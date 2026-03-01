@@ -152,6 +152,7 @@ class Config:
             'ENABLE_TTS': True,
             'ENABLE_TEXT_COMMANDS': True,
             'TTS_VOLUME': 1.0,  # Volume multiplier for TTS audio (1.0 = normal, 2.0 = double, 3.0 = triple)
+            'TTS_DEFAULT_VOICE': 1, # Default voice (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
             'PTT_TTS_DELAY': 1.0,   # Silence padding before TTS (seconds) to prevent cutoff
             'PTT_ANNOUNCEMENT_DELAY': 0.5,  # Seconds after PTT key-up before announcement audio starts
             # SDR Integration
@@ -4367,13 +4368,27 @@ class MumbleRadioGateway:
             print(f"    Port: {self.config.MUMBLE_PORT}")
             return False
     
-    def speak_text(self, text):
+    # gTTS voice map: number → (lang, tld, description)
+    TTS_VOICES = {
+        1: ('en', 'com',    'US English'),
+        2: ('en', 'co.uk',  'British English'),
+        3: ('en', 'com.au', 'Australian English'),
+        4: ('en', 'co.in',  'Indian English'),
+        5: ('en', 'co.za',  'South African English'),
+        6: ('en', 'ca',     'Canadian English'),
+        7: ('en', 'ie',     'Irish English'),
+        8: ('fr', 'fr',     'French'),
+        9: ('de', 'de',     'German'),
+    }
+
+    def speak_text(self, text, voice=None):
         """
         Generate TTS audio from text and play it on radio
-        
+
         Args:
             text: Text to convert to speech
-            
+            voice: Optional voice number (1-9), defaults to TTS_DEFAULT_VOICE config
+
         Returns:
             bool: True if successful, False otherwise
         """
@@ -4400,10 +4415,12 @@ class MumbleRadioGateway:
             temp_file.close()
             
             # Generate TTS audio using gTTS
+            voice_num = voice or int(getattr(self.config, 'TTS_DEFAULT_VOICE', 1))
+            lang, tld, voice_desc = self.TTS_VOICES.get(voice_num, self.TTS_VOICES[1])
             if self.config.VERBOSE_LOGGING:
-                print(f"[TTS] Calling gTTS to generate audio...")
+                print(f"[TTS] Calling gTTS (voice {voice_num}: {voice_desc})...")
             try:
-                tts = self.tts_engine(text, lang='en', slow=False)
+                tts = self.tts_engine(text, lang=lang, tld=tld, slow=False)
                 if self.config.VERBOSE_LOGGING:
                     print(f"[TTS] Saving to {temp_path}...")
                 tts.save(temp_path)
@@ -4552,7 +4569,7 @@ class MumbleRadioGateway:
         Handle incoming text messages from Mumble users
         
         Supports commands:
-            !speak <text>  - Generate TTS and broadcast on radio
+            !speak [voice#] <text>  - Generate TTS and broadcast on radio (voices 1-9)
             !play <0-9>    - Play announcement file by slot number
             !files         - List loaded announcement files
             !stop          - Stop playback and clear queue
@@ -4589,12 +4606,23 @@ class MumbleRadioGateway:
             # Handle commands
             if command == '!speak':
                 if args:
-                    if self.speak_text(args):
-                        self.send_text_message(f"Speaking: {args[:50]}...")
+                    # Parse optional voice number: !speak 3 Hello world
+                    voice = None
+                    speak_text = args
+                    speak_parts = args.split(None, 1)
+                    if len(speak_parts) == 2 and speak_parts[0].isdigit():
+                        v = int(speak_parts[0])
+                        if v in self.TTS_VOICES:
+                            voice = v
+                            speak_text = speak_parts[1]
+                    if self.speak_text(speak_text, voice=voice):
+                        v_info = f" (voice {voice})" if voice else ""
+                        self.send_text_message(f"Speaking{v_info}: {speak_text[:50]}...")
                     else:
                         self.send_text_message("TTS not available")
                 else:
-                    self.send_text_message("Usage: !speak <text>")
+                    voices = " | ".join(f"{k}={v[2]}" for k, v in self.TTS_VOICES.items())
+                    self.send_text_message(f"Usage: !speak [voice#] <text> — Voices: {voices}")
             
             elif command == '!play':
                 if args and args in '0123456789':
@@ -4764,7 +4792,7 @@ class MumbleRadioGateway:
             elif command == '!help':
                 help_text = [
                     "=== Gateway Commands ===",
-                    "!speak <text> - TTS broadcast on radio",
+                    "!speak [voice#] <text> - TTS broadcast (voices 1-9)",
                     "!cw <text>    - Send Morse code on radio",
                     "!play <0-9>   - Play announcement by slot",
                     "!files        - List loaded announcement files",

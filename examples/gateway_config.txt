@@ -563,6 +563,12 @@ ENABLE_TEXT_COMMANDS = true
 # TTS audio is often quieter than regular files, boost it here
 TTS_VOLUME = 1.0
 
+# Default TTS voice (used when !speak has no voice number)
+# 1=US  2=British  3=Australian  4=Indian  5=South African
+# 6=Canadian  7=Irish  8=French  9=German
+# Usage: !speak <text> (uses default) or !speak 3 <text> (Australian)
+TTS_DEFAULT_VOICE = 1
+
 # Silence padding before TTS audio (seconds)
 # Prevents first words from being cut off due to PTT delay
 # 0.25 = quarter second of silence before speech starts
