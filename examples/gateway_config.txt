@@ -1,764 +1,391 @@
 # ============================================================================
 # MUMBLE RADIO GATEWAY - CONFIGURATION FILE
 # ============================================================================
-# 
+#
 # Bidirectional audio gateway between Mumble VoIP and radio via AIOC
-# 
-# Features:
-#   • Mumble ↔ Radio audio bridging with auto-PTT
-#   • File playback system (announcements/station ID)
-#   • Broadcastify streaming (optional)
-#   • EchoLink integration (optional)
-#   • Audio processing (noise gate, AGC, filters)
 #
 # Quick Start:
 #   1. Set MUMBLE_SERVER to your server IP/hostname
-#   2. Set ENABLE_STREAM_OUTPUT = true for Broadcastify streaming
-#   3. Most other settings have sensible defaults
+#   2. Most other settings have sensible defaults
+#   3. Optional features are disabled by default — enable as needed
 #
 # Keyboard Controls (runtime):
-#   MUTE:    't' = TX | 'r' = RX | 'm' = Global | 's' = SDR1 | 'x' = SDR2 | 'c' = Remote | 'a' = Announce
-#   AUDIO:   'v' = VAD | ',' = Vol- | '.' = Vol+
-#   SDR:     'd' = SDR1 Duck toggle
-#   PROCESS: 'n' = Gate | 'f' = HPF | 'g' = AGC | 'w' = Wiener | 'e' = Echo
-#   PTT:     'p' = Manual PTT toggle
-#   PLAY:    '1-9' = Announcements | '0' = Station ID | '-' = Stop
-#   TRACE:   'i' = Start/stop audio trace
+#   MUTE:    't'=TX  'r'=RX  'm'=Global  's'=SDR1  'x'=SDR2  'c'=Remote  'a'=Announce
+#   AUDIO:   'v'=VAD  ','=Vol-  '.'=Vol+
+#   PROCESS: 'n'=Gate  'f'=HPF  'g'=AGC  'w'=Wiener  'e'=Echo
+#   SDR:     'd'=SDR1 Duck toggle
+#   PTT:     'p'=Manual PTT toggle
+#   PLAY:    '1-9'=Announcements  '0'=Station ID  '-'=Stop
+#   TRACE:   'i'=Start/stop audio trace
 # ============================================================================
 
+
 # ============================================================================
-# CORE: MUMBLE SERVER CONNECTION
+# MUMBLE SERVER
 # ============================================================================
 
-# Mumble server IP address or hostname
-# Examples: 192.168.1.100, mumble.example.com
 MUMBLE_SERVER = 192.168.2.128
-
-# Mumble server port
-# Default: 64738 (standard Mumble port)
 MUMBLE_PORT = 64738
-
-# Username displayed on Mumble
 MUMBLE_USERNAME = RadioGateway
+MUMBLE_PASSWORD =
+MUMBLE_CHANNEL =
 
-# Server password (leave empty if none)
-MUMBLE_PASSWORD = 
-
-# Channel to join (leave empty for root channel)
-# Examples: Radio, General/Radio
-MUMBLE_CHANNEL = 
-
-# Opus encoder bitrate in bits/second (outgoing audio quality)
-# 40000 = good | 72000 = high | 96000 = maximum (recommended for radio)
+# Opus encoder bitrate (bits/sec): 40000=good | 72000=high | 96000=max
 MUMBLE_BITRATE = 96000
 
-# Enable Opus Variable Bit Rate
-# false = constant bitrate (recommended — more predictable bandwidth)
-# true  = adapts bitrate to content
+# false=constant bitrate (recommended) | true=adapts to content
 MUMBLE_VBR = false
 
+
 # ============================================================================
-# CORE: RADIO INTERFACE (AIOC)
+# RADIO INTERFACE (AIOC)
 # ============================================================================
 
-# AIOC USB device identifiers
-# Default values work for most AIOC devices
+# AIOC USB identifiers (defaults work for most AIOC devices)
 AIOC_VID = 0x1209
 AIOC_PID = 0x7388
 
-# Audio device names (auto-detected if empty)
-# Leave blank unless you have multiple AIOC devices
-AIOC_INPUT_DEVICE = 
-AIOC_OUTPUT_DEVICE = 
+# Audio device names (leave blank for auto-detect)
+AIOC_INPUT_DEVICE =
+AIOC_OUTPUT_DEVICE =
 
-# GPIO channel for PTT control
-# 2 = CM108 GPIO2 (standard AIOC configuration)
+# CM108 GPIO channel for PTT (2=standard AIOC, try 1-3 if PTT doesn't work)
 AIOC_PTT_CHANNEL = 3
 
+
 # ============================================================================
-# CORE: AUDIO QUALITY & BUFFERING
+# AUDIO FORMAT & BUFFERING
 # ============================================================================
 
-# Sample rate in Hz
-# 48000 = CD quality (recommended, matches Mumble)
-AUDIO_RATE = 48000
+AUDIO_RATE = 48000       # Hz (48000 matches Mumble — don't change)
+AUDIO_CHANNELS = 1       # Mono (recommended for radio)
+AUDIO_BITS = 16          # 16-bit PCM (don't change)
 
-# Channels: 1 = Mono (recommended for radio)
-AUDIO_CHANNELS = 1
-
-# Bit depth: 16 = Standard (don't change)
-AUDIO_BITS = 16
-
-# Audio chunk size (samples) — processing granularity
-# The gateway uses 4× this value as the ALSA buffer period to absorb USB
-# timing jitter, then slices it back to this size for processing.
-# Tradeoff: smaller = lower latency, larger = more stable.
-#   480 =  10ms | 960 = 20ms | 1920 = 40ms
-#  2400 =  50ms (recommended) | 4800 = 100ms | 9600 = 200ms
-# If you get -9999 / overrun errors, increase this value.
+# Chunk size (samples) — tradeoff: smaller=lower latency, larger=more stable
+# The gateway uses 4x this as the ALSA buffer period for USB jitter absorption.
+#   480=10ms | 960=20ms | 1920=40ms | 2400=50ms | 4800=100ms | 9600=200ms
+# Increase if you get -9999 / overrun errors.
 AUDIO_CHUNK_SIZE = 2400
 
+
 # ============================================================================
-# CORE: AUDIO LEVELS
+# AUDIO LEVELS
 # ============================================================================
 
-# Radio RX → Mumble volume multiplier
-# 0.5 = half volume | 1.0 = unity (default) | 2.0 = double
-# Adjust if radio audio is too quiet/loud in Mumble
+# Radio RX -> Mumble volume (0.5=half | 1.0=unity | 2.0=double)
 INPUT_VOLUME = 1.0
 
-# Mumble → Radio TX volume multiplier
-# Adjust if Mumble audio is too quiet/loud on radio
+# Mumble -> Radio TX volume
 OUTPUT_VOLUME = 1.0
 
-# ============================================================================
-# CORE: PTT (PUSH-TO-TALK) CONTROL
-# ============================================================================
-
-# Delay before activating PTT after audio detected (seconds)
-# Gives time for squelch tail to settle
-PTT_ACTIVATION_DELAY = 0.1
-
-# Delay before releasing PTT after audio stops (seconds)
-# Prevents cutting off end of transmissions
-PTT_RELEASE_DELAY = 0.5
 
 # ============================================================================
-# FEATURE: VOICE ACTIVITY DETECTION (VAD)
+# PTT (PUSH-TO-TALK)
 # ============================================================================
 
-# Enable VAD for Radio RX → Mumble
-# true = only send to Mumble when radio signal detected (recommended)
-# false = always send (may transmit noise/carrier)
-ENABLE_VAD = true
+PTT_ACTIVATION_DELAY = 0.1   # Seconds before keying PTT after audio detected
+PTT_RELEASE_DELAY = 0.5      # Seconds to hold PTT after audio stops
 
-# VAD threshold in dBFS (more negative = more sensitive)
-# -40 = very sensitive | -33 = balanced | -25 = less sensitive
-VAD_THRESHOLD = -45
-
-# VAD timing
-VAD_ATTACK = 0.05   # How fast to activate (seconds)
-VAD_RELEASE = 2   # How long to hold after silence (seconds)
-VAD_MIN_DURATION = 0.25  # Minimum transmission length (seconds)
-
-# ============================================================================
-# FEATURE: VOX (VOICE-OPERATED SWITCH)
-# ============================================================================
-
-# Enable VOX for Radio RX → Mumble
-# Alternative to VAD, based on audio level threshold
-ENABLE_VOX = false
-
-# VOX threshold in dBFS
-VOX_THRESHOLD = -30
-
-# VOX timing
-VOX_ATTACK_TIME = 0.05   # How fast to activate
-VOX_RELEASE_TIME = 0.5   # How long to hold after silence
-
-# ============================================================================
-# FEATURE: AUDIO PROCESSING
-# ============================================================================
-
-# Noise Gate - removes low-level background noise
-ENABLE_NOISE_GATE = false
-NOISE_GATE_THRESHOLD = -40    # dBFS threshold
-NOISE_GATE_ATTACK = 0.01      # Attack time (seconds)
-NOISE_GATE_RELEASE = 0.1      # Release time (seconds)
-
-# High-Pass Filter - removes low-frequency rumble
-ENABLE_HIGHPASS_FILTER = false
-HIGHPASS_CUTOFF_FREQ = 300    # Hz (300 = good for voice)
-
-# Automatic Gain Control - normalizes audio levels
-ENABLE_AGC = false
-
-# Noise Suppression - advanced noise reduction
-ENABLE_NOISE_SUPPRESSION = false
-NOISE_SUPPRESSION_METHOD = spectral  # spectral or wiener
-NOISE_SUPPRESSION_STRENGTH = 0.5     # 0.0 to 1.0
-
-# Echo Cancellation - reduces feedback
-ENABLE_ECHO_CANCELLATION = false
-
-# ============================================================================
-# FEATURE: FILE PLAYBACK (Announcements & Station ID)
-# ============================================================================
-
-# Enable file playback system
-# Allows triggering audio files with keys 0-9
-ENABLE_PLAYBACK = true
-
-# Directory containing audio files
-# Gateway will scan this directory and auto-assign files to keys
-PLAYBACK_DIRECTORY = audio
-
-# Playback volume multiplier for announcement audio files
-# 1.0 = normal, 2.0 = double — audio is clipped to int16 range so
-# boosting beyond clipping only increases distortion, not perceived loudness
-PLAYBACK_VOLUME = 4.0
-
-# --- Morse Code (CW) ---
-# Speed in words per minute (standard PARIS timing; 15 WPM = ~22 ms dit)
-CW_WPM = 15
-# Tone frequency in Hz (typical CW sidetone range: 400–900 Hz)
-CW_FREQUENCY = 700
-# Volume multiplier applied to generated CW PCM before writing the WAV.
-# PLAYBACK_VOLUME is also applied on top — keep CW_VOLUME=1.0 and tune via PLAYBACK_VOLUME.
-CW_VOLUME = 1.0
-
-# File Naming & Auto-Assignment:
-# 
-# Station ID (key 0):
-#   Priority: station_id.mp3 > station_id.wav > station_id.(any format)
-#   If not found, key 0 will be disabled
-#
-# Announcements (keys 1-9):
-#   Method 1 - Numbered prefix (recommended):
-#     1_welcome.mp3       → Key 1
-#     2_emergency.wav     → Key 2
-#     3_net_starting.mp3  → Key 3
-#     Files starting with "N_" assign to key N
-#
-#   Method 2 - Auto-assignment:
-#     If files don't have number prefixes, they'll be
-#     assigned to keys 1-9 in alphabetical order
-#
-# Supported formats: .mp3, .wav, .ogg, .flac, .m4a
-#
-# On startup, gateway will display which file is assigned to each key
-# This mapping is shown just above the status bar
-
-# Auto-play interval for station ID (seconds, 0 = disabled)
-# When non-zero, the station_id file (slot 0) plays automatically every N seconds
-# Example: 3600 = play station ID once per hour
-PLAYBACK_ANNOUNCEMENT_INTERVAL = 0
-
-# Delay after PTT key-up before announcement/file audio starts (seconds)
-# Gives the repeater or radio time to open squelch before audio begins
-# 0.5 = half second (default) | 0.0 = no delay
+# Delay after PTT key-up before announcement/TTS audio starts (seconds)
+# Gives the radio time to fully key up before speech begins
 PTT_ANNOUNCEMENT_DELAY = 0.5
 
 
 # ============================================================================
-# FEATURE: SDR RECEIVER INTEGRATION
-# ============================================================================
-# Add a second receiver (SDR) that feeds audio into the gateway
-# simultaneously with the main AIOC radio. Audio is mixed together.
-#
-# Two SDR inputs supported: SDR1 and SDR2 with priority-based ducking
-#
-# Prerequisites:
-#   1. Install ALSA loopback: sudo modprobe snd-aloop
-#   2. Make permanent: echo "snd-aloop" | sudo tee -a /etc/modules
-#   3. Configure SDRconnect (or other SDR software) to output to Loopback device
-#
-# Keyboard Controls:
-#   's' = Mute/unmute SDR1 audio
-#   'x' = Mute/unmute SDR2 audio
-#   'd' = Toggle SDR1 ducking on/off
-#   'm' = Global mute (mutes everything including SDRs)
-#
-# Priority System:
-#   - AIOC/Radio RX always has top priority (ducks all SDRs)
-#   - SDR_PRIORITY and SDR2_PRIORITY determine ducking between SDRs
-#   - Lower number = higher priority (1 ducks 2)
-#
-# Status Bar:
-#   SDR1:[cyan bar] = SDR1 audio level display
-#   SDR2:[magenta bar] = SDR2 audio level display
-#
-# Use Case Examples:
-#   - Monitor two frequencies simultaneously with priority
-#   - Add scanner audio feed + web SDR with priority ducking
-#   - Mix in remote receiver with local SDR
+# VOICE ACTIVITY DETECTION (VAD)
 # ============================================================================
 
-# -------- SDR1 Configuration --------
-# Enable SDR1 audio input
+# Controls Radio RX -> Mumble: only transmit when signal detected
+ENABLE_VAD = true
+
+# Threshold in dBFS (more negative = more sensitive)
+# -45=very sensitive | -33=balanced | -25=less sensitive
+VAD_THRESHOLD = -45
+
+VAD_ATTACK = 0.05        # Seconds to activate
+VAD_RELEASE = 2           # Seconds to hold after silence
+VAD_MIN_DURATION = 0.25   # Minimum transmission length (seconds)
+
+
+# ============================================================================
+# VOX (VOICE-OPERATED SWITCH) — alternative to VAD
+# ============================================================================
+
+ENABLE_VOX = false
+VOX_THRESHOLD = -30       # dBFS threshold
+VOX_ATTACK_TIME = 0.05    # Seconds to activate
+VOX_RELEASE_TIME = 0.5    # Seconds to hold after silence
+
+
+# ============================================================================
+# AUDIO PROCESSING
+# ============================================================================
+
+# Noise Gate — removes low-level background noise
+ENABLE_NOISE_GATE = false
+NOISE_GATE_THRESHOLD = -40    # dBFS
+NOISE_GATE_ATTACK = 0.01      # seconds
+NOISE_GATE_RELEASE = 0.1      # seconds
+
+# High-Pass Filter — removes low-frequency rumble
+ENABLE_HIGHPASS_FILTER = false
+HIGHPASS_CUTOFF_FREQ = 300    # Hz (300=good for voice)
+
+# Automatic Gain Control — normalizes audio levels
+ENABLE_AGC = false
+
+# Noise Suppression — advanced noise reduction
+ENABLE_NOISE_SUPPRESSION = false
+NOISE_SUPPRESSION_METHOD = spectral  # spectral or wiener
+NOISE_SUPPRESSION_STRENGTH = 0.5     # 0.0 to 1.0
+
+# Echo Cancellation
+ENABLE_ECHO_CANCELLATION = false
+
+
+# ============================================================================
+# SDR RECEIVER INTEGRATION
+# ============================================================================
+# Mix one or two SDR receivers into the gateway alongside AIOC radio.
+# Requires ALSA loopback (sudo modprobe snd-aloop).
+#
+# Priority: AIOC/Radio always ducks all SDRs. Between SDRs, lower
+# priority number = higher priority (SDR1 at 1 ducks SDR2 at 2).
+
+# -------- SDR1 --------
 ENABLE_SDR = true
 
-# ALSA device name for SDR1 audio input
-# IMPORTANT: ALSA Loopback devices work in PAIRS
-#   - If SDRconnect outputs to hw:2,0 → Gateway reads from hw:2,1
-#   - If SDRconnect outputs to hw:2,1 → Gateway reads from hw:2,0
-#
-# The gateway will search for devices containing this string
-# Examples:
-#   Loopback          - Searches for any Loopback device
-#   hw:2,1            - Specific hardware device (pair of hw:2,0)
-#   hw:Loopback,2,1   - Full ALSA format
-#
-# To find your device:
-#   1. Note what SDRconnect shows (e.g., "hw:2,0")
-#   2. Use the OPPOSITE subdevice number:
-#      SDRconnect → hw:2,0 means use hw:2,1
-#      SDRconnect → hw:2,1 means use hw:2,0
+# ALSA loopback device. Loopback pairs: if SDR writes to hw:N,0, read hw:N,1
 SDR_DEVICE_NAME = hw:6,1
 
-# SDR1 priority for ducking (1 = higher priority, 2 = lower priority)
-# If SDR1_PRIORITY < SDR2_PRIORITY, SDR1 will duck SDR2 when both have audio
-# AIOC/Radio RX always ducks both SDRs regardless of priority
-SDR_PRIORITY = 1
+SDR_PRIORITY = 1          # Ducking priority (lower = higher priority)
+SDR_DUCK = true            # true=duck when higher-priority source active
+SDR_MIX_RATIO = 1.0        # Volume when ducking disabled (0.0 to 1.0)
+SDR_DISPLAY_GAIN = 1.0     # Status bar sensitivity (1.0=normal, 5.0=very sensitive)
+SDR_AUDIO_BOOST = 2.0      # Actual volume boost (1.0=unity, 2.0=double)
+SDR_BUFFER_MULTIPLIER = 4  # ALSA read buffer (4=recommended | 8=extra stability)
 
-# SDR1 audio ducking
-# true  = SDR1 audio is silenced when higher priority audio is active
-#         (AIOC/Radio RX, or lower-priority-number SDR)
-# false = SDR1 audio is always mixed at SDR_MIX_RATIO volume
-SDR_DUCK = true
+# Loopback watchdog — detects stalled ALSA reads after extended runtime.
+# Recovery stages: 1=reopen stream, 2=reinit PyAudio, 3=reload snd-aloop module.
+# Status bar shows W<N> when recovery has been attempted.
+SDR_WATCHDOG_TIMEOUT = 10       # Seconds before triggering recovery
+SDR_WATCHDOG_MAX_RESTARTS = 5   # Max recovery attempts (then stays silent)
+SDR_WATCHDOG_MODPROBE = false   # Stage 3: requires sudoers NOPASSWD entry for modprobe
 
-# SDR1 audio mix ratio (0.0 to 1.0) - only applies when SDR_DUCK = false
-# Sets the SDR1 volume relative to other sources when mixing simultaneously
-# 1.0 = full volume (default)
-# 0.5 = half volume
-SDR_MIX_RATIO = 1.0
-
-# SDR1 display sensitivity (1.0 to 10.0)
-# Controls how sensitive the status bar and percentage display are
-# This does NOT change the actual audio volume
-# 1.0 = normal sensitivity (default)
-# 3.0 = show 3x on bar (more visible)
-# 5.0 = very sensitive (bar shows even quiet signals)
-SDR_DISPLAY_GAIN = 1.0
-
-# SDR1 audio volume boost (1.0 to 10.0)
-# Controls ACTUAL audio volume sent to Mumble
-# 1.0 = no change (default - original level)
-# 2.0 = 2x louder
-# 3.0 = 3x louder
-SDR_AUDIO_BOOST = 2.0
-
-# SDR1 buffer size multiplier — controls how many chunks the reader fetches per ALSA
-# read call (frames_per_buffer = AUDIO_CHUNK_SIZE × SDR_BUFFER_MULTIPLIER).
-# Larger values reduce ALSA read call overhead and absorb bursts more smoothly.
-# 4 = recommended | 8 = extra stability | 16 = maximum (high latency)
-SDR_BUFFER_MULTIPLIER = 4
-
-# SDR1 loopback watchdog — detects stalled ALSA reads and attempts staged recovery.
-# After extended runtime, snd-aloop can get stuck (reads block forever or throw IOError
-# on every attempt). The watchdog detects this and tries to recover automatically.
-#
-# Recovery stages (tried in order until one succeeds):
-#   Stage 1: Close and reopen the ALSA stream
-#   Stage 2: Terminate and reinitialize PyAudio entirely
-#   Stage 3: Reload the snd-aloop kernel module via sudo modprobe (see below)
-#
-# TIMEOUT      — seconds with no successful ALSA read before recovery is triggered
-# MAX_RESTARTS — max total recovery attempts before giving up (gateway keeps running,
-#                SDR source stays silent — use !restart or Ctrl+C to recover manually)
-# MODPROBE     — enable stage 3 (kernel module reload). Requires a sudoers entry:
-#                  <user> ALL=(ALL) NOPASSWD: /sbin/modprobe -r snd-aloop, /sbin/modprobe snd-aloop
-#                Add to /etc/sudoers.d/gateway-loopback (use visudo to edit safely)
-#
-# Status bar shows W<N> after the SDR bar when recovery has been attempted.
-SDR_WATCHDOG_TIMEOUT = 10
-SDR_WATCHDOG_MAX_RESTARTS = 5
-SDR_WATCHDOG_MODPROBE = false
-
-# -------- SDR2 Configuration --------
-# Enable SDR2 audio input (second SDR receiver)
+# -------- SDR2 --------
 ENABLE_SDR2 = false
-
-# ALSA device name for SDR2 audio input (must be different from SDR1)
-# Same pairing rules as SDR1 - use opposite subdevice number
 SDR2_DEVICE_NAME = hw:4,1
-
-# SDR2 priority for ducking (1 = higher priority, 2 = lower priority)
-# If SDR2_PRIORITY > SDR1_PRIORITY, SDR2 will be ducked by SDR1
 SDR2_PRIORITY = 2
-
-# SDR2 audio ducking
 SDR2_DUCK = true
-
-# SDR2 audio mix ratio (when ducking disabled)
 SDR2_MIX_RATIO = 1.0
-
-# SDR2 display sensitivity
 SDR2_DISPLAY_GAIN = 1.0
-
-# SDR2 audio volume boost
 SDR2_AUDIO_BOOST = 2.0
-
-# SDR2 buffer size multiplier (same as SDR_BUFFER_MULTIPLIER above)
 SDR2_BUFFER_MULTIPLIER = 4
-
-# SDR2 loopback watchdog (same behaviour as SDR_WATCHDOG_* above)
 SDR2_WATCHDOG_TIMEOUT = 10
 SDR2_WATCHDOG_MAX_RESTARTS = 5
 SDR2_WATCHDOG_MODPROBE = false
 
-# ============================================================================
-# FEATURE: REMOTE AUDIO LINK
-# ============================================================================
-# Links two gateway instances over TCP.
-#
-# ROLES:
-#   server — This machine dials OUT to the client's IP and pushes its
-#             mixed audio (radio RX + SDR + file playback) continuously.
-#             Status bar shows SV:[yellow bar].
-#
-#   client — This machine listens for an inbound TCP connection from the
-#             server. Received audio enters the local mixer as source "SDRSV"
-#             with full duck/priority support. Status bar shows CL:[green bar].
-#             Press 'c' to mute/unmute SDRSV at runtime.
-#
-#   disabled — No remote audio link (default).
-#
-# CONNECTION MODEL:
-#   Server dials OUT to client (server = audio sender, client = receiver).
-#   Audio flows one way: server → client.
-#
-#   Server config:            Client config:
-#     ROLE = server             ROLE = client
-#     HOST = <client IP>        HOST = (blank = all interfaces)
-#     PORT = 9600               PORT = 9600
-#
-# PRIORITY (client side):
-#   SDRSV participates in duck/priority alongside SDR1/SDR2.
-#   REMOTE_AUDIO_PRIORITY = 3 (default) → ducked by radio RX, SDR1, SDR2
-#   REMOTE_AUDIO_PRIORITY = 0           → ducks SDR1 and SDR2 when active
-#
-# FIREWALL (client machine must allow inbound TCP on the port):
-#   sudo ufw allow 9600/tcp
-# ============================================================================
-
-# Role: 'server', 'client', or 'disabled'
-REMOTE_AUDIO_ROLE = disabled
-
-# Server: IP of the client machine
-# Client: bind address (leave blank to listen on all interfaces)
-REMOTE_AUDIO_HOST =
-
-# TCP port (must match on both server and client)
-REMOTE_AUDIO_PORT = 9600
-
-# Client: duck SDRSV when higher-priority sources are active
-REMOTE_AUDIO_DUCK = true
-
-# Client: sdr_priority for ducking (0 = highest, ducks SDR1/SDR2; 3 = lowest, default)
-REMOTE_AUDIO_PRIORITY = 3
-
-# Client: status bar display sensitivity multiplier
-REMOTE_AUDIO_DISPLAY_GAIN = 1.0
-
-# Client: volume boost for received audio (1.0 = no change)
-REMOTE_AUDIO_AUDIO_BOOST = 1.0
-
-# Server: seconds between reconnect attempts if link drops
-REMOTE_AUDIO_RECONNECT_INTERVAL = 5.0
-
-# ============================================================================
-# ANNOUNCEMENT INPUT (port 9601)
-# ============================================================================
-# Listens for inbound TCP connections carrying length-prefixed 16-bit mono PCM
-# at the configured sample rate (same wire format as REMOTE_AUDIO_ROLE=client).
-# When audio arrives the gateway activates PTT (if AIOC is present) and sends
-# the audio to the radio for transmission.  PTT is released automatically once
-# the stream drains after the sender disconnects (PTT_RELEASE_DELAY applies).
-#
-# Enable inbound firewall port if needed:  sudo ufw allow 9601/tcp
-# ============================================================================
-
-# Set to true to enable the announcement input listener
-ENABLE_ANNOUNCE_INPUT = false
-
-# TCP port to listen on (sender connects here)
-ANNOUNCE_INPUT_PORT = 9601
-
-# Bind address (blank = all interfaces / 0.0.0.0)
-ANNOUNCE_INPUT_HOST =
-
-# Audio threshold in dBFS.  Chunks below this level are treated as silence
-# and do not trigger PTT.  The stream can stay connected between announcements
-# without keying the radio.  PTT_RELEASE_DELAY provides the tail hold after
-# audio stops.  Range: -60 (very sensitive) to -20 (only loud audio).
-ANNOUNCE_INPUT_THRESHOLD = -45.0
-
-# Volume multiplier for announcement audio (1.0 = unity, 2.0 = double).
-# Boost if announcements sound quiet on the radio.  Audio is clipped to
-# int16 range so extreme values only add distortion, not loudness.
-ANNOUNCE_INPUT_VOLUME = 4.0
 
 # ============================================================================
 # SIGNAL DETECTION & SOURCE SWITCHING
 # ============================================================================
-# Controls when and how the mixer switches between audio sources (e.g. when
-# radio RX arrives and ducks the SDR, or when it ends and SDR resumes).
-#
-# Attack  — how long a source must be CONTINUOUSLY active before a switch is
-#           allowed.  Any silence resets the timer, so brief transients or
-#           noise bursts never cause an unwanted switch.
-#
-# Release — how long the interrupting source must be continuously silent
-#           before the original source is allowed to resume.  Prevents SDR
-#           from popping back on during natural speech pauses.
-#
-# Padding — a brief silence inserted at EACH transition point (duck-out and
-#           duck-in).  Gives a clean audible break instead of an abrupt cut:
-#             duck-out: [SDR playing] → [silence] → [radio plays, SDR ducked]
-#             duck-in:  [radio silent] → [silence] → [SDR resumes]
+# Controls ducking transitions: when radio RX arrives and ducks SDR, and
+# when it ends and SDR resumes.
 #
 # Recommended starting values:
-#   - Sensitive/fast:   attack=0.1, release=2.0, padding=0.1
-#   - Balanced:         attack=0.15, release=3.0, padding=1.0
-#   - Conservative:     attack=0.5, release=5.0, padding=1.0
-# ============================================================================
+#   Sensitive/fast:   attack=0.1,  release=2.0, padding=0.1
+#   Balanced:         attack=0.15, release=3.0, padding=1.0
+#   Conservative:     attack=0.5,  release=5.0, padding=1.0
 
-# Attack: seconds of CONTINUOUS signal required before a source switch is allowed
-# Lower = faster duck response when radio starts (0.15 = 150ms, ~3 audio chunks)
+# Seconds of CONTINUOUS signal before a duck is triggered
 SIGNAL_ATTACK_TIME = 0.15
 
-# Release: seconds of continuous silence required before switching back
-# Higher = holds through longer gaps between radio transmissions
-# Total hold = SIGNAL_RELEASE_TIME + 1.0s internal hold timer
+# Seconds of continuous silence before the ducked source resumes
 SIGNAL_RELEASE_TIME = 3
 
-# Padding: seconds of silence inserted at each transition (duck-out AND duck-in)
+# Seconds of silence inserted at each transition (duck-out AND duck-in)
 SWITCH_PADDING_TIME = 1
 
-# SDR-to-SDR duck cooldown: after a lower-priority SDR unducks (starts playing
-# because the higher-priority SDR's signal hold expired), it gets this many
-# seconds of immunity before the higher-priority SDR can re-duck it.
-# Prevents rapid toggling when the higher-priority SDR has intermittent signal
-# near the threshold.  SIGNAL_RELEASE_TIME already provides the same hold in
-# the other direction, so this makes switching symmetric.
-# 0 = no cooldown (instant re-duck allowed)
+# SDR-to-SDR: seconds of immunity after unduck before re-duck is allowed
+# Prevents rapid toggling with intermittent signals. 0=no cooldown.
 SDR_DUCK_COOLDOWN = 3.0
 
-# SDR signal detection threshold (dBFS).  Audio chunks with RMS below this
-# level are treated as silence — they won't refresh the hold timer and won't
-# trigger SDR-to-SDR ducking.  Lower = more sensitive (keeps quieter audio).
-# -50 = original default; -60 = 10dB more sensitive (good for weak signals)
+# SDR signal threshold (dBFS). Chunks below this are treated as silence.
+# -50=default | -60=10dB more sensitive (good for weak signals)
 SDR_SIGNAL_THRESHOLD = -60.0
 
+
 # ============================================================================
-# FEATURE: TEXT-TO-SPEECH & TEXT COMMANDS (Phase 4)
+# REMOTE AUDIO LINK (TCP)
 # ============================================================================
-# Convert text to speech and broadcast on radio
-# Remote control via Mumble text messages
+# Links two gateway instances. Server sends its mixed audio to the client.
+# Client receives it as source "SDRSV" with duck/priority support.
 #
-# Prerequisites:
-#   pip3 install gtts --break-system-packages
-#
-# Text Commands (send via Mumble chat):
-#   !speak <text>  - Generate TTS and broadcast on radio
-#   !cw <text>     - Send Morse code on radio
-#   !play <0-9>    - Play announcement file
-#   !status        - Show gateway status
-#   !help          - Show available commands
-#
-# Example:
-#   User types in Mumble: !speak Emergency traffic - all stations stand by
-#   Gateway: Generates speech, keys PTT, broadcasts on radio
+# Server config: ROLE=server, HOST=<client IP>, PORT=9600
+# Client config: ROLE=client, HOST=(blank), PORT=9600
+# Firewall: client needs inbound TCP on the port (sudo ufw allow 9600/tcp)
+
+REMOTE_AUDIO_ROLE = disabled       # server | client | disabled
+REMOTE_AUDIO_HOST =                # Server: client IP. Client: bind addr (blank=all)
+REMOTE_AUDIO_PORT = 9600
+REMOTE_AUDIO_DUCK = true           # Client: duck when higher-priority source active
+REMOTE_AUDIO_PRIORITY = 3          # Client: 0=ducks SDR1/SDR2, 3=lowest (default)
+REMOTE_AUDIO_DISPLAY_GAIN = 1.0    # Client: status bar sensitivity
+REMOTE_AUDIO_AUDIO_BOOST = 1.0     # Client: volume boost (1.0=no change)
+REMOTE_AUDIO_RECONNECT_INTERVAL = 5.0  # Server: seconds between reconnect attempts
+
+
+# ============================================================================
+# ANNOUNCEMENT INPUT (TCP port 9601)
+# ============================================================================
+# Receives length-prefixed 16-bit mono PCM over TCP and transmits it on
+# the radio via PTT. Use with windows_audio_client.py in Announcement mode.
+# PTT is audio-gated: silence below threshold does not key the radio.
+# Firewall: sudo ufw allow 9601/tcp
+
+ENABLE_ANNOUNCE_INPUT = false
+ANNOUNCE_INPUT_PORT = 9601
+ANNOUNCE_INPUT_HOST =              # Bind address (blank = all interfaces)
+
+# Silence threshold (dBFS). Audio below this won't trigger PTT.
+# -60=very sensitive | -45=default | -20=only loud audio
+ANNOUNCE_INPUT_THRESHOLD = -45.0
+
+# Volume multiplier (clipped to int16 — extreme values add distortion, not loudness)
+ANNOUNCE_INPUT_VOLUME = 4.0
+
+
+# ============================================================================
+# FILE PLAYBACK (Announcements & Station ID)
 # ============================================================================
 
-# Enable text-to-speech (requires gtts)
+ENABLE_PLAYBACK = true
+PLAYBACK_DIRECTORY = audio
+
+# Volume multiplier (clipped to int16; 1.0=normal, 2.0=double)
+PLAYBACK_VOLUME = 4.0
+
+# Auto-play station ID interval (seconds, 0=disabled)
+# Example: 3600 = play station_id file once per hour
+PLAYBACK_ANNOUNCEMENT_INTERVAL = 0
+
+# --- Morse Code (CW) ---
+CW_WPM = 15           # Words per minute (PARIS timing)
+CW_FREQUENCY = 700    # Tone frequency (Hz)
+CW_VOLUME = 1.0       # CW-specific volume (PLAYBACK_VOLUME also applies)
+
+# File naming:
+#   Station ID (key 0): station_id.mp3 or station_id.wav
+#   Announcements (keys 1-9): prefix with number (1_welcome.mp3, 2_alert.wav)
+#     or files without prefixes are auto-assigned alphabetically
+#   Formats: .mp3, .wav, .ogg, .flac, .m4a
+
+
+# ============================================================================
+# TEXT-TO-SPEECH & TEXT COMMANDS
+# ============================================================================
+# Mumble chat commands: !speak, !cw, !play, !status, !help
+# Requires: pip3 install gtts --break-system-packages
+
 ENABLE_TTS = true
-
-# Enable text command processing
-# Allows Mumble users to control gateway via text messages
 ENABLE_TEXT_COMMANDS = true
+TTS_VOLUME = 1.0          # Volume boost (1.0=normal, 2.0=double)
 
-# TTS volume boost (1.0 = normal, 2.0 = double, 3.0 = triple)
-# TTS audio is often quieter than regular files, boost it here
-TTS_VOLUME = 1.0
-
-# Default TTS voice (used when !speak has no voice number)
-# 1=US  2=British  3=Australian  4=Indian  5=South African
-# 6=Canadian  7=Irish  8=French  9=German
-# Usage: !speak <text> (uses default) or !speak 3 <text> (Australian)
+# Default voice: 1=US 2=British 3=Australian 4=Indian 5=South African
+#                6=Canadian 7=Irish 8=French 9=German
+# Override per-message: !speak 3 Hello (uses Australian)
 TTS_DEFAULT_VOICE = 1
 
-# Silence padding before TTS audio (seconds)
-# Prevents first words from being cut off due to PTT delay
-# 0.25 = quarter second of silence before speech starts
+# Silence padding before TTS audio (seconds) — prevents first words being cut off
 PTT_TTS_DELAY = 1.0
 
 
 # ============================================================================
-# FEATURE: BROADCASTIFY STREAMING
+# SPEAKER OUTPUT (Local Monitoring)
 # ============================================================================
-# Requirements:
-#   1. Install: sudo apt-get install darkice lame ffmpeg
-#   2. Configure /etc/darkice.cfg with Broadcastify credentials
-#   3. Run: ./start_broadcastify_FIXED.sh (handles all subprocesses)
-#
-# Audio Flow:
-#   Radio RX → Gateway → Pipe → FFmpeg → ALSA Loopback → Darkice → Broadcastify
-#
-# Note: File playback (announcements) do NOT stream directly
-#       They go: File → Radio TX → Air → Radio RX → Stream (realistic!)
-# ============================================================================
+# Play radio RX through a local speaker. Find device names with VERBOSE_LOGGING.
+# Device examples: (blank)=default, "USB Audio"=name match, hw:2,0, or index
 
-# Enable streaming to Broadcastify
-# Requires Darkice + FFmpeg running (see startup script)
+ENABLE_SPEAKER_OUTPUT = false
+SPEAKER_OUTPUT_DEVICE =
+SPEAKER_VOLUME = 1.0
+SPEAKER_START_MUTED = true  # Start muted (unmute at runtime)
+
+
+# ============================================================================
+# BROADCASTIFY STREAMING
+# ============================================================================
+# Requires: sudo apt-get install darkice lame ffmpeg
+# Audio flow: Gateway -> Pipe -> FFmpeg -> ALSA Loopback -> DarkIce -> Broadcastify
+
 ENABLE_STREAM_OUTPUT = false
-
-# Broadcastify server details (from your feed settings page on broadcastify.com)
 STREAM_SERVER = audio9.broadcastify.com
 STREAM_PORT = 80
 STREAM_PASSWORD = your_feed_password
 STREAM_MOUNT = /your_feed_mount
-
-# Stream metadata (displayed on Broadcastify)
 STREAM_NAME = Radio Gateway
 STREAM_DESCRIPTION = Radio to Mumble Gateway Stream
+STREAM_FORMAT = mp3       # mp3 or ogg
+STREAM_BITRATE = 16       # kbps (16=common for scanner audio)
 
-# Stream format and quality
-STREAM_FORMAT = mp3      # mp3 or ogg
-STREAM_BITRATE = 16      # kbps (16 common for scanner audio)
 
 # ============================================================================
-# FEATURE: ECHOLINK INTEGRATION (via TheLinkBox)
+# ECHOLINK (via TheLinkBox)
 # ============================================================================
-# Connect to the worldwide EchoLink network using TheLinkBox proxy client
-#
-# What is TheLinkBox?
-#   - FREE EchoLink proxy client (no port forwarding needed!)
-#   - NAT-friendly (works behind routers/firewalls)
-#   - Uses EchoLink's public proxy servers automatically
-#
-# Prerequisites:
-#   1. Install TheLinkBox: sudo apt-get install thelinkbox
-#   2. Register at echolink.org with valid amateur radio callsign
-#   3. Configure /etc/thelinkbox/thelinkbox.conf
-#   4. Start TheLinkBox before starting gateway
-#
-# Audio Flow:
-#   Radio RX ──┐
-#   EchoLink ─┼──> Mixer ──┬──> Mumble
-#   Files ────┘            ├──> Radio TX
-#                          └──> EchoLink TX
-#
-# See README.md for complete TheLinkBox configuration guide
-# ============================================================================
+# Prerequisites: thelinkbox package, echolink.org registration with callsign
+# NAT-friendly — uses EchoLink public proxy servers automatically
 
-# Enable EchoLink integration
 ENABLE_ECHOLINK = false
 
-# Named pipes for IPC with TheLinkBox
-# These must match TheLinkBox configuration:
-#   [AUDIO]
-#   AUDIO_IN_DEVICE = /tmp/echolink_tx   (TheLinkBox reads from here)
-#   AUDIO_OUT_DEVICE = /tmp/echolink_rx  (TheLinkBox writes here)
-ECHOLINK_RX_PIPE = /tmp/echolink_rx  # Gateway reads FROM TheLinkBox
-ECHOLINK_TX_PIPE = /tmp/echolink_tx  # Gateway writes TO TheLinkBox
+# Named pipes (must match TheLinkBox config)
+ECHOLINK_RX_PIPE = /tmp/echolink_rx   # Gateway reads from TheLinkBox
+ECHOLINK_TX_PIPE = /tmp/echolink_tx   # Gateway writes to TheLinkBox
 
-# Audio routing options - configure exactly where EchoLink audio goes
-ECHOLINK_TO_MUMBLE = true   # EchoLink users heard on Mumble
-ECHOLINK_TO_RADIO = false   # EchoLink users heard on Radio (gateway will PTT)
-MUMBLE_TO_ECHOLINK = false  # Mumble users sent to EchoLink network
-RADIO_TO_ECHOLINK = true    # Radio RX sent to EchoLink network
-
-# Common Configurations:
-#
-# Full Bridge (everyone hears everyone):
-#   ECHOLINK_TO_MUMBLE = true
-#   ECHOLINK_TO_RADIO = true
-#   MUMBLE_TO_ECHOLINK = true
-#   RADIO_TO_ECHOLINK = true
-#
-# Radio + EchoLink only (Mumble separate):
-#   ECHOLINK_TO_MUMBLE = false
-#   ECHOLINK_TO_RADIO = true
-#   MUMBLE_TO_ECHOLINK = false
-#   RADIO_TO_ECHOLINK = true
-#
-# Mumble + EchoLink only (Radio separate):
-#   ECHOLINK_TO_MUMBLE = true
-#   ECHOLINK_TO_RADIO = false
-#   MUMBLE_TO_ECHOLINK = true
-#   RADIO_TO_ECHOLINK = false
+# Audio routing
+ECHOLINK_TO_MUMBLE = true    # EchoLink -> Mumble
+ECHOLINK_TO_RADIO = false    # EchoLink -> Radio TX (will PTT)
+MUMBLE_TO_ECHOLINK = false   # Mumble -> EchoLink
+RADIO_TO_ECHOLINK = true     # Radio RX -> EchoLink
 
 
 # ============================================================================
-# FEATURE: SPEAKER OUTPUT (Local Monitoring)
-# ============================================================================
-# Plays incoming radio RX audio through a local speaker or headset so you
-# can monitor the radio without a Mumble client.
-#
-# Runtime control:
-#   'o' key = mute/unmute speaker output
-#
-# To find your device name, set VERBOSE_LOGGING = true and run the gateway.
-# It will list all available output devices on startup.
-#
-# SPEAKER_OUTPUT_DEVICE examples:
-#   (empty)       = system default output
-#   USB Audio     = partial name match (case-insensitive)
-#   hw:2,0        = raw ALSA device
-#   1             = raw PyAudio device index
+# ADVANCED: STREAM HEALTH & DIAGNOSTICS
 # ============================================================================
 
-# Enable local speaker monitoring of radio RX audio
-ENABLE_SPEAKER_OUTPUT = false
-
-# Output device: empty = system default, or partial device name / hw:N,M / index
-SPEAKER_OUTPUT_DEVICE =
-
-# Speaker volume multiplier (1.0 = unity gain)
-SPEAKER_VOLUME = 1.0
-
-# ============================================================================
-# ADVANCED: STREAM HEALTH MONITORING
-# ============================================================================
-
-# Enable stream health monitoring
-# Monitors audio input stream and auto-restarts on errors
-# Can help recover from -9999 errors but may cause brief dropouts
+# Auto-restart audio input stream on errors (may cause brief dropouts)
 ENABLE_STREAM_HEALTH = false
 
-# ============================================================================
-# ADVANCED: DIAGNOSTICS
-# ============================================================================
-
-# Verbose logging - shows detailed diagnostic information
-# true = show debug output | false = minimal output
+# Verbose logging (shows debug output on startup and during operation)
 VERBOSE_LOGGING = false
 
-# Update rate for status line display
-# Lower = smoother updates, higher CPU usage
+# Status bar refresh rate (seconds; lower=smoother, higher CPU)
 STATUS_UPDATE_INTERVAL = 1
 
+
 # ============================================================================
-# TROUBLESHOOTING GUIDE
+# TROUBLESHOOTING
 # ============================================================================
 #
-# AUDIO ISSUES:
-#   • No audio on Mumble: Check INPUT_VOLUME, verify VAD/VOX settings
-#   • No audio on radio: Check OUTPUT_VOLUME, verify AIOC connection
-#   • Choppy audio: Increase AUDIO_CHUNK_SIZE
-#   • High latency: Decrease AUDIO_CHUNK_SIZE
-#   • -9999 errors: Increase AUDIO_CHUNK_SIZE or enable STREAM_HEALTH
+# AUDIO:
+#   No audio on Mumble     -> Check INPUT_VOLUME, VAD/VOX settings
+#   No audio on radio      -> Check OUTPUT_VOLUME, AIOC connection
+#   Choppy / -9999 errors  -> Increase AUDIO_CHUNK_SIZE
 #
-# MUMBLE ISSUES:
-#   • Won't connect: Verify MUMBLE_SERVER, MUMBLE_PORT
-#   • No codec: Wait 5-10 seconds after connect, check server compatibility
-#   • Channel not found: Check MUMBLE_CHANNEL spelling
+# MUMBLE:
+#   Won't connect          -> Verify MUMBLE_SERVER and MUMBLE_PORT
+#   Channel not found      -> Check MUMBLE_CHANNEL spelling
 #
-# PTT ISSUES:
-#   • PTT activates too quickly: Increase PTT_ACTIVATION_DELAY
-#   • PTT releases too quickly: Increase PTT_RELEASE_DELAY
-#   • PTT doesn't activate: Check AIOC_PTT_CHANNEL (try 1, 2, or 3)
+# PTT:
+#   Doesn't activate       -> Try AIOC_PTT_CHANNEL = 1, 2, or 3
+#   Cuts off too fast      -> Increase PTT_RELEASE_DELAY
 #
-# SDR STALL ISSUES (after extended runtime):
-#   • SDR suddenly goes silent after running for hours: snd-aloop got stuck
-#     The watchdog will detect this after SDR_WATCHDOG_TIMEOUT seconds and
-#     attempt staged recovery (reopen stream → reinit PyAudio → reload module)
-#   • Status bar shows W1, W2, etc.: recovery attempts have been made
-#   • After SDR_WATCHDOG_MAX_RESTARTS failures, use !restart or Ctrl+C
-#   • To enable module-reload recovery: set SDR_WATCHDOG_MODPROBE = true and
-#     add the sudoers entry (see SDR_WATCHDOG_MODPROBE comment above)
+# SDR:
+#   Goes silent after hours -> Watchdog will auto-recover (see SDR_WATCHDOG_*)
+#   Status shows W1, W2    -> Recovery attempts made; !restart if still silent
 #
-# STREAMING ISSUES:
-#   • Stream offline: Check Darkice is running (ps aux | grep darkice)
-#   • No audio on stream: Verify FFmpeg bridge is running
-#   • Needs reboot to work: Run ./start_broadcastify_FIXED.sh
+# STREAMING:
+#   Stream offline          -> Check DarkIce is running (ps aux | grep darkice)
+#   No audio on stream      -> Verify FFmpeg bridge is running
 #
-# FILE PLAYBACK ISSUES:
-#   • Files won't play: Check PLAYBACK_DIRECTORY path
-#   • Wrong files play: Verify files named 0.wav through 9.wav
-#   • Audio quality poor: Re-encode files at AUDIO_RATE sample rate
-#
-# For more help, enable VERBOSE_LOGGING = true and check output
+# For more help, enable VERBOSE_LOGGING = true
 # ============================================================================

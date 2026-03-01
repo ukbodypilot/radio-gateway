@@ -274,7 +274,7 @@ def main():
     print(f"Device : {dev_name} (index {dev_index})")
     print(f"Gateway: {host}:{port}")
     print(f"Format : {SAMPLE_RATE} Hz, mono, 16-bit, {FRAMES_PER_BUFFER} frames/chunk")
-    print(f"\nKeys: 'l' = toggle LIVE/IDLE")
+    print(f"\nPress 'l' to toggle LIVE/IDLE — audio is NOT sent until you go LIVE")
     print("Press Ctrl+C to stop.\n")
 
     # --- Shared state for keyboard thread -----------------------------------
