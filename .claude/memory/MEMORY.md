@@ -109,6 +109,19 @@ All three pure-Python per-sample loops replaced with numpy/scipy:
 - Noise gate left as-is (serial carry, acceptable ~2.4ms, not worth complexity)
 - scipy already present on RPi OS — no new deps
 
+## Text-to-Speech (gTTS)
+- `!speak <text>` or `!speak <voice#> <text>` — voice 1-9 via gTTS lang/tld combos
+- Voices: 1=US 2=British 3=Australian 4=Indian 5=South African 6=Canadian 7=Irish 8=French 9=German
+- `TTS_DEFAULT_VOICE = 1` in config; `TTS_VOLUME`, `PTT_TTS_DELAY`
+- Mumble text messages arrive as HTML — stripped with `re.sub(r'<[^>]+>', '', msg)` + `html.unescape()`
+- Voice map is class-level `TTS_VOICES` dict on the gateway class
+
+## SDR Mixer — sole_source Logic
+- `sole_source` = no AIOC/PTT audio present (SDRs are the only source type)
+- Refined: an SDR with no signal is NOT force-included if another SDR has instant signal
+- Pre-scan pass checks `check_signal_instant()` for all SDRs before main inclusion loop
+- Prevents loopback noise from unused SDR polluting the mix
+
 ## Known Bugs Fixed (details in bugs.md)
 - SDR burst audio, Mumble encoder starvation, duck-out regression
 - Config parser crash on decimal, global_muted UnboundLocalError
@@ -123,8 +136,11 @@ All three pure-Python per-sample loops replaced with numpy/scipy:
 - SDR volume 6dB step when second SDR joins/exits mix: crossfade `_mix_audio_streams(ratio=0.5)` attenuated SDR1 by 6dB when SDR2 present. Fixed: sum-and-clip in second pass (each SDR at full gain). Commit 69577ac.
 - AIOC duck hold causing 1s dead air: `_hold_fired` kept `aioc_ducks_sdrs=True` for 1s after AIOC VAD released, outputting silence. Fixed: gate on `non_ptt_audio is not None`.
 - SDR prebuffering + stale hysteresis ducking SDR2: when SDR1 returns None, `has_actual_audio` still True during release hold → `sig=True` → SDR2 ducked. Fixed: clear `sig=False` before continue.
-- Sub-buffer latency buildup under CPU load: SDRSource and AIOC had no max sub_buffer cap. With CPU-heavy competing process (e.g. SDRconnect at 85%+), blobs accumulate faster than consumed → 2s+ stale audio. Fixed: cap at 5×blob_bytes after eager drain.
-- SDR-to-SDR rapid switching: when SDR1 has intermittent signal near threshold, SDR2 rapidly toggles ducked/unducked at ~3s intervals. SIGNAL_RELEASE_TIME gives SDR1 a 3s hold, but no symmetric protection for SDR2 after unduck. Fixed: added SDR_DUCK_COOLDOWN (3.0s default) — after SDR2 unducks from SDR1, SDR2 gets 3s immunity from re-ducking. AIOC Rule 1 ducking unaffected.
+- Sub-buffer latency buildup under CPU load: cap at 5×blob_bytes after eager drain
+- SDR-to-SDR rapid switching: added SDR_DUCK_COOLDOWN (3.0s) symmetric cooldown
+- No-signal SDR polluting mix: sole_source refined to exclude no-signal SDRs when another has audio
+- SDR prebuffer gap too long (400ms): reduced from 3 blobs to 2 blobs; AIOC keeps 3
+- Mumble HTML in TTS: text messages arrive as HTML, gTTS read tags/entities aloud. Fixed: strip+unescape
 
 ## Deployment Notes
 - WirePlumber config must be in `~/.config/wireplumber/wireplumber.conf.d/`

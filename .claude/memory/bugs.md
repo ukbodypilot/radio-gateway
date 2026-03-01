@@ -26,6 +26,9 @@
 - **Status bar width shift on mute/duck**: Muted/ducked bars were 10 visible chars vs normal bars at 11. Fixed: padded M/D suffix to 4 chars (`M   ` / `D   `).
 - **PTT trace always showed RMS=0**: The RMS measurement point in audio_transmit_loop was after the PTT branch `continue`, so it never executed for PTT ticks. Trace showed RMS=0 for all file playback/announcement ticks, making it look like silence was being sent. Fixed: added RMS measurement inside the PTT branch itself.
 
+## TTS / Text Command Bugs
+- **Mumble HTML tags read aloud by gTTS**: Mumble sends text messages as HTML (e.g. `<a href="...">!speak</a> text` with `&amp;` entities). `on_text_message` passed raw HTML to `speak_text()` → gTTS read tags and escape sequences aloud. Fixed: strip HTML tags with `re.sub(r'<[^>]+>', '', msg)` and decode entities with `html.unescape()` before any command parsing.
+
 ## Config / Code Bugs
 - **Config parser crash on decimal**: `int('0.3')` raised ValueError, silently abandoning all config after that line. Fixed: `VAD_RELEASE: 1.0` default (float); parser tries `float()` fallback on ValueError.
 - **global_muted UnboundLocalError**: Set inside `if self.sdr_source:` block, used in `if self.sdr2_source:` block. Fixed: calculated before both blocks.
