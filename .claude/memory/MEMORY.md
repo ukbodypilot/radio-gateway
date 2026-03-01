@@ -9,7 +9,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 **Main file:** `mumble_radio_gateway.py` (~5000+ lines)
 **Installer:** `scripts/install.sh` (8 steps, targets Debian/Ubuntu/RPi)
 **Config:** `gateway_config.txt` (copied from `examples/gateway_config.txt` on install)
-**Start script:** `start.sh` (7 steps: kill procs, loopback, AIOC USB reset, pipe, DarkIce, FFmpeg, gateway; `sudo -v` cached at top)
+**Start script:** `start.sh` (8 steps: kill procs, CPU governor→performance, loopback, AIOC USB reset, pipe, DarkIce, FFmpeg, gateway w/nice -10; `sudo -v` cached at top)
 **Windows client:** `windows_audio_client.py` (SDR input on 9600 or Announcement on 9601)
 
 ## Announcement Input (port 9601)
@@ -46,6 +46,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `SDR_BUFFER_MULTIPLIER = 4`
 - AIOC pre-buffer: 3 blobs / 600ms
 - `PLAYBACK_VOLUME = 4.0`, `ANNOUNCE_INPUT_VOLUME = 4.0`
+- `SDR_DUCK_COOLDOWN = 3.0` — symmetric cooldown after SDR-to-SDR unduck
 
 ## Keyboard Controls
 - MUTE: `t`=TX `r`=RX `m`=Global `s`=SDR1 `x`=SDR2 `c`=Remote `a`=Announce
@@ -80,7 +81,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Symptom: `aplay -l` shows AIOC, `/proc/asound/cardN/stream0` Playback shows `Stop`,
   `speaker-test -D hw:N,0` produces no audio on radio
 - Fix: USB reset (unplug/replug or sysfs authorized cycle)
-- `start.sh` now does AIOC USB reset at step 3 before gateway launch
+- `start.sh` now does AIOC USB reset at step 4 before gateway launch
 - Reset method: `echo 0 > /sys/bus/usb/devices/X-Y/authorized; sleep 1; echo 1 > ...`
 
 ## DarkIce Notes
@@ -121,6 +122,7 @@ All three pure-Python per-sample loops replaced with numpy/scipy:
 - AIOC duck hold causing 1s dead air: `_hold_fired` kept `aioc_ducks_sdrs=True` for 1s after AIOC VAD released, outputting silence. Fixed: gate on `non_ptt_audio is not None`.
 - SDR prebuffering + stale hysteresis ducking SDR2: when SDR1 returns None, `has_actual_audio` still True during release hold → `sig=True` → SDR2 ducked. Fixed: clear `sig=False` before continue.
 - Sub-buffer latency buildup under CPU load: SDRSource and AIOC had no max sub_buffer cap. With CPU-heavy competing process (e.g. SDRconnect at 85%+), blobs accumulate faster than consumed → 2s+ stale audio. Fixed: cap at 5×blob_bytes after eager drain.
+- SDR-to-SDR rapid switching: when SDR1 has intermittent signal near threshold, SDR2 rapidly toggles ducked/unducked at ~3s intervals. SIGNAL_RELEASE_TIME gives SDR1 a 3s hold, but no symmetric protection for SDR2 after unduck. Fixed: added SDR_DUCK_COOLDOWN (3.0s default) — after SDR2 unducks from SDR1, SDR2 gets 3s immunity from re-ducking. AIOC Rule 1 ducking unaffected.
 
 ## Deployment Notes
 - WirePlumber config must be in `~/.config/wireplumber/wireplumber.conf.d/`

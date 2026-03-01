@@ -23,6 +23,7 @@
 #   PROCESS: 'n' = Gate | 'f' = HPF | 'g' = AGC | 'w' = Wiener | 'e' = Echo
 #   PTT:     'p' = Manual PTT toggle
 #   PLAY:    '1-9' = Announcements | '0' = Station ID | '-' = Stop
+#   TRACE:   'i' = Start/stop audio trace
 # ============================================================================
 
 # ============================================================================
@@ -515,6 +516,15 @@ SIGNAL_RELEASE_TIME = 3
 # Padding: seconds of silence inserted at each transition (duck-out AND duck-in)
 SWITCH_PADDING_TIME = 1
 
+# SDR-to-SDR duck cooldown: after a lower-priority SDR unducks (starts playing
+# because the higher-priority SDR's signal hold expired), it gets this many
+# seconds of immunity before the higher-priority SDR can re-duck it.
+# Prevents rapid toggling when the higher-priority SDR has intermittent signal
+# near the threshold.  SIGNAL_RELEASE_TIME already provides the same hold in
+# the other direction, so this makes switching symmetric.
+# 0 = no cooldown (instant re-duck allowed)
+SDR_DUCK_COOLDOWN = 3.0
+
 # ============================================================================
 # FEATURE: TEXT-TO-SPEECH & TEXT COMMANDS (Phase 4)
 # ============================================================================
@@ -526,7 +536,8 @@ SWITCH_PADDING_TIME = 1
 #
 # Text Commands (send via Mumble chat):
 #   !speak <text>  - Generate TTS and broadcast on radio
-#   !play <0-9>    - Play announcement file  
+#   !cw <text>     - Send Morse code on radio
+#   !play <0-9>    - Play announcement file
 #   !status        - Show gateway status
 #   !help          - Show available commands
 #

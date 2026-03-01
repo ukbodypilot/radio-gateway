@@ -182,6 +182,7 @@ class Config:
             'SIGNAL_ATTACK_TIME': 0.15,  # Seconds of CONTINUOUS signal required before a source switch is allowed
             'SIGNAL_RELEASE_TIME': 3.0,  # Seconds of continuous silence required before switching back
             'SWITCH_PADDING_TIME': 1.0,  # Seconds of silence inserted at each transition (duck-out and duck-in)
+            'SDR_DUCK_COOLDOWN': 3.0,   # After lower-priority SDR unducks, seconds before higher-priority SDR can re-duck it
             # EchoLink Integration (Phase 3B)
             'ENABLE_ECHOLINK': False,
             'ECHOLINK_RX_PIPE': '/tmp/echolink_rx',
@@ -2383,6 +2384,18 @@ class AudioMixer:
         # Per-SDR hold timers: instant attack, held release for smooth audio
         self.sdr_hold_until = {}      # {sdr_name: float timestamp}
         self.sdr_prev_included = {}   # {sdr_name: bool} - for fade-in detection
+
+        # SDR-to-SDR duck cooldown: once a lower-priority SDR unducks (starts
+        # playing because the higher-priority SDR's signal hold expired), it
+        # gets SDR_DUCK_COOLDOWN seconds of immunity before a higher-priority
+        # SDR can re-duck it.  This prevents rapid toggling when a higher-
+        # priority SDR has intermittent signal or noise near the threshold.
+        # SIGNAL_RELEASE_TIME already provides the same hold in the other
+        # direction (higher-priority keeps playing 3s after signal stops), so
+        # this makes the behaviour symmetric.
+        self.SDR_DUCK_COOLDOWN = getattr(config, 'SDR_DUCK_COOLDOWN', 3.0)
+        self._sdr_duck_cooldown_until = {}   # {sdr_name: float} earliest time re-duck allowed
+        self._sdr_prev_ducked_by_sdr = {}    # {sdr_name: bool} Rule 2 ducked last tick
         
     def add_source(self, source):
         """Add an audio source to the mixer"""
@@ -2714,6 +2727,8 @@ class AudioMixer:
 
             should_duck = False
 
+            ducked_by_sdr = False  # Rule 2 specifically (not Rule 1)
+
             if sdr_duck:
                 # Rule 1: AIOC/PTT/Radio audio ducks ALL SDRs (with padding on transitions)
                 if aioc_ducks_sdrs:
@@ -2736,11 +2751,32 @@ class AudioMixer:
                         other_trace = _sdr_trace.get(other_name, {})
                         other_has_signal = other_trace.get('sig')  # hysteresis-based only
                         if other_priority < sdr_priority and other_has_signal:
-                            should_duck = True
+                            ducked_by_sdr = True
                             if self.call_count % 100 == 1 and self.config.VERBOSE_LOGGING:
                                 print(f"  [Mixer] {sdr_name} (priority {sdr_priority}) ducked by {other_name} (priority {other_priority})")
                             break
-            
+
+                    # Cooldown: after this SDR unducks from a Rule 2 duck, it gets
+                    # SDR_DUCK_COOLDOWN seconds of immunity before it can be re-ducked.
+                    # This prevents rapid toggling when the higher-priority SDR has
+                    # intermittent signal near the threshold.
+                    if ducked_by_sdr:
+                        cooldown_until = self._sdr_duck_cooldown_until.get(sdr_name, 0.0)
+                        if current_time < cooldown_until:
+                            ducked_by_sdr = False  # cooldown active — keep playing
+
+                    should_duck = ducked_by_sdr
+
+            # Track Rule 2 transitions for cooldown timer
+            prev_ducked_by_sdr = self._sdr_prev_ducked_by_sdr.get(sdr_name, False)
+            if prev_ducked_by_sdr and not ducked_by_sdr and not aioc_ducks_sdrs:
+                # Transition: was ducked by higher-priority SDR, now unducked.
+                # Start cooldown — this SDR gets guaranteed play time.
+                self._sdr_duck_cooldown_until[sdr_name] = current_time + self.SDR_DUCK_COOLDOWN
+                if self.config.VERBOSE_LOGGING:
+                    print(f"  [Mixer] {sdr_name} unduck cooldown started ({self.SDR_DUCK_COOLDOWN:.1f}s)")
+            self._sdr_prev_ducked_by_sdr[sdr_name] = ducked_by_sdr
+
             # Track ducking state for status bar
             if should_duck:
                 _sdr_trace[sdr_name] = {'ducked': True, 'inc': False, 'sig': False, 'hold': False, 'sole': False}
