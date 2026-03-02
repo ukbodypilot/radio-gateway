@@ -224,6 +224,16 @@ class Config:
             'ANNOUNCE_INPUT_HOST': '',
             'ANNOUNCE_INPUT_THRESHOLD': -45.0,  # dBFS — below this is treated as silence
             'ANNOUNCE_INPUT_VOLUME': 4.0,       # volume multiplier for announcement audio
+            # Relay Control — Radio Power
+            'ENABLE_RELAY_RADIO': False,
+            'RELAY_RADIO_DEVICE': '/dev/relay_radio',
+            'RELAY_RADIO_BAUD': 9600,
+            # Relay Control — Charger Schedule
+            'ENABLE_RELAY_CHARGER': False,
+            'RELAY_CHARGER_DEVICE': '/dev/relay_charger',
+            'RELAY_CHARGER_BAUD': 9600,
+            'RELAY_CHARGER_ON_TIME': '23:00',
+            'RELAY_CHARGER_OFF_TIME': '06:00',
         }
         
         # Set defaults
@@ -3009,6 +3019,52 @@ class AudioMixer:
         return status
 
 
+class RelayController:
+    """Controls a CH340 USB relay module via serial (4-byte commands)."""
+
+    CMD_ON  = bytes([0xA0, 0x01, 0x01, 0xA2])
+    CMD_OFF = bytes([0xA0, 0x01, 0x00, 0xA1])
+
+    def __init__(self, device, baud=9600):
+        self._device = device
+        self._baud = baud
+        self._port = None
+        self._state = None  # None=unknown, True=on, False=off
+
+    def open(self):
+        try:
+            import serial
+            self._port = serial.Serial(self._device, self._baud, timeout=1)
+            return True
+        except Exception as e:
+            print(f"  [Relay] Failed to open {self._device}: {e}")
+            return False
+
+    def close(self):
+        if self._port:
+            try:
+                self._port.close()
+            except Exception:
+                pass
+            self._port = None
+
+    def set_state(self, on):
+        """Set relay on (True) or off (False). Returns True on success."""
+        if not self._port:
+            return False
+        try:
+            self._port.write(self.CMD_ON if on else self.CMD_OFF)
+            self._state = on
+            return True
+        except Exception as e:
+            print(f"  [Relay] Write error on {self._device}: {e}")
+            return False
+
+    @property
+    def state(self):
+        return self._state
+
+
 class MumbleRadioGateway:
     def __init__(self, config):
         self.config = config
@@ -3110,12 +3166,39 @@ class MumbleRadioGateway:
         self._rebroadcast_ptt_active = False       # whether rebroadcast currently has PTT keyed
         self._rebroadcast_sending = False           # SDR audio actively being sent (for status bar)
 
+        # Relay control — radio power button (momentary pulse with 'j' key)
+        self.relay_radio = None              # RelayController instance
+        self._relay_radio_pressing = False   # True during 0.5s button pulse
+
+        # Relay control — charger schedule
+        self.relay_charger = None      # RelayController instance
+        self.relay_charger_on = False  # Current charge state
+        self._charger_on_time = None   # (hour, minute) tuple
+        self._charger_off_time = None  # (hour, minute) tuple
+
         # DarkIce process monitoring (auto-restart if it dies)
         self._darkice_pid = None          # PID when initially detected
         self._darkice_was_running = False  # True if DarkIce was alive at startup
         self._darkice_restart_count = 0
         self._last_darkice_check = 0
     
+    def _charger_should_be_on(self):
+        """Check if charger should be on based on current time and schedule.
+        Handles overnight wrap (e.g. 23:00 → 06:00)."""
+        if not self._charger_on_time or not self._charger_off_time:
+            return False
+        import datetime
+        now = datetime.datetime.now()
+        cur = (now.hour, now.minute)
+        on_t = self._charger_on_time
+        off_t = self._charger_off_time
+        if on_t <= off_t:
+            # Same-day window (e.g. 06:00 → 18:00)
+            return on_t <= cur < off_t
+        else:
+            # Overnight wrap (e.g. 23:00 → 06:00)
+            return cur >= on_t or cur < off_t
+
     def calculate_audio_level(self, pcm_data):
         """Calculate RMS audio level from PCM data (0-100 scale)"""
         try:
@@ -4090,6 +4173,46 @@ class MumbleRadioGateway:
                 except Exception as e:
                     print(f"⚠ Warning: Could not initialize announcement input: {e}")
                     self.announce_input_source = None
+
+            # Initialize relay controllers
+            if getattr(self.config, 'ENABLE_RELAY_RADIO', False):
+                try:
+                    dev = self.config.RELAY_RADIO_DEVICE
+                    print(f"Initializing radio power relay ({dev})...")
+                    self.relay_radio = RelayController(dev, self.config.RELAY_RADIO_BAUD)
+                    if self.relay_radio.open():
+                        self.relay_radio.set_state(False)  # Ensure relay off on startup
+                        print(f"  Relay radio: ready (press 'j' to pulse power button)")
+                    else:
+                        self.relay_radio = None
+                except Exception as e:
+                    print(f"  Warning: Could not initialize radio relay: {e}")
+                    self.relay_radio = None
+
+            if getattr(self.config, 'ENABLE_RELAY_CHARGER', False):
+                try:
+                    dev = self.config.RELAY_CHARGER_DEVICE
+                    print(f"Initializing charger relay ({dev})...")
+                    self.relay_charger = RelayController(dev, self.config.RELAY_CHARGER_BAUD)
+                    if self.relay_charger.open():
+                        # Parse schedule times
+                        on_str = str(self.config.RELAY_CHARGER_ON_TIME)
+                        off_str = str(self.config.RELAY_CHARGER_OFF_TIME)
+                        oh, om = int(on_str.split(':')[0]), int(on_str.split(':')[1])
+                        fh, fm = int(off_str.split(':')[0]), int(off_str.split(':')[1])
+                        self._charger_on_time = (oh, om)
+                        self._charger_off_time = (fh, fm)
+                        # Set initial state based on current time
+                        should_be_on = self._charger_should_be_on()
+                        self.relay_charger.set_state(should_be_on)
+                        self.relay_charger_on = should_be_on
+                        state_str = "CHARGING" if should_be_on else "DRAINING"
+                        print(f"  Charger relay: {state_str} (schedule {on_str}-{off_str})")
+                    else:
+                        self.relay_charger = None
+                except Exception as e:
+                    print(f"  Warning: Could not initialize charger relay: {e}")
+                    self.relay_charger = None
 
             # Initialize EchoLink source if enabled (Phase 3B)
             if self.config.ENABLE_ECHOLINK:
@@ -5761,6 +5884,19 @@ class MumbleRadioGateway:
                             self._rebroadcast_ptt_hold_until = 0
                         self._trace_events.append((time.monotonic(), 'sdr_rebroadcast', 'on' if self.sdr_rebroadcast else 'off'))
 
+                    elif char == 'j':
+                        # Pulse radio power button (relay ON 0.5s then OFF)
+                        if self.relay_radio and not self._relay_radio_pressing:
+                            def _pulse_power():
+                                self._relay_radio_pressing = True
+                                self.relay_radio.set_state(True)
+                                self._trace_events.append((time.monotonic(), 'relay_radio', 'press'))
+                                time.sleep(0.5)
+                                self.relay_radio.set_state(False)
+                                self._relay_radio_pressing = False
+                                self._trace_events.append((time.monotonic(), 'relay_radio', 'release'))
+                            threading.Thread(target=_pulse_power, daemon=True).start()
+
                     elif char == 'i':
                         # Toggle audio trace recording
                         self._trace_recording = not self._trace_recording
@@ -6043,9 +6179,22 @@ class MumbleRadioGateway:
                         self.speaker_audio_level, muted=self.speaker_muted, color='cyan'
                     )
 
+                # Relay status indicators (fixed width, only shown when enabled)
+                relay_bar = ""
+                if self.relay_radio:
+                    if self._relay_radio_pressing:
+                        relay_bar += f" {YELLOW}PWRB{RESET}"
+                    else:
+                        relay_bar += f" {WHITE}PWRB{RESET}"
+                if self.relay_charger:
+                    if self.relay_charger_on:
+                        relay_bar += f" {WHITE}CHG:{GREEN}CHRGE{RESET}"
+                    else:
+                        relay_bar += f" {WHITE}CHG:{RED}DRAIN{RESET}"
+
                 # Extra padding to clear any orphaned text when line shortens
                 # Order: ...Vol → FileStatus → ProcessingFlags → Diagnostics
-                print(f"\r{status_symbol} {WHITE}M:{RESET}{mumble_status} {WHITE}PTT:{RESET}{ptt_status} {WHITE}VAD:{RESET}{vad_status}{vad_info} {WHITE}TX:{RESET}{radio_tx_bar} {WHITE}RX:{RESET}{radio_rx_bar}{sp_bar}{sdr_bar}{sdr2_bar}{remote_bar}{annin_bar}{vol_info}{file_status_info}{proc_info}{diag}     ", end="", flush=True)
+                print(f"\r{status_symbol} {WHITE}M:{RESET}{mumble_status} {WHITE}PTT:{RESET}{ptt_status} {WHITE}VAD:{RESET}{vad_status}{vad_info} {WHITE}TX:{RESET}{radio_tx_bar} {WHITE}RX:{RESET}{radio_rx_bar}{sp_bar}{sdr_bar}{sdr2_bar}{remote_bar}{annin_bar}{relay_bar}{vol_info}{file_status_info}{proc_info}{diag}     ", end="", flush=True)
             
             # Always check for stuck audio (even if status reporting is disabled)
             elif status_check_interval == 0:
@@ -6068,6 +6217,14 @@ class MumbleRadioGateway:
                     self._restart_darkice()
                 elif pid != self._darkice_pid:
                     self._darkice_pid = pid  # PID changed (external restart)
+
+            # Charger relay schedule check (only on state change)
+            if self.relay_charger:
+                should_on = self._charger_should_be_on()
+                if should_on != self.relay_charger_on:
+                    self.relay_charger.set_state(should_on)
+                    self.relay_charger_on = should_on
+                    self._trace_events.append((time.monotonic(), 'relay_charger', 'on' if should_on else 'off'))
 
             # SDR loopback watchdog checks
             if self.sdr_source and self.sdr_source.enabled:
@@ -6166,19 +6323,14 @@ class MumbleRadioGateway:
         
         print("Press Ctrl+C to exit")
         print("Keyboard Controls:")
-        print("  Mute:  't'=TX | 'r'=RX | 'm'=Global | 's'=SDR1 | 'x'=SDR2  |  Audio: 'v'=VAD | ','=Vol- | '.'=Vol+")
-        print("  Proc:  'n'=Gate | 'f'=HPF | 'g'=AGC | 'w'=Wiener | 'e'=Echo")
-        print("  SDR:   'd'=SDR1 Duck toggle | 'b'=SDR Rebroadcast toggle (route SDR→AIOC TX)")
-        print("  PTT:   'p'=Manual PTT Toggle (override auto-PTT)")
-        print("  Trace: 'i'=Start/stop audio trace recording (writes tools/audio_trace.txt on exit)")
-        if getattr(self.config, 'REMOTE_AUDIO_ROLE', 'disabled').lower() == 'client' and self.remote_audio_source:
-            print("  Remote: 'c'=Remote audio (SDRSV) mute toggle")
-        if self.announce_input_source:
-            print("  Annce: 'a'=Announcement input (ANNIN) mute toggle")
-        if self.config.ENABLE_SPEAKER_OUTPUT:
-            print("  Spkr:  'o'=Speaker mute toggle")
-        if self.config.ENABLE_PLAYBACK:
-            print("  Play:  '1-9'=Announcements | '0'=StationID | '-'=Stop")
+        print("  Mute:  't'=TX  'r'=RX  'm'=Global  's'=SDR1  'x'=SDR2  'c'=Remote  'a'=Announce  'o'=Speaker")
+        print("  Audio: 'v'=VAD toggle  ','=Vol-  '.'=Vol+")
+        print("  Proc:  'n'=Gate  'f'=HPF  'g'=AGC  'w'=Wiener  'e'=Echo")
+        print("  SDR:   'd'=SDR1 Duck toggle  'b'=SDR Rebroadcast toggle")
+        print("  PTT:   'p'=Manual PTT toggle")
+        print("  Play:  '1-9'=Announcements  '0'=StationID  '-'=Stop")
+        print("  Relay: 'j'=Radio power button")
+        print("  Trace: 'i'=Start/stop audio trace")
         print("=" * 60)
         print()
         
@@ -6679,6 +6831,22 @@ class MumbleRadioGateway:
                 self.announce_input_source.cleanup()
                 if self.config.VERBOSE_LOGGING:
                     print("  Announcement input closed")
+            except Exception:
+                pass
+
+        # Close relay serial ports (leave relays in current state — don't power-cycle on restart)
+        if self.relay_radio:
+            try:
+                self.relay_radio.close()
+                if self.config.VERBOSE_LOGGING:
+                    print("  Radio relay port closed")
+            except Exception:
+                pass
+        if self.relay_charger:
+            try:
+                self.relay_charger.close()
+                if self.config.VERBOSE_LOGGING:
+                    print("  Charger relay port closed")
             except Exception:
                 pass
 

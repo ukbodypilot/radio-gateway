@@ -1,0 +1,24 @@
+# Udev rules for CH340 USB relay modules — persistent symlinks by physical port
+#
+# Each relay is identified by its physical USB port path, so swapping
+# which port a relay is plugged into will NOT silently change which
+# device controls what.
+#
+# Setup:
+#   1. Plug in one relay at a time
+#   2. Find its port path:
+#        udevadm info -a -n /dev/ttyUSB0 | grep KERNELS
+#      Use the first KERNELS value (e.g. "1-1.2")
+#   3. Replace REPLACE_WITH_PORT_PATH below with that value
+#   4. Copy this file:
+#        sudo cp scripts/99-relay-udev.rules /etc/udev/rules.d/
+#   5. Reload:
+#        sudo udevadm control --reload-rules && sudo udevadm trigger
+#   6. Verify:
+#        ls -l /dev/relay_radio /dev/relay_charger
+#
+# Radio power relay — toggled with 'j' key at runtime
+SUBSYSTEM=="tty", KERNELS=="REPLACE_WITH_PORT_PATH", SYMLINK+="relay_radio"
+
+# Charger relay — automatic schedule (overnight charging)
+SUBSYSTEM=="tty", KERNELS=="REPLACE_WITH_PORT_PATH", SYMLINK+="relay_charger"

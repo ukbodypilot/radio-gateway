@@ -10,13 +10,14 @@
 #   3. Optional features are disabled by default — enable as needed
 #
 # Keyboard Controls (runtime):
-#   MUTE:    't'=TX  'r'=RX  'm'=Global  's'=SDR1  'x'=SDR2  'c'=Remote  'a'=Announce
-#   AUDIO:   'v'=VAD  ','=Vol-  '.'=Vol+
-#   PROCESS: 'n'=Gate  'f'=HPF  'g'=AGC  'w'=Wiener  'e'=Echo
-#   SDR:     'd'=SDR1 Duck toggle
-#   PTT:     'p'=Manual PTT toggle
-#   PLAY:    '1-9'=Announcements  '0'=Station ID  '-'=Stop
-#   TRACE:   'i'=Start/stop audio trace
+#   MUTE:  't'=TX  'r'=RX  'm'=Global  's'=SDR1  'x'=SDR2  'c'=Remote  'a'=Announce  'o'=Speaker
+#   AUDIO: 'v'=VAD toggle  ','=Vol-  '.'=Vol+
+#   PROC:  'n'=Gate  'f'=HPF  'g'=AGC  'w'=Wiener  'e'=Echo
+#   SDR:   'd'=SDR1 Duck toggle  'b'=SDR Rebroadcast toggle
+#   PTT:   'p'=Manual PTT toggle
+#   PLAY:  '1-9'=Announcements  '0'=Station ID  '-'=Stop
+#   RELAY: 'j'=Radio power button
+#   TRACE: 'i'=Start/stop audio trace
 # ============================================================================
 
 
@@ -350,6 +351,25 @@ ECHOLINK_TO_MUMBLE = true    # EchoLink -> Mumble
 ECHOLINK_TO_RADIO = false    # EchoLink -> Radio TX (will PTT)
 MUMBLE_TO_ECHOLINK = false   # Mumble -> EchoLink
 RADIO_TO_ECHOLINK = true     # Radio RX -> EchoLink
+
+
+# ============================================================================
+# RELAY CONTROL
+# ============================================================================
+# Requires: pip3 install pyserial --break-system-packages
+# Udev rules: see scripts/99-relay-udev.rules for persistent /dev symlinks
+
+# Radio Power Relay — press 'j' to pulse power button (relay ON 0.5s then OFF)
+ENABLE_RELAY_RADIO = false
+RELAY_RADIO_DEVICE = /dev/relay_radio
+RELAY_RADIO_BAUD = 9600
+
+# Charger Relay — automatic schedule (overnight charging)
+ENABLE_RELAY_CHARGER = false
+RELAY_CHARGER_DEVICE = /dev/relay_charger
+RELAY_CHARGER_BAUD = 9600
+RELAY_CHARGER_ON_TIME = 23:00
+RELAY_CHARGER_OFF_TIME = 06:00
 
 
 # ============================================================================

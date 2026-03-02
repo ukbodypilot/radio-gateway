@@ -334,6 +334,33 @@ Google TTS (gTTS) integration — Mumble users send a text message to trigger sp
 - Status bar shows `SP:[bar]` level when enabled; decays to 0 when no audio is playing
 - WirePlumber exclusion automatically applied for USB audio devices (e.g. C-Media)
 
+### Relay Control (CH340 USB Relays)
+Two optional CH340 USB relay modules for hardware control:
+
+- **Radio Power Button** (`j` key): Simulates a momentary power-button press — relay closes for 0.5 seconds then opens. Since the relay acts as a button press, the gateway does not track radio on/off state.
+- **Charger Schedule**: Automatically switches a charger relay on/off based on a configurable time window (e.g. 23:00–06:00 for overnight charging). Handles overnight time wrap.
+
+**Status bar:**
+- `PWRB` — white when idle, yellow during the 0.5s button pulse
+- `CHG:CHRGE` / `CHG:DRAIN` — green/red showing current charger relay state
+
+**Setup:** Persistent `/dev/relay_radio` and `/dev/relay_charger` symlinks via udev rules — see `scripts/99-relay-udev.rules` for the template.
+
+**Configuration:**
+```ini
+ENABLE_RELAY_RADIO = false
+RELAY_RADIO_DEVICE = /dev/relay_radio
+RELAY_RADIO_BAUD = 9600
+
+ENABLE_RELAY_CHARGER = false
+RELAY_CHARGER_DEVICE = /dev/relay_charger
+RELAY_CHARGER_BAUD = 9600
+RELAY_CHARGER_ON_TIME = 23:00
+RELAY_CHARGER_OFF_TIME = 06:00
+```
+
+**Requires:** `pip3 install pyserial`
+
 ## Quick Start
 
 ### Requirements
@@ -504,24 +531,17 @@ Press keys during operation to control the gateway:
 ### Mute Controls
 - `t` = TX Mute (Mumble → Radio)
 - `r` = RX Mute (Radio → Mumble)
+- `m` = Global Mute (mutes all audio)
 - `s` = SDR1 Mute
 - `x` = SDR2 Mute
 - `c` = Remote Audio Mute (SDRSV — client mode only)
 - `a` = Announcement Input Mute (ANNIN)
-- `m` = Global Mute (mutes all audio)
-- `o` = Toggle Speaker Output Mute
-
-### SDR Controls
-- `d` = **Toggle SDR1 Ducking** (duck vs. mix mode)
-- `b` = **Toggle SDR Rebroadcast** (route mixed SDR audio to AIOC radio TX with PTT)
-- `s` = Toggle SDR1 Mute
-- `x` = Toggle SDR2 Mute
+- `o` = Speaker Output Mute
 
 ### Audio Controls
 - `v` = Toggle VAD on/off
 - `,` = Volume Down (Radio → Mumble)
 - `.` = Volume Up (Radio → Mumble)
-- `p` = Manual PTT Toggle (override auto-PTT)
 
 ### Processing Controls
 - `n` = Toggle Noise Gate
@@ -530,10 +550,20 @@ Press keys during operation to control the gateway:
 - `w` = Toggle Wiener Filter (spectral noise suppression)
 - `e` = Toggle Echo Cancellation
 
-### File Playback Controls
+### SDR Controls
+- `d` = Toggle SDR1 Ducking (duck vs. mix mode)
+- `b` = Toggle SDR Rebroadcast (route mixed SDR audio to AIOC radio TX with PTT)
+
+### PTT
+- `p` = Manual PTT Toggle (override auto-PTT)
+
+### File Playback
 - `1-9` = Play announcement files
 - `0` = Play Station ID
 - `-` = Stop playback
+
+### Relay Control
+- `j` = Radio power button (momentary pulse — relay ON 0.5s then OFF)
 
 ### Diagnostics
 - `i` = Start/stop audio trace recording (writes to `tools/audio_trace.txt`)
@@ -558,7 +588,7 @@ Press keys during operation to control the gateway:
 
 ### Audio Level Bars
 
-Bars appear in this order: TX → RX → SP → SDR1 → SDR2 → SV or CL → AN
+Bars appear in this order: TX → RX → SP → SDR1 → SDR2 → SV or CL → AN → PWRB → CHG
 
 | Bar | Color | Meaning |
 |-----|-------|---------|
@@ -570,6 +600,8 @@ Bars appear in this order: TX → RX → SP → SDR1 → SDR2 → SV or CL → A
 | **SV:[bar]** | Yellow | Remote Audio Link — server mode: audio level being sent to remote client |
 | **CL:[bar]** | Green | Remote Audio Link — client mode: audio level received from remote server (SDRSV) |
 | **AN:[bar]** | Red | Announcement Input — audio level from TCP port 9601 (only shown when `ENABLE_ANNOUNCE_INPUT = true`; shows 0 when no client connected) |
+| **PWRB** | White/Yellow | Radio power button relay — white when idle, yellow during 0.5s pulse (only shown when `ENABLE_RELAY_RADIO = true`) |
+| **CHG:CHRGE/DRAIN** | Green/Red | Charger relay — green when charging, red when draining (only shown when `ENABLE_RELAY_CHARGER = true`) |
 
 **Bar States:**
 

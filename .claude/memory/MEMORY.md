@@ -51,13 +51,13 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `SDR_SIGNAL_THRESHOLD = -60.0` — dBFS threshold for SDR signal detection (was hardcoded -50)
 
 ## Keyboard Controls
-- MUTE: `t`=TX `r`=RX `m`=Global `s`=SDR1 `x`=SDR2 `c`=Remote `a`=Announce
-- SDR REBROADCAST: `b`=Toggle (routes mixed SDR to AIOC TX with 3s PTT hold)
-- AUDIO: `v`=VAD `,`=Vol- `.`=Vol+
-- PROCESS: `n`=Gate `f`=HPF `g`=AGC `w`=Wiener `e`=Echo
-- SDR: `d`=SDR1 Duck toggle
+- MUTE: `t`=TX `r`=RX `m`=Global `s`=SDR1 `x`=SDR2 `c`=Remote `a`=Announce `o`=Speaker
+- AUDIO: `v`=VAD toggle `,`=Vol- `.`=Vol+
+- PROC: `n`=Gate `f`=HPF `g`=AGC `w`=Wiener `e`=Echo
+- SDR: `d`=SDR1 Duck toggle `b`=SDR Rebroadcast toggle
 - PTT: `p`=Manual PTT toggle
 - PLAY: `1-9`=Announcements `0`=StationID `-`=Stop
+- RELAY: `j`=Radio power button (momentary pulse)
 - TRACE: `i`=Start/stop audio trace
 - NOTE: AGC moved from 'a' to 'g'; proc flag changed from A to G
 
@@ -116,6 +116,16 @@ All three pure-Python per-sample loops replaced with numpy/scipy:
 - `TTS_DEFAULT_VOICE = 1` in config; `TTS_VOLUME`, `PTT_TTS_DELAY`
 - Mumble text messages arrive as HTML — stripped with `re.sub(r'<[^>]+>', '', msg)` + `html.unescape()`
 - Voice map is class-level `TTS_VOICES` dict on the gateway class
+
+## Relay Control (CH340 USB Relays)
+- `RelayController` class: 4-byte serial commands, `CMD_ON`/`CMD_OFF`, lazy `import serial`
+- Radio power relay: `j` key momentary pulse (ON 0.5s then OFF — simulates button press), `ENABLE_RELAY_RADIO`
+- Charger relay: automatic schedule, `ENABLE_RELAY_CHARGER`, `RELAY_CHARGER_ON_TIME`/`OFF_TIME`
+- Schedule handles overnight wrap (e.g. 23:00→06:00); only sends command on state change
+- Status bar: `PWRB` (white idle, yellow during pulse) + `CHG:CHRGE/DRAIN` (green/red, 5 chars)
+- Udev template: `scripts/99-relay-udev.rules` — maps physical USB port to persistent symlinks
+- Cleanup: closes serial ports but leaves relays in current state (no power-cycle on restart)
+- Dependency: `pyserial` (imported inside `open()` — only fails if relay enabled but pkg missing)
 
 ## SDR Rebroadcast
 - Toggle: `b` key. Routes mixed SDR-only audio (no AIOC/PTT) to AIOC radio TX
