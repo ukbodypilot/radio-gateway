@@ -1215,7 +1215,7 @@ class SDRSource(AudioSource):
         # Queue.  The consumer slices them into 50ms chunks via a sub-buffer,
         # using a blocking get(timeout) at blob boundaries to synchronize with
         # the ALSA clock — same proven pattern as AIOCRadioSource.
-        self._chunk_queue = _queue_mod.Queue(maxsize=8)   # blobs (~1.6s at 200ms each)
+        self._chunk_queue = _queue_mod.Queue(maxsize=32)  # 50ms chunks (~1.6s)
         self._sub_buffer = b''
         self._chunk_bytes = config.AUDIO_CHUNK_SIZE * getattr(self, 'sdr_channels', 1) * 2
         self._blob_bytes = 0       # set in setup_audio() once channels/multiplier are known
@@ -1367,11 +1367,10 @@ class SDRSource(AudioSource):
             )
             self._reader_thread.start()
 
-            # Pre-fill: wait for 3 blobs so the sub-buffer has a cushion.
-            # 3 blobs = 3× blob period of margin; reader and consumer are rate-matched
-            # so 2 blobs gave zero headroom. 3 blobs matches AIOC's pre-buffer strategy.
+            # Pre-fill: wait for 12 chunks (600ms) so the sub-buffer has a cushion.
+            # With 50ms reader chunks this matches the old 3-blob (3×200ms) strategy.
             prefill_deadline = time.monotonic() + 2.0
-            while self._chunk_queue.qsize() < 3 and time.monotonic() < prefill_deadline:
+            while self._chunk_queue.qsize() < 12 and time.monotonic() < prefill_deadline:
                 time.sleep(0.01)
 
             if self.config.VERBOSE_LOGGING:
@@ -1395,11 +1394,12 @@ class SDRSource(AudioSource):
         Intentionally does NO audio processing — all numpy/level/mute work
         happens in get_audio() in the main thread.
         """
-        if self.name == "SDR2":
-            buf_mult = getattr(self.config, 'SDR2_BUFFER_MULTIPLIER', 4)
-        else:
-            buf_mult = getattr(self.config, 'SDR_BUFFER_MULTIPLIER', 4)
-        read_frames = self.config.AUDIO_CHUNK_SIZE * max(buf_mult, 1)
+        # Read one consumer chunk (50ms / 2400 frames) at a time instead of
+        # one full ALSA period (200ms).  Smaller reads deliver data 4× more
+        # frequently, dramatically reducing delivery jitter and silence gaps.
+        # The ALSA buffer is still opened at buffer_multiplier × chunk_size
+        # for stability — only the read granularity changes.
+        read_frames = self.config.AUDIO_CHUNK_SIZE
 
         while self._reader_running:
             if not self.input_stream:
@@ -1464,16 +1464,15 @@ class SDRSource(AudioSource):
         # serving.  This is the SAME mechanism used by AIOCRadioSource — it
         # absorbs ALSA loopback delivery jitter so starvation events don't
         # immediately produce silence.  Only active once _blob_bytes is set.
-        # During rebroadcast, use 1-blob gate to halve gap duration (radio TX
-        # is more sensitive to dead air than Mumble/Opus).
+        # 1-blob gate keeps gaps short (~200ms) — 2-blob gate caused 400ms+
+        # gaps that were audibly jarring.
         if self._prebuffering and self._blob_bytes > 0:
-            prebuf_blobs = 1 if self.gateway.sdr_rebroadcast else 2
-            if len(self._sub_buffer) < self._blob_bytes * prebuf_blobs:
+            if len(self._sub_buffer) < self._blob_bytes:
                 return None, False  # still accumulating cushion
             self._prebuffering = False
 
         if len(self._sub_buffer) < cb:
-            self._prebuffering = True  # depleted — rebuild 2-blob cushion
+            self._prebuffering = True  # depleted — rebuild 1-blob cushion
             return None, False
 
         raw = self._sub_buffer[:cb]

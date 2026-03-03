@@ -1791,6 +1791,12 @@ New Mumble text commands added:
 
 ### Recent Fixes & Improvements
 
+**SDR audio — silence gap elimination**
+- Fixed periodic 200–450 ms silence gaps in SDR audio caused by ALSA loopback delivery jitter
+- SDR reader thread now reads 50 ms chunks instead of 200 ms ALSA periods, delivering data 4x more frequently and reducing delivery jitter from stdev 118 ms to ~10 ms
+- Prebuffer gate simplified to 1-blob threshold; queue depth increased to 32 slots
+- Verified: zero silence gaps in 47 s trace (was 5 gaps up to 450 ms)
+
 **Audio quality and CPU performance improvements**
 - All RMS calculations replaced with numpy vectorized operations (10–100× faster on Pi) — reduces per-loop CPU usage and the risk of AIOC buffer overflows causing silent sample drops
 - `MUMBLE_BITRATE` and `MUMBLE_VBR` are now actually applied to the Mumble client via `set_bandwidth()` — previously the library always defaulted to 50 kbps regardless of the config value

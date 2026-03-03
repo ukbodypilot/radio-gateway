@@ -135,7 +135,7 @@ All three pure-Python per-sample loops replaced with numpy/scipy:
 - PTT release timer guard: `status_monitor_loop()` skips PTT timeout when `_rebroadcast_ptt_active`
 - Status bar: SDR labels white (off), green (rebroadcast idle), red (rebroadcast sending)
 - PTT indicator: `B-ON` (cyan) when rebroadcast PTT active
-- SDR prebuffer reduced to 1 blob during rebroadcast (halves gap duration)
+- SDR prebuffer always 1 blob (no rebroadcast conditional)
 - Trace: element 22 `_tr_rebro` (sig/hold/idle), `rebro_ptt` events, `rb` column in detail
 
 ## SDR Mixer — sole_source Logic

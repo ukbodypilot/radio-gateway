@@ -650,6 +650,30 @@ WIRE FORMAT
     2400 frames per chunk (4800 bytes)
 
 ================================================================================
+RECENT CHANGES (v3.5)
+================================================================================
+
+SDR AUDIO — SILENCE GAP ELIMINATION
+--------------------------------------
+- Fixed: SDR audio had periodic 200–450 ms silence gaps caused by ALSA
+  loopback delivery jitter.  The reader thread was reading one full ALSA
+  period (200 ms / 9600 frames) at a time.  Jitter in loopback delivery
+  meant blobs sometimes arrived 400–600 ms apart, depleting the sub-buffer
+  and triggering the prebuffer gate.
+- Fix: reader thread now reads one consumer chunk (50 ms / 2400 frames) at
+  a time instead of one full period.  Delivers data 4x more frequently,
+  reducing blob delivery jitter from stdev 118 ms to ~10 ms.  ALSA buffer
+  size is unchanged (still SDR_BUFFER_MULTIPLIER x chunk_size) — only the
+  read granularity changed.
+- Prebuffer gate simplified: always uses 1-blob threshold (was 2 blobs
+  normally, 1 during rebroadcast).  With 50 ms reads the cushion refills
+  almost instantly.
+- Queue depth increased from 8 to 32 slots to accommodate the smaller,
+  more frequent chunks.
+- Result: verified zero silence gaps in 47 s trace (934 ticks, 100% audio).
+  Previously 5 gaps up to 450 ms in the same duration.
+
+================================================================================
 RECENT CHANGES (v3.4)
 ================================================================================
 
