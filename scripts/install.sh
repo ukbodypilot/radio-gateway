@@ -115,6 +115,12 @@ _pip() {
         || pip3 install "$@" 2>/dev/null
 }
 
+# Ensure setuptools is functional — required by legacy setup.py packages (e.g. pymumble)
+# On some Debian systems python3-setuptools is absent or broken, causing metadata-generation-failed
+set +e
+_pip --upgrade setuptools 2>/dev/null
+set -e
+
 # Core packages (excluding pymumble — handled separately due to PyPI name variants)
 set +e
 _pip hid numpy pyaudio soundfile resampy psutil gtts
