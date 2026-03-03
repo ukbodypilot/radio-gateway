@@ -361,6 +361,55 @@ RELAY_CHARGER_OFF_TIME = 06:00
 
 **Requires:** `pip3 install pyserial`
 
+### TH-9800 CAT Control
+
+Connects to the [TH9800_CAT.py](https://github.com/your-repo/th9800) TCP server to configure a TYT TH-9800 radio on gateway startup. Sets channel, volume, and power level for both VFOs independently.
+
+**How it works:**
+1. TH9800_CAT.py runs on the same machine, connected to the radio via USB serial (FT232R)
+2. TH9800_CAT.py exposes a TCP server (default port 9800) for remote control
+3. On startup, the gateway connects, authenticates, enables USB TX control (RTS), then sends setup commands
+4. Channel is set by stepping the per-VFO dial until the target channel is reached
+5. Volume is set by stepping from the default level (25) to the target level
+6. Power is set by cycling the LOW button (L/M/H) until the target is reached
+
+**Status bar:**
+- `CAT` — white when enabled but not connected, green when connected and idle, red when actively sending/receiving data (holds red for at least 1 second for visibility)
+
+**TH9800_CAT.py setup:**
+
+Set `auto_start_server=true` in the TH9800_CAT.py `config.txt` to have the TCP server start automatically when the GUI launches:
+```ini
+host=0.0.0.0
+port=9800
+password=
+auto_start_server=true
+```
+
+**Gateway configuration:**
+```ini
+ENABLE_CAT_CONTROL = true
+CAT_HOST = 127.0.0.1
+CAT_PORT = 9800
+CAT_PASSWORD =
+
+# Channel setup (-1 = don't change)
+CAT_LEFT_CHANNEL = 1
+CAT_RIGHT_CHANNEL = 2
+
+# Volume (0-100, -1 = don't change)
+CAT_LEFT_VOLUME = 62
+CAT_RIGHT_VOLUME = 0
+
+# Power level (L=Low, M=Medium, H=High, blank = don't change)
+CAT_LEFT_POWER = L
+CAT_RIGHT_POWER = L
+```
+
+**Debug log:** All CAT packet parsing and command details are written to `cat_debug.log` in the gateway directory.
+
+**Requires:** TH9800_CAT.py running with TCP server enabled and serial connected to the radio.
+
 ## Quick Start
 
 ### Requirements
@@ -588,7 +637,7 @@ Press keys during operation to control the gateway:
 
 ### Audio Level Bars
 
-Bars appear in this order: TX → RX → SP → SDR1 → SDR2 → SV or CL → AN → PWRB → CHG
+Bars appear in this order: TX → RX → SP → SDR1 → SDR2 → SV or CL → AN → PWRB → CHG → CAT
 
 | Bar | Color | Meaning |
 |-----|-------|---------|
@@ -602,6 +651,7 @@ Bars appear in this order: TX → RX → SP → SDR1 → SDR2 → SV or CL → A
 | **AN:[bar]** | Red | Announcement Input — audio level from TCP port 9601 (only shown when `ENABLE_ANNOUNCE_INPUT = true`; shows 0 when no client connected) |
 | **PWRB** | White/Yellow | Radio power button relay — white when idle, yellow during 0.5s pulse (only shown when `ENABLE_RELAY_RADIO = true`) |
 | **CHG:CHRGE/DRAIN** | Green/Red | Charger relay — green when charging, red when draining (only shown when `ENABLE_RELAY_CHARGER = true`) |
+| **CAT** | White/Green/Red | TH-9800 CAT control — white when enabled but not connected, green when connected idle, red when active (only shown when `ENABLE_CAT_CONTROL = true`) |
 
 **Bar States:**
 
@@ -1243,6 +1293,22 @@ ECHOLINK_TO_MUMBLE = true
 ECHOLINK_TO_RADIO = false
 RADIO_TO_ECHOLINK = true
 MUMBLE_TO_ECHOLINK = false
+```
+
+### TH-9800 CAT Control Settings
+
+```ini
+ENABLE_CAT_CONTROL = false             # Enable TH-9800 CAT control on startup
+CAT_HOST = 127.0.0.1                   # TH9800_CAT.py TCP server address
+CAT_PORT = 9800                        # TCP server port
+CAT_PASSWORD =                         # TCP server password (blank = no password)
+
+CAT_LEFT_CHANNEL = -1                  # Left VFO channel (-1 = don't change)
+CAT_RIGHT_CHANNEL = -1                 # Right VFO channel (-1 = don't change)
+CAT_LEFT_VOLUME = -1                   # Left VFO volume 0-100 (-1 = don't change)
+CAT_RIGHT_VOLUME = -1                  # Right VFO volume 0-100 (-1 = don't change)
+CAT_LEFT_POWER =                       # Left VFO power: L/M/H (blank = don't change)
+CAT_RIGHT_POWER =                      # Right VFO power: L/M/H (blank = don't change)
 ```
 
 ### Advanced Settings

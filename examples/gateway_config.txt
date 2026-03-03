@@ -373,6 +373,31 @@ RELAY_CHARGER_OFF_TIME = 06:00
 
 
 # ============================================================================
+# TH-9800 CAT CONTROL
+# ============================================================================
+# Connects to TH9800_CAT.py TCP server to configure the radio on startup.
+# Requires TH9800_CAT.py running with TCP server enabled (auto_start_server=true
+# in its config.txt, or manually click Start Server in the GUI).
+
+ENABLE_CAT_CONTROL = false
+CAT_HOST = 127.0.0.1
+CAT_PORT = 9800
+CAT_PASSWORD =
+
+# Channel setup (-1 = don't change). Channel numbers as shown on radio display.
+CAT_LEFT_CHANNEL = -1
+CAT_RIGHT_CHANNEL = -1
+
+# Volume (0-100, -1 = don't change)
+CAT_LEFT_VOLUME = -1
+CAT_RIGHT_VOLUME = -1
+
+# Power level (L=Low, M=Medium, H=High, blank = don't change)
+CAT_LEFT_POWER =
+CAT_RIGHT_POWER =
+
+
+# ============================================================================
 # ADVANCED: STREAM HEALTH & DIAGNOSTICS
 # ============================================================================
 

@@ -13,6 +13,7 @@ import threading
 import collections
 import queue as _queue_mod
 from struct import Struct
+import socket
 import select  # For non-blocking keyboard input
 import array as _array_mod
 import math as _math_mod
@@ -234,6 +235,17 @@ class Config:
             'RELAY_CHARGER_BAUD': 9600,
             'RELAY_CHARGER_ON_TIME': '23:00',
             'RELAY_CHARGER_OFF_TIME': '06:00',
+            # TH-9800 CAT Control
+            'ENABLE_CAT_CONTROL': False,
+            'CAT_HOST': '127.0.0.1',
+            'CAT_PORT': 9800,
+            'CAT_PASSWORD': '',
+            'CAT_LEFT_CHANNEL': -1,     # -1 = don't change
+            'CAT_RIGHT_CHANNEL': -1,    # -1 = don't change
+            'CAT_LEFT_VOLUME': -1,      # 0-100, -1 = don't change
+            'CAT_RIGHT_VOLUME': -1,     # 0-100, -1 = don't change
+            'CAT_LEFT_POWER': '',       # L/M/H or blank = don't change
+            'CAT_RIGHT_POWER': '',      # L/M/H or blank = don't change
         }
         
         # Set defaults
@@ -3065,6 +3077,458 @@ class RelayController:
         return self._state
 
 
+class RadioCATClient:
+    """TCP client for TH-9800 CAT control via TH9800_CAT.py server."""
+
+    START_BYTES = b'\xAA\xFD'
+
+    # 12-byte default payload template (button release / return control to body)
+    DEFAULT_PAYLOAD = bytearray([0x84,0xFF,0xFF,0xFF,0xFF,0x81,0xFF,0xFF,0x82,0xFF,0xFF,0x00])
+
+    # VFO identifiers
+    LEFT = 'LEFT'
+    RIGHT = 'RIGHT'
+
+    def __init__(self, host, port, password=''):
+        self._host = host
+        self._port = port
+        self._password = password
+        self._sock = None
+        self._buf = b''
+        # Radio state parsed from forwarded packets
+        self._channel = ''       # Latest channel text (3-char, e.g. "001")
+        self._channel_vfo = ''   # Which VFO the channel belongs to ('LEFT' or 'RIGHT')
+        self._vfo_text = ''      # Display text (6-char name)
+        self._power = {}         # {'LEFT': 'H', 'RIGHT': 'L'}
+        self._lock = threading.Lock()
+        self._last_activity = 0  # monotonic timestamp of last send/recv (for status bar)
+        self._stop = False       # set True to abort loops (ctrl+c)
+        self._log = None         # file handle for debug log
+
+    def _logmsg(self, msg, console=True):
+        """Write debug message to cat_debug.log and optionally print."""
+        if console:
+            print(msg)
+        if self._log:
+            self._log.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+            self._log.flush()
+
+    def connect(self):
+        """Connect to CAT TCP server and authenticate."""
+        try:
+            self._log = open('cat_debug.log', 'w')
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._sock.settimeout(5.0)
+            self._sock.connect((self._host, self._port))
+            # Authenticate
+            self._sock.sendall(f"!pass {self._password}\n".encode())
+            resp = self._recv_line(timeout=5.0)
+            if resp and 'Login Successful' in resp:
+                # Ensure RTS is set to USB Controlled (required for CAT TX)
+                rts_resp = self._send_cmd("!rts True")
+                if rts_resp:
+                    print(f"  CAT RTS: {rts_resp}")
+                return True
+            else:
+                print(f"  CAT auth failed: {resp}")
+                self.close()
+                return False
+        except Exception as e:
+            print(f"  CAT connect error: {e}")
+            self.close()
+            return False
+
+    def close(self):
+        """Close TCP connection."""
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+            self._sock = None
+        if self._log:
+            try:
+                self._log.close()
+            except Exception:
+                pass
+            self._log = None
+
+    def _send_cmd(self, cmd):
+        """Send text command and return response line."""
+        if not self._sock:
+            return None
+        try:
+            self._sock.sendall(f"{cmd}\n".encode())
+            self._last_activity = time.monotonic()
+            return self._recv_line(timeout=2.0)
+        except Exception as e:
+            self._logmsg(f"  CAT send error: {e}")
+            return None
+
+    def _recv_line(self, timeout=2.0):
+        """Read from socket until newline, with timeout. Parses binary radio packets inline."""
+        if not self._sock:
+            return None
+        self._sock.settimeout(timeout)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            # Check for binary packet in buffer
+            while self.START_BYTES in self._buf:
+                idx = self._buf.index(self.START_BYTES)
+                if idx > 0:
+                    # Text data before binary — check for newline
+                    text_part = self._buf[:idx]
+                    if b'\n' in text_part:
+                        line_end = text_part.index(b'\n')
+                        line = self._buf[:line_end].decode('ascii', errors='replace').strip()
+                        self._buf = self._buf[line_end+1:]
+                        return line
+                    self._buf = self._buf[idx:]
+                # Need at least 3 bytes for start + length
+                if len(self._buf) < 3:
+                    break
+                pkt_len = self._buf[2]
+                total = 3 + pkt_len + 1  # start(2) + len(1) + payload + checksum(1)
+                if len(self._buf) < total:
+                    break
+                pkt_data = self._buf[3:3+pkt_len]
+                self._buf = self._buf[total:]
+                # Skip any trailing newline the server appends
+                if self._buf.startswith(b'\n'):
+                    self._buf = self._buf[1:]
+                self._parse_radio_packet(pkt_data)
+
+            # Check for text line in buffer
+            if b'\n' in self._buf:
+                line_end = self._buf.index(b'\n')
+                line = self._buf[:line_end].decode('ascii', errors='replace').strip()
+                self._buf = self._buf[line_end+1:]
+                return line
+
+            # Read more data
+            try:
+                remaining = max(0.1, deadline - time.time())
+                self._sock.settimeout(remaining)
+                data = self._sock.recv(1024)
+                if not data:
+                    return None
+                self._buf += data
+                self._last_activity = time.monotonic()
+            except socket.timeout:
+                break
+            except Exception:
+                return None
+        return None
+
+    def _drain(self, duration=0.3):
+        """Drain any pending data from socket, parsing packets along the way."""
+        if not self._sock:
+            return
+        end = time.time() + duration
+        self._sock.settimeout(0.05)
+        while time.time() < end:
+            try:
+                data = self._sock.recv(4096)
+                if not data:
+                    break
+                self._buf += data
+            except socket.timeout:
+                pass
+            except Exception:
+                break
+        # Process any buffered packets
+        self._recv_line(timeout=0.1)
+
+    def _parse_radio_packet(self, data):
+        """Parse forwarded binary radio packets to update internal state."""
+        if len(data) < 2:
+            return
+        pkt_type = data[0]  # First byte is packet type
+        vfo_byte = data[1]  # Second byte is VFO indicator
+
+        if pkt_type == 0x03:  # DISPLAY_CHANGE
+            if vfo_byte == 0x43:
+                self._channel_vfo = self.LEFT
+            elif vfo_byte == 0xC3:
+                self._channel_vfo = self.RIGHT
+            self._logmsg(f"    [pkt] DISPLAY_CHANGE vfo=0x{vfo_byte:02X} -> {self._channel_vfo}", console=False)
+
+        elif pkt_type == 0x02:  # CHANNEL_TEXT
+            if vfo_byte in (0x40, 0x60):
+                self._channel_vfo = self.LEFT
+            elif vfo_byte in (0xC0, 0xE0):
+                self._channel_vfo = self.RIGHT
+            if len(data) >= 6:
+                try:
+                    self._channel = data[3:6].decode('ascii', errors='replace').strip()
+                    self._logmsg(f"    [pkt] CHANNEL_TEXT vfo={self._channel_vfo} ch='{self._channel}'", console=False)
+                except Exception:
+                    pass
+
+        elif pkt_type == 0x01:  # DISPLAY_TEXT
+            if len(data) >= 9:
+                try:
+                    self._vfo_text = data[3:9].decode('ascii', errors='replace').strip()
+                    self._logmsg(f"    [pkt] DISPLAY_TEXT text='{self._vfo_text}'", console=False)
+                except Exception:
+                    pass
+
+        elif pkt_type == 0x04:  # DISPLAY_ICONS
+            if vfo_byte == 0x40:
+                vfo = self.LEFT
+            elif vfo_byte == 0xC0:
+                vfo = self.RIGHT
+            else:
+                self._logmsg(f"    [pkt] DISPLAY_ICONS unknown vfo=0x{vfo_byte:02X}", console=False)
+                return
+            if len(data) >= 8:
+                power_byte = data[7]
+                if power_byte & 0x08:
+                    self._power[vfo] = 'L'
+                elif power_byte & 0x02:
+                    self._power[vfo] = 'M'
+                else:
+                    self._power[vfo] = 'H'
+                self._logmsg(f"    [pkt] DISPLAY_ICONS vfo={vfo} power={self._power[vfo]}", console=False)
+        else:
+            self._logmsg(f"    [pkt] type=0x{pkt_type:02X} vfo=0x{vfo_byte:02X} data={data.hex()}", console=False)
+
+    def _build_packet(self, payload):
+        """Build full AA FD <len> <payload> <checksum> packet, return hex string."""
+        length = len(payload)
+        checksum = length
+        for b in payload:
+            checksum ^= b
+        pkt = bytearray([0xAA, 0xFD, length]) + bytearray(payload) + bytearray([checksum & 0xFF])
+        return pkt.hex()
+
+    def _build_button_payload(self, cmd_bytes, start, end):
+        """Insert cmd_bytes into DEFAULT_PAYLOAD at positions start:end."""
+        payload = bytearray(self.DEFAULT_PAYLOAD)
+        payload[start:end] = bytearray(cmd_bytes)
+        return payload
+
+    def _send_button(self, cmd_bytes, start, end):
+        """Build button payload, send as !data command."""
+        payload = self._build_button_payload(cmd_bytes, start, end)
+        hex_str = self._build_packet(payload)
+        return self._send_cmd(f"!data {hex_str}")
+
+    def _send_button_release(self):
+        """Send button release (DEFAULT_PAYLOAD)."""
+        hex_str = self._build_packet(self.DEFAULT_PAYLOAD)
+        return self._send_cmd(f"!data {hex_str}")
+
+    def _channel_matches(self, target_int):
+        """Compare current channel to target as integers, tolerant of padding/spaces."""
+        try:
+            return int(self._channel) == target_int
+        except (ValueError, TypeError):
+            return False
+
+    def set_channel(self, vfo, target_channel):
+        """Set channel on specified VFO by stepping the dial. Returns True on success."""
+        target_int = int(target_channel)
+        self._logmsg(f"  CAT: Setting {vfo} channel to {target_int}...")
+
+        self._drain()
+
+        # Press the VFO dial to trigger a display update
+        if vfo == self.LEFT:
+            self._send_button([0x00, 0x25], 3, 5)  # L_DIAL_PRESS
+        else:
+            self._send_button([0x00, 0xA5], 3, 5)  # R_DIAL_PRESS
+        time.sleep(0.15)
+        self._send_button_release()
+        time.sleep(0.3)
+
+        # Drain and read channel
+        self._drain(0.5)
+        self._logmsg(f"    Current: vfo={self._channel_vfo} ch='{self._channel}'", console=False)
+        if self._channel_vfo == vfo and self._channel_matches(target_int):
+            self._logmsg(f"    Already on channel {target_int}")
+            return True
+
+        start_channel = self._channel if self._channel_vfo == vfo else ''
+
+        # Step through channels
+        for i in range(200):
+            if self._stop:
+                self._logmsg(f"    Aborted")
+                return False
+            if vfo == self.LEFT:
+                self._send_button([0x02], 2, 3)  # L_DIAL_RIGHT
+            else:
+                self._send_button([0x82], 2, 3)  # R_DIAL_RIGHT
+            time.sleep(0.05)
+            self._send_button_release()
+            time.sleep(0.15)
+
+            # Read response
+            self._drain(0.2)
+            self._logmsg(f"    Step {i+1}: vfo={self._channel_vfo} ch='{self._channel}'", console=False)
+            if self._channel_vfo == vfo and self._channel_matches(target_int):
+                self._logmsg(f"    Channel set to {target_int} (stepped {i+1})")
+                return True
+            if start_channel and self._channel_vfo == vfo and self._channel == start_channel and i > 0:
+                self._logmsg(f"    Channel {target_int} not found (looped around after {i+1} steps)")
+                return False
+
+        self._logmsg(f"    Channel {target_int} not found (max iterations)")
+        return False
+
+    def set_volume(self, vfo, target_level):
+        """Set volume on specified VFO by stepping toward target. level=0-100."""
+        target_level = max(0, min(100, target_level))
+        vfo_letter = 'LEFT' if vfo == self.LEFT else 'RIGHT'
+        # Start from radio default (25) — radio resets volume on power cycle
+        current = 25
+        step = 2
+        self._logmsg(f"  CAT: Setting {vfo} volume to {target_level}% (from {current})...")
+
+        if current == target_level:
+            self._logmsg(f"    Already at volume {target_level}")
+            return True
+
+        # Step toward target
+        iterations = 0
+        while current != target_level:
+            if self._stop:
+                self._logmsg(f"    Aborted")
+                return False
+            if current < target_level:
+                current = min(current + step, target_level)
+            else:
+                current = max(current - step, target_level)
+            resp = self._send_cmd(f"!vol {vfo_letter} {current}")
+            self._logmsg(f"    Volume step: {current}", console=False)
+            time.sleep(0.02)
+            iterations += 1
+            if iterations > 100:
+                self._logmsg(f"    Volume max iterations")
+                break
+
+        self._logmsg(f"    Volume set to {target_level}%")
+        return True
+
+    def set_power(self, vfo, target):
+        """Set power level on specified VFO. target='L','M','H'. Returns True on success."""
+        target = target.upper()
+        if target not in ('L', 'M', 'H'):
+            self._logmsg(f"    Invalid power level: {target}")
+            return False
+        self._logmsg(f"  CAT: Setting {vfo} power to {target}...")
+
+        self._drain()
+
+        # Trigger display refresh with dial press
+        if vfo == self.LEFT:
+            self._send_button([0x00, 0x25], 3, 5)
+        else:
+            self._send_button([0x00, 0xA5], 3, 5)
+        time.sleep(0.15)
+        self._send_button_release()
+        time.sleep(0.3)
+        self._drain(0.5)
+
+        current = self._power.get(vfo, '')
+        self._logmsg(f"    Current power: vfo={vfo} power='{current}' target='{target}'", console=False)
+        if current == target:
+            self._logmsg(f"    Already at power {target}")
+            return True
+
+        start_power = current
+
+        # Cycle power: L→M→H→L (press LOW button)
+        for i in range(4):
+            if self._stop:
+                self._logmsg(f"    Aborted")
+                return False
+            if vfo == self.LEFT:
+                self._send_button([0x00, 0x21], 3, 5)  # L_LOW
+            else:
+                self._send_button([0x00, 0xA1], 3, 5)  # R_LOW
+            time.sleep(0.15)
+            self._send_button_release()
+            time.sleep(0.3)
+            self._drain(0.5)
+
+            current = self._power.get(vfo, '')
+            self._logmsg(f"    Power cycle {i+1}: power='{current}'", console=False)
+            if current == target:
+                self._logmsg(f"    Power set to {target} (cycled {i+1})")
+                return True
+            if start_power and current == start_power and i > 0:
+                self._logmsg(f"    Power {target} not reached (looped back)")
+                return False
+
+        self._logmsg(f"    Power {target} not reached (max iterations)")
+        return False
+
+    def setup_radio(self, config):
+        """Run full radio setup sequence from config."""
+        left_ch = getattr(config, 'CAT_LEFT_CHANNEL', -1)
+        right_ch = getattr(config, 'CAT_RIGHT_CHANNEL', -1)
+        left_vol = getattr(config, 'CAT_LEFT_VOLUME', -1)
+        right_vol = getattr(config, 'CAT_RIGHT_VOLUME', -1)
+        left_pwr = str(getattr(config, 'CAT_LEFT_POWER', '')).strip()
+        right_pwr = str(getattr(config, 'CAT_RIGHT_POWER', '')).strip()
+
+        if self._stop:
+            return
+
+        if int(left_ch) != -1:
+            try:
+                self.set_channel(self.LEFT, int(left_ch))
+            except Exception as e:
+                self._logmsg(f"  CAT: Left channel error: {e}")
+
+        if self._stop:
+            return
+
+        if int(right_ch) != -1:
+            try:
+                self.set_channel(self.RIGHT, int(right_ch))
+            except Exception as e:
+                self._logmsg(f"  CAT: Right channel error: {e}")
+
+        if self._stop:
+            return
+
+        if int(left_vol) != -1:
+            try:
+                self.set_volume(self.LEFT, int(left_vol))
+            except Exception as e:
+                self._logmsg(f"  CAT: Left volume error: {e}")
+
+        if self._stop:
+            return
+
+        if int(right_vol) != -1:
+            try:
+                self.set_volume(self.RIGHT, int(right_vol))
+            except Exception as e:
+                self._logmsg(f"  CAT: Right volume error: {e}")
+
+        if self._stop:
+            return
+
+        if left_pwr:
+            try:
+                self.set_power(self.LEFT, left_pwr)
+            except Exception as e:
+                self._logmsg(f"  CAT: Left power error: {e}")
+
+        if self._stop:
+            return
+
+        if right_pwr:
+            try:
+                self.set_power(self.RIGHT, right_pwr)
+            except Exception as e:
+                self._logmsg(f"  CAT: Right power error: {e}")
+
+
 class MumbleRadioGateway:
     def __init__(self, config):
         self.config = config
@@ -3175,6 +3639,9 @@ class MumbleRadioGateway:
         self.relay_charger_on = False  # Current charge state
         self._charger_on_time = None   # (hour, minute) tuple
         self._charger_off_time = None  # (hour, minute) tuple
+
+        # TH-9800 CAT control
+        self.cat_client = None  # RadioCATClient instance
 
         # DarkIce process monitoring (auto-restart if it dies)
         self._darkice_pid = None          # PID when initially detected
@@ -4213,6 +4680,37 @@ class MumbleRadioGateway:
                 except Exception as e:
                     print(f"  Warning: Could not initialize charger relay: {e}")
                     self.relay_charger = None
+
+            # Initialize TH-9800 CAT control
+            if getattr(self.config, 'ENABLE_CAT_CONTROL', False):
+                try:
+                    host = self.config.CAT_HOST
+                    port = int(self.config.CAT_PORT)
+                    password = str(self.config.CAT_PASSWORD)
+                    print(f"Connecting to TH-9800 CAT server ({host}:{port})...")
+                    self.cat_client = RadioCATClient(host, port, password)
+                    if self.cat_client.connect():
+                        print("  Connected to CAT server")
+                        # Install SIGINT handler to stop CAT loops
+                        _cat_ref = self.cat_client
+                        _prev_handler = signal.getsignal(signal.SIGINT)
+                        def _cat_sigint(sig, frame):
+                            _cat_ref._stop = True
+                        signal.signal(signal.SIGINT, _cat_sigint)
+                        try:
+                            self.cat_client.setup_radio(self.config)
+                        except KeyboardInterrupt:
+                            self.cat_client._stop = True
+                        finally:
+                            signal.signal(signal.SIGINT, _prev_handler)
+                        if self.cat_client._stop:
+                            print("\n  CAT setup interrupted")
+                    else:
+                        print("  Failed to connect to CAT server")
+                        self.cat_client = None
+                except Exception as e:
+                    print(f"  CAT control error: {e}")
+                    self.cat_client = None
 
             # Initialize EchoLink source if enabled (Phase 3B)
             if self.config.ENABLE_ECHOLINK:
@@ -5891,7 +6389,7 @@ class MumbleRadioGateway:
                                 self._relay_radio_pressing = True
                                 self.relay_radio.set_state(True)
                                 self._trace_events.append((time.monotonic(), 'relay_radio', 'press'))
-                                time.sleep(0.5)
+                                time.sleep(1.0)
                                 self.relay_radio.set_state(False)
                                 self._relay_radio_pressing = False
                                 self._trace_events.append((time.monotonic(), 'relay_radio', 'release'))
@@ -6183,7 +6681,7 @@ class MumbleRadioGateway:
                 relay_bar = ""
                 if self.relay_radio:
                     if self._relay_radio_pressing:
-                        relay_bar += f" {YELLOW}PWRB{RESET}"
+                        relay_bar += f" {RED}PWRB{RESET}"
                     else:
                         relay_bar += f" {WHITE}PWRB{RESET}"
                 if self.relay_charger:
@@ -6192,9 +6690,19 @@ class MumbleRadioGateway:
                     else:
                         relay_bar += f" {WHITE}CHG:{RED}DRAIN{RESET}"
 
+                # CAT control status indicator
+                cat_bar = ""
+                if self.cat_client:
+                    if time.monotonic() - self.cat_client._last_activity < 1.0:
+                        cat_bar = f" {RED}CAT{RESET}"
+                    else:
+                        cat_bar = f" {GREEN}CAT{RESET}"
+                elif getattr(self.config, 'ENABLE_CAT_CONTROL', False):
+                    cat_bar = f" {WHITE}CAT{RESET}"
+
                 # Extra padding to clear any orphaned text when line shortens
                 # Order: ...Vol → FileStatus → ProcessingFlags → Diagnostics
-                print(f"\r{status_symbol} {WHITE}M:{RESET}{mumble_status} {WHITE}PTT:{RESET}{ptt_status} {WHITE}VAD:{RESET}{vad_status}{vad_info} {WHITE}TX:{RESET}{radio_tx_bar} {WHITE}RX:{RESET}{radio_rx_bar}{sp_bar}{sdr_bar}{sdr2_bar}{remote_bar}{annin_bar}{relay_bar}{vol_info}{file_status_info}{proc_info}{diag}     ", end="", flush=True)
+                print(f"\r{status_symbol} {WHITE}M:{RESET}{mumble_status} {WHITE}PTT:{RESET}{ptt_status} {WHITE}VAD:{RESET}{vad_status}{vad_info} {WHITE}TX:{RESET}{radio_tx_bar} {WHITE}RX:{RESET}{radio_rx_bar}{sp_bar}{sdr_bar}{sdr2_bar}{remote_bar}{annin_bar}{relay_bar}{cat_bar}{vol_info}{file_status_info}{proc_info}{diag}     ", end="", flush=True)
             
             # Always check for stuck audio (even if status reporting is disabled)
             elif status_check_interval == 0:
@@ -6847,6 +7355,14 @@ class MumbleRadioGateway:
                 self.relay_charger.close()
                 if self.config.VERBOSE_LOGGING:
                     print("  Charger relay port closed")
+            except Exception:
+                pass
+
+        if self.cat_client:
+            try:
+                self.cat_client.close()
+                if self.config.VERBOSE_LOGGING:
+                    print("  CAT client closed")
             except Exception:
                 pass
 

@@ -176,10 +176,25 @@ All three pure-Python per-sample loops replaced with numpy/scipy:
 - Config: `SDR_WATCHDOG_TIMEOUT` (10s), `SDR_WATCHDOG_MAX_RESTARTS` (5), `SDR_WATCHDOG_MODPROBE` (false)
 - Staged recovery: stage 1=reopen, stage 2=reinit PyAudio, stage 3=reload snd-aloop
 
+## TH-9800 CAT Control
+- `RadioCATClient` class: TCP client for TH9800_CAT.py server
+- Config: `ENABLE_CAT_CONTROL`, `CAT_HOST`, `CAT_PORT`, `CAT_PASSWORD`
+- Setup: channel (L/R), volume (L/R 0-100), power (L/R L/M/H)
+- Channel set: steps per-VFO dial (L_DIAL_RIGHT/R_DIAL_RIGHT), no VFO switch needed
+- Volume set: uses `!vol LEFT|RIGHT N` TCP command (added to TH9800_CAT.py), steps by 2 from default 25
+- Power set: cycles L_LOW/R_LOW button, reads DISPLAY_ICONS for current power
+- **Packet format**: byte 0 = packet type, byte 1 = VFO indicator (NOT reversed)
+- Channel text at data[3:6], display text at data[3:9], power byte at data[7]
+- TH9800 config.txt: `auto_start_server=true` auto-starts TCP server on GUI launch
+- Gateway sends `!rts True` after connect to ensure USB TX control mode
+- Debug log: `cat_debug.log` (all packet parsing, steps, commands — console shows summary only)
+- Status bar: CAT indicator — white=enabled/unconnected, green=connected, red=active (1s min visibility)
+- SIGINT handler during setup for clean ctrl+c abort
+
 ## Status Bar
 - format_level_bar() returns fixed-width (11 visible chars: 6-char bar + space + 4-char suffix)
 - Status icon only (no ACTIVE/IDLE/STOP text label, no colon prefix)
-- Bar display order: TX → RX → SP → SDR1 → SDR2 → SV/CL → AN
+- Bar display order: TX → RX → SP → SDR1 → SDR2 → SV/CL → AN → relay → CAT
 
 ## audio/ Folder — Local Only
 - `audio/` is in `.gitignore` — never committed (sensitive/copyrighted audio clips)

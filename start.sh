@@ -10,6 +10,10 @@ echo ""
 cleanup() {
     echo ""
     echo "Cleaning up..."
+    if [ ! -z "$TH9800_PID" ]; then
+        kill $TH9800_PID 2>/dev/null
+        echo "  Stopped TH-9800 CAT"
+    fi
     if [ ! -z "$DARKICE_PID" ]; then
         kill $DARKICE_PID 2>/dev/null
         echo "  Stopped Darkice"
@@ -48,17 +52,19 @@ sleep 1
 # 2. Start TH-9800 CAT control if not already running
 echo "[2/10] Checking TH-9800 CAT control..."
 if pgrep -f "TH9800_CAT.py" > /dev/null 2>&1; then
-    echo "  ✓ TH-9800 CAT already running (PID: $(pgrep -f TH9800_CAT.py | head -1))"
+    TH9800_PID=$(pgrep -f TH9800_CAT.py | head -1)
+    echo "  ✓ TH-9800 CAT already running (PID: $TH9800_PID)"
 else
     TH9800_SCRIPT="$HOME/Downloads/th9800/TH9800_CAT.py"
     if [ -f "$TH9800_SCRIPT" ]; then
         python3 "$TH9800_SCRIPT" &
-        disown
+        TH9800_PID=$!
         sleep 2
-        if pgrep -f "TH9800_CAT.py" > /dev/null 2>&1; then
-            echo "  ✓ TH-9800 CAT started (PID: $(pgrep -f TH9800_CAT.py | head -1))"
+        if ps -p $TH9800_PID > /dev/null 2>&1; then
+            echo "  ✓ TH-9800 CAT started (PID: $TH9800_PID)"
         else
             echo "  ⚠ TH-9800 CAT failed to start (continuing anyway)"
+            TH9800_PID=""
         fi
     else
         echo "  ⚠ TH-9800 CAT script not found at $TH9800_SCRIPT (skipping)"
