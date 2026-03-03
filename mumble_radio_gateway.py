@@ -1219,11 +1219,20 @@ class SDRSource(AudioSource):
         self._sub_buffer = b''
         self._chunk_bytes = config.AUDIO_CHUNK_SIZE * getattr(self, 'sdr_channels', 1) * 2
         self._blob_bytes = 0       # set in setup_audio() once channels/multiplier are known
-        self._prebuffering = True  # gate: don't serve until 3-blob cushion built (same as AIOC)
+        self._prebuffering = True  # gate: don't serve until cushion built on first start
         self._last_blocked_ms = 0.0  # instrumentation: how long get_audio blocked on blob fetch
         self._blob_times = collections.deque(maxlen=64)  # instrumentation: reader blob timestamps
         self._reader_running = False
         self._reader_thread = None
+
+        # Packet loss concealment (PLC): repeat last chunk during short gaps
+        # instead of returning silence.  ALSA loopback delivers in ~200ms
+        # bursts; when a burst is late the sub_buffer drains and silence
+        # occurs.  Repeating the last 50ms of audio masks gaps up to ~1s.
+        self._plc_chunk = None     # last served chunk (raw PCM bytes)
+        self._plc_count = 0        # consecutive PLC repeats (0 = normal)
+        self._plc_max = 20         # max repeats before giving up (20 × 50ms = 1s)
+        self._plc_total = 0        # lifetime PLC repeats (instrumentation)
 
         if self.config.VERBOSE_LOGGING:
             print(f"[{self.name}] Initializing SDR audio source...")
@@ -1460,28 +1469,41 @@ class SDRSource(AudioSource):
         if self._blob_bytes > 0 and len(self._sub_buffer) > self._blob_bytes * 5:
             self._sub_buffer = self._sub_buffer[-(self._blob_bytes * 5):]
 
-        # Pre-buffer gate: after depletion re-accumulate blobs before
-        # serving.  This is the SAME mechanism used by AIOCRadioSource — it
-        # absorbs ALSA loopback delivery jitter so starvation events don't
-        # immediately produce silence.  Only active once _blob_bytes is set.
-        # 1-blob gate keeps gaps short (~200ms) — 2-blob gate caused 400ms+
-        # gaps that were audibly jarring.
+        # Initial pre-buffer gate: on first start, wait for a cushion before
+        # serving.  After initial fill, PLC handles any subsequent gaps.
         if self._prebuffering and self._blob_bytes > 0:
             if len(self._sub_buffer) < self._blob_bytes:
-                return None, False  # still accumulating cushion
+                return None, False  # still accumulating initial cushion
             self._prebuffering = False
 
         if len(self._sub_buffer) < cb:
-            self._prebuffering = True  # depleted — rebuild 1-blob cushion
+            # Sub-buffer depleted.  PLC: fade out the last served chunk to
+            # mask ALSA loopback delivery jitter (typically 150-400ms).
+            # Each repeat is attenuated by 0.35× so the audio fades smoothly
+            # to silence rather than looping or cutting hard:
+            #   repeat 1: 35%  repeat 2: 12%  repeat 3: 4%  repeat 4+: ~0%
+            # After _plc_max repeats give up — source is genuinely gone.
+            if self._plc_chunk and self._plc_count < self._plc_max:
+                self._plc_count += 1
+                self._plc_total += 1
+                gain = 0.35 ** self._plc_count  # exponential decay
+                if gain < 0.01:
+                    # Below -40 dB — just send silence (cheaper than numpy)
+                    return b'\x00' * len(self._plc_chunk), False
+                arr = np.frombuffer(self._plc_chunk, dtype=np.int16)
+                faded = np.clip(arr.astype(np.float32) * gain, -32768, 32767).astype(np.int16)
+                return faded.tobytes(), False
             return None, False
 
         raw = self._sub_buffer[:cb]
         self._sub_buffer = self._sub_buffer[cb:]
+        self._plc_count = 0  # real data arrived — reset PLC counter
 
         # Muted: chunk was sliced (keeps sub-buffer fresh), discard it.
         should_discard = self.muted or (self.gateway.tx_muted and self.gateway.rx_muted)
         if should_discard:
             self.audio_level = max(0, int(self.audio_level * 0.7))
+            self._plc_chunk = None  # don't replay stale audio on unmute
             return None, False
 
         self.total_reads += 1
@@ -1515,8 +1537,9 @@ class SDRSource(AudioSource):
                 arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
                 raw = arr.tobytes()
 
+        self._plc_chunk = raw  # save for PLC if next tick depletes
         return raw, False  # SDR never triggers PTT
-    
+
     def is_active(self):
         """SDR is active if enabled and receiving audio"""
         return self.enabled and not self.muted and self.input_stream is not None
@@ -1560,6 +1583,8 @@ class SDRSource(AudioSource):
             self._reader_thread.join(timeout=2.0)
         self._sub_buffer = b''
         self._prebuffering = True  # rebuild cushion on next start
+        self._plc_chunk = None     # clear PLC state for clean restart
+        self._plc_count = 0
         while not self._chunk_queue.empty():
             try:
                 self._chunk_queue.get_nowait()
@@ -7002,7 +7027,9 @@ class MumbleRadioGateway:
                 q4 = statistics.mean(sq_vals[-n//4:]) if n >= 4 else 0
                 f.write(f"  first quarter={q1:.1f}  last quarter={q4:.1f}\n")
                 pb_ticks = sum(1 for r in trace if len(r) > SPREBUF and r[SPREBUF])
-                f.write(f"  prebuffering: {pb_ticks}/{len(trace)} ticks\n\n")
+                f.write(f"  prebuffering: {pb_ticks}/{len(trace)} ticks\n")
+                plc_total = self.sdr_source._plc_total if self.sdr_source else 0
+                f.write(f"  PLC repeats: {plc_total} (gap concealment)\n\n")
 
             # SDR2 queue depth
             sq2_vals = [r[SQ2] for r in trace if len(r) > SQ2 and r[SQ2] >= 0]
@@ -7010,7 +7037,9 @@ class MumbleRadioGateway:
                 f.write(f"SDR2 QUEUE DEPTH\n")
                 f.write(f"  min={min(sq2_vals)}  mean={statistics.mean(sq2_vals):.1f}  max={max(sq2_vals)}\n")
                 pb2_ticks = sum(1 for r in trace if len(r) > S2PREBUF and r[S2PREBUF])
-                f.write(f"  prebuffering: {pb2_ticks}/{len(trace)} ticks\n\n")
+                f.write(f"  prebuffering: {pb2_ticks}/{len(trace)} ticks\n")
+                plc2_total = self.sdr2_source._plc_total if self.sdr2_source else 0
+                f.write(f"  PLC repeats: {plc2_total} (gap concealment)\n\n")
 
             # AIOC queue depth
             aq_vals = [r[AQ] for r in trace if r[AQ] >= 0]
