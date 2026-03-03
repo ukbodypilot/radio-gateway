@@ -224,9 +224,9 @@ SDR2_DUCK = true        # SDR2: ducked by radio RX and SDR1
 
 **Status bar during dual SDR operation:**
 ```
-SDR1:[███---] 45%  SDR2:-DUCK- D      ← SDR2 ducked by SDR1
-SDR1:-DUCK- D      SDR2:-DUCK- D      ← both ducked by radio RX
-SDR1:[███---] 45%  SDR2:[██----] 30%  ← both playing (mixed)
+SDR1:███---  45%  SDR2:-DUCK- D      ← SDR2 ducked by SDR1
+SDR1:-DUCK- D     SDR2:-DUCK- D      ← both ducked by radio RX
+SDR1:███---  45%  SDR2:██----  30%   ← both playing (mixed)
 ```
 *(The bar is always 6 characters wide; `-DUCK-` and `-MUTE-` replace the filled bar in their respective states.)*
 
@@ -1622,6 +1622,32 @@ class MySource(AudioSource):
 - PyAudio: Python audio interface
 
 ## Changelog
+
+### TH-9800 CAT Control
+
+Connects to the TH9800_CAT.py TCP server on startup and configures both sides of the radio automatically — channel, volume, and power level.
+
+- **RadioCATClient** class: TCP client that authenticates, sends binary CAT packets, and parses radio responses
+- **Channel set**: dials through channels using per-VFO knob commands (L_DIAL_RIGHT / R_DIAL_RIGHT) — no VFO switch needed
+- **Volume set**: uses `!vol` TCP command (same code path as GUI slider), steps incrementally from default 25 to target
+- **Power set**: cycles L/M/H by pressing the LOW button and reading DISPLAY_ICONS response
+- **RTS mode**: automatically sends `!rts True` on connect to ensure USB-controlled TX mode
+- Debug log: `cat_debug.log` records all packet traffic; summary messages print to console
+- Ctrl+C interrupts setup sequence cleanly via `_stop` flag
+- Status bar: `CAT` indicator — white (enabled, not connected), green (connected idle), red (active)
+- Config: `ENABLE_CAT_CONTROL`, `CAT_HOST`, `CAT_PORT`, `CAT_PASSWORD`, `CAT_LEFT/RIGHT_CHANNEL`, `CAT_LEFT/RIGHT_VOLUME`, `CAT_LEFT/RIGHT_POWER`
+- TH9800_CAT.py: added `auto_start_server` config key and `!vol` TCP command
+
+### CH340 USB Relay Control
+
+Controls CH340-based USB relay modules for radio power button simulation and charger scheduling.
+
+- **Radio power relay** (`j` key): momentary pulse (ON 0.5s → OFF) simulates pressing the radio power button
+- **Charger relay**: automatic on/off schedule with overnight wrap support (e.g. 23:00→06:00)
+- `RelayController` class: 4-byte serial protocol, lazy `import serial`, persistent symlinks via udev rules
+- Status bar: `PWRB` (white idle, yellow during pulse), `CHG:CHRGE/DRAIN` (green/red)
+- Config: `ENABLE_RELAY_RADIO`, `RELAY_RADIO_PORT`, `ENABLE_RELAY_CHARGER`, `RELAY_CHARGER_PORT`, `RELAY_CHARGER_ON_TIME`, `RELAY_CHARGER_OFF_TIME`
+- Udev template: `scripts/99-relay-udev.rules`
 
 ### SDR Rebroadcast, TTS Voices & Audio Improvements
 
