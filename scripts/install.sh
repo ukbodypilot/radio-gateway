@@ -31,7 +31,7 @@ fi
 echo
 
 # ── 1. System packages ───────────────────────────────────────
-echo "[ 1/8 ] Installing system packages..."
+echo "[ 1/10 ] Installing system packages..."
 sudo apt-get update -qq
 sudo apt-get install -y \
     python3 \
@@ -48,7 +48,7 @@ echo "  ✓ System packages installed"
 echo
 
 # ── 2. ALSA loopback module ──────────────────────────────────
-echo "[ 2/8 ] Setting up ALSA loopback (for SDR input)..."
+echo "[ 2/10 ] Setting up ALSA loopback (for SDR input)..."
 
 # Write modprobe options first:
 #   enable=1,1,1 → enable 3 independent loopback cards
@@ -107,7 +107,7 @@ aplay -l 2>/dev/null | grep "Loopback" | grep "device 0" | sed 's/^/    /'
 echo
 
 # ── 3. Python packages ───────────────────────────────────────
-echo "[ 3/8 ] Installing Python packages..."
+echo "[ 3/10 ] Installing Python packages..."
 
 # Helper: try --break-system-packages (Debian 12+), then plain pip
 _pip() {
@@ -151,7 +151,7 @@ fi
 echo
 
 # ── 4. UDEV rules for AIOC ──────────────────────────────────
-echo "[ 4/8 ] Setting up UDEV rules for AIOC USB device..."
+echo "[ 4/10 ] Setting up UDEV rules for AIOC USB device..."
 UDEV_RULE='SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="audio"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="plugdev"'
 
@@ -166,7 +166,7 @@ fi
 echo
 
 # ── 5. Audio group, realtime limits, and sudoers ─────────────────
-echo "[ 5/8 ] Setting up audio permissions..."
+echo "[ 5/10 ] Setting up audio permissions..."
 set +e   # None of this should abort the install
 
 # Determine the real (non-root) user running this script
@@ -210,7 +210,7 @@ set -e
 echo
 
 # ── 6. Darkice (optional — for Broadcastify/Icecast streaming) ───
-echo "[ 6/8 ] Darkice streaming (optional)..."
+echo "[ 6/10 ] Darkice streaming (optional)..."
 set +e
 sudo apt-get install -y darkice lame 2>/dev/null
 DARKICE_STATUS=$?
@@ -260,8 +260,49 @@ systemctl --user restart wireplumber 2>/dev/null || true
 set -e
 echo
 
-# ── 7. Gateway configuration ─────────────────────────────────
-echo "[ 7/8 ] Setting up configuration..."
+# ── 7. Mumble GUI client ─────────────────────────────────────
+echo "[ 7/10 ] Installing Mumble client..."
+set +e
+sudo apt-get install -y mumble 2>/dev/null
+if [ $? -eq 0 ]; then
+    echo "  ✓ Mumble client installed"
+else
+    echo "  ⚠ Could not install mumble — install manually: sudo apt-get install mumble"
+fi
+set -e
+echo
+
+# ── 8. OpenSSL TLS compatibility (for older Mumble servers) ──
+echo "[ 8/10 ] Configuring OpenSSL for TLS 1.0 compatibility..."
+OPENSSL_CNF="/etc/ssl/openssl.cnf"
+if [ -f "$OPENSSL_CNF" ]; then
+    # Check if already patched
+    if grep -q "MinProtocol = TLSv1" "$OPENSSL_CNF" 2>/dev/null; then
+        echo "  ✓ OpenSSL TLS 1.0 compatibility already configured"
+    else
+        # Back up original
+        sudo cp "$OPENSSL_CNF" "${OPENSSL_CNF}.bak"
+        echo "  ✓ Backed up $OPENSSL_CNF to ${OPENSSL_CNF}.bak"
+
+        # Add ssl_conf directive under [openssl_init] if not present
+        if ! grep -q "^ssl_conf" "$OPENSSL_CNF" 2>/dev/null; then
+            sudo sed -i '/^\[openssl_init\]/a ssl_conf = ssl_sect' "$OPENSSL_CNF"
+        fi
+
+        # Add [ssl_sect] and [system_default_sect] sections before [provider_sect]
+        if ! grep -q "^\[ssl_sect\]" "$OPENSSL_CNF" 2>/dev/null; then
+            sudo sed -i '/^\[provider_sect\]/i \[ssl_sect\]\nsystem_default = system_default_sect\n\n[system_default_sect]\nMinProtocol = TLSv1\nCipherString = DEFAULT:@SECLEVEL=0\n' "$OPENSSL_CNF"
+        fi
+
+        echo "  ✓ OpenSSL patched: TLS 1.0 + SECLEVEL=0 (needed for older Mumble servers)"
+    fi
+else
+    echo "  ⚠ $OPENSSL_CNF not found — skipping TLS compatibility patch"
+fi
+echo
+
+# ── 9. Gateway configuration ─────────────────────────────────
+echo "[ 9/10 ] Setting up configuration..."
 
 CONFIG_DEST="$GATEWAY_DIR/gateway_config.txt"
 CONFIG_SRC="$GATEWAY_DIR/examples/gateway_config.txt"
@@ -282,8 +323,8 @@ mkdir -p "$GATEWAY_DIR/audio"
 echo "  ✓ audio/ directory ready (place announcement files here)"
 echo
 
-# ── 7. Make scripts executable ───────────────────────────────
-echo "[ 8/8 ] Setting permissions..."
+# ── 10. Make scripts executable ──────────────────────────────
+echo "[ 10/10 ] Setting permissions..."
 chmod +x "$GATEWAY_DIR/mumble_radio_gateway.py" 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/scripts/"*.sh 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/start.sh" 2>/dev/null || true
