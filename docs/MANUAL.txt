@@ -648,6 +648,7 @@ SETUP
 KEYBOARD CONTROLS
 -----------------
   l = Toggle LIVE/IDLE (server) or LIVE/MUTE (client)
+  m = Switch between server and client roles at runtime
 
   Server role:
     LIVE (red)   — real audio is captured and sent to the gateway
@@ -658,6 +659,9 @@ KEYBOARD CONTROLS
     LIVE (red)    — received audio is played on the output device
     MUTE (yellow) — received audio is discarded (connection stays open)
     Starts in LIVE mode.
+
+  Each role has its own saved settings (devices, host/port) in the config file.
+  Pressing 'm' cleanly tears down the current role and starts the other.
 
 CONNECTION EXAMPLES
 -------------------

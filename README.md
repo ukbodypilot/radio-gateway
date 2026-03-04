@@ -1019,8 +1019,10 @@ Selections are saved to `windows_audio_client.json` for subsequent runs.
 |-----|------|--------|
 | `l` | server | Toggle LIVE/IDLE — LIVE sends real audio (red), IDLE sends silence (green) |
 | `l` | client | Toggle LIVE/MUTE — LIVE plays received audio (red), MUTE discards it (yellow) |
+| `m` | any | Switch between server and client roles at runtime |
 
 Server role starts in IDLE mode. Client role starts in LIVE mode.
+Each role has its own saved settings (devices, host/port) in the config file.
 
 ### Connection Examples
 

@@ -24,6 +24,7 @@ Audio: 48000 Hz, mono, 16-bit signed little-endian PCM, 2400 frames per chunk.
 
 Keyboard controls:
   l = Toggle LIVE/IDLE (server) or LIVE/MUTE (client)
+  m = Switch between server and client roles
 
 Usage:
     pip install sounddevice
@@ -31,6 +32,7 @@ Usage:
 
 On first run the script will prompt for role, mode, audio device, and host,
 then save the selection to windows_audio_client.json alongside this script.
+Each role has its own saved settings (devices, host/port) in the config file.
 """
 
 import json
@@ -66,6 +68,8 @@ MODE_SDR = "sdr"
 MODE_ANNOUNCE = "announce"
 DEFAULT_PORTS = {MODE_SDR: 9600, MODE_ANNOUNCE: 9601}
 MODE_LABELS = {MODE_SDR: "SDR input source", MODE_ANNOUNCE: "Announcement source"}
+
+ROLE_LABELS = {ROLE_SERVER: "Server (send audio)", ROLE_CLIENT: "Client (receive audio)"}
 
 # ANSI colors
 RED = "\033[91m"
@@ -118,6 +122,8 @@ def _keyboard_listener(state):
                     ch = ""
                 if ch == "l":
                     state["live"] = not state["live"]
+                elif ch == "m":
+                    state["switch_role"] = True
             time.sleep(0.05)
     except ImportError:
         # Unix / Linux / macOS
@@ -133,6 +139,8 @@ def _keyboard_listener(state):
                     ch = sys.stdin.read(1).lower()
                     if ch == "l":
                         state["live"] = not state["live"]
+                    elif ch == "m":
+                        state["switch_role"] = True
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
@@ -193,7 +201,7 @@ def choose_role(cfg):
 
 def choose_mode(cfg):
     """Resolve or prompt for operating mode.  Returns MODE_SDR or MODE_ANNOUNCE."""
-    saved = cfg.get("mode")
+    saved = cfg.get("server_mode")
     if saved in (MODE_SDR, MODE_ANNOUNCE):
         return saved
 
@@ -215,7 +223,7 @@ def choose_mode(cfg):
 
 def choose_input_device(cfg):
     """Resolve or prompt for an input device.  Returns (index, name)."""
-    saved_name = cfg.get("device_name")
+    saved_name = cfg.get("server_device_name")
     if saved_name:
         idx = find_device_by_name(saved_name, output=False)
         if idx is not None:
@@ -244,7 +252,7 @@ def choose_input_device(cfg):
 
 def choose_output_device(cfg):
     """Resolve or prompt for an output device.  Returns (index, name)."""
-    saved_name = cfg.get("output_device_name")
+    saved_name = cfg.get("client_device_name")
     if saved_name:
         idx = find_device_by_name(saved_name, output=True)
         if idx is not None:
@@ -293,16 +301,19 @@ def level_bar(db, width=20):
     return "#" * filled + "-" * (width - filled)
 
 # ---------------------------------------------------------------------------
-# Server role — send audio to gateway (existing behavior)
+# Server role — send audio to gateway
 # ---------------------------------------------------------------------------
-def run_server(cfg):
-    """Send audio from local input device to the gateway over TCP."""
+def run_server(cfg, state):
+    """Send audio from local input device to the gateway over TCP.
+
+    Returns True if user pressed 'm' to switch roles, False otherwise.
+    """
     # --- Operating mode -----------------------------------------------------
     try:
         mode = choose_mode(cfg)
     except KeyboardInterrupt:
-        sys.exit(0)
-    cfg["mode"] = mode
+        return False
+    cfg["server_mode"] = mode
     default_port = DEFAULT_PORTS[mode]
 
     # --- Resolve gateway host/port from args, config, or prompt -----------
@@ -315,18 +326,18 @@ def run_server(cfg):
             port = int(sys.argv[2])
         except ValueError:
             print(f"Invalid port: {sys.argv[2]}")
-            sys.exit(1)
+            return False
 
     if not host:
-        host = cfg.get("gateway_host")
+        host = cfg.get("server_host")
     if not port:
-        port = cfg.get("gateway_port")
+        port = cfg.get("server_port")
 
     if not host:
         host = input("Gateway host (IP or hostname): ").strip()
         if not host:
             print("No host provided.")
-            sys.exit(1)
+            return False
     if not port:
         port_str = input(f"Gateway port [{default_port}]: ").strip()
         port = int(port_str) if port_str else default_port
@@ -337,28 +348,26 @@ def run_server(cfg):
     try:
         dev_index, dev_name = choose_input_device(cfg)
     except KeyboardInterrupt:
-        sys.exit(0)
+        return False
 
     # Save config
-    cfg["device_name"] = dev_name
-    cfg["gateway_host"] = host
-    cfg["gateway_port"] = port
+    cfg["server_device_name"] = dev_name
+    cfg["server_host"] = host
+    cfg["server_port"] = port
     save_config(cfg)
 
-    print(f"\nRole   : Server (send audio)")
+    print(f"\nRole   : {CYAN}Server (send audio){RESET}")
     print(f"Mode   : {MODE_LABELS[mode]}")
     print(f"Device : {dev_name} (index {dev_index})")
     print(f"Gateway: {host}:{port}")
     print(f"Format : {SAMPLE_RATE} Hz, mono, 16-bit, {FRAMES_PER_BUFFER} frames/chunk")
     print(f"\nPress 'l' to toggle LIVE/IDLE — audio is NOT sent until you go LIVE")
+    print(f"Press 'm' to switch to client role")
     print("Press Ctrl+C to stop.\n")
 
-    # --- Shared state for keyboard thread -----------------------------------
-    state = {"live": False, "running": True}
-
-    # Start keyboard listener
-    kb_thread = threading.Thread(target=_keyboard_listener, args=(state,), daemon=True)
-    kb_thread.start()
+    # --- Reset state --------------------------------------------------------
+    state["live"] = False
+    state["switch_role"] = False
 
     # --- Open audio stream --------------------------------------------------
     stream = sd.RawInputStream(
@@ -389,8 +398,9 @@ def run_server(cfg):
                 pass
             return None
 
+    switched = False
     try:
-        while True:
+        while not state["switch_role"]:
             # Connect / reconnect
             if sock is None:
                 print(f"Connecting to {host}:{port} ...")
@@ -398,7 +408,7 @@ def run_server(cfg):
                 if sock is None:
                     # Keep reading (and discarding) audio so the stream doesn't stall
                     deadline = time.monotonic() + RECONNECT_INTERVAL
-                    while time.monotonic() < deadline:
+                    while time.monotonic() < deadline and not state["switch_role"]:
                         try:
                             stream.read(FRAMES_PER_BUFFER)
                         except Exception:
@@ -438,13 +448,14 @@ def run_server(cfg):
                 status = f"{GREEN}IDLE{RESET}"
             db = rms_db(pcm)
             bar = level_bar(db)
-            sys.stdout.write(f"\r  {status}  [{bar}] {db:+6.1f} dBFS ")
+            role_tag = f"{CYAN}SV{RESET}"
+            sys.stdout.write(f"\r  {role_tag} {status}  [{bar}] {db:+6.1f} dBFS ")
             sys.stdout.flush()
 
+        switched = state["switch_role"]
     except KeyboardInterrupt:
         print("\n\nShutting down.")
     finally:
-        state["running"] = False
         stream.stop()
         stream.close()
         if sock:
@@ -452,6 +463,8 @@ def run_server(cfg):
                 sock.close()
             except Exception:
                 pass
+
+    return switched
 
 # ---------------------------------------------------------------------------
 # Client role — receive audio from gateway
@@ -467,8 +480,11 @@ def _recv_exact(sock, n):
     return bytes(buf)
 
 
-def run_client(cfg):
-    """Receive audio from the gateway and play on local output device."""
+def run_client(cfg, state):
+    """Receive audio from the gateway and play on local output device.
+
+    Returns True if user pressed 'm' to switch roles, False otherwise.
+    """
     # --- Resolve listen port from args, config, or prompt -------------------
     port = None
     if len(sys.argv) >= 3:
@@ -476,7 +492,7 @@ def run_client(cfg):
             port = int(sys.argv[2])
         except ValueError:
             print(f"Invalid port: {sys.argv[2]}")
-            sys.exit(1)
+            return False
     if not port:
         port = cfg.get("client_port")
     if not port:
@@ -488,25 +504,24 @@ def run_client(cfg):
     try:
         dev_index, dev_name = choose_output_device(cfg)
     except KeyboardInterrupt:
-        sys.exit(0)
+        return False
 
     # Save config
-    cfg["output_device_name"] = dev_name
+    cfg["client_device_name"] = dev_name
     cfg["client_port"] = port
     save_config(cfg)
 
-    print(f"\nRole   : Client (receive audio)")
+    print(f"\nRole   : {CYAN}Client (receive audio){RESET}")
     print(f"Device : {dev_name} (index {dev_index})")
     print(f"Listen : port {port}")
     print(f"Format : {SAMPLE_RATE} Hz, mono, 16-bit, {FRAMES_PER_BUFFER} frames/chunk")
     print(f"\nPress 'l' to toggle LIVE/MUTE — when MUTE, received audio is discarded")
+    print(f"Press 'm' to switch to server role")
     print("Press Ctrl+C to stop.\n")
 
-    # --- Shared state for keyboard thread -----------------------------------
-    state = {"live": True, "running": True}
-
-    kb_thread = threading.Thread(target=_keyboard_listener, args=(state,), daemon=True)
-    kb_thread.start()
+    # --- Reset state --------------------------------------------------------
+    state["live"] = True
+    state["switch_role"] = False
 
     # --- Listen socket ------------------------------------------------------
     listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -517,8 +532,9 @@ def run_client(cfg):
 
     print(f"Listening on port {port} — waiting for gateway connection ...")
 
+    switched = False
     try:
-        while state["running"]:
+        while not state["switch_role"]:
             # Accept a connection
             try:
                 conn, addr = listen_sock.accept()
@@ -541,7 +557,7 @@ def run_client(cfg):
             out_stream.start()
 
             try:
-                while state["running"]:
+                while not state["switch_role"]:
                     # Read length prefix
                     hdr = _recv_exact(conn, 4)
                     if hdr is None:
@@ -568,7 +584,8 @@ def run_client(cfg):
                         status = f"{YELLOW}MUTE{RESET}"
                     db = rms_db(pcm)
                     bar = level_bar(db)
-                    sys.stdout.write(f"\r  {status}  [{bar}] {db:+6.1f} dBFS ")
+                    role_tag = f"{CYAN}CL{RESET}"
+                    sys.stdout.write(f"\r  {role_tag} {status}  [{bar}] {db:+6.1f} dBFS ")
                     sys.stdout.flush()
 
             except (ConnectionResetError, BrokenPipeError, OSError):
@@ -580,13 +597,16 @@ def run_client(cfg):
                     conn.close()
                 except Exception:
                     pass
-                print(f"\nGateway disconnected — waiting for reconnect ...")
+                if not state["switch_role"]:
+                    print(f"\nGateway disconnected — waiting for reconnect ...")
 
+        switched = state["switch_role"]
     except KeyboardInterrupt:
         print("\n\nShutting down.")
     finally:
-        state["running"] = False
         listen_sock.close()
+
+    return switched
 
 # ---------------------------------------------------------------------------
 # Main
@@ -602,10 +622,27 @@ def main():
     cfg["role"] = role
     save_config(cfg)
 
-    if role == ROLE_SERVER:
-        run_server(cfg)
-    else:
-        run_client(cfg)
+    # Shared state lives across role switches — keyboard thread stays running
+    state = {"live": False, "running": True, "switch_role": False}
+    kb_thread = threading.Thread(target=_keyboard_listener, args=(state,), daemon=True)
+    kb_thread.start()
+
+    while True:
+        if role == ROLE_SERVER:
+            switched = run_server(cfg, state)
+        else:
+            switched = run_client(cfg, state)
+
+        if not switched:
+            break
+
+        # Flip role
+        role = ROLE_CLIENT if role == ROLE_SERVER else ROLE_SERVER
+        cfg["role"] = role
+        save_config(cfg)
+        print(f"\n\n{'='*60}")
+        print(f"  Switching to {CYAN}{ROLE_LABELS[role]}{RESET}")
+        print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
