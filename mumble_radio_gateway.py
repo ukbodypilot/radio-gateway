@@ -57,16 +57,32 @@ try:
     from pymumble_py3 import Mumble
     from pymumble_py3.callbacks import PYMUMBLE_CLBK_SOUNDRECEIVED, PYMUMBLE_CLBK_TEXTMESSAGERECEIVED
     import pymumble_py3.constants as mumble_constants
+    import pymumble_py3.mumble as _pymumble_mod
 except ImportError:
     try:
         from pymumble import Mumble
         from pymumble.callbacks import PYMUMBLE_CLBK_SOUNDRECEIVED, PYMUMBLE_CLBK_TEXTMESSAGERECEIVED
         import pymumble.constants as mumble_constants
+        import pymumble.mumble as _pymumble_mod
     except ImportError:
         print("ERROR: pymumble library not found!")
         print("Install with: pip3 install pymumble --break-system-packages")
         print("          or: pip3 install pymumble-py3 --break-system-packages")
         sys.exit(1)
+
+# Patch pymumble's _wrap_socket to allow old Murmur servers with SHA-1 certs.
+# ssl.create_default_context() enforces SECLEVEL=1+ which rejects SHA-1 signatures
+# (e.g. Murmur 1.2.x auto-generated certificates). Lower to SECLEVEL=0.
+def _wrap_socket_compat(sock, keyfile=None, certfile=None,
+                        verify_mode=_ssl.CERT_NONE, server_hostname=None):
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    ctx.set_ciphers('DEFAULT:@SECLEVEL=0')
+    if certfile:
+        ctx.load_cert_chain(certfile, keyfile)
+    return ctx.wrap_socket(sock, server_hostname=server_hostname)
+_pymumble_mod._wrap_socket = _wrap_socket_compat
 
 try:
     import pyaudio
