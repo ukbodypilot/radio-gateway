@@ -3689,6 +3689,19 @@ class MumbleRadioGateway:
         self._darkice_was_running = False  # True if DarkIce was alive at startup
         self._darkice_restart_count = 0
         self._last_darkice_check = 0
+
+        # Watchdog trace — low-fidelity long-running diagnostics (press 'u')
+        # Samples every 5s into memory, flushes to disk every 60s.
+        # Designed to run overnight/multi-day to catch freezes.
+        self._watchdog_active = False
+        self._watchdog_thread = None
+        self._watchdog_t0 = 0.0           # start monotonic time
+        self._tx_loop_tick = 0            # incremented every transmit loop tick
+
+        # Thread references for watchdog health checks
+        self._tx_thread = None
+        self._status_thread = None
+        self._keyboard_thread = None
     
     def _charger_should_be_on(self):
         """Check if charger should be on based on current time and schedule.
@@ -5538,6 +5551,7 @@ class MumbleRadioGateway:
         _trace = self._audio_trace  # local ref for speed
 
         while self.running:
+            self._tx_loop_tick += 1
             # ── 50ms self-clock ──────────────────────────────────────────────
             _now = time.monotonic()
             _slept = 0.0
@@ -6460,6 +6474,18 @@ class MumbleRadioGateway:
                             print(f"\n[Trace] Recording STOPPED ({len(self._audio_trace)} ticks captured)")
                         self._trace_events.append((time.monotonic(), 'trace', 'on' if self._trace_recording else 'off'))
 
+                    elif char == 'u':
+                        # Toggle watchdog trace (long-running diagnostics)
+                        self._watchdog_active = not self._watchdog_active
+                        if self._watchdog_active:
+                            self._watchdog_t0 = time.monotonic()
+                            self._watchdog_thread = threading.Thread(
+                                target=self._watchdog_trace_loop, daemon=True)
+                            self._watchdog_thread.start()
+                            print(f"\n[Watchdog] Trace STARTED — sampling every 5s, flushing to tools/watchdog_trace.txt every 60s")
+                        else:
+                            print(f"\n[Watchdog] Trace STOPPED")
+
                     elif char == 'o':
                         # Toggle speaker output mute
                         if self.speaker_stream:
@@ -6895,7 +6921,7 @@ class MumbleRadioGateway:
         print("  PTT:   'p'=Manual PTT toggle")
         print("  Play:  '1-9'=Announcements  '0'=StationID  '-'=Stop")
         print("  Relay: 'j'=Radio power button")
-        print("  Trace: 'i'=Start/stop audio trace")
+        print("  Trace: 'i'=Start/stop audio trace  'u'=Start/stop watchdog trace")
         print("=" * 60)
         print()
         
@@ -6917,16 +6943,16 @@ class MumbleRadioGateway:
             print()
         
         # Start audio transmit thread
-        tx_thread = threading.Thread(target=self.audio_transmit_loop, daemon=True)
-        tx_thread.start()
-        
+        self._tx_thread = threading.Thread(target=self.audio_transmit_loop, daemon=True)
+        self._tx_thread.start()
+
         # Start status monitor thread (handles PTT timeout and status reporting)
-        status_thread = threading.Thread(target=self.status_monitor_loop, daemon=True)
-        status_thread.start()
-        
+        self._status_thread = threading.Thread(target=self.status_monitor_loop, daemon=True)
+        self._status_thread.start()
+
         # Start keyboard listener thread
-        keyboard_thread = threading.Thread(target=self.keyboard_listener_loop, daemon=True)
-        keyboard_thread.start()
+        self._keyboard_thread = threading.Thread(target=self.keyboard_listener_loop, daemon=True)
+        self._keyboard_thread.start()
         
         # Main loop
         try:
@@ -6937,6 +6963,146 @@ class MumbleRadioGateway:
         finally:
             self.cleanup()
     
+    def _watchdog_trace_loop(self):
+        """Low-fidelity long-running trace.  Samples every 5s, flushes to disk every 60s.
+        Designed to run overnight to diagnose freezes."""
+        import os, datetime, resource
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'watchdog_trace.txt')
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        SAMPLE_INTERVAL = 5     # seconds between samples
+        FLUSH_INTERVAL = 60     # seconds between disk writes
+        buffer = []
+        last_flush = time.monotonic()
+        prev_tick = self._tx_loop_tick
+
+        # Write/append header
+        hdr = ("timestamp\tuptime_s\ttx_ticks\ttick_rate"
+               "\tth_tx\tth_stat\tth_kb\tth_aioc\tth_sdr1\tth_sdr2\tth_remote\tth_announce"
+               "\tmumble"
+               "\ten_aioc\ten_sdr1\ten_sdr2\ten_remote\ten_announce"
+               "\tmu_tx\tmu_rx\tmu_sdr1\tmu_sdr2\tmu_remote\tmu_announce\tmu_spk"
+               "\tlvl_tx\tlvl_rx\tlvl_sdr1\tlvl_sdr2\tlvl_sv"
+               "\tq_aioc\tq_sdr1\tq_sdr2"
+               "\tptt\tvad\trebro_ptt\trss_mb\n")
+        try:
+            with open(out_path, 'a') as f:
+                f.write(f"\n# Watchdog started {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(hdr)
+        except Exception:
+            pass
+
+        while self._watchdog_active and self.running:
+            time.sleep(SAMPLE_INTERVAL)
+            if not self._watchdog_active:
+                break
+
+            now_mono = time.monotonic()
+            uptime = now_mono - self._watchdog_t0
+
+            # Tick rate (ticks per second since last sample)
+            cur_tick = self._tx_loop_tick
+            tick_rate = (cur_tick - prev_tick) / SAMPLE_INTERVAL
+            prev_tick = cur_tick
+
+            # Thread alive checks
+            def _alive(t):
+                return 1 if (t and t.is_alive()) else 0
+
+            th_tx = _alive(self._tx_thread)
+            th_stat = _alive(self._status_thread)
+            th_kb = _alive(self._keyboard_thread)
+            th_aioc = _alive(self.radio_source._reader_thread if self.radio_source and hasattr(self.radio_source, '_reader_thread') else None)
+            th_sdr1 = _alive(self.sdr_source._reader_thread if self.sdr_source and hasattr(self.sdr_source, '_reader_thread') else None)
+            th_sdr2 = _alive(self.sdr2_source._reader_thread if self.sdr2_source and hasattr(self.sdr2_source, '_reader_thread') else None)
+            th_remote = _alive(self.remote_audio_source._reader_thread if self.remote_audio_source and hasattr(self.remote_audio_source, '_reader_thread') else None)
+            th_announce = _alive(self.announce_input_source._reader_thread if self.announce_input_source and hasattr(self.announce_input_source, '_reader_thread') else None)
+
+            # Mumble connection
+            mumble_ok = 0
+            try:
+                if self.mumble and self.mumble.is_alive():
+                    mumble_ok = 1
+            except Exception:
+                pass
+
+            # Source enabled flags
+            en_aioc = 1 if (self.radio_source and self.radio_source.enabled) else 0
+            en_sdr1 = 1 if (self.sdr_source and self.sdr_source.enabled) else 0
+            en_sdr2 = 1 if (self.sdr2_source and self.sdr2_source.enabled) else 0
+            en_remote = 1 if (self.remote_audio_source and self.remote_audio_source.enabled) else 0
+            en_announce = 1 if (self.announce_input_source and self.announce_input_source.enabled) else 0
+
+            # Mute flags
+            mu_tx = 1 if self.tx_muted else 0
+            mu_rx = 1 if self.rx_muted else 0
+            mu_sdr1 = 1 if self.sdr_muted else 0
+            mu_sdr2 = 1 if self.sdr2_muted else 0
+            mu_remote = 1 if self.remote_audio_muted else 0
+            mu_announce = 1 if self.announce_input_muted else 0
+            mu_spk = 1 if self.speaker_muted else 0
+
+            # Audio levels
+            lvl_tx = self.tx_audio_level
+            lvl_rx = self.rx_audio_level
+            lvl_sdr1 = self.sdr_audio_level
+            lvl_sdr2 = self.sdr2_audio_level
+            lvl_sv = self.sv_audio_level
+
+            # Queue depths
+            def _qsize(src):
+                try:
+                    if src and hasattr(src, '_chunk_queue'):
+                        return src._chunk_queue.qsize()
+                except Exception:
+                    pass
+                return -1
+
+            q_aioc = _qsize(self.radio_source)
+            q_sdr1 = _qsize(self.sdr_source)
+            q_sdr2 = _qsize(self.sdr2_source)
+
+            # PTT / VAD / rebroadcast
+            ptt = 1 if self.ptt_active else 0
+            vad = 1 if self.vad_active else 0
+            rebro = 1 if self._rebroadcast_ptt_active else 0
+
+            # RSS memory (KB → MB)
+            try:
+                rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+            except Exception:
+                rss_mb = -1
+
+            ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            line = (f"{ts}\t{uptime:.0f}\t{cur_tick}\t{tick_rate:.1f}"
+                    f"\t{th_tx}\t{th_stat}\t{th_kb}\t{th_aioc}\t{th_sdr1}\t{th_sdr2}\t{th_remote}\t{th_announce}"
+                    f"\t{mumble_ok}"
+                    f"\t{en_aioc}\t{en_sdr1}\t{en_sdr2}\t{en_remote}\t{en_announce}"
+                    f"\t{mu_tx}\t{mu_rx}\t{mu_sdr1}\t{mu_sdr2}\t{mu_remote}\t{mu_announce}\t{mu_spk}"
+                    f"\t{lvl_tx}\t{lvl_rx}\t{lvl_sdr1}\t{lvl_sdr2}\t{lvl_sv}"
+                    f"\t{q_aioc}\t{q_sdr1}\t{q_sdr2}"
+                    f"\t{ptt}\t{vad}\t{rebro}\t{rss_mb:.1f}\n")
+            buffer.append(line)
+
+            # Flush to disk periodically
+            if now_mono - last_flush >= FLUSH_INTERVAL and buffer:
+                try:
+                    with open(out_path, 'a') as f:
+                        f.writelines(buffer)
+                    buffer.clear()
+                    last_flush = now_mono
+                except Exception:
+                    pass
+
+        # Final flush on stop
+        if buffer:
+            try:
+                with open(out_path, 'a') as f:
+                    f.write(f"# Watchdog stopped {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.writelines(buffer)
+            except Exception:
+                pass
+
     def _dump_audio_trace(self):
         """Write audio trace to tools/audio_trace.txt on shutdown."""
         trace = list(self._audio_trace)
@@ -7324,6 +7490,10 @@ class MumbleRadioGateway:
 
     def cleanup(self):
         """Clean up resources"""
+        # Stop watchdog trace and flush remaining samples
+        if self._watchdog_active:
+            self._watchdog_active = False
+
         # Dump audio trace before anything else
         try:
             self._dump_audio_trace()

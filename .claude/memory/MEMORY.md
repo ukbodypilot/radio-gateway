@@ -61,7 +61,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - PTT: `p`=Manual PTT toggle
 - PLAY: `1-9`=Announcements `0`=StationID `-`=Stop
 - RELAY: `j`=Radio power button (momentary pulse)
-- TRACE: `i`=Start/stop audio trace
+- TRACE: `i`=Start/stop audio trace `u`=Start/stop watchdog trace
 - NOTE: AGC moved from 'a' to 'g'; proc flag changed from A to G
 
 ## ALSA Loopback Setup
@@ -95,6 +95,14 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Config template: `scripts/darkice.cfg.example` (NOT examples/)
 - Needs audio group + realtime limits
 - udev: needs BOTH `SUBSYSTEM=="usb"` AND `SUBSYSTEM=="hidraw"` rules for AIOC
+
+## Watchdog Trace (press 'u')
+- Low-fidelity long-running trace for diagnosing overnight freezes
+- Samples every 5s into memory, flushes to `tools/watchdog_trace.txt` every 60s
+- Tracks: thread alive (tx/status/kb/aioc/sdr1/sdr2/remote/announce), mumble connected,
+  source enabled flags, mute flags, audio levels, queue depths, PTT/VAD/rebroadcast, RSS memory
+- `_tx_loop_tick` counter: incremented every transmit loop tick; watchdog computes tick_rate/s
+- If tick_rate drops to 0, transmit loop is stuck. If a thread alive goes 0→dead, thread crashed.
 
 ## Audio Trace Instrumentation
 - PTT branch now has its own RMS measurement (was blind before — RMS always showed 0)
