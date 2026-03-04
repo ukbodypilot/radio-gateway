@@ -515,12 +515,12 @@ def run_client(cfg, state):
     print(f"Device : {dev_name} (index {dev_index})")
     print(f"Listen : port {port}")
     print(f"Format : {SAMPLE_RATE} Hz, mono, 16-bit, {FRAMES_PER_BUFFER} frames/chunk")
-    print(f"\nPress 'l' to toggle LIVE/MUTE — when MUTE, received audio is discarded")
+    print(f"\nPress 'l' to toggle PLAY/MUTE — when MUTE, received audio is discarded")
     print(f"Press 'm' to switch to server role")
     print("Press Ctrl+C to stop.\n")
 
     # --- Reset state --------------------------------------------------------
-    state["live"] = True
+    state["live"] = False
     state["switch_role"] = False
 
     # --- Listen socket ------------------------------------------------------
@@ -565,7 +565,7 @@ def run_client(cfg, state):
                     except socket.timeout:
                         # No data — update status line and re-check state
                         if state["live"]:
-                            status = f"{RED}LIVE{RESET}"
+                            status = f"{GREEN}PLAY{RESET}"
                         else:
                             status = f"{YELLOW}MUTE{RESET}"
                         role_tag = f"{CYAN}CL{RESET}"
@@ -593,7 +593,7 @@ def run_client(cfg, state):
 
                     # Status line
                     if is_live:
-                        status = f"{RED}LIVE{RESET}"
+                        status = f"{GREEN}PLAY{RESET}"
                     else:
                         status = f"{YELLOW}MUTE{RESET}"
                     db = rms_db(pcm)
