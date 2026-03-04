@@ -223,12 +223,23 @@ SDR_REBROADCAST_PTT_HOLD = 3.0
 # ============================================================================
 # REMOTE AUDIO LINK (TCP)
 # ============================================================================
-# Links two gateway instances. Server sends its mixed audio to the client.
-# Client receives it as source "SDRSV" with duck/priority support.
+# Links two gateway instances, or a gateway to windows_audio_client.py.
+# Server sends its mixed audio to the client; client receives it as source
+# "SDRSV" with duck/priority support.
 #
-# Server config: ROLE=server, HOST=<client IP>, PORT=9600
-# Client config: ROLE=client, HOST=(blank), PORT=9600
-# Firewall: client needs inbound TCP on the port (sudo ufw allow 9600/tcp)
+# Gateway-to-gateway:
+#   Server config: ROLE=server, HOST=<client IP>, PORT=9600
+#   Client config: ROLE=client, HOST=(blank), PORT=9600
+#
+# Gateway-to-Windows client (receive on Windows):
+#   Gateway: ROLE=server, HOST=<windows IP>, PORT=9600
+#   Windows: python windows_audio_client.py → Role: client, Listen port: 9600
+#
+# Windows client-to-gateway (send from Windows):
+#   Gateway: ROLE=client, PORT=9600
+#   Windows: python windows_audio_client.py <gateway_ip> 9600 → Role: server
+#
+# Firewall: client side needs inbound TCP on the port (sudo ufw allow 9600/tcp)
 
 REMOTE_AUDIO_ROLE = disabled       # server | client | disabled
 REMOTE_AUDIO_HOST =                # Server: client IP. Client: bind addr (blank=all)

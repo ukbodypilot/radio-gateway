@@ -617,30 +617,61 @@ TROUBLESHOOTING
 WINDOWS AUDIO CLIENT
 ================================================================================
 
-windows_audio_client.py is a standalone sender that captures audio from a local
-Windows input device (e.g. VB-Audio Virtual Cable) and streams it to the gateway
-over TCP. It works on Windows, Linux, and macOS.
+windows_audio_client.py can either send audio to the gateway or receive audio
+from it, depending on the selected role. It works on Windows, Linux, and macOS.
+
+ROLES
+-----
+  server — Captures from a local input device and sends to the gateway over TCP.
+           The client connects out to the gateway port.
+           Pairs with a gateway configured as REMOTE_AUDIO_ROLE = client.
+
+  client — Listens on a TCP port for the gateway's RemoteAudioServer to connect
+           in and push audio. Plays received audio on a local output device.
+           Pairs with a gateway configured as REMOTE_AUDIO_ROLE = server.
+
+  Role names are consistent with the gateway's REMOTE_AUDIO_ROLE.
 
 SETUP
 -----
   pip install sounddevice numpy
-  python windows_audio_client.py [gateway_host] [gateway_port]
+  python windows_audio_client.py [host] [port]
 
   On first run the script prompts for:
-    1. Operating mode — SDR input source (port 9600) or Announcement (port 9601)
-    2. Audio device — selects from available input devices
-    3. Gateway host/port — IP or hostname of the gateway machine
+    1. Role — server (send audio) or client (receive audio)
+    2. Operating mode (server only) — SDR input (port 9600) or Announcement (9601)
+    3. Audio device — input device (server) or output device (client)
+    4. Host/port — gateway host to connect to (server) or port to listen on (client)
 
   Selections are saved to windows_audio_client.json for subsequent runs.
 
 KEYBOARD CONTROLS
 -----------------
-  l = Toggle LIVE/IDLE
+  l = Toggle LIVE/IDLE (server) or LIVE/MUTE (client)
 
-  LIVE (red)  — real audio is captured and sent to the gateway
-  IDLE (green) — silence is sent (connection stays open)
+  Server role:
+    LIVE (red)   — real audio is captured and sent to the gateway
+    IDLE (green) — silence is sent (connection stays open)
+    Starts in IDLE mode.
 
-  The client starts in IDLE mode. Press 'l' to go live.
+  Client role:
+    LIVE (red)    — received audio is played on the output device
+    MUTE (yellow) — received audio is discarded (connection stays open)
+    Starts in LIVE mode.
+
+CONNECTION EXAMPLES
+-------------------
+  Send audio to gateway (Windows = server, gateway = client):
+    Windows:  python windows_audio_client.py 192.168.1.10 9600
+              Role: server, Mode: SDR input source
+    Gateway:  REMOTE_AUDIO_ROLE = client, REMOTE_AUDIO_PORT = 9600
+
+  Receive audio from gateway (Windows = client, gateway = server):
+    Windows:  python windows_audio_client.py
+              Role: client, Listen port: 9600
+    Gateway:  REMOTE_AUDIO_ROLE = server
+              REMOTE_AUDIO_HOST = <windows_client_ip>
+              REMOTE_AUDIO_PORT = 9600
 
 WIRE FORMAT
 -----------
