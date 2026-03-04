@@ -10,7 +10,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 **Installer:** `scripts/install.sh` (8 steps, targets Debian/Ubuntu/RPi)
 **Config:** `gateway_config.txt` (copied from `examples/gateway_config.txt` on install)
 **Start script:** `start.sh` (8 steps: kill procs, CPU governor→performance, loopback, AIOC USB reset, pipe, DarkIce, FFmpeg, gateway w/nice -10; `sudo -v` cached at top)
-**Windows client:** `windows_audio_client.py` (SDR input on 9600 or Announcement on 9601)
+**Windows client:** `windows_audio_client.py` (server: send audio, client: receive audio, `m` to switch)
 
 ## Announcement Input (port 9601)
 - `NetworkAnnouncementSource` — listens on 9601, inbound TCP, length-prefixed PCM
@@ -22,11 +22,14 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Config: `ENABLE_ANNOUNCE_INPUT`, `ANNOUNCE_INPUT_PORT`, `ANNOUNCE_INPUT_HOST`, `ANNOUNCE_INPUT_THRESHOLD`, `ANNOUNCE_INPUT_VOLUME`
 
 ## Windows Audio Client
-- `windows_audio_client.py` — captures from local input device, sends length-prefixed PCM
-- Mode selection on first run: SDR input (port 9600) or Announcement (port 9601)
-- Config saved to `windows_audio_client.json` (in .gitignore)
-- Same wire format as RemoteAudioSource (4-byte BE length + PCM payload)
-- Keyboard: `l` = toggle LIVE/IDLE (LIVE sends real audio in red, IDLE sends silence in green)
+- `windows_audio_client.py` — send or receive audio (role-based, consistent with gateway REMOTE_AUDIO_ROLE)
+- **server role**: captures from input device, connects out to gateway, sends length-prefixed PCM
+- **client role**: listens on TCP port, gateway connects in, plays received audio on output device
+- Keyboard: `l` = LIVE/IDLE (server) or LIVE/MUTE (client), `m` = switch role at runtime
+- Config saved to `windows_audio_client.json` (in .gitignore) — separate keys per role:
+  `role`, `server_mode`, `server_device_name`, `server_host`, `server_port`,
+  `client_device_name`, `client_port`
+- Status line shows `SV` or `CL` prefix for active role
 - Cross-platform keyboard listener: msvcrt (Windows) / tty+termios (Unix)
 
 ## Key Architecture
@@ -164,6 +167,7 @@ All three pure-Python per-sample loops replaced with numpy/scipy:
 - SDR prebuffer gap too long (400ms): reduced from 3 blobs to 2 blobs; AIOC keeps 3
 - Mumble HTML in TTS: text messages arrive as HTML, gTTS read tags/entities aloud. Fixed: strip+unescape
 - SDR Rebroadcast bugs: AIOC TX feedback ducking, PTT release timer, TX bar level, prebuffer gaps (see bugs.md)
+- SV status bar stuck: was using `tx_audio_level` (AIOC input) instead of actual outbound level. Fixed: added `sv_audio_level` updated at all `send_audio()` call sites (commit 68f90de)
 
 ## Deployment Notes
 - WirePlumber config must be in `~/.config/wireplumber/wireplumber.conf.d/`

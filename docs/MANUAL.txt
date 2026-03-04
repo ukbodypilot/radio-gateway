@@ -644,6 +644,15 @@ SETUP
     4. Host/port — gateway host to connect to (server) or port to listen on (client)
 
   Selections are saved to windows_audio_client.json for subsequent runs.
+  Each role stores its own settings independently:
+
+    role               — last selected role (server or client)
+    server_mode        — sdr or announce
+    server_device_name — input device name
+    server_host        — gateway host/IP
+    server_port        — gateway port
+    client_device_name — output device name
+    client_port        — listen port
 
 KEYBOARD CONTROLS
 -----------------

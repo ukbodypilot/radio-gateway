@@ -1012,6 +1012,17 @@ On first run the script prompts for:
 4. **Host/port** — gateway host to connect to (server) or port to listen on (client)
 
 Selections are saved to `windows_audio_client.json` for subsequent runs.
+Each role stores its own settings independently:
+
+| Config Key | Role | Description |
+|------------|------|-------------|
+| `role` | both | Last selected role (`server` or `client`) |
+| `server_mode` | server | `sdr` or `announce` |
+| `server_device_name` | server | Input device name |
+| `server_host` | server | Gateway host/IP |
+| `server_port` | server | Gateway port |
+| `client_device_name` | client | Output device name |
+| `client_port` | client | Listen port |
 
 ### Keyboard Controls
 
