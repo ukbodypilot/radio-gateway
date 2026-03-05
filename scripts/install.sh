@@ -367,6 +367,13 @@ set +e
 if [ "$DISTRO" = "arch" ]; then
     if sudo pacman -S --noconfirm --needed mumble-server 2>/dev/null; then
         echo "  ✓ mumble-server installed"
+        # Create the _mumble-server system user and directories
+        sudo systemd-sysusers /usr/lib/sysusers.d/mumble-server.conf 2>/dev/null || true
+        sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/mumble-server.conf 2>/dev/null || true
+        # Disable the default mumble-server service — gateway manages its own instances
+        sudo systemctl stop mumble-server.service 2>/dev/null || true
+        sudo systemctl disable mumble-server.service 2>/dev/null || true
+        echo "  ✓ Default mumble-server service disabled (gateway manages its own instances)"
     else
         echo "  ⚠ Could not install mumble-server — install manually if needed"
         echo "    This is optional: only needed if ENABLE_MUMBLE_SERVER_1/2 = true"
@@ -388,10 +395,17 @@ fi
 for MSDIR in /var/lib/mumble-server /var/log/mumble-server /var/run/mumble-server; do
     sudo mkdir -p "$MSDIR" 2>/dev/null || true
 done
-# Set ownership if mumble-server user exists
-if id mumble-server &>/dev/null; then
-    sudo chown mumble-server:mumble-server /var/lib/mumble-server /var/log/mumble-server /var/run/mumble-server 2>/dev/null || true
-    echo "  ✓ Mumble server directories created (owned by mumble-server user)"
+# Set ownership — Arch uses '_mumble-server', Debian uses 'mumble-server'
+if id _mumble-server &>/dev/null; then
+    MS_USER=_mumble-server
+elif id mumble-server &>/dev/null; then
+    MS_USER=mumble-server
+else
+    MS_USER=""
+fi
+if [ -n "$MS_USER" ]; then
+    sudo chown "$MS_USER:$MS_USER" /var/lib/mumble-server /var/log/mumble-server /var/run/mumble-server 2>/dev/null || true
+    echo "  ✓ Mumble server directories created (owned by $MS_USER)"
 fi
 set -e
 echo

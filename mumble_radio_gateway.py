@@ -3756,6 +3756,21 @@ class MumbleServerManager:
             self.error_msg = 'murmurd/mumble-server binary not found'
             return False
 
+        # Detect the service user: Arch uses '_mumble-server', Debian uses 'mumble-server'
+        import pwd
+        svc_user = None
+        for candidate_user in ['_mumble-server', 'mumble-server']:
+            try:
+                pwd.getpwnam(candidate_user)
+                svc_user = candidate_user
+                break
+            except KeyError:
+                pass
+        if not svc_user:
+            self.state = self.STATE_ERROR
+            self.error_msg = 'mumble-server system user not found (need _mumble-server or mumble-server)'
+            return False
+
         unit = '\n'.join([
             '[Unit]',
             f'Description=Mumble Server (Gateway Instance {self.num})',
@@ -3764,8 +3779,8 @@ class MumbleServerManager:
             '[Service]',
             'Type=simple',
             f'ExecStart={murmurd_bin} -fg -ini {self._config_path}',
-            'User=mumble-server',
-            'Group=mumble-server',
+            f'User={svc_user}',
+            f'Group={svc_user}',
             'Restart=on-failure',
             'RestartSec=5',
             '',
