@@ -6540,8 +6540,10 @@ class MumbleRadioGateway:
         # Suppress ALL stderr during restart (ALSA is very noisy)
         import sys
         import os as restart_os
-        
-        stderr_fd = sys.stderr.fileno()
+
+        # Use the original stderr fd (may have been redirected by StatusBarWriter)
+        _orig_stderr = getattr(self, '_orig_stderr', sys.stderr)
+        stderr_fd = _orig_stderr.fileno() if hasattr(_orig_stderr, 'fileno') else 2
         saved_stderr_fd = restart_os.dup(stderr_fd)
         devnull_fd = restart_os.open(restart_os.devnull, restart_os.O_WRONLY)
         
@@ -7494,6 +7496,37 @@ class MumbleRadioGateway:
         # Install stdout wrapper so print() clears the status bar first
         self._status_writer = StatusBarWriter(sys.stdout)
         sys.stdout = self._status_writer
+        # Redirect Python stderr through the same wrapper so warnings from
+        # libraries clear the status bar before printing.
+        self._orig_stderr = sys.stderr
+        sys.stderr = self._status_writer
+        # Redirect OS-level fd 2 (C stderr) through a pipe that feeds back
+        # into the StatusBarWriter.  This catches output from external
+        # processes (murmurd, Mumble GUI Qt warnings) that share our terminal.
+        try:
+            self._stderr_pipe_r, self._stderr_pipe_w = os.pipe()
+            os.dup2(self._stderr_pipe_w, 2)
+            os.close(self._stderr_pipe_w)
+            def _stderr_reader():
+                buf = b''
+                while self.running:
+                    try:
+                        data = os.read(self._stderr_pipe_r, 4096)
+                        if not data:
+                            break
+                        buf += data
+                        while b'\n' in buf:
+                            line, buf = buf.split(b'\n', 1)
+                            text = line.decode('utf-8', errors='replace').rstrip()
+                            if text:
+                                self._status_writer.write(text + '\n')
+                                self._status_writer.flush()
+                    except OSError:
+                        break
+            self._stderr_thread = threading.Thread(target=_stderr_reader, daemon=True)
+            self._stderr_thread.start()
+        except Exception:
+            pass  # Non-fatal — stderr just won't be captured
 
         # Start audio transmit thread
         self._tx_thread = threading.Thread(target=self.audio_transmit_loop, daemon=True)
@@ -8057,7 +8090,20 @@ class MumbleRadioGateway:
 
     def cleanup(self):
         """Clean up resources"""
-        # Restore original stdout before cleanup prints
+        # Restore original stdout/stderr before cleanup prints
+        if hasattr(self, '_orig_stderr') and self._orig_stderr:
+            sys.stderr = self._orig_stderr
+            # Restore fd 2 if we piped it
+            try:
+                os.dup2(self._orig_stderr.fileno(), 2)
+            except Exception:
+                pass
+            # Close the pipe read end to unblock the reader thread
+            if hasattr(self, '_stderr_pipe_r'):
+                try:
+                    os.close(self._stderr_pipe_r)
+                except Exception:
+                    pass
         if self._status_writer:
             sys.stdout = self._status_writer._orig
             self._status_writer = None
