@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Mumble Radio Gateway — Installation Script
-# Supports: Raspberry Pi, Debian/Ubuntu amd64, any Debian-based Linux
+# Supports: Raspberry Pi, Debian/Ubuntu, Arch Linux
 # ============================================================
 
 set -e
@@ -28,21 +28,45 @@ if $IS_PI; then
 else
     echo "Detected: Standard Linux PC"
 fi
+
+# ── Detect distro / package manager ─────────────────────────
+DISTRO="unknown"
+if command -v pacman &>/dev/null; then
+    DISTRO="arch"
+elif command -v apt-get &>/dev/null; then
+    DISTRO="debian"
+else
+    echo "ERROR: No supported package manager found (need apt-get or pacman)"
+    exit 1
+fi
+echo "Package manager: $DISTRO"
 echo
 
 # ── 1. System packages ───────────────────────────────────────
 echo "[ 1/10 ] Installing system packages..."
-sudo apt-get update -qq
-sudo apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-pyaudio \
-    portaudio19-dev \
-    libhidapi-libusb0 \
-    libhidapi-dev \
-    libsndfile1 \
-    ffmpeg \
-    git
+if [ "$DISTRO" = "arch" ]; then
+    sudo pacman -Sy --noconfirm --needed \
+        python \
+        python-pip \
+        python-pyaudio \
+        portaudio \
+        hidapi \
+        libsndfile \
+        ffmpeg \
+        git
+else
+    sudo apt-get update -qq
+    sudo apt-get install -y \
+        python3 \
+        python3-pip \
+        python3-pyaudio \
+        portaudio19-dev \
+        libhidapi-libusb0 \
+        libhidapi-dev \
+        libsndfile1 \
+        ffmpeg \
+        git
+fi
 
 echo "  ✓ System packages installed"
 echo
@@ -93,17 +117,28 @@ printf "    enable = "; cat /sys/module/snd_aloop/parameters/enable 2>/dev/null 
 printf "    index  = "; cat /sys/module/snd_aloop/parameters/index  2>/dev/null || echo "(unavailable)"
 
 # Make it load on boot
-if ! grep -q "snd-aloop" /etc/modules 2>/dev/null; then
-    echo "snd-aloop" | sudo tee -a /etc/modules > /dev/null
-    echo "  ✓ Added snd-aloop to /etc/modules (auto-load on boot)"
+if [ "$DISTRO" = "arch" ]; then
+    if [ ! -f /etc/modules-load.d/snd-aloop.conf ] || ! grep -q "snd-aloop" /etc/modules-load.d/snd-aloop.conf 2>/dev/null; then
+        echo "snd-aloop" | sudo tee /etc/modules-load.d/snd-aloop.conf > /dev/null
+        echo "  ✓ Added snd-aloop to /etc/modules-load.d/ (auto-load on boot)"
+    else
+        echo "  ✓ snd-aloop already in /etc/modules-load.d/"
+    fi
 else
-    echo "  ✓ snd-aloop already in /etc/modules"
+    if ! grep -q "snd-aloop" /etc/modules 2>/dev/null; then
+        echo "snd-aloop" | sudo tee -a /etc/modules > /dev/null
+        echo "  ✓ Added snd-aloop to /etc/modules (auto-load on boot)"
+    else
+        echo "  ✓ snd-aloop already in /etc/modules"
+    fi
 fi
 
 # Verify — count cards (each card has 2 devices, count device 0 entries only)
-LOOPBACK_COUNT=$(aplay -l 2>/dev/null | grep "Loopback" | grep -c "device 0" || true)
+LOOPBACK_LINES=$(aplay -l 2>/dev/null | grep "Loopback" | grep "device 0" || true)
+LOOPBACK_COUNT=$(echo "$LOOPBACK_LINES" | grep -c "Loopback" || true)
+[ -z "$LOOPBACK_LINES" ] && LOOPBACK_COUNT=0
 echo "  Loopback cards visible: $LOOPBACK_COUNT (expected 3 at hw:4 hw:5 hw:6)"
-aplay -l 2>/dev/null | grep "Loopback" | grep "device 0" | sed 's/^/    /'
+echo "$LOOPBACK_LINES" | grep "Loopback" | sed 's/^/    /' || true
 echo
 
 # ── 3. Python packages ───────────────────────────────────────
@@ -212,30 +247,76 @@ echo
 # ── 6. Darkice (optional — for Broadcastify/Icecast streaming) ───
 echo "[ 6/10 ] Darkice streaming (optional)..."
 set +e
-sudo apt-get install -y darkice lame 2>/dev/null
-DARKICE_STATUS=$?
-if [ $DARKICE_STATUS -eq 0 ]; then
-    echo "  ✓ Darkice installed"
+if [ "$DISTRO" = "arch" ]; then
+    if sudo pacman -S --noconfirm --needed lame 2>/dev/null; then
+        echo "  ✓ lame (MP3 encoder) installed"
+    else
+        echo "  ⚠ Could not install lame — streaming may not work"
+    fi
+    if command -v darkice &>/dev/null; then
+        echo "  ✓ Darkice already installed"
+        DARKICE_STATUS=0
+    else
+        # AUR helpers refuse to run as root — run as the real user
+        AUR_USER=${SUDO_USER:-$USER}
+        AUR_HELPER=""
+        for helper in yay paru; do
+            if sudo -u "$AUR_USER" bash -c "command -v $helper" &>/dev/null; then
+                AUR_HELPER="$helper"
+                break
+            fi
+        done
+        if [ -n "$AUR_HELPER" ]; then
+            echo "  Installing darkice from AUR via $AUR_HELPER..."
+            # Remove any pre-existing /etc/darkice.cfg to avoid pacman file conflict
+            if [ -f /etc/darkice.cfg ]; then
+                sudo rm -f /etc/darkice.cfg
+            fi
+            if sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm darkice 2>/dev/null; then
+                echo "  ✓ Darkice installed from AUR"
+                DARKICE_STATUS=0
+            else
+                echo "  ⚠ Skipping darkice — AUR install via $AUR_HELPER failed"
+                echo "    Try manually: $AUR_HELPER -S darkice"
+                echo "    This is optional: only needed for Broadcastify/Icecast streaming"
+                DARKICE_STATUS=1
+            fi
+        else
+            echo "  ⚠ Skipping darkice — no AUR helper found (yay/paru)"
+            echo "    Install an AUR helper, then run: yay -S darkice"
+            echo "    This is optional: only needed for Broadcastify/Icecast streaming"
+            DARKICE_STATUS=1
+        fi
+    fi
 else
-    echo "  ⚠ darkice could not be installed from apt — skipping"
-    echo "    This is optional: streaming to Broadcastify requires darkice,"
-    echo "    but all other gateway features work without it."
-    echo "    To install manually: sudo apt-get install darkice lame"
+    sudo apt-get install -y darkice lame 2>/dev/null
+    DARKICE_STATUS=$?
+    if [ $DARKICE_STATUS -eq 0 ]; then
+        echo "  ✓ Darkice + lame installed"
+    else
+        echo "  ⚠ Skipping darkice — could not install from apt"
+        echo "    To install manually: sudo apt-get install darkice lame"
+        echo "    This is optional: only needed for Broadcastify/Icecast streaming"
+    fi
 fi
 
 # Create /etc/darkice.cfg from example if it doesn't exist
 DARKICE_CFG=/etc/darkice.cfg
 DARKICE_EXAMPLE="$GATEWAY_DIR/scripts/darkice.cfg.example"
-if [ ! -f "$DARKICE_CFG" ]; then
-    if [ -f "$DARKICE_EXAMPLE" ]; then
-        sudo cp "$DARKICE_EXAMPLE" "$DARKICE_CFG" \
-            && echo "  ✓ Created $DARKICE_CFG — edit with your Broadcastify credentials" \
-            || echo "  ⚠ Could not create $DARKICE_CFG — copy manually from $DARKICE_EXAMPLE"
+if [ $DARKICE_STATUS -eq 0 ]; then
+    if [ ! -f "$DARKICE_CFG" ]; then
+        if [ -f "$DARKICE_EXAMPLE" ]; then
+            sudo cp "$DARKICE_EXAMPLE" "$DARKICE_CFG" \
+                && echo "  ✓ Created $DARKICE_CFG — edit with your Broadcastify credentials" \
+                || echo "  ⚠ Could not create $DARKICE_CFG — copy manually from $DARKICE_EXAMPLE"
+        else
+            echo "  ⚠ Example not found — create $DARKICE_CFG manually"
+        fi
     else
-        echo "  ⚠ Example not found — create $DARKICE_CFG manually"
+        echo "  ✓ $DARKICE_CFG already exists (not overwritten)"
     fi
 else
-    echo "  ✓ $DARKICE_CFG already exists (not overwritten)"
+    echo "  Skipping darkice.cfg setup — darkice not installed"
 fi
 
 # Configure WirePlumber to not manage ALSA loopback devices
@@ -243,19 +324,23 @@ fi
 WIREPLUMBER_CONF_DIR="$HOME/.config/wireplumber/wireplumber.conf.d"
 WIREPLUMBER_CONF="$WIREPLUMBER_CONF_DIR/99-disable-loopback.conf"
 WIREPLUMBER_SRC="$GATEWAY_DIR/scripts/99-disable-loopback.conf"
-mkdir -p "$WIREPLUMBER_CONF_DIR"
-if [ ! -f "$WIREPLUMBER_CONF" ]; then
-    if [ -f "$WIREPLUMBER_SRC" ]; then
-        cp "$WIREPLUMBER_SRC" "$WIREPLUMBER_CONF" \
-            && echo "  ✓ WirePlumber loopback exclusion installed" \
-            || echo "  ⚠ Could not install WirePlumber config — DarkIce may fail to open audio device"
+if command -v wireplumber &>/dev/null || systemctl --user is-active wireplumber &>/dev/null; then
+    mkdir -p "$WIREPLUMBER_CONF_DIR"
+    if [ ! -f "$WIREPLUMBER_CONF" ]; then
+        if [ -f "$WIREPLUMBER_SRC" ]; then
+            cp "$WIREPLUMBER_SRC" "$WIREPLUMBER_CONF" \
+                && echo "  ✓ WirePlumber loopback exclusion installed" \
+                || echo "  ⚠ Could not install WirePlumber config — DarkIce may fail to open audio device"
+        else
+            echo "  ⚠ $WIREPLUMBER_SRC not found — skipping WirePlumber config"
+        fi
     else
-        echo "  ⚠ $WIREPLUMBER_SRC not found — skipping WirePlumber config"
+        echo "  ✓ WirePlumber loopback config already exists (not overwritten)"
     fi
+    systemctl --user restart wireplumber 2>/dev/null || true
 else
-    echo "  ✓ WirePlumber loopback config already exists (not overwritten)"
+    echo "  Skipping WirePlumber config — wireplumber not running"
 fi
-systemctl --user restart wireplumber 2>/dev/null || true
 
 set -e
 echo
@@ -263,11 +348,15 @@ echo
 # ── 7. Mumble GUI client ─────────────────────────────────────
 echo "[ 7/10 ] Installing Mumble client..."
 set +e
-sudo apt-get install -y mumble 2>/dev/null
+if [ "$DISTRO" = "arch" ]; then
+    sudo pacman -S --noconfirm --needed mumble 2>/dev/null
+else
+    sudo apt-get install -y mumble 2>/dev/null
+fi
 if [ $? -eq 0 ]; then
     echo "  ✓ Mumble client installed"
 else
-    echo "  ⚠ Could not install mumble — install manually: sudo apt-get install mumble"
+    echo "  ⚠ Could not install mumble — install manually"
 fi
 set -e
 echo
