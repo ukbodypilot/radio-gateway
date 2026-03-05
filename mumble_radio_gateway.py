@@ -40,6 +40,8 @@ if not hasattr(_ssl, 'wrap_socket'):
         )
         ctx.check_hostname = False
         ctx.verify_mode = _ssl.CERT_NONE
+        ctx.minimum_version = _ssl.TLSVersion.MINIMUM_SUPPORTED
+        ctx.set_ciphers('DEFAULT:@SECLEVEL=0')
         if certfile:
             ctx.load_cert_chain(certfile, keyfile)
         if ca_certs:
@@ -78,6 +80,7 @@ def _wrap_socket_compat(sock, keyfile=None, certfile=None,
     ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = _ssl.CERT_NONE
+    ctx.minimum_version = _ssl.TLSVersion.MINIMUM_SUPPORTED
     ctx.set_ciphers('DEFAULT:@SECLEVEL=0')
     if certfile:
         ctx.load_cert_chain(certfile, keyfile)
