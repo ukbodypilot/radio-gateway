@@ -106,16 +106,20 @@ for pid in $(pgrep -f "claude" 2>/dev/null); do
     fi
 done
 if [ "$CLAUDE_RUNNING" = false ]; then
-    if command -v claude > /dev/null 2>&1; then
-        if command -v lxterminal > /dev/null 2>&1; then
-            lxterminal --working-directory="$GATEWAY_DIR" -e claude &
+    CLAUDE_BIN="$(command -v claude 2>/dev/null)"
+    if [ -n "$CLAUDE_BIN" ]; then
+        if command -v xfce4-terminal > /dev/null 2>&1; then
+            xfce4-terminal --working-directory="$GATEWAY_DIR" -e "$CLAUDE_BIN" &
+            disown
+        elif command -v lxterminal > /dev/null 2>&1; then
+            lxterminal --working-directory="$GATEWAY_DIR" -e "$CLAUDE_BIN" &
             disown
         elif command -v x-terminal-emulator > /dev/null 2>&1; then
-            cd "$GATEWAY_DIR" && x-terminal-emulator -e claude &
+            cd "$GATEWAY_DIR" && x-terminal-emulator -e "$CLAUDE_BIN" &
             disown
             cd - > /dev/null
         elif command -v gnome-terminal > /dev/null 2>&1; then
-            gnome-terminal --working-directory="$GATEWAY_DIR" -- claude &
+            gnome-terminal --working-directory="$GATEWAY_DIR" -- "$CLAUDE_BIN" &
             disown
         else
             echo "  ⚠ No supported terminal emulator found (skipping)"
