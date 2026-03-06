@@ -5,10 +5,22 @@ Reads configuration from gateway_config.txt
 Optimized for low latency and high quality audio
 """
 
-__version__ = "1.0.0"
-
 import sys
 import os
+
+def _get_version():
+    """Build version from git: tag-based (e.g. 1.0.0, 1.0.0-3-g87ba23a) or commit hash."""
+    try:
+        import subprocess
+        v = subprocess.check_output(
+            ['git', 'describe', '--tags', '--always'],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL, text=True).strip()
+        return v.lstrip('v')
+    except Exception:
+        return "unknown"
+
+__version__ = _get_version()
 import time
 import signal
 import threading
@@ -7825,16 +7837,7 @@ class MumbleRadioGateway:
         """Main application"""
         print("=" * 60)
         print("Mumble-to-Radio Gateway via AIOC")
-        import subprocess as _sp
-        _git_hash = ""
-        try:
-            _git_hash = _sp.check_output(
-                ['git', 'rev-parse', '--short', 'HEAD'],
-                cwd=os.path.dirname(os.path.abspath(__file__)),
-                stderr=_sp.DEVNULL, text=True).strip()
-        except Exception:
-            pass
-        print(f"Version {__version__}" + (f" ({_git_hash})" if _git_hash else ""))
+        print(f"Version {__version__}")
         print("=" * 60)
         print()
         
@@ -7936,19 +7939,11 @@ class MumbleRadioGateway:
                "\tlvl_tx\tlvl_rx\tlvl_sdr1\tlvl_sdr2\tlvl_sv"
                "\tq_aioc\tq_sdr1\tq_sdr2"
                "\tptt\tvad\trebro_ptt\trss_mb\n")
-        import platform, subprocess as _sp
-        _git_hash = "unknown"
-        try:
-            _git_hash = _sp.check_output(
-                ['git', 'rev-parse', '--short', 'HEAD'],
-                cwd=os.path.dirname(os.path.abspath(__file__)),
-                stderr=_sp.DEVNULL, text=True).strip()
-        except Exception:
-            pass
+        import platform
         try:
             with open(out_path, 'a') as f:
                 f.write(f"\n# Watchdog started {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                        f"  v{__version__} ({_git_hash})"
+                        f"  v{__version__}"
                         f"  {platform.node()} {platform.system()} {platform.release()} {platform.machine()}"
                         f"  py{platform.python_version()}\n")
                 f.write(hdr)
@@ -8092,20 +8087,12 @@ class MumbleRadioGateway:
             f.write(f"{'='*90}\n\n")
 
             # ── System info ──
-            import platform, subprocess as _sp
-            git_hash = "unknown"
-            try:
-                git_hash = _sp.check_output(
-                    ['git', 'rev-parse', '--short', 'HEAD'],
-                    cwd=os.path.dirname(os.path.abspath(__file__)),
-                    stderr=_sp.DEVNULL, text=True).strip()
-            except Exception:
-                pass
+            import platform
             sdr_mode = "PipeWire" if any(
                 isinstance(s, PipeWireSDRSource)
                 for s in [self.sdr_source, self.sdr2_source] if s) else "ALSA"
             f.write("SYSTEM\n")
-            f.write(f"  version={__version__} commit={git_hash}\n")
+            f.write(f"  version={__version__}\n")
             f.write(f"  os={platform.system()} {platform.release()} arch={platform.machine()}\n")
             f.write(f"  python={platform.python_version()} sdr_mode={sdr_mode}\n")
             f.write(f"  host={platform.node()}\n\n")
