@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Mumble Radio Gateway
 Comment=Start the Mumble Radio Gateway streaming stack
-Exec=__TERMINAL__ --geometry=130x20 --title "Mumble Radio Gateway" -e "bash -c 'cd __GATEWAY_DIR__ && ./start.sh; exec bash'"
+Exec=__TERMINAL__ --geometry=150x25 --title "Mumble Radio Gateway" -e "bash -c 'cd __GATEWAY_DIR__ && ./start.sh; exec bash'"
 Icon=audio-input-microphone
 Terminal=false
 Type=Application
