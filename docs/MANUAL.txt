@@ -2,8 +2,8 @@
 MUMBLE RADIO GATEWAY - USER GUIDE
 ================================================================================
 
-VERSION: 3.4
-Last Updated: February 2026
+VERSION: 1.1.0 (see `git describe --tags` for exact version)
+Last Updated: March 2026
 
 ================================================================================
 OVERVIEW
@@ -735,7 +735,53 @@ WIRE FORMAT
     2400 frames per chunk (4800 bytes)
 
 ================================================================================
-RECENT CHANGES (v3.5)
+RECENT CHANGES (v1.1.0)
+================================================================================
+
+PIPEWIRE SDR SOURCE
+--------------------
+- New: PipeWireSDRSource reads SDR audio from a PipeWire virtual null sink
+  monitor via FFmpeg subprocess.  Delivers continuous low-jitter audio with
+  no blob boundaries — eliminates all prebuffer gaps and crossfade issues
+  inherent in ALSA loopback mode.
+- Config: SDR_DEVICE_NAME = pw:sdr_capture (or pw:sdr_capture2 for SDR2)
+- Auto-creates the PipeWire sink via pw-cli if it doesn't exist at startup.
+- WirePlumber config (90-sdr-capture-sink.conf) persists sinks across reboots.
+- ALSA loopback (hw:N,1) still works as before for Pi and non-PipeWire systems.
+
+GATEWAY RESTART KEY
+--------------------
+- New: 'q' key restarts the gateway process (clean shutdown + os.execv).
+  Reloads gateway_config.txt without restarting start.sh or DarkIce/FFmpeg.
+
+DESKTOP SHORTCUT
+-----------------
+- New: installer step 12 creates a desktop shortcut that opens a terminal
+  and runs start.sh.  Template at scripts/mumble-radio-gateway.desktop.template.
+
+AUTO-VERSIONING
+----------------
+- Version is computed from git tags at startup via `git describe --tags --always`.
+- Shows tag if on one (e.g. "1.1.0"), or tag+commits+hash if ahead
+  (e.g. "1.1.0-3-g87ba23a").
+- Audio trace and watchdog trace headers include version, OS, architecture,
+  Python version, hostname, and SDR mode (PipeWire vs ALSA).
+
+TERMINAL RAW MODE FIX
+----------------------
+- Fixed: Ctrl+C exit left terminal in raw mode (no echo, no line editing).
+  Keyboard listener runs as daemon thread; Python kills daemon threads before
+  their finally blocks run.  Terminal settings now restored in cleanup().
+
+INSTALLER IMPROVEMENTS
+-----------------------
+- pyserial added to core Python packages (required for USB relay control).
+- Auto-detects CH340 USB relay devices and creates /dev/relay_radio udev
+  symlink (step 4b).  Handles single relay (auto), multiple (interactive
+  picker), or none (skip).
+
+================================================================================
+RECENT CHANGES (v1.0.0) — formerly v3.5
 ================================================================================
 
 SDR AUDIO — SILENCE GAP ELIMINATION
@@ -759,7 +805,7 @@ SDR AUDIO — SILENCE GAP ELIMINATION
   Previously 5 gaps up to 450 ms in the same duration.
 
 ================================================================================
-RECENT CHANGES (v3.4)
+RECENT CHANGES (pre-1.0)
 ================================================================================
 
 NETWORK ANNOUNCEMENT INPUT (TCP port 9601)
@@ -776,7 +822,7 @@ NETWORK ANNOUNCEMENT INPUT (TCP port 9601)
   ANNOUNCE_INPUT_HOST, ANNOUNCE_INPUT_THRESHOLD (-45.0 dBFS default).
 
 ================================================================================
-RECENT CHANGES (v3.3)
+RECENT CHANGES (pre-1.0)
 ================================================================================
 
 SDR LOOPBACK WATCHDOG
@@ -788,7 +834,7 @@ SDR LOOPBACK WATCHDOG
   SDR_WATCHDOG_MODPROBE (false). Same settings for SDR2 with SDR2_ prefix.
 
 ================================================================================
-RECENT CHANGES (v3.2)
+RECENT CHANGES (pre-1.0)
 ================================================================================
 
 SDR DUCKING — SDR2 STAYS DUCKED WHEN SDR1 SENDS SILENCE (BUG FIX)
@@ -805,7 +851,7 @@ SDR DUCKING — SDR2 STAYS DUCKED WHEN SDR1 SENDS SILENCE (BUG FIX)
   SDR1 connected-but-silent no longer suppresses SDR2.
 
 ================================================================================
-RECENT CHANGES (v3.1)
+RECENT CHANGES (pre-1.0)
 ================================================================================
 
 AIOC AUDIO — PERIODIC DROPOUT FIX
@@ -831,7 +877,7 @@ SP BAR — LEVEL TRACKING FIX
   with the 'r' key. Now it correctly decays to 0 when no audio is playing.
 
 ================================================================================
-RECENT CHANGES (v3.0)
+RECENT CHANGES (pre-1.0)
 ================================================================================
 
 ANNOUNCEMENT PLAYBACK — PTT AND AUDIO FIXES

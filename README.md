@@ -1820,6 +1820,22 @@ class MySource(AudioSource):
 
 ## Changelog
 
+### v1.1.0
+
+**PipeWire SDR source** — New `PipeWireSDRSource` reads SDR audio from a PipeWire virtual null sink monitor via FFmpeg. Continuous low-jitter stream with no blob boundaries — eliminates prebuffer gaps. Config: `SDR_DEVICE_NAME = pw:sdr_capture`. Auto-creates sink if missing. WirePlumber config persists sinks across reboots. ALSA loopback still works for Pi/non-PipeWire systems.
+
+**Gateway restart key** — `q` key restarts the gateway (clean shutdown + `os.execv`), reloading `gateway_config.txt` without restarting `start.sh` or DarkIce/FFmpeg.
+
+**Desktop shortcut** — Installer step 12 creates a desktop shortcut. Template: `scripts/mumble-radio-gateway.desktop.template`.
+
+**Auto-versioning** — Version computed from git tags at startup (`git describe --tags --always`). Audio and watchdog traces include version, OS, arch, Python version, hostname, and SDR mode.
+
+**Terminal raw mode fix** — Ctrl+C exit no longer leaves terminal in raw mode. Terminal settings restored in `cleanup()`.
+
+**Installer improvements** — `pyserial` added to core packages. Auto-detects CH340 USB relay and creates `/dev/relay_radio` udev symlink.
+
+### v1.0.0
+
 ### TH-9800 CAT Control
 
 Connects to the TH9800_CAT.py TCP server on startup and configures both sides of the radio automatically — channel, volume, and power level.
