@@ -138,17 +138,17 @@ if [ "$CLAUDE_RUNNING" = false ]; then
     CLAUDE_BIN="$(command -v claude 2>/dev/null)"
     if [ -n "$CLAUDE_BIN" ]; then
         if command -v xfce4-terminal > /dev/null 2>&1; then
-            xfce4-terminal --geometry=110x30 --working-directory="$GATEWAY_DIR" -e "$CLAUDE_BIN" &
+            xfce4-terminal --geometry=130x20 --working-directory="$GATEWAY_DIR" -e "$CLAUDE_BIN" &
             disown
         elif command -v lxterminal > /dev/null 2>&1; then
-            lxterminal --geometry=110x30 --working-directory="$GATEWAY_DIR" -e "$CLAUDE_BIN" &
+            lxterminal --geometry=130x20 --working-directory="$GATEWAY_DIR" -e "$CLAUDE_BIN" &
             disown
         elif command -v x-terminal-emulator > /dev/null 2>&1; then
-            cd "$GATEWAY_DIR" && x-terminal-emulator --geometry=110x30 -e "$CLAUDE_BIN" &
+            cd "$GATEWAY_DIR" && x-terminal-emulator --geometry=130x20 -e "$CLAUDE_BIN" &
             disown
             cd - > /dev/null
         elif command -v gnome-terminal > /dev/null 2>&1; then
-            gnome-terminal --geometry=110x30 --working-directory="$GATEWAY_DIR" -- "$CLAUDE_BIN" &
+            gnome-terminal --geometry=130x20 --working-directory="$GATEWAY_DIR" -- "$CLAUDE_BIN" &
             disown
         else
             echo "  ⚠ No supported terminal emulator found (skipping)"
