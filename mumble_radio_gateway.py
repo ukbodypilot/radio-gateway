@@ -3657,9 +3657,18 @@ class RadioCATClient:
     def set_rts(self, usb_controlled):
         """Set RTS state. True = USB Controlled, False = Radio Controlled."""
         resp = self._send_cmd(f"!rts {usb_controlled}")
-        self._rts_usb = usb_controlled
-        self._logmsg(f"  CAT RTS set to {'USB' if usb_controlled else 'Radio'} Controlled: {resp}")
+        # Parse actual state from response (TH9800 returns 'True' or 'False')
+        if resp:
+            self._rts_usb = resp.strip().lower() == 'true'
+        else:
+            self._rts_usb = usb_controlled
+        self._logmsg(f"  CAT RTS set to {'USB' if self._rts_usb else 'Radio'} Controlled: {resp}")
         return resp
+
+    def query_rts(self):
+        """Query current RTS state from TH9800 (toggle then toggle back would be destructive,
+        so just return cached state)."""
+        return self._rts_usb
 
     def get_rts(self):
         """Return last known RTS state. True = USB Controlled, False = Radio Controlled."""
