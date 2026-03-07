@@ -4110,23 +4110,22 @@ class SmartAnnouncementManager:
             print(f"  [SmartAnnounce] google-scrape requires: {', '.join(missing)}")
             print(f"    Install with: sudo pacman -S {' '.join(missing)}")
             return False
-        # Check DISPLAY
-        display = os.environ.get('DISPLAY', '')
-        if not display:
+        # Ensure DISPLAY is set (needed for xdotool even if started from a non-GUI shell)
+        if not os.environ.get('DISPLAY'):
             os.environ['DISPLAY'] = ':0'
             print("  [SmartAnnounce] Set DISPLAY=:0")
-        # Check Firefox is running
+        # Check Firefox at init (non-fatal — it may start later)
         try:
             result = subprocess.run(['xdotool', 'search', '--name', 'Mozilla Firefox'],
                                     capture_output=True, text=True, timeout=5,
                                     env={**os.environ, 'DISPLAY': os.environ.get('DISPLAY', ':0')})
             windows = [w.strip() for w in result.stdout.strip().split('\n') if w.strip()]
-            if not windows:
-                print("  [SmartAnnounce] Firefox not running — google-scrape needs a Firefox window")
-                return False
+            if windows:
+                print(f"  [SmartAnnounce] Firefox detected ({len(windows)} windows)")
+            else:
+                print("  [SmartAnnounce] Firefox not detected yet — will check again at announcement time")
         except Exception as e:
-            print(f"  [SmartAnnounce] Cannot detect Firefox: {e}")
-            return False
+            print(f"  [SmartAnnounce] Cannot check Firefox: {e} — will retry at announcement time")
         # Check Ollama for optional text composition
         self._ollama_available = False
         configured_model = str(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_MODEL', '') or '').strip()
