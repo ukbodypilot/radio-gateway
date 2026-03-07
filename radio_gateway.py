@@ -4616,7 +4616,7 @@ class SmartAnnouncementManager:
                     pass
 
     def _call_google_scrape(self, entry, system_prompt, max_words):
-        """Scrape Google AI Overview via Firefox, clean up for TTS directly."""
+        """Scrape Google AI Overview via Firefox, pre-clean, then summarize with Ollama."""
         import re
         search_query = entry['prompt']
         print(f"\n[SmartAnnounce] #{entry['id']}: ── GOOGLE SCRAPE SEARCH ──")
@@ -4631,15 +4631,14 @@ class SmartAnnouncementManager:
         for line in ai_text.split('\n'):
             print(f"  {line}")
 
-        # Clean up AI Overview text for spoken TTS
+        # Pre-clean: strip junk so Ollama processes less text
         lines = ai_text.split('\n')
         cleaned = []
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            # Skip lines that are just headers/labels ending with colon
-            # but keep lines that have content after the colon
+            # Skip short header-only lines
             if line.endswith(':') and len(line.split()) <= 6:
                 continue
             # Remove bullet markers
@@ -4649,38 +4648,22 @@ class SmartAnnouncementManager:
             # Remove citation markers like [1], [2], +1, +2
             line = re.sub(r'\[\d+\]', '', line)
             line = re.sub(r'^\+\d+\s*', '', line).strip()
-            # Remove source attributions like "Source: BBC"
+            # Remove source attributions
             line = re.sub(r'^Source:.*$', '', line, flags=re.IGNORECASE).strip()
-            # Convert "Header: content" into just "content" for short headers
-            m = re.match(r'^([A-Z][^:]{0,30}):\s+(.+)', line)
-            if m and len(m.group(1).split()) <= 4:
-                line = m.group(2)
-            if line:
+            if line and len(line.split()) >= 3:
                 cleaned.append(line)
 
-        # Join into flowing text with sentence breaks
-        text = '. '.join(cleaned)
-        # Collapse multiple periods/spaces
-        text = re.sub(r'\.[\s.]+', '. ', text)
-        text = re.sub(r'\s+', ' ', text).strip()
-        # Ensure it ends with a period
-        if text and not text.endswith('.'):
-            text += '.'
+        pre_cleaned = ' '.join(cleaned)
+        # Trim to ~400 words max input to keep Ollama fast
+        words = pre_cleaned.split()
+        if len(words) > 400:
+            pre_cleaned = ' '.join(words[:400])
 
-        # Truncate at sentence boundary within word limit
-        words = text.split()
-        if len(words) > max_words:
-            truncated = ' '.join(words[:max_words])
-            # Find the last sentence end within the truncated text
-            last_period = truncated.rfind('.')
-            if last_period > len(truncated) // 3:
-                text = truncated[:last_period + 1]
-            else:
-                text = truncated + '.'
+        print(f"[SmartAnnounce] #{entry['id']}: ── PRE-CLEANED ({len(pre_cleaned.split())} words) ──")
+        print(f"  {pre_cleaned[:300]}...")
 
-        print(f"[SmartAnnounce] #{entry['id']}: ── CLEANED FOR TTS ({len(text.split())} words) ──")
-        print(f"  {text}")
-        return text if text else None
+        # Send pre-cleaned text through Ollama for natural spoken summary
+        return self._ollama_compose(entry, system_prompt, max_words, pre_cleaned)
 
     def _ollama_compose(self, entry, system_prompt, max_words, search_context):
         """Use local Ollama to compose natural speech from search results."""
