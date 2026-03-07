@@ -338,7 +338,7 @@ sleep 2
 # Start gateway with elevated scheduling priority so it competes well against
 # CPU-heavy apps (e.g. SDRconnect).  nice -n -10 raises priority without RT
 # scheduling — safe, no risk of starving the kernel.
-nice -n -10 python3 "$GATEWAY_FILE"
+sudo nice -n -10 sudo -u "$USER" python3 "$GATEWAY_FILE"
 
 # If gateway exits, cleanup
 cleanup

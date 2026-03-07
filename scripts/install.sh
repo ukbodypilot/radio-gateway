@@ -134,9 +134,15 @@ else
 fi
 
 # Verify — count cards (each card has 2 devices, count device 0 entries only)
-LOOPBACK_LINES=$(aplay -l 2>/dev/null | grep "Loopback" | grep "device 0" || true)
-LOOPBACK_COUNT=$(echo "$LOOPBACK_LINES" | grep -c "Loopback" || true)
-[ -z "$LOOPBACK_LINES" ] && LOOPBACK_COUNT=0
+# Cards may take a moment to appear after modprobe — retry up to 3s
+LOOPBACK_COUNT=0
+for _wait in 1 2 3 4 5 6; do
+    LOOPBACK_LINES=$(aplay -l 2>/dev/null | grep "Loopback" | grep "device 0" || true)
+    LOOPBACK_COUNT=$(echo "$LOOPBACK_LINES" | grep -c "Loopback" || true)
+    [ -z "$LOOPBACK_LINES" ] && LOOPBACK_COUNT=0
+    [ "$LOOPBACK_COUNT" -ge 3 ] && break
+    sleep 0.5
+done
 echo "  Loopback cards visible: $LOOPBACK_COUNT (expected 3 at hw:4 hw:5 hw:6)"
 echo "$LOOPBACK_LINES" | grep "Loopback" | sed 's/^/    /' || true
 echo
@@ -150,27 +156,52 @@ _pip() {
         || pip3 install "$@" 2>/dev/null
 }
 
-# Ensure setuptools is functional — required by legacy setup.py packages (e.g. pymumble)
-# On some Debian systems python3-setuptools is absent or broken, causing metadata-generation-failed
+# Ensure setuptools is present — required by legacy setup.py packages (e.g. pymumble)
+# Only install if missing (skip upgrade check — slow on Pi)
 set +e
-_pip --upgrade setuptools 2>/dev/null
+if ! python3 -c "import setuptools" 2>/dev/null; then
+    _pip setuptools 2>/dev/null
+fi
 set -e
 
 # Core packages (excluding pymumble — handled separately due to PyPI name variants)
+# Only install packages that are missing — avoids slow pip index checks on re-run
+CORE_PKGS="hid numpy pyaudio soundfile resampy psutil gtts pyserial"
+MISSING_PKGS=""
+for pkg in $CORE_PKGS; do
+    # Map pip names to Python import names where they differ
+    case "$pkg" in
+        pyaudio)   imp="pyaudio" ;;
+        soundfile) imp="soundfile" ;;
+        gtts)      imp="gtts" ;;
+        pyserial)  imp="serial" ;;
+        *)         imp="$pkg" ;;
+    esac
+    if ! python3 -c "import $imp" 2>/dev/null; then
+        MISSING_PKGS="$MISSING_PKGS $pkg"
+    fi
+done
+
 set +e
-_pip hid numpy pyaudio soundfile resampy psutil gtts pyserial
-CORE_STATUS=$?
-set -e
-if [ $CORE_STATUS -eq 0 ]; then
-    echo "  ✓ Core Python packages installed"
+if [ -n "$MISSING_PKGS" ]; then
+    echo "  Installing missing packages:$MISSING_PKGS"
+    _pip $MISSING_PKGS
+    CORE_STATUS=$?
+    if [ $CORE_STATUS -eq 0 ]; then
+        echo "  ✓ Core Python packages installed"
+    else
+        echo "  ⚠ Some core packages may have failed — check output above"
+    fi
 else
-    echo "  ⚠ Some core packages may have failed — check output above"
+    echo "  ✓ All core Python packages already installed"
 fi
 
 # pymumble: try pymumble-py3 first (Python-3 fork), fall back to pymumble
-set +e
 MUMBLE_OK=false
-if _pip "pymumble-py3>=1.0.0" 2>/dev/null; then
+if python3 -c "import pymumble_py3" 2>/dev/null || python3 -c "import pymumble" 2>/dev/null; then
+    echo "  ✓ pymumble already installed"
+    MUMBLE_OK=true
+elif _pip "pymumble-py3>=1.0.0" 2>/dev/null; then
     echo "  ✓ pymumble-py3 installed"
     MUMBLE_OK=true
 elif _pip pymumble 2>/dev/null; then
@@ -203,62 +234,186 @@ echo
 
 # ── 4b. UDEV rules for CH340 USB relay ───────────────────────
 echo "       Setting up UDEV rules for USB relay (optional)..."
-if [ -f /etc/udev/rules.d/99-relay-udev.rules ]; then
-    echo "  ✓ Relay UDEV rules already exist"
-else
-    # Find CH340-style USB serial devices (product="USB Serial", no manufacturer)
-    RELAY_PORTS=()
-    RELAY_DEVS=()
-    for tty in /dev/ttyUSB*; do
-        [ -e "$tty" ] || continue
-        prod="$(udevadm info -a -n "$tty" 2>/dev/null | grep -m1 'ATTRS{product}==' | sed 's/.*"\(.*\)"/\1/')"
-        mfr="$(udevadm info -a -n "$tty" 2>/dev/null | grep -m1 'ATTRS{manufacturer}==' | sed 's/.*"\(.*\)"/\1/')"
-        # CH340 typically shows product="USB Serial" with no manufacturer (or "1a86")
-        if [ "$prod" = "USB Serial" ] || echo "$mfr" | grep -qi "1a86"; then
-            kpath="$(udevadm info -a -n "$tty" 2>/dev/null | grep 'KERNELS==' | sed -n '2p' | sed 's/.*"\(.*\)"/\1/')"
-            if [ -n "$kpath" ]; then
-                RELAY_PORTS+=("$kpath")
-                RELAY_DEVS+=("$tty")
-            fi
-        fi
-    done
 
-    if [ ${#RELAY_PORTS[@]} -eq 0 ]; then
-        echo "  ⚠ No CH340 USB relay detected (skipping — plug in relay and re-run installer)"
-    elif [ ${#RELAY_PORTS[@]} -eq 1 ]; then
-        echo "SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[0]}\", SYMLINK+=\"relay_radio\"" | sudo tee /etc/udev/rules.d/99-relay-udev.rules > /dev/null
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger
-        echo "  ✓ Relay UDEV rule installed: ${RELAY_DEVS[0]} (port ${RELAY_PORTS[0]}) → /dev/relay_radio"
-    else
-        echo "  Found multiple CH340 USB serial devices:"
-        for i in "${!RELAY_PORTS[@]}"; do
-            echo "    $((i+1)). ${RELAY_DEVS[$i]} (port ${RELAY_PORTS[$i]})"
-        done
-        echo -n "  Which is the radio power relay? [1-${#RELAY_PORTS[@]}, or s to skip]: "
-        read -r choice
-        if [ "$choice" = "s" ] || [ -z "$choice" ]; then
-            echo "  ⚠ Skipped relay setup"
-        elif [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le ${#RELAY_PORTS[@]} ]; then
-            idx=$((choice - 1))
-            RULES="SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[$idx]}\", SYMLINK+=\"relay_radio\""
-            # If there's a second device, offer it as charger relay
-            if [ ${#RELAY_PORTS[@]} -eq 2 ]; then
-                other_idx=$(( 1 - idx ))
-                echo -n "  Use ${RELAY_DEVS[$other_idx]} (port ${RELAY_PORTS[$other_idx]}) as charger relay? [y/N]: "
-                read -r charger_choice
-                if [ "$charger_choice" = "y" ] || [ "$charger_choice" = "Y" ]; then
-                    RULES="$RULES
-SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[$other_idx]}\", SYMLINK+=\"relay_charger\""
-                fi
-            fi
-            echo "$RULES" | sudo tee /etc/udev/rules.d/99-relay-udev.rules > /dev/null
-            sudo udevadm control --reload-rules
-            sudo udevadm trigger
-            echo "  ✓ Relay UDEV rules installed"
-        else
-            echo "  ⚠ Invalid choice — skipped relay setup"
+# Always re-detect relays — hardware or purpose may have changed between runs
+# Find CH340-style USB serial devices (product="USB Serial", vendor 1a86)
+RELAY_PORTS=()
+RELAY_DEVS=()
+for tty in /dev/ttyUSB*; do
+    [ -e "$tty" ] || continue
+    prod="$(udevadm info -a -n "$tty" 2>/dev/null | grep -m1 'ATTRS{product}==' | sed 's/.*"\(.*\)"/\1/')"
+    mfr="$(udevadm info -a -n "$tty" 2>/dev/null | grep -m1 'ATTRS{manufacturer}==' | sed 's/.*"\(.*\)"/\1/')"
+    # CH340 typically shows product="USB Serial" with no manufacturer (or vendor "1a86")
+    if [ "$prod" = "USB Serial" ] || echo "$mfr" | grep -qi "1a86"; then
+        kpath="$(udevadm info -a -n "$tty" 2>/dev/null | grep 'KERNELS==' | sed -n '2p' | sed 's/.*"\(.*\)"/\1/')"
+        if [ -n "$kpath" ]; then
+            RELAY_PORTS+=("$kpath")
+            RELAY_DEVS+=("$tty")
         fi
+    fi
+done
+
+if [ ${#RELAY_PORTS[@]} -eq 0 ]; then
+    echo "  ⚠ No CH340 USB relay detected (skipping — plug in relay and re-run installer)"
+    # Remove stale rules if hardware is gone
+    if [ -f /etc/udev/rules.d/99-relay-udev.rules ]; then
+        sudo rm -f /etc/udev/rules.d/99-relay-udev.rules
+        sudo udevadm control --reload-rules
+        echo "  ✓ Removed stale relay udev rules"
+    fi
+else
+    # Helper: click a relay on then off (visible/audible identification)
+    # Uses python3 for reliable binary serial I/O (bash can't handle null bytes)
+    relay_identify() {
+        local dev="$1"
+        python3 -c "
+import serial, time
+try:
+    s = serial.Serial('$dev', 9600, timeout=1)
+    for _ in range(3):
+        s.write(b'\xA0\x01\x01\xA2')  # ON
+        time.sleep(0.3)
+        s.write(b'\xA0\x01\x00\xA1')  # OFF
+        time.sleep(0.3)
+    s.close()
+except Exception as e:
+    print(f'    ⚠ Could not click relay: {e}')
+" 2>/dev/null
+    }
+
+    echo "  Found ${#RELAY_PORTS[@]} CH340 USB serial device(s):"
+    for i in "${!RELAY_PORTS[@]}"; do
+        echo "    $((i+1)). ${RELAY_DEVS[$i]} (USB port ${RELAY_PORTS[$i]})"
+    done
+    echo ""
+
+    if [ ${#RELAY_PORTS[@]} -eq 1 ]; then
+        # Single relay — just ask what it's for
+        echo "  Assign this relay a purpose:"
+        echo "    r = Radio power button (/dev/relay_radio)"
+        echo "    c = Charger control    (/dev/relay_charger)"
+        echo "    t = Test (click relay to confirm it works)"
+        echo "    s = Skip (don't assign)"
+        echo ""
+        while true; do
+            echo -n "  ${RELAY_DEVS[0]} — purpose? [r/c/t/s]: "
+            read -r purpose
+            case "$purpose" in
+                t|T)
+                    echo "    Clicking relay 3 times..."
+                    relay_identify "${RELAY_DEVS[0]}"
+                    echo "    Did you see/hear it? Choose purpose now."
+                    continue
+                    ;;
+                r|R)
+                    printf 'SUBSYSTEM=="tty", KERNELS=="%s", SYMLINK+="relay_radio", MODE="0666"\n' \
+                        "${RELAY_PORTS[0]}" | sudo tee /etc/udev/rules.d/99-relay-udev.rules > /dev/null
+                    echo "    → /dev/relay_radio"
+                    break
+                    ;;
+                c|C)
+                    printf 'SUBSYSTEM=="tty", KERNELS=="%s", SYMLINK+="relay_charger", MODE="0666"\n' \
+                        "${RELAY_PORTS[0]}" | sudo tee /etc/udev/rules.d/99-relay-udev.rules > /dev/null
+                    echo "    → /dev/relay_charger"
+                    break
+                    ;;
+                s|S|"")
+                    echo "    → skipped"
+                    sudo rm -f /etc/udev/rules.d/99-relay-udev.rules
+                    break
+                    ;;
+                *)  echo "    ⚠ Invalid — enter r, c, t, or s" ;;
+            esac
+        done
+    else
+        # Multiple relays — identify before assigning
+        echo "  Multiple relays detected — you need to identify which is which."
+        echo "  Press a number to click that relay (3 on/off pulses), then assign purposes."
+        echo ""
+
+        # Identification loop — let user click relays until they know which is which
+        while true; do
+            echo "  Identify relays (click to find which is which):"
+            for i in "${!RELAY_PORTS[@]}"; do
+                echo "    $((i+1)) = Click relay at ${RELAY_DEVS[$i]}"
+            done
+            echo "    d = Done identifying, assign purposes now"
+            echo -n "  Choice: "
+            read -r id_choice
+            if [ "$id_choice" = "d" ] || [ "$id_choice" = "D" ]; then
+                break
+            elif [ "$id_choice" -ge 1 ] 2>/dev/null && [ "$id_choice" -le ${#RELAY_PORTS[@]} ]; then
+                idx=$((id_choice - 1))
+                echo "    Clicking relay $id_choice (${RELAY_DEVS[$idx]})..."
+                relay_identify "${RELAY_DEVS[$idx]}"
+                echo "    Done."
+            else
+                echo "    ⚠ Invalid — enter a relay number or d"
+            fi
+            echo ""
+        done
+
+        # Assignment loop
+        echo ""
+        echo "  Now assign each relay a purpose:"
+        echo "    r = Radio power button (/dev/relay_radio)"
+        echo "    c = Charger control    (/dev/relay_charger)"
+        echo "    s = Skip (don't assign)"
+        echo ""
+
+        RULES=""
+        ASSIGNED_RADIO=false
+        ASSIGNED_CHARGER=false
+        for i in "${!RELAY_PORTS[@]}"; do
+            while true; do
+                echo -n "  Relay $((i+1)) (${RELAY_DEVS[$i]}) — purpose? [r/c/s]: "
+                read -r purpose
+                case "$purpose" in
+                    r|R)
+                        if $ASSIGNED_RADIO; then
+                            echo "    ⚠ Radio relay already assigned — pick another"
+                            continue
+                        fi
+                        RULES="${RULES}SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[$i]}\", SYMLINK+=\"relay_radio\", MODE=\"0666\"\n"
+                        ASSIGNED_RADIO=true
+                        echo "    → /dev/relay_radio"
+                        break
+                        ;;
+                    c|C)
+                        if $ASSIGNED_CHARGER; then
+                            echo "    ⚠ Charger relay already assigned — pick another"
+                            continue
+                        fi
+                        RULES="${RULES}SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[$i]}\", SYMLINK+=\"relay_charger\", MODE=\"0666\"\n"
+                        ASSIGNED_CHARGER=true
+                        echo "    → /dev/relay_charger"
+                        break
+                        ;;
+                    s|S|"")
+                        echo "    → skipped"
+                        break
+                        ;;
+                    *)  echo "    ⚠ Invalid — enter r, c, or s" ;;
+                esac
+            done
+        done
+
+        if [ -n "$RULES" ]; then
+            printf "$RULES" | sudo tee /etc/udev/rules.d/99-relay-udev.rules > /dev/null
+        else
+            echo "  ⚠ No relays assigned — removing udev rules"
+            sudo rm -f /etc/udev/rules.d/99-relay-udev.rules
+        fi
+    fi
+
+    # Reload and verify
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger --subsystem-match=tty
+    sleep 1
+    if [ -f /etc/udev/rules.d/99-relay-udev.rules ]; then
+        echo "  ✓ Relay UDEV rules installed"
+        [ -L /dev/relay_radio ] && echo "    /dev/relay_radio   → $(readlink -f /dev/relay_radio)"
+        [ -L /dev/relay_charger ] && echo "    /dev/relay_charger → $(readlink -f /dev/relay_charger)"
     fi
 fi
 echo
@@ -315,8 +470,9 @@ fi
 MODPROBE_BIN=$(which modprobe 2>/dev/null || echo /usr/sbin/modprobe)
 SUDOERS_FILE=/etc/sudoers.d/mumble-gateway
 if [ -n "$ACTUAL_USER" ]; then
-    printf '%s ALL=(ALL) NOPASSWD: %s snd-aloop, %s -r snd-aloop\n' \
-        "$ACTUAL_USER" "$MODPROBE_BIN" "$MODPROBE_BIN" \
+    NICE_BIN=$(which nice 2>/dev/null || echo /usr/bin/nice)
+    printf '%s ALL=(ALL) NOPASSWD: %s snd-aloop, %s -r snd-aloop, %s\n' \
+        "$ACTUAL_USER" "$MODPROBE_BIN" "$MODPROBE_BIN" "$NICE_BIN" \
         | sudo tee "$SUDOERS_FILE" > /dev/null \
         && sudo chmod 440 "$SUDOERS_FILE" \
         && echo "  ✓ Passwordless sudo configured for modprobe snd-aloop" \
@@ -324,6 +480,23 @@ if [ -n "$ACTUAL_USER" ]; then
 fi
 
 set -e
+echo
+
+# ── 5b. Fix /run/user runtime directory permissions (RPi only) ───
+if $IS_PI; then
+    echo "       Fixing /run/user runtime directory permissions (RPi)..."
+    # systemd-logind creates /run/user/1000 with 0770 on some RPi configs,
+    # but XDG_RUNTIME_DIR requires 0700 — Qt/Mumble warns on every launch
+    TMPFILES_RULE="/etc/tmpfiles.d/run-user-perms.conf"
+    if [ ! -f "$TMPFILES_RULE" ]; then
+        echo 'd /run/user/%U 0700 - - -' | sudo tee "$TMPFILES_RULE" > /dev/null
+        echo "  ✓ Created $TMPFILES_RULE (fixes 0770 → 0700 on boot)"
+    else
+        echo "  ✓ $TMPFILES_RULE already exists"
+    fi
+    # Fix it right now too
+    chmod 0700 /run/user/$(id -u) 2>/dev/null || true
+fi
 echo
 
 # ── 6. Darkice (optional — for Broadcastify/Icecast streaming) ───
