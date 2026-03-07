@@ -91,6 +91,7 @@ A bidirectional audio bridge connecting Mumble VoIP to amateur radio with multi-
 - **Voice Activity Detection (VAD)**: Smart audio gate prevents noise transmission (enabled by default)
 - **Real-Time Audio Processing**: Noise gate, AGC, filters, echo cancellation
 - **Live Status Display**: Real-time bars showing TX/RX/SDR levels with color coding
+- **Smart Announcements**: AI-powered scheduled broadcasts using Claude API with web search (weather, news, time)
 - **Local Mumble Server**: Run up to 2 managed mumble-server instances on the same machine
 
 ### Audio Sources (Priority-Based Mixing)
@@ -362,6 +363,47 @@ RELAY_CHARGER_OFF_TIME = 06:00
 
 **Requires:** `pip3 install pyserial`
 
+### Smart Announcements (AI-Powered)
+
+Scheduled radio announcements powered by Claude AI with real-time web search. The gateway calls the Anthropic API on a configurable interval, Claude gathers live data (weather, news, time, etc.) via web search, composes a natural spoken message, and the gateway broadcasts it via gTTS.
+
+**How it works:**
+1. Configure one or more announcement entries with an interval, voice, target length, and a prompt
+2. On each interval, the gateway calls Claude Sonnet with the prompt and web search enabled
+3. Claude researches current data and composes a spoken message within the word limit
+4. The text is converted to speech via gTTS and queued for radio broadcast
+5. If TH-9800 CAT control is active and RTS is USB Controlled, the gateway temporarily switches to Radio Controlled for the announcement, then restores the previous state
+
+**Keyboard shortcuts:**
+- `[` = Trigger smart announcement #1 immediately
+- `]` = Trigger smart announcement #2 immediately
+- `\` = Trigger smart announcement #3 immediately
+
+**Mumble command:** `!smart` lists configured announcements; `!smart <N>` triggers one manually.
+
+**Example announcements:**
+```ini
+# Hourly weather update (15 seconds, US English voice)
+SMART_ANNOUNCE_1 = 3600, 1, 15, {Give a brief weather update for London, UK including temperature and conditions}
+
+# Time check every 30 minutes (10 seconds, US English)
+SMART_ANNOUNCE_2 = 1800, 1, 10, {What is the current UTC time and date, spoken naturally}
+
+# News headlines every 2 hours (20 seconds, British English)
+SMART_ANNOUNCE_3 = 7200, 2, 20, {Summarize the top 2 breaking news headlines from the UK}
+```
+
+**Configuration:**
+```ini
+ENABLE_SMART_ANNOUNCE = true
+SMART_ANNOUNCE_API_KEY = sk-ant-api03-your-key-here    # From console.anthropic.com
+
+SMART_ANNOUNCE_1 = interval_secs, voice, target_secs, {prompt text}
+# Up to 19 entries (SMART_ANNOUNCE_1 through SMART_ANNOUNCE_19)
+```
+
+**Requires:** `pip3 install anthropic` (handled by `scripts/install.sh`) and an Anthropic API key with credits.
+
 ### TH-9800 CAT Control
 
 Connects to the [TH9800_CAT.py](https://github.com/your-repo/th9800) TCP server to configure a TYT TH-9800 radio on gateway startup. Sets channel, volume, and power level for both VFOs independently.
@@ -369,7 +411,7 @@ Connects to the [TH9800_CAT.py](https://github.com/your-repo/th9800) TCP server 
 **How it works:**
 1. TH9800_CAT.py runs on the same machine, connected to the radio via USB serial (FT232R)
 2. TH9800_CAT.py exposes a TCP server (default port 9800) for remote control
-3. On startup, the gateway connects, authenticates, enables USB TX control (RTS), then sends setup commands
+3. On startup, the gateway connects, authenticates, enables USB TX control (RTS), then sends setup commands (if `CAT_STARTUP_COMMANDS = true`; set to `false` to connect without sending setup commands)
 4. Channel is set by stepping the per-VFO dial until the target channel is reached
 5. Volume is set by stepping from the default level (25) to the target level
 6. Power is set by cycling the LOW button (L/M/H) until the target is reached
@@ -719,6 +761,11 @@ Press keys during operation to control the gateway:
 ### Relay Control
 - `j` = Radio power button (momentary pulse — relay ON 0.5s then OFF)
 - `h` = Charger relay manual toggle (overrides schedule until next timed transition)
+
+### Smart Announcements
+- `[` = Trigger smart announcement #1
+- `]` = Trigger smart announcement #2
+- `\` = Trigger smart announcement #3
 
 ### Diagnostics
 - `i` = Start/stop audio trace recording (writes to `tools/audio_trace.txt`)
@@ -1337,6 +1384,26 @@ TTS_DEFAULT_VOICE = 1        # Default voice (1=US 2=UK 3=AU 4=IN 5=SA 6=CA 7=IE
 PTT_TTS_DELAY = 1.0          # Silence padding before TTS (seconds)
 ```
 
+### Smart Announcement Settings
+
+```ini
+ENABLE_SMART_ANNOUNCE = false              # Enable AI-powered scheduled announcements
+SMART_ANNOUNCE_API_KEY =                   # Anthropic API key (console.anthropic.com)
+
+# Entry format: interval_secs, voice (1-9), target_secs (max 60), {prompt text}
+SMART_ANNOUNCE_1 = 3600, 1, 15, {Give a brief weather update for London, UK}
+SMART_ANNOUNCE_2 = 1800, 1, 10, {What is the current UTC time and date}
+# Up to SMART_ANNOUNCE_19
+```
+
+**Parameters per entry:**
+- `interval_secs` — how often to announce (e.g. 3600 = hourly)
+- `voice` — gTTS voice number (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
+- `target_secs` — target speech length in seconds (max 60, ~2.5 words/second)
+- `{prompt text}` — instructions for Claude AI (anything inside braces, can include punctuation)
+
+**Requires:** `pip3 install anthropic` and API credits at [console.anthropic.com](https://console.anthropic.com).
+
 ### Audio Processing Settings
 
 ```ini
@@ -1460,6 +1527,7 @@ MUMBLE_TO_ECHOLINK = false
 
 ```ini
 ENABLE_CAT_CONTROL = false             # Enable TH-9800 CAT control on startup
+CAT_STARTUP_COMMANDS = true            # Send channel/volume/power setup on connect (false = connect only)
 CAT_HOST = 127.0.0.1                   # TH9800_CAT.py TCP server address
 CAT_PORT = 9800                        # TCP server port
 CAT_PASSWORD =                         # TCP server password (blank = no password)

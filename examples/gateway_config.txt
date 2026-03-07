@@ -17,9 +17,10 @@
 #   PTT:   'p'=Manual PTT toggle
 #   PLAY:  '1-9'=Announcements  '0'=Station ID  '-'=Stop
 #   NET:   'k'=Reset remote audio connection
-#   RELAY: 'j'=Radio power button
+#   RELAY: 'j'=Radio power button  'h'=Charger toggle
+#   SMART: '['=Smart#1  ']'=Smart#2  '\'=Smart#3
 #   TRACE: 'i'=Start/stop audio trace  'u'=Start/stop watchdog trace
-#   MISC:  'z'=Clear and reprint console
+#   MISC:  'q'=Restart gateway  'z'=Clear and reprint console
 # ============================================================================
 
 
