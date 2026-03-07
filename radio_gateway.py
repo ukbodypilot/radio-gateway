@@ -4489,10 +4489,8 @@ class SmartAnnouncementManager:
                 'if(e.textContent.trim()==="Show more")e.click();});'
                 '})();'
             )
-            # Combined JS: click AI Mode, wait for response, then copy page text
-            # to a hidden textarea and select it — all in one console session.
-            # This avoids clicking the page body (which can hit ads/popups).
-            js_combined = (
+            # JS: click AI Mode, wait for response, click Show more
+            js_click = (
                 '(async()=>{'
                 'let links=Array.from(document.querySelectorAll("a"));'
                 'let allIdx=links.findIndex(e=>e.textContent.trim()==="All");'
@@ -4504,27 +4502,50 @@ class SmartAnnouncementManager:
                 'if(ai){ai.click();await new Promise(r=>setTimeout(r,10000));}'
                 'document.querySelectorAll("div[jsname],span,button").forEach(e=>{'
                 'if(e.textContent.trim()==="Show more")e.click();});'
-                'await new Promise(r=>setTimeout(r,1000));'
-                # Copy page text via hidden textarea (bypasses clipboard API restrictions)
-                'let ta=document.createElement("textarea");'
-                'ta.value=document.body.innerText;'
-                'document.body.appendChild(ta);'
-                'ta.select();'
-                'document.execCommand("copy");'
-                'document.body.removeChild(ta);'
                 '})();'
             )
             subprocess.run(['xclip', '-selection', 'clipboard'],
-                           input=js_combined.encode(), env=display_env, timeout=3)
+                           input=js_click.encode(), env=display_env, timeout=3)
             xdo('key', 'ctrl+v')
             time.sleep(0.1)
             xdo('key', 'Return')
             print(f"[SmartAnnounce] google-scrape: waiting for AI Mode response...")
-            time.sleep(14)
+            time.sleep(12)
 
             # Close console
             xdo('key', 'ctrl+shift+k')
+            time.sleep(0.3)
+
+            # Re-find and re-activate our Firefox window (in case an ad stole focus)
+            result = xdo('search', '--name', 'Mozilla Firefox')
+            best_wid2 = best_wid
+            best_area2 = 0
+            for wid in [w.strip() for w in result.stdout.strip().split('\n') if w.strip()]:
+                try:
+                    geo = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', wid],
+                                         capture_output=True, text=True, timeout=3, env=display_env)
+                    w = h = 0
+                    for line in geo.stdout.strip().split('\n'):
+                        if line.startswith('WIDTH='): w = int(line.split('=')[1])
+                        if line.startswith('HEIGHT='): h = int(line.split('=')[1])
+                    if w * h > best_area2:
+                        best_area2 = w * h
+                        best_wid2 = wid
+                except Exception:
+                    continue
+            xdo('windowactivate', '--sync', best_wid2)
+            time.sleep(0.3)
+
+            # Click near the top-left of the page content (avoids ads which are
+            # typically in the center/right) to focus the page, then select all + copy
+            xdo('mousemove', '--window', best_wid2, '150', '300')
+            time.sleep(0.1)
+            xdo('click', '1')
             time.sleep(0.2)
+            xdo('key', 'ctrl+a')
+            time.sleep(0.2)
+            xdo('key', 'ctrl+c')
+            time.sleep(0.3)
 
             # Get clipboard
             page_text = xclip_get()
