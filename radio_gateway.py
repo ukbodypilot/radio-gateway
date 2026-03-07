@@ -3545,11 +3545,6 @@ class RadioCATClient:
             self._sock.sendall(f"!pass {self._password}\n".encode())
             resp = self._recv_line(timeout=5.0)
             if resp and 'Login Successful' in resp:
-                # Ensure RTS is set to USB Controlled (required for CAT TX)
-                rts_resp = self._send_cmd("!rts True")
-                if rts_resp:
-                    self._logmsg(f"  CAT RTS: {rts_resp}")
-                self._rts_usb = True
                 return True
             else:
                 print(f"  CAT auth failed: {resp}")
