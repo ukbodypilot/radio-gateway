@@ -4402,6 +4402,7 @@ class MumbleRadioGateway:
         # Relay control — charger schedule
         self.relay_charger = None      # RelayController instance
         self.relay_charger_on = False  # Current charge state
+        self._charger_manual = False   # True when user manually overrode schedule
         self._charger_on_time = None   # (hour, minute) tuple
         self._charger_off_time = None  # (hour, minute) tuple
 
@@ -7290,6 +7291,15 @@ class MumbleRadioGateway:
                                 self._trace_events.append((time.monotonic(), 'relay_radio', 'release'))
                             threading.Thread(target=_pulse_power, daemon=True).start()
 
+                    elif char == 'h':
+                        # Toggle charger relay manually (overrides schedule until next timed change)
+                        if self.relay_charger:
+                            new_state = not self.relay_charger_on
+                            self.relay_charger.set_state(new_state)
+                            self.relay_charger_on = new_state
+                            self._charger_manual = True
+                            self._trace_events.append((time.monotonic(), 'relay_charger', f'manual_{"on" if new_state else "off"}'))
+
                     elif char == 'i':
                         # Toggle audio trace recording
                         self._trace_recording = not self._trace_recording
@@ -7611,10 +7621,11 @@ class MumbleRadioGateway:
                     else:
                         relay_bar += f" {WHITE}PWRB{RESET}"
                 if self.relay_charger:
+                    manual_tag = "*" if self._charger_manual else ""
                     if self.relay_charger_on:
-                        relay_bar += f" {WHITE}CHG:{GREEN}CHRGE{RESET}"
+                        relay_bar += f" {WHITE}CHG:{GREEN}CHRGE{manual_tag}{RESET}"
                     else:
-                        relay_bar += f" {WHITE}CHG:{RED}DRAIN{RESET}"
+                        relay_bar += f" {WHITE}CHG:{RED}DRAIN{manual_tag}{RESET}"
 
                 # CAT control status indicator
                 cat_bar = ""
@@ -7697,6 +7708,7 @@ class MumbleRadioGateway:
                 if should_on != self.relay_charger_on:
                     self.relay_charger.set_state(should_on)
                     self.relay_charger_on = should_on
+                    self._charger_manual = False  # schedule took over
                     self._trace_events.append((time.monotonic(), 'relay_charger', 'on' if should_on else 'off'))
 
             # SDR loopback watchdog checks
@@ -7810,7 +7822,7 @@ class MumbleRadioGateway:
         print("  PTT:   'p'=Manual PTT toggle")
         print("  Play:  '1-9'=Announcements  '0'=StationID  '-'=Stop")
         print("  Net:   'k'=Reset remote audio connection")
-        print("  Relay: 'j'=Radio power button")
+        print("  Relay: 'j'=Radio power button  'h'=Charger toggle")
         print("  Trace: 'i'=Start/stop audio trace  'u'=Start/stop watchdog trace")
         print("  Misc:  'q'=Restart gateway  'z'=Clear and reprint console")
         print("=" * 60)
