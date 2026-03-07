@@ -424,6 +424,12 @@ ENABLE_SMART_ANNOUNCE = false
 # WARNING: Do not commit this file with a real API key
 SMART_ANNOUNCE_API_KEY =
 
+# Time window — announcements only play between these times (system clock)
+# Format: HH:MM (24-hour). Leave blank for no restriction.
+# Handles overnight wrap (e.g. 22:00 start, 06:00 end = 10pm to 6am)
+SMART_ANNOUNCE_START_TIME =
+SMART_ANNOUNCE_END_TIME =
+
 # Example announcements (uncomment and customize):
 # SMART_ANNOUNCE_1 = 3600, 1, 15, {Give a brief weather update for London, UK including temperature and conditions}
 # SMART_ANNOUNCE_2 = 1800, 1, 10, {What is the current UTC time and date, spoken naturally}

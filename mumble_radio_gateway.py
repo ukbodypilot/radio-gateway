@@ -271,6 +271,8 @@ class Config:
             # Smart Announcements (AI-powered via Claude API)
             'ENABLE_SMART_ANNOUNCE': False,
             'SMART_ANNOUNCE_API_KEY': '',
+            'SMART_ANNOUNCE_START_TIME': '',   # HH:MM — empty = no restriction
+            'SMART_ANNOUNCE_END_TIME': '',     # HH:MM — empty = no restriction
             # TH-9800 CAT Control
             'ENABLE_CAT_CONTROL': False,
             'CAT_STARTUP_COMMANDS': True,
@@ -4043,6 +4045,28 @@ class SmartAnnouncementManager:
         """Stop the timer thread."""
         self._stop = True
 
+    def _in_time_window(self):
+        """Check if current time is within the configured start/end window.
+        Returns True if no window configured or current time is inside it."""
+        import datetime
+        start_str = str(getattr(self.config, 'SMART_ANNOUNCE_START_TIME', '') or '')
+        end_str = str(getattr(self.config, 'SMART_ANNOUNCE_END_TIME', '') or '')
+        if not start_str or not end_str:
+            return True
+        try:
+            now = datetime.datetime.now().time()
+            sh, sm = map(int, start_str.split(':'))
+            eh, em = map(int, end_str.split(':'))
+            start = datetime.time(sh, sm)
+            end = datetime.time(eh, em)
+            if start <= end:
+                return start <= now <= end
+            else:
+                # Overnight wrap (e.g. 22:00 - 06:00)
+                return now >= start or now <= end
+        except (ValueError, AttributeError):
+            return True  # invalid format → don't restrict
+
     def _timer_loop(self):
         """Check intervals and trigger announcements."""
         # Stagger first runs: don't all fire at t=0
@@ -4051,6 +4075,8 @@ class SmartAnnouncementManager:
             e['last_run'] = now
         while not self._stop:
             time.sleep(5)
+            if not self._in_time_window():
+                continue
             now = time.time()
             for e in self._entries:
                 if now - e['last_run'] >= e['interval']:
@@ -4064,6 +4090,9 @@ class SmartAnnouncementManager:
         """Call Claude API, get text, speak it."""
         if not self._client:
             print(f"\n[SmartAnnounce] #{entry['id']}: No API client (missing key?)")
+            return
+        if not self._in_time_window():
+            print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — outside time window")
             return
         # Don't announce while radio is busy (PTT active, playback in progress)
         if getattr(self.gateway, 'vad_active', False):
