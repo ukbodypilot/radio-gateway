@@ -4058,7 +4058,7 @@ class SmartAnnouncementManager:
         # Don't announce while radio is busy (PTT active, playback in progress)
         if getattr(self.gateway, 'vad_active', False):
             return
-        if self.gateway.playback_source and self.gateway.playback_source.is_playing:
+        if self.gateway.playback_source and self.gateway.playback_source.current_file:
             return
 
         max_words = int(entry['target_secs'] * self.WORDS_PER_SECOND)
