@@ -5,6 +5,9 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# Ensure ~/.local/bin is in PATH (not present in non-login shells like desktop shortcuts)
+[[ -d "$HOME/.local/bin" && ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+
 # Read a value from gateway_config.txt (strips comments, whitespace, quotes)
 read_config() {
     local key="$1" default="$2"
