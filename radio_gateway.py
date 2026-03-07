@@ -4101,7 +4101,7 @@ class SmartAnnouncementManager:
         performs a Google search, clicks 'Show more' to expand the AI Overview,
         then copies the page text and extracts the AI Overview section.
         Requires: xdotool, xclip, Firefox running on DISPLAY=:0."""
-        import shutil
+        import shutil, subprocess
         missing = []
         for tool in ('xdotool', 'xclip'):
             if not shutil.which(tool):
@@ -4409,7 +4409,7 @@ class SmartAnnouncementManager:
     def _scrape_google_ai_overview(self, search_query):
         """Drive the real Firefox browser via xdotool to Google search and extract AI Overview.
         Returns the AI Overview text or None."""
-        import urllib.parse
+        import subprocess, urllib.parse
         display_env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY', ':0')}
 
         def xdo(*args, timeout=5):
