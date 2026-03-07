@@ -339,11 +339,11 @@ Google TTS (gTTS) integration — Mumble users send a text message to trigger sp
 Two optional CH340 USB relay modules for hardware control:
 
 - **Radio Power Button** (`j` key): Simulates a momentary power-button press — relay closes for 0.5 seconds then opens. Since the relay acts as a button press, the gateway does not track radio on/off state.
-- **Charger Schedule**: Automatically switches a charger relay on/off based on a configurable time window (e.g. 23:00–06:00 for overnight charging). Handles overnight time wrap.
+- **Charger Schedule** (`h` key): Automatically switches a charger relay on/off based on a configurable time window (e.g. 23:00–06:00 for overnight charging). Handles overnight time wrap. Press `h` to manually override — the relay stays in the manual state until the next scheduled transition, then automatic control resumes.
 
 **Status bar:**
 - `PWRB` — white when idle, yellow during the 0.5s button pulse
-- `CHG:CHRGE` / `CHG:DRAIN` — green/red showing current charger relay state
+- `CHG:CHRGE` / `CHG:DRAIN` — green/red showing current charger relay state (`*` suffix when manually overridden)
 
 **Setup:** Persistent `/dev/relay_radio` and `/dev/relay_charger` symlinks via udev rules — see `scripts/99-relay-udev.rules` for the template.
 
@@ -718,6 +718,7 @@ Press keys during operation to control the gateway:
 
 ### Relay Control
 - `j` = Radio power button (momentary pulse — relay ON 0.5s then OFF)
+- `h` = Charger relay manual toggle (overrides schedule until next timed transition)
 
 ### Diagnostics
 - `i` = Start/stop audio trace recording (writes to `tools/audio_trace.txt`)
@@ -762,7 +763,7 @@ Bars appear in this order: TX → RX → SP → SDR1 → SDR2 → SV or CL → A
 | **CL:[bar]** | Green | Remote Audio Link — client mode: audio level received from remote server (SDRSV) |
 | **AN:[bar]** | Red | Announcement Input — audio level from TCP port 9601 (only shown when `ENABLE_ANNOUNCE_INPUT = true`; shows 0 when no client connected) |
 | **PWRB** | White/Yellow | Radio power button relay — white when idle, yellow during 0.5s pulse (only shown when `ENABLE_RELAY_RADIO = true`) |
-| **CHG:CHRGE/DRAIN** | Green/Red | Charger relay — green when charging, red when draining (only shown when `ENABLE_RELAY_CHARGER = true`) |
+| **CHG:CHRGE/DRAIN** | Green/Red | Charger relay — green when charging, red when draining; `*` suffix indicates manual override active (only shown when `ENABLE_RELAY_CHARGER = true`) |
 | **CAT** | White/Green/Red | TH-9800 CAT control — white when enabled but not connected, green when connected idle, red when active (only shown when `ENABLE_CAT_CONTROL = true`) |
 | **MS1** | White/Green/Red | Mumble Server 1 — white when configured, green when running, red on error (only shown when `ENABLE_MUMBLE_SERVER_1 = true`) |
 | **MS2** | White/Green/Red | Mumble Server 2 — white when configured, green when running, red on error (only shown when `ENABLE_MUMBLE_SERVER_2 = true`) |
@@ -1856,7 +1857,7 @@ Connects to the TH9800_CAT.py TCP server on startup and configures both sides of
 Controls CH340-based USB relay modules for radio power button simulation and charger scheduling.
 
 - **Radio power relay** (`j` key): momentary pulse (ON 0.5s → OFF) simulates pressing the radio power button
-- **Charger relay**: automatic on/off schedule with overnight wrap support (e.g. 23:00→06:00)
+- **Charger relay** (`h` key): automatic on/off schedule with overnight wrap support (e.g. 23:00→06:00). Manual toggle overrides schedule until next timed transition
 - `RelayController` class: 4-byte serial protocol, lazy `import serial`, persistent symlinks via udev rules
 - Status bar: `PWRB` (white idle, yellow during pulse), `CHG:CHRGE/DRAIN` (green/red)
 - Config: `ENABLE_RELAY_RADIO`, `RELAY_RADIO_PORT`, `ENABLE_RELAY_CHARGER`, `RELAY_CHARGER_PORT`, `RELAY_CHARGER_ON_TIME`, `RELAY_CHARGER_OFF_TIME`
