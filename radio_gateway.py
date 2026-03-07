@@ -4616,7 +4616,8 @@ class SmartAnnouncementManager:
                     pass
 
     def _call_google_scrape(self, entry, system_prompt, max_words):
-        """Scrape Google AI Overview via Firefox, optionally refine with Ollama."""
+        """Scrape Google AI Overview via Firefox, clean up for TTS directly."""
+        import re
         search_query = entry['prompt']
         print(f"\n[SmartAnnounce] #{entry['id']}: ── GOOGLE SCRAPE SEARCH ──")
         print(f"  Query: {search_query}")
@@ -4630,19 +4631,55 @@ class SmartAnnouncementManager:
         for line in ai_text.split('\n'):
             print(f"  {line}")
 
-        # If Ollama available, use it to condense/reformat for speech
-        if getattr(self, '_ollama_available', False):
-            return self._ollama_compose(entry, system_prompt, max_words, ai_text)
+        # Clean up AI Overview text for spoken TTS
+        lines = ai_text.split('\n')
+        cleaned = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Skip lines that are just headers/labels ending with colon
+            # but keep lines that have content after the colon
+            if line.endswith(':') and len(line.split()) <= 6:
+                continue
+            # Remove bullet markers
+            line = re.sub(r'^[\s•·\-\*]+', '', line).strip()
+            # Remove URLs
+            line = re.sub(r'https?://\S+', '', line).strip()
+            # Remove citation markers like [1], [2], +1, +2
+            line = re.sub(r'\[\d+\]', '', line)
+            line = re.sub(r'^\+\d+\s*', '', line).strip()
+            # Remove source attributions like "Source: BBC"
+            line = re.sub(r'^Source:.*$', '', line, flags=re.IGNORECASE).strip()
+            # Convert "Header: content" into just "content" for short headers
+            m = re.match(r'^([A-Z][^:]{0,30}):\s+(.+)', line)
+            if m and len(m.group(1).split()) <= 4:
+                line = m.group(2)
+            if line:
+                cleaned.append(line)
 
-        # No Ollama — clean up the AI Overview text for direct TTS
-        import re
-        text = re.sub(r'\s+', ' ', ai_text).strip()
-        # Remove bullet markers
-        text = re.sub(r'\s*[•·]\s*', '. ', text)
-        # Trim to word limit
+        # Join into flowing text with sentence breaks
+        text = '. '.join(cleaned)
+        # Collapse multiple periods/spaces
+        text = re.sub(r'\.[\s.]+', '. ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        # Ensure it ends with a period
+        if text and not text.endswith('.'):
+            text += '.'
+
+        # Truncate at sentence boundary within word limit
         words = text.split()
         if len(words) > max_words:
-            text = ' '.join(words[:max_words])
+            truncated = ' '.join(words[:max_words])
+            # Find the last sentence end within the truncated text
+            last_period = truncated.rfind('.')
+            if last_period > len(truncated) // 3:
+                text = truncated[:last_period + 1]
+            else:
+                text = truncated + '.'
+
+        print(f"[SmartAnnounce] #{entry['id']}: ── CLEANED FOR TTS ({len(text.split())} words) ──")
+        print(f"  {text}")
         return text if text else None
 
     def _ollama_compose(self, entry, system_prompt, max_words, search_context):
