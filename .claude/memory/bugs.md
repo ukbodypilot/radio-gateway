@@ -1,4 +1,4 @@
-# Bug History — Mumble Radio Gateway
+# Bug History — Radio Gateway
 
 ## Audio Pipeline Bugs
 - **SDR-to-SDR ducking inconsistency / sources switching over each other** (commit 3808066): Rule 2 (higher-priority SDR ducks lower-priority SDR) used `check_signal_instant()` — zero attack, fires on any chunk above -50 dBFS including SDR noise floor. Also checked `sig or hold` for `other_has_signal`, meaning a single noisy 200ms chunk from SDR1 silenced SDR2 for 3s via the hold timer. With intermittent SDR noise both sources flipped rapidly. Fixed: `_sdr_trace['sig']` now stores `has_actual_audio()` result (requires `SIGNAL_ATTACK_TIME=0.15s` continuous signal before firing); Rule 2 reads only `sig` — `hold` is for inclusion/fade-out only, not ducking decisions. Release unchanged at 3s.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mumble Radio Gateway — startup script
+# Radio Gateway — startup script
 
 # Resolve script directory immediately (handles symlinks and relative invocation)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -20,7 +20,7 @@ START_TH9800_CAT="$(read_config START_TH9800_CAT false)"
 START_CLAUDE_CODE="$(read_config START_CLAUDE_CODE false)"
 
 echo "=========================================="
-echo "Starting Mumble Radio Gateway"
+echo "Starting Radio Gateway"
 echo "=========================================="
 echo ""
 
@@ -72,7 +72,7 @@ pkill -9 ffmpeg 2>/dev/null && echo "  Killed existing FFmpeg"
 sleep 1
 
 # Also kill any Python gateway processes (just in case)
-pkill -9 -f "mumble_radio_gateway" 2>/dev/null && echo "  Killed existing gateway"
+pkill -9 -f "radio_gateway" 2>/dev/null && echo "  Killed existing gateway"
 
 # Stop leftover mumble-server instances from prior gateway runs so they don't
 # linger on stale ports (the gateway will start fresh ones with current config)
@@ -316,12 +316,12 @@ echo "[11/11] Starting gateway..."
 echo ""
 
 # Find the gateway file - ONLY in same directory as this script
-GATEWAY_FILE="$SCRIPT_DIR/mumble_radio_gateway.py"
+GATEWAY_FILE="$SCRIPT_DIR/radio_gateway.py"
 
 if [ ! -f "$GATEWAY_FILE" ]; then
     echo "✗ Gateway file not found!"
     echo "  Expected: $GATEWAY_FILE"
-    echo "  Make sure mumble_radio_gateway.py is in the SAME directory as start.sh"
+    echo "  Make sure radio_gateway.py is in the SAME directory as start.sh"
     cleanup
     exit 1
 fi

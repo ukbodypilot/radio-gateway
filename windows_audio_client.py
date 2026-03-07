@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows Audio Client for Mumble Radio Gateway.
+"""Windows Audio Client for Radio Gateway.
 
 Two roles (consistent with gateway REMOTE_AUDIO_ROLE):
 

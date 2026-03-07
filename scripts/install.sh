@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# Mumble Radio Gateway — Installation Script
+# Radio Gateway — Installation Script
 # Supports: Raspberry Pi, Debian/Ubuntu, Arch Linux
 # ============================================================
 
@@ -10,7 +10,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 GATEWAY_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 echo "============================================================"
-echo "Mumble Radio Gateway - Installation"
+echo "Radio Gateway - Installation"
 echo "============================================================"
 echo "Gateway directory: $GATEWAY_DIR"
 echo
@@ -718,7 +718,7 @@ echo
 
 # ── 11. Make scripts executable ──────────────────────────────
 echo "[ 11/12 ] Setting permissions..."
-chmod +x "$GATEWAY_DIR/mumble_radio_gateway.py" 2>/dev/null || true
+chmod +x "$GATEWAY_DIR/radio_gateway.py" 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/scripts/"*.sh 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/start.sh" 2>/dev/null || true
 echo "  ✓ Scripts are executable"
@@ -739,10 +739,10 @@ if [ -d "$DESKTOP_DIR" ] || mkdir -p "$DESKTOP_DIR" 2>/dev/null; then
     if [ -n "$TERM_BIN" ]; then
         sed -e "s|__TERMINAL__|$TERM_BIN|g" \
             -e "s|__GATEWAY_DIR__|$GATEWAY_DIR|g" \
-            "$SCRIPT_DIR/mumble-radio-gateway.desktop.template" \
-            > "$DESKTOP_DIR/mumble-radio-gateway.desktop"
-        chmod +x "$DESKTOP_DIR/mumble-radio-gateway.desktop"
-        echo "  ✓ Desktop shortcut created ($DESKTOP_DIR/mumble-radio-gateway.desktop)"
+            "$SCRIPT_DIR/radio-gateway.desktop.template" \
+            > "$DESKTOP_DIR/radio-gateway.desktop"
+        chmod +x "$DESKTOP_DIR/radio-gateway.desktop"
+        echo "  ✓ Desktop shortcut created ($DESKTOP_DIR/radio-gateway.desktop)"
     else
         echo "  ⚠ No supported terminal emulator found (skipping shortcut)"
     fi
@@ -775,7 +775,7 @@ echo "  4. Log out and back in so audio group membership takes effect"
 echo "     (needed for darkice realtime scheduling without sudo)"
 echo
 echo "  5. Run the gateway:"
-echo "       python3 $GATEWAY_DIR/mumble_radio_gateway.py"
+echo "       python3 $GATEWAY_DIR/radio_gateway.py"
 echo
 echo "SDR INPUT (optional):"
 echo "  Route SDR software audio output to ALSA loopback hw:X,0"

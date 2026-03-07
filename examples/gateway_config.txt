@@ -1,5 +1,5 @@
 # ============================================================================
-# MUMBLE RADIO GATEWAY - CONFIGURATION FILE
+# RADIO GATEWAY - CONFIGURATION FILE
 # ============================================================================
 #
 # Bidirectional audio gateway between Mumble VoIP and radio via AIOC

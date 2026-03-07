@@ -1,5 +1,5 @@
 ================================================================================
-MUMBLE RADIO GATEWAY - USER GUIDE
+RADIO GATEWAY - USER GUIDE
 ================================================================================
 
 VERSION: 1.1.0 (see `git describe --tags` for exact version)
@@ -9,7 +9,7 @@ Last Updated: March 2026
 OVERVIEW
 ================================================================================
 
-The Mumble Radio Gateway bridges a radio (via AIOC - All-In-One Cable) with
+The Radio Gateway bridges a radio (via AIOC - All-In-One Cable) with
 a Mumble voice chat server. It provides:
 
 - Bidirectional audio bridge: Mumble VoIP ↔ Amateur Radio (AIOC USB)
@@ -757,7 +757,7 @@ GATEWAY RESTART KEY
 DESKTOP SHORTCUT
 -----------------
 - New: installer step 12 creates a desktop shortcut that opens a terminal
-  and runs start.sh.  Template at scripts/mumble-radio-gateway.desktop.template.
+  and runs start.sh.  Template at scripts/radio-gateway.desktop.template.
 
 AUTO-VERSIONING
 ----------------

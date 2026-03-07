@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Radio Gateway
+Comment=Start the Radio Gateway streaming stack
+Exec=__TERMINAL__ --geometry=150x25 --title "Radio Gateway" -e "bash -c 'cd __GATEWAY_DIR__ && ./start.sh; exec bash'"
+Icon=audio-input-microphone
+Terminal=false
+Type=Application
+Categories=Audio;Network;
+StartupNotify=false

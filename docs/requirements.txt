@@ -1,4 +1,4 @@
-# Python dependencies for Mumble Radio Gateway
+# Python dependencies for Radio Gateway
 # Install with: pip3 install -r requirements.txt --break-system-packages
 
 # USB HID interface for AIOC PTT control

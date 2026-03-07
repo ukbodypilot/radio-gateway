@@ -1,5 +1,5 @@
 # =============================================================================
-# Darkice configuration — Mumble Radio Gateway → Broadcastify streaming
+# Darkice configuration — Radio Gateway → Broadcastify streaming
 # =============================================================================
 # Copy to /etc/darkice.cfg and edit the [icecast2-0] section with your
 # Broadcastify stream key and stream secret.
@@ -34,5 +34,5 @@ port            = 80
 password        = YOUR_STREAM_PASSWORD
 mountPoint      = YOUR_STREAM_KEY
 name            = My Radio Gateway
-description     = Mumble Radio Gateway Stream
+description     = Radio Gateway Stream
 public          = yes

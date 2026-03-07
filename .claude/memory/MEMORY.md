@@ -1,4 +1,4 @@
-# Mumble Radio Gateway — Project Memory
+# Radio Gateway — Project Memory
 
 ## Update this file
 Update MEMORY.md and detail files at the end of every session and whenever a significant bug or pattern is discovered. Keep this file under 200 lines.
@@ -6,7 +6,7 @@ Update MEMORY.md and detail files at the end of every session and whenever a sig
 ## Project Overview
 Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Optional SDR input via PipeWire virtual sink or ALSA loopback. Optional Broadcastify streaming via DarkIce. Python 3, runs on Raspberry Pi, Debian amd64, and Arch Linux.
 
-**Main file:** `mumble_radio_gateway.py` (~5000+ lines)
+**Main file:** `radio_gateway.py` (~5000+ lines)
 **Installer:** `scripts/install.sh` (12 steps, targets Debian/Ubuntu/RPi/Arch Linux)
 **Config:** `gateway_config.txt` (copied from `examples/gateway_config.txt` on install)
 **Start script:** `start.sh` (11 steps: kill procs, Mumble GUI, TH-9800 CAT, Claude Code, CPU governor, loopback, AIOC USB reset, pipe, DarkIce, FFmpeg, gateway w/nice -10)
@@ -62,7 +62,8 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - SDR: `d`=SDR1 Duck toggle `b`=SDR Rebroadcast toggle
 - PTT: `p`=Manual PTT toggle
 - PLAY: `1-9`=Announcements `0`=StationID `-`=Stop
-- RELAY: `j`=Radio power button (momentary pulse)
+- RELAY: `j`=Radio power button `h`=Charger toggle
+- SMART: `[`=Smart#1 `]`=Smart#2 `\`=Smart#3
 - TRACE: `i`=Start/stop audio trace `u`=Start/stop watchdog trace
 - MISC: `q`=Restart gateway (re-exec, reloads config) `z`=Clear console
 
@@ -80,6 +81,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Keyboard listener runs as daemon thread using tty raw mode (setcbreak)
 - Daemon threads killed before their `finally` blocks run on process exit
 - Fix: save terminal settings on instance (`self._terminal_settings`), restore in `cleanup()`
+- Safety net: `start.sh` cleanup runs `stty sane` to guarantee terminal restored on any exit
 
 ## DarkIce Notes
 - DarkIce 1.5 parser bug: crashes if "password" appears before first `[section]` header
@@ -107,10 +109,13 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 
 ## TH-9800 CAT Control
 - `RadioCATClient` class: TCP client for TH9800_CAT.py server
-- Config: `ENABLE_CAT_CONTROL`, `CAT_HOST`, `CAT_PORT`, `CAT_PASSWORD`
+- Config: `ENABLE_CAT_CONTROL`, `CAT_STARTUP_COMMANDS`, `CAT_HOST`, `CAT_PORT`, `CAT_PASSWORD`
+- `CAT_STARTUP_COMMANDS = false` → connect TCP but skip channel/volume/power setup
 - `_logmsg` defaults to log-only (console=False); verbose shows on screen
 - `setup_radio` prints concise summary, not per-step spam
-- RTS read/set/toggle via TCP: `!rts`, `!rts True`, `!rts False`
+- RTS set/toggle via TCP: `!rts`, `!rts True`, `!rts False`
+- `set_rts()` parses response from TH9800 to track actual state
+- TH9800_CAT.py `bool("False")` bug fixed → string comparison now
 
 ## Smart Announcements (Claude API)
 - `SmartAnnouncementManager`: scheduled AI-powered spoken announcements
@@ -119,13 +124,17 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Uses Claude Sonnet with web_search tool (max 3 searches) for real-time data
 - Word limit: ~2.5 words/sec × target_secs; max 60s
 - Feeds text to existing gTTS → PTT pipeline
+- Keyboard: `[`=Smart#1, `]`=Smart#2, `\`=Smart#3
 - Mumble commands: `!smart` (list), `!smart N` (trigger)
+- RTS management: if USB Controlled, switches to Radio Controlled for playback, restores after
 - Skips if radio busy (VAD active or playback in progress)
+- All abort paths print reason (no silent failures)
+- FilePlaybackSource uses `current_file` (not `is_playing`) to check playback state
 - Anthropic API key stored in gateway_config.txt (NOT committed)
 - Dependency: `anthropic` SDK (added to installer)
 
 ## Desktop Shortcut
-- Template: `scripts/mumble-radio-gateway.desktop.template`
+- Template: `scripts/radio-gateway.desktop.template`
 - Installer step 12: detects terminal emulator, substitutes `__TERMINAL__` and `__GATEWAY_DIR__`
 - Opens terminal, cd to gateway dir, runs `start.sh`, keeps shell open on exit
 
@@ -148,7 +157,7 @@ not restored on exit, SDR periodic gaps, rebroadcast bugs, SV status bar.
 - Fixed-width status bar is important
 
 ## Machine Setup — user-optiplex3020 (Arch Linux, 2026-03-04)
-- Cloned to `/home/user/Downloads/mumble-radio-gateway`
+- Cloned to `/home/user/Downloads/radio-gateway`
 - Git user: ukbodypilot / robin.pengelly@gmail.com; token in remote URL
 - Arch Linux (EndeavourOS), XFCE4, RDP via xrdp+x11vnc
 - Python 3.14 on this machine

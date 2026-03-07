@@ -1,10 +1,10 @@
-# Mumble Radio Gateway
+# Radio Gateway
 
-A bidirectional audio bridge connecting Mumble VoIP to amateur radio with multi-source audio mixing, SDR integration, real-time processing, and extensive features.
+A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, AI-powered announcements, CAT radio control, real-time audio processing, and streaming.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║                       MUMBLE RADIO GATEWAY — AUDIO FLOW                              ║
+║                       RADIO GATEWAY — AUDIO FLOW                              ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝
 
   ┌─────────────────┐  PTT audio (direct)                           ┌──────────────────┐
@@ -512,7 +512,7 @@ MUMBLE_SERVER_2_PORT = 64739         # Must be different from Server 1
 ```bash
 # Clone repository
 git clone <your-repo-url>
-cd mumble-radio-gateway
+cd radio-gateway
 
 # Run the installer (handles all dependencies automatically)
 bash scripts/install.sh
@@ -1651,7 +1651,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 **Problem: `ssl.wrap_socket` removed / `PROTOCOL_TLSv1_2` deprecated**
 
-`pymumble` uses SSL APIs removed in Python 3.12. The gateway applies a compatibility shim automatically on startup — no manual fix is required. If you see SSL-related import errors, ensure you are running `mumble_radio_gateway.py` directly rather than importing `pymumble` from other code.
+`pymumble` uses SSL APIs removed in Python 3.12. The gateway applies a compatibility shim automatically on startup — no manual fix is required. If you see SSL-related import errors, ensure you are running `radio_gateway.py` directly rather than importing `pymumble` from other code.
 
 ### SDR Audio Issues
 
@@ -1835,8 +1835,8 @@ See `docs/TTS_TEXT_COMMANDS_GUIDE.md` for full documentation and examples.
 ### Project Structure
 
 ```
-mumble-radio-gateway/
-├── mumble_radio_gateway.py     # Main application
+radio-gateway/
+├── radio_gateway.py     # Main application
 ├── gateway_config.txt           # Configuration file (copy from examples/)
 ├── start.sh                     # Startup script (launches gateway + Darkice)
 ├── README.md                    # This file
@@ -1847,7 +1847,7 @@ mumble-radio-gateway/
 │   ├── install.sh               # Full installer (Raspberry Pi + Debian + Arch)
 │   ├── darkice.cfg.example      # Darkice/Broadcastify config template
 │   ├── 99-disable-loopback.conf # WirePlumber exclusion rules (ALSA loopback + AIOC)
-│   ├── mumble-radio-gateway.desktop.template  # Desktop shortcut template
+│   ├── radio-gateway.desktop.template  # Desktop shortcut template
 │   └── loopback-status          # Diagnostic: show all loopback card assignments
 ├── docs/
 │   ├── MANUAL.txt               # Detailed user manual
@@ -1904,7 +1904,7 @@ class MySource(AudioSource):
 
 **Gateway restart key** — `q` key restarts the gateway (clean shutdown + `os.execv`), reloading `gateway_config.txt` without restarting `start.sh` or DarkIce/FFmpeg.
 
-**Desktop shortcut** — Installer step 12 creates a desktop shortcut. Template: `scripts/mumble-radio-gateway.desktop.template`.
+**Desktop shortcut** — Installer step 12 creates a desktop shortcut. Template: `scripts/radio-gateway.desktop.template`.
 
 **Auto-versioning** — Version computed from git tags at startup (`git describe --tags --always`). Audio and watchdog traces include version, OS, arch, Python version, hostname, and SDR mode.
 
