@@ -270,7 +270,7 @@ class Config:
             'RELAY_CHARGER_OFF_TIME': '06:00',
             # Smart Announcements (AI-powered)
             'ENABLE_SMART_ANNOUNCE': True,
-            'SMART_ANNOUNCE_AI_BACKEND': 'duckduckgo',  # duckduckgo, claude, or gemini
+            'SMART_ANNOUNCE_AI_BACKEND': 'duckduckgo',  # duckduckgo, google-scrape, claude, or gemini
             'SMART_ANNOUNCE_OLLAMA_MODEL': 'llama3.2:3b',  # Ollama model (blank = auto-detect)
             'SMART_ANNOUNCE_OLLAMA_TEMPERATURE': 0.5,  # 0.0=focused, 1.0=creative
             'SMART_ANNOUNCE_OLLAMA_TOP_P': 0.9,        # nucleus sampling (0.0-1.0)
@@ -4095,6 +4095,63 @@ class SmartAnnouncementManager:
             print("    For better results, install Ollama: curl -fsSL https://ollama.com/install.sh | sh")
         return True
 
+    def _init_google_scrape(self):
+        """Initialize Google AI Overview scrape backend.
+        Uses xdotool to drive the user's real Firefox browser on the desktop,
+        performs a Google search, clicks 'Show more' to expand the AI Overview,
+        then copies the page text and extracts the AI Overview section.
+        Requires: xdotool, xclip, Firefox running on DISPLAY=:0."""
+        import shutil
+        missing = []
+        for tool in ('xdotool', 'xclip'):
+            if not shutil.which(tool):
+                missing.append(tool)
+        if missing:
+            print(f"  [SmartAnnounce] google-scrape requires: {', '.join(missing)}")
+            print(f"    Install with: sudo pacman -S {' '.join(missing)}")
+            return False
+        # Check DISPLAY
+        display = os.environ.get('DISPLAY', '')
+        if not display:
+            os.environ['DISPLAY'] = ':0'
+            print("  [SmartAnnounce] Set DISPLAY=:0")
+        # Check Firefox is running
+        try:
+            result = subprocess.run(['xdotool', 'search', '--name', 'Mozilla Firefox'],
+                                    capture_output=True, text=True, timeout=5,
+                                    env={**os.environ, 'DISPLAY': os.environ.get('DISPLAY', ':0')})
+            windows = [w.strip() for w in result.stdout.strip().split('\n') if w.strip()]
+            if not windows:
+                print("  [SmartAnnounce] Firefox not running — google-scrape needs a Firefox window")
+                return False
+        except Exception as e:
+            print(f"  [SmartAnnounce] Cannot detect Firefox: {e}")
+            return False
+        # Check Ollama for optional text composition
+        self._ollama_available = False
+        configured_model = str(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_MODEL', '') or '').strip()
+        try:
+            import urllib.request, json
+            req = urllib.request.Request('http://127.0.0.1:11434/api/tags', method='GET')
+            resp = urllib.request.urlopen(req, timeout=2)
+            if resp.status == 200:
+                data = json.loads(resp.read())
+                models = [m.get('name', '') for m in data.get('models', [])]
+                if configured_model and (configured_model in models or any(m.startswith(configured_model) for m in models)):
+                    self._ollama_model = configured_model
+                    self._ollama_available = True
+                elif models:
+                    self._ollama_model = models[0]
+                    self._ollama_available = True
+        except Exception:
+            pass
+        if self._ollama_available:
+            print(f"  [SmartAnnounce] Ollama — using model '{self._ollama_model}'")
+        else:
+            print("  [SmartAnnounce] Ollama not available — AI Overview text sent directly to TTS")
+        self._client = True  # marker that backend is ready
+        return True
+
     def start(self):
         """Start the background timer thread."""
         if not self._entries:
@@ -4102,6 +4159,8 @@ class SmartAnnouncementManager:
         try:
             if self._backend == 'duckduckgo':
                 ok = self._init_duckduckgo()
+            elif self._backend == 'google-scrape':
+                ok = self._init_google_scrape()
             elif self._backend == 'gemini':
                 ok = self._init_gemini()
             else:
@@ -4211,6 +4270,8 @@ class SmartAnnouncementManager:
         try:
             if self._backend == 'duckduckgo':
                 text = self._call_duckduckgo(entry, system_prompt, max_words)
+            elif self._backend == 'google-scrape':
+                text = self._call_google_scrape(entry, system_prompt, max_words)
             elif self._backend == 'gemini':
                 text = self._call_gemini(entry, system_prompt, max_words)
             else:
@@ -4340,6 +4401,180 @@ class SmartAnnouncementManager:
                 body = re.sub(r'\s+', ' ', body).strip()
                 snippets.append(body)
         text = '. '.join(snippets)
+        # Trim to word limit
+        words = text.split()
+        if len(words) > max_words:
+            text = ' '.join(words[:max_words])
+        return text if text else None
+
+    def _scrape_google_ai_overview(self, search_query):
+        """Drive the real Firefox browser via xdotool to Google search and extract AI Overview.
+        Returns the AI Overview text or None."""
+        import urllib.parse
+        display_env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY', ':0')}
+
+        def xdo(*args, timeout=5):
+            return subprocess.run(['xdotool'] + list(args),
+                                  capture_output=True, text=True, timeout=timeout, env=display_env)
+
+        def xclip_get():
+            r = subprocess.run(['xclip', '-selection', 'clipboard', '-o'],
+                               capture_output=True, text=True, timeout=5, env=display_env)
+            return r.stdout if r.returncode == 0 else ''
+
+        # Find the main Firefox window (largest one with "Mozilla Firefox" in title)
+        result = xdo('search', '--name', 'Mozilla Firefox')
+        if result.returncode != 0 or not result.stdout.strip():
+            print(f"[SmartAnnounce] google-scrape: Firefox window not found")
+            return None
+        wids = [w.strip() for w in result.stdout.strip().split('\n') if w.strip()]
+
+        # Find the largest window (the actual browser, not internal widgets)
+        best_wid = None
+        best_area = 0
+        for wid in wids:
+            try:
+                geo = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', wid],
+                                     capture_output=True, text=True, timeout=3, env=display_env)
+                w = h = 0
+                for line in geo.stdout.strip().split('\n'):
+                    if line.startswith('WIDTH='): w = int(line.split('=')[1])
+                    if line.startswith('HEIGHT='): h = int(line.split('=')[1])
+                area = w * h
+                if area > best_area:
+                    best_area = area
+                    best_wid = wid
+            except Exception:
+                continue
+
+        if not best_wid or best_area < 10000:
+            print(f"[SmartAnnounce] google-scrape: no usable Firefox window found")
+            return None
+
+        # Save currently active window to restore later
+        active_result = xdo('getactivewindow')
+        prev_wid = active_result.stdout.strip() if active_result.returncode == 0 else None
+
+        try:
+            # Activate Firefox
+            xdo('windowactivate', '--sync', best_wid)
+            time.sleep(0.5)
+
+            # Navigate to Google search in the current tab (F6 reliably focuses URL bar)
+            encoded_q = urllib.parse.quote_plus(search_query)
+            url = f'https://www.google.com/search?q={encoded_q}&hl=en'
+            xdo('key', 'F6')
+            time.sleep(0.5)
+            xdo('type', '--clearmodifiers', '--delay', '10', url, timeout=15)
+            time.sleep(0.3)
+            xdo('key', 'Return')
+
+            print(f"[SmartAnnounce] google-scrape: navigating, waiting for page load...")
+            time.sleep(8)
+
+            # Open browser console to click "AI Mode" (if not already showing AI Overview)
+            # and "Show more" buttons to expand truncated content
+            xdo('key', 'ctrl+shift+k')
+            time.sleep(1)
+            js_click = (
+                '(async()=>{'
+                'let ai=Array.from(document.querySelectorAll("a,div,span"))'
+                '.find(e=>e.textContent.trim()==="AI Mode");'
+                'if(ai){ai.click();await new Promise(r=>setTimeout(r,12000));}'
+                'document.querySelectorAll("div[jsname],span,button").forEach(e=>{'
+                'if(e.textContent.trim()==="Show more")e.click();});'
+                '})();'
+            )
+            xdo('type', '--delay', '2', js_click, timeout=60)
+            time.sleep(0.2)
+            xdo('key', 'Return')
+            # Wait for AI Mode/Show more to load
+            time.sleep(15)
+
+            # Close console
+            xdo('key', 'ctrl+shift+k')
+            time.sleep(0.5)
+
+            # Click page body to focus it (center of window)
+            geo = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', best_wid],
+                                 capture_output=True, text=True, timeout=3, env=display_env)
+            cx, cy = 663, 500
+            for line in geo.stdout.strip().split('\n'):
+                if line.startswith('WIDTH='): cx = int(line.split('=')[1]) // 2
+                if line.startswith('HEIGHT='): cy = int(line.split('=')[1]) // 2
+            xdo('mousemove', '--window', best_wid, str(cx), str(cy))
+            time.sleep(0.2)
+            xdo('click', '1')
+            time.sleep(0.3)
+
+            # Select all and copy
+            xdo('key', 'ctrl+a')
+            time.sleep(0.3)
+            xdo('key', 'ctrl+c')
+            time.sleep(0.5)
+
+            # Get clipboard
+            page_text = xclip_get()
+            if not page_text:
+                print(f"[SmartAnnounce] google-scrape: clipboard empty")
+                return None
+
+            # Extract AI Overview section
+            ai_start = page_text.find('AI Overview')
+            if ai_start == -1:
+                print(f"[SmartAnnounce] google-scrape: 'AI Overview' not found in page text ({len(page_text)} chars)")
+                # Check for CAPTCHA
+                if 'unusual traffic' in page_text.lower() or 'captcha' in page_text.lower():
+                    print(f"[SmartAnnounce] google-scrape: Google CAPTCHA detected — try searching manually first")
+                return None
+
+            # Find the end marker
+            ai_text = page_text[ai_start:]
+            for end_marker in ['Dive deeper in AI Mode', 'AI can make mistakes', 'Dive deeper']:
+                end_pos = ai_text.find(end_marker)
+                if end_pos > 0:
+                    ai_text = ai_text[:end_pos]
+                    break
+
+            # Clean up: remove "AI Overview" header and citation markers like +1, +2
+            import re
+            ai_text = ai_text.replace('AI Overview', '', 1).strip()
+            ai_text = re.sub(r'^\+\d+\s*', '', ai_text).strip()  # remove leading +1, +2 etc.
+
+            return ai_text if ai_text else None
+
+        finally:
+            # Restore previous window focus
+            if prev_wid:
+                try:
+                    xdo('windowactivate', prev_wid)
+                except Exception:
+                    pass
+
+    def _call_google_scrape(self, entry, system_prompt, max_words):
+        """Scrape Google AI Overview via Firefox, optionally refine with Ollama."""
+        search_query = entry['prompt']
+        print(f"\n[SmartAnnounce] #{entry['id']}: ── GOOGLE SCRAPE SEARCH ──")
+        print(f"  Query: {search_query}")
+
+        ai_text = self._scrape_google_ai_overview(search_query)
+        if not ai_text:
+            print(f"[SmartAnnounce] #{entry['id']}: no AI Overview found")
+            return None
+
+        print(f"[SmartAnnounce] #{entry['id']}: ── AI OVERVIEW ({len(ai_text)} chars) ──")
+        for line in ai_text.split('\n'):
+            print(f"  {line}")
+
+        # If Ollama available, use it to condense/reformat for speech
+        if getattr(self, '_ollama_available', False):
+            return self._ollama_compose(entry, system_prompt, max_words, ai_text)
+
+        # No Ollama — clean up the AI Overview text for direct TTS
+        import re
+        text = re.sub(r'\s+', ' ', ai_text).strip()
+        # Remove bullet markers
+        text = re.sub(r'\s*[•·]\s*', '. ', text)
         # Trim to word limit
         words = text.split()
         if len(words) > max_words:

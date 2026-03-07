@@ -53,7 +53,9 @@ if [ "$DISTRO" = "arch" ]; then
         hidapi \
         libsndfile \
         ffmpeg \
-        git
+        git \
+        xdotool \
+        xclip
 else
     sudo apt-get update -qq
     sudo apt-get install -y \
@@ -65,7 +67,9 @@ else
         libhidapi-dev \
         libsndfile1 \
         ffmpeg \
-        git
+        git \
+        xdotool \
+        xclip
 fi
 
 echo "  ✓ System packages installed"
