@@ -117,21 +117,22 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `set_rts()` parses response from TH9800 to track actual state
 - TH9800_CAT.py `bool("False")` bug fixed → string comparison now
 
-## Smart Announcements (Claude API)
+## Smart Announcements (Modular AI Backend)
 - `SmartAnnouncementManager`: scheduled AI-powered spoken announcements
-- Config: `ENABLE_SMART_ANNOUNCE`, `SMART_ANNOUNCE_API_KEY`, `SMART_ANNOUNCE_N`
+- Config: `ENABLE_SMART_ANNOUNCE`, `SMART_ANNOUNCE_AI_BACKEND`, `SMART_ANNOUNCE_N`
 - Entry format: `interval_secs, voice, target_secs, {prompt text in braces}`
-- Uses Claude Sonnet with web_search tool (max 3 searches) for real-time data
+- **Backends** (`SMART_ANNOUNCE_AI_BACKEND`):
+  - `duckduckgo` (default): free, no key. DuckDuckGo web search + Ollama local LLM. Falls back to search snippets if no Ollama.
+  - `claude`: Anthropic API + web search. Key: `SMART_ANNOUNCE_API_KEY`
+  - `gemini`: Google Gemini API + Google Search. Key: `SMART_ANNOUNCE_GEMINI_API_KEY`
 - Word limit: ~2.5 words/sec × target_secs; max 60s
-- Feeds text to existing gTTS → PTT pipeline
+- Feeds text to existing gTTS → AIOC PTT pipeline (no CAT/TCP RTS switching)
 - Keyboard: `[`=Smart#1, `]`=Smart#2, `\`=Smart#3
 - Mumble commands: `!smart` (list), `!smart N` (trigger)
-- RTS management: if USB Controlled, switches to Radio Controlled for playback, restores after
+- Manual triggers (keyboard/Mumble) skip time window check
 - Skips if radio busy (VAD active or playback in progress)
-- All abort paths print reason (no silent failures)
-- FilePlaybackSource uses `current_file` (not `is_playing`) to check playback state
-- Anthropic API key stored in gateway_config.txt (NOT committed)
-- Dependency: `anthropic` SDK (added to installer)
+- Dependencies: `ddgs` (default), `anthropic` (claude), `google-genai` (gemini), Ollama (optional)
+- Installer step 7: installs Ollama + pulls model (llama3.2:3b on PC, llama3.2:1b on Pi)
 
 ## Desktop Shortcut
 - Template: `scripts/radio-gateway.desktop.template`

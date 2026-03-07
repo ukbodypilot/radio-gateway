@@ -399,15 +399,20 @@ RELAY_CHARGER_OFF_TIME = 06:00
 
 
 # ============================================================================
-# SMART ANNOUNCEMENTS (AI-powered via Claude API)
+# SMART ANNOUNCEMENTS (AI-powered)
 # ============================================================================
-# Claude generates spoken announcements from prompts, with web search for
+# AI generates spoken announcements from prompts, with web search for
 # real-time data (weather, news, time, etc). Audio is broadcast via gTTS + PTT.
 #
-# Prerequisites:
-#   pip3 install anthropic --break-system-packages
+# Backends:
+#   duckduckgo — Free, no API key. DuckDuckGo search + Ollama local LLM.
+#                Install Ollama: curl -fsSL https://ollama.com/install.sh | sh
+#                Then: ollama pull llama3.2:3b (or llama3.2:1b on Raspberry Pi)
+#   claude     — Anthropic Claude API with web search. Requires API key + credits.
+#   gemini     — Google Gemini API with Google Search. Requires API key.
 #
 # Mumble command: !smart <N> to trigger manually, !smart to list all
+# Manual triggers (keyboard/Mumble) ignore the time window restriction.
 #
 # Entry format:
 #   SMART_ANNOUNCE_N = interval_secs, voice, target_secs, {prompt text}
@@ -416,15 +421,21 @@ RELAY_CHARGER_OFF_TIME = 06:00
 #   interval_secs  — how often to announce (seconds, e.g. 3600 = hourly)
 #   voice          — gTTS voice number (1=US, 2=British, 3=Australian, etc)
 #   target_secs    — target speech length in seconds (max 60)
-#   {prompt text}  — instructions for Claude (anything inside braces)
+#   {prompt text}  — instructions for the AI (anything inside braces)
 
 ENABLE_SMART_ANNOUNCE = false
 
-# Anthropic API key (get one at console.anthropic.com)
+# AI Backend — choose: duckduckgo (free, no key), claude, or gemini
+SMART_ANNOUNCE_AI_BACKEND = duckduckgo
+
+# Claude API key (used when AI_BACKEND = claude)
 # WARNING: Do not commit this file with a real API key
 SMART_ANNOUNCE_API_KEY =
 
-# Time window — announcements only play between these times (system clock)
+# Gemini API key (used when AI_BACKEND = gemini)
+SMART_ANNOUNCE_GEMINI_API_KEY =
+
+# Time window — scheduled announcements only play between these times (system clock)
 # Format: HH:MM (24-hour). Leave blank for no restriction.
 # Handles overnight wrap (e.g. 22:00 start, 06:00 end = 10pm to 6am)
 SMART_ANNOUNCE_START_TIME =

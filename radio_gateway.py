@@ -268,9 +268,11 @@ class Config:
             'RELAY_CHARGER_BAUD': 9600,
             'RELAY_CHARGER_ON_TIME': '23:00',
             'RELAY_CHARGER_OFF_TIME': '06:00',
-            # Smart Announcements (AI-powered via Claude API)
+            # Smart Announcements (AI-powered)
             'ENABLE_SMART_ANNOUNCE': False,
-            'SMART_ANNOUNCE_API_KEY': '',
+            'SMART_ANNOUNCE_AI_BACKEND': 'duckduckgo',  # duckduckgo, claude, or gemini
+            'SMART_ANNOUNCE_API_KEY': '',            # Claude API key
+            'SMART_ANNOUNCE_GEMINI_API_KEY': '',     # Gemini API key
             'SMART_ANNOUNCE_START_TIME': '',   # HH:MM — empty = no restriction
             'SMART_ANNOUNCE_END_TIME': '',     # HH:MM — empty = no restriction
             # TH-9800 CAT Control
@@ -3954,14 +3956,13 @@ class RadioCATClient:
 
 
 class SmartAnnouncementManager:
-    """AI-powered announcements using Claude API with web search.
+    """AI-powered announcements with pluggable backend (Claude or Gemini).
 
     Reads SMART_ANNOUNCE_N entries from config. Each entry has:
         interval (seconds), voice (1-9), target_seconds (max speech length), {prompt}
 
-    Claude composes a spoken message based on the prompt, using web search
-    for real-time data (weather, news, time, etc). The result is fed to
-    the existing gTTS pipeline for broadcast.
+    The selected AI backend composes a spoken message based on the prompt.
+    The result is fed to the existing gTTS pipeline for broadcast.
     """
 
     # ~2.5 words/second for gTTS speech
@@ -3973,7 +3974,8 @@ class SmartAnnouncementManager:
         self._entries = []  # list of dicts: {id, interval, voice, target_secs, prompt, last_run}
         self._thread = None
         self._stop = False
-        self._client = None  # anthropic.Anthropic instance
+        self._client = None  # AI client instance (anthropic.Anthropic or genai model)
+        self._backend = str(getattr(self.config, 'SMART_ANNOUNCE_AI_BACKEND', 'duckduckgo')).strip().lower()
         self._parse_entries()
 
     def _parse_entries(self):
@@ -4013,25 +4015,91 @@ class SmartAnnouncementManager:
             'last_run': 0,
         }
 
+    def _init_claude(self):
+        """Initialize Claude (Anthropic) backend."""
+        api_key = getattr(self.config, 'SMART_ANNOUNCE_API_KEY', '')
+        if not api_key:
+            print("  [SmartAnnounce] No API key configured (SMART_ANNOUNCE_API_KEY)")
+            return False
+        try:
+            import anthropic
+            self._client = anthropic.Anthropic(api_key=api_key)
+            return True
+        except ImportError:
+            print("  [SmartAnnounce] anthropic package not installed")
+            print("    Install with: pip3 install anthropic --break-system-packages")
+            return False
+
+    def _init_gemini(self):
+        """Initialize Google Gemini backend."""
+        api_key = getattr(self.config, 'SMART_ANNOUNCE_GEMINI_API_KEY', '')
+        if not api_key:
+            print("  [SmartAnnounce] No Gemini API key configured (SMART_ANNOUNCE_GEMINI_API_KEY)")
+            return False
+        try:
+            from google import genai
+            self._client = genai.Client(api_key=api_key)
+            return True
+        except ImportError:
+            print("  [SmartAnnounce] google-genai package not installed")
+            print("    Install with: pip3 install google-genai --break-system-packages")
+            return False
+
+    def _init_duckduckgo(self):
+        """Initialize DuckDuckGo search + Ollama backend (free, no API key needed).
+        Uses ddgs for web search and Ollama (if running) for natural speech composition.
+        Falls back to reading search snippets directly if Ollama is unavailable."""
+        try:
+            from ddgs import DDGS
+            self._client = DDGS()
+        except ImportError:
+            try:
+                from duckduckgo_search import DDGS
+                self._client = DDGS()
+            except ImportError:
+                print("  [SmartAnnounce] ddgs package not installed")
+                print("    Install with: pip3 install ddgs --break-system-packages")
+                return False
+        # Check if Ollama is available for natural speech composition
+        self._ollama_available = False
+        try:
+            import urllib.request
+            req = urllib.request.Request('http://127.0.0.1:11434/api/tags', method='GET')
+            resp = urllib.request.urlopen(req, timeout=2)
+            if resp.status == 200:
+                import json
+                data = json.loads(resp.read())
+                models = [m.get('name', '') for m in data.get('models', [])]
+                if models:
+                    self._ollama_model = models[0]  # use first available model
+                    self._ollama_available = True
+                    print(f"  [SmartAnnounce] Ollama detected — using model '{self._ollama_model}' for speech composition")
+                else:
+                    print("  [SmartAnnounce] Ollama running but no models pulled — using search snippets directly")
+                    print("    Pull a model with: ollama pull llama3.2:3b")
+        except Exception:
+            print("  [SmartAnnounce] Ollama not detected — using search snippets directly")
+            print("    For better results, install Ollama: curl -fsSL https://ollama.com/install.sh | sh")
+        return True
+
     def start(self):
         """Start the background timer thread."""
         if not self._entries:
             return
-        api_key = getattr(self.config, 'SMART_ANNOUNCE_API_KEY', '')
-        if not api_key:
-            print("  [SmartAnnounce] No API key configured (SMART_ANNOUNCE_API_KEY)")
-            return
         try:
-            import anthropic
-            self._client = anthropic.Anthropic(api_key=api_key)
+            if self._backend == 'duckduckgo':
+                ok = self._init_duckduckgo()
+            elif self._backend == 'gemini':
+                ok = self._init_gemini()
+            else:
+                ok = self._init_claude()
+            if not ok:
+                return
+            print(f"  [SmartAnnounce] Backend: {self._backend}")
             print(f"  [SmartAnnounce] Initialized with {len(self._entries)} scheduled announcement(s)")
             for e in self._entries:
                 print(f"    #{e['id']}: every {e['interval']}s, voice {e['voice']}, "
                       f"~{e['target_secs']}s, prompt: {e['prompt'][:60]}...")
-        except ImportError:
-            print("  [SmartAnnounce] anthropic package not installed")
-            print("    Install with: pip3 install anthropic --break-system-packages")
-            return
         except Exception as e:
             print(f"  [SmartAnnounce] Init error: {e}")
             return
@@ -4086,20 +4154,24 @@ class SmartAnnouncementManager:
                     except Exception as ex:
                         print(f"\n[SmartAnnounce] Error on #{e['id']}: {ex}")
 
-    def _run_announcement(self, entry):
-        """Call Claude API, get text, speak it."""
-        if not self._client:
-            print(f"\n[SmartAnnounce] #{entry['id']}: No API client (missing key?)")
-            return
-        if not self._in_time_window():
-            print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — outside time window")
-            return
-        # Don't announce while radio is busy (PTT active, playback in progress)
-        if getattr(self.gateway, 'vad_active', False):
-            print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — VAD active (radio busy)")
-            return
-        if self.gateway.playback_source and self.gateway.playback_source.current_file:
-            print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — playback in progress")
+    def _run_announcement(self, entry, manual=False):
+        """Call AI API, get text, speak it. manual=True skips time window check."""
+        try:
+            if not self._client:
+                print(f"\n[SmartAnnounce] #{entry['id']}: No API client (missing key?)")
+                return
+            if not manual and not self._in_time_window():
+                print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — outside time window")
+                return
+            # Don't announce while radio is busy (PTT active, playback in progress)
+            if getattr(self.gateway, 'vad_active', False):
+                print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — VAD active (radio busy)")
+                return
+            if self.gateway.playback_source and self.gateway.playback_source.current_file:
+                print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — playback in progress")
+                return
+        except Exception as e:
+            print(f"\n[SmartAnnounce] #{entry['id']}: Pre-check error: {e}")
             return
 
         max_words = int(entry['target_secs'] * self.WORDS_PER_SECOND)
@@ -4119,22 +4191,13 @@ class SmartAnnouncementManager:
         )
 
         try:
-            print(f"\n[SmartAnnounce] #{entry['id']}: Calling Claude API (web search)...")
-            response = self._client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1024,
-                system=system_prompt,
-                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
-                messages=[{"role": "user", "content": entry['prompt']}],
-            )
-            # Extract text from response (may contain tool_use and text blocks)
-            text_parts = []
-            for block in response.content:
-                if hasattr(block, 'text'):
-                    text_parts.append(block.text)
-            text = ' '.join(text_parts).strip()
+            if self._backend == 'duckduckgo':
+                text = self._call_duckduckgo(entry, system_prompt, max_words)
+            elif self._backend == 'gemini':
+                text = self._call_gemini(entry, system_prompt, max_words)
+            else:
+                text = self._call_claude(entry, system_prompt, max_words)
             if not text:
-                print(f"[SmartAnnounce] #{entry['id']}: empty response from Claude")
                 return
 
             # Truncate if over word limit (safety net)
@@ -4144,39 +4207,130 @@ class SmartAnnouncementManager:
 
             print(f"[SmartAnnounce] #{entry['id']}: \"{text[:80]}\" ({len(words)} words, voice {entry['voice']})")
 
-            # RTS management: if USB Controlled, switch to Radio Controlled for
-            # the announcement (so gateway PTT works), then restore afterwards.
-            # If already Radio Controlled, just play without changing RTS.
-            cat = self.gateway.cat_client
-            rts_was_usb = False
-            if cat and cat.get_rts() is True:
-                rts_was_usb = True
-                cat.set_rts(False)
-                time.sleep(0.2)
-
+            # Playback triggers AIOC PTT automatically via the audio loop
+            # (set_ptt_state writes HID GPIO to key the radio).
             print(f"[SmartAnnounce] #{entry['id']}: Speaking via TTS...")
             self.gateway.speak_text(text, voice=entry['voice'])
 
-            # Wait for playback to finish before restoring RTS
-            if rts_was_usb and cat:
-                # Poll until playback completes (speak_text queues async)
-                pb = self.gateway.playback_source
-                if pb:
-                    for _ in range(600):  # up to 60s
-                        if not pb.current_file:
-                            break
-                        time.sleep(0.1)
-                time.sleep(0.5)
-                cat.set_rts(True)
-
         except Exception as e:
             print(f"\n[SmartAnnounce] #{entry['id']}: API error: {e}")
+
+    def _call_claude(self, entry, system_prompt, max_words):
+        """Call Claude API with web search, return announcement text or None."""
+        print(f"\n[SmartAnnounce] #{entry['id']}: Calling Claude API (web search)...")
+        response = self._client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            system=system_prompt,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+            messages=[{"role": "user", "content": entry['prompt']}],
+        )
+        text_parts = []
+        for block in response.content:
+            if hasattr(block, 'text'):
+                text_parts.append(block.text)
+        text = ' '.join(text_parts).strip()
+        if not text:
+            print(f"[SmartAnnounce] #{entry['id']}: empty response from Claude")
+            return None
+        return text
+
+    def _call_gemini(self, entry, system_prompt, max_words):
+        """Call Gemini API with Google Search grounding, return announcement text or None."""
+        from google.genai import types
+        print(f"\n[SmartAnnounce] #{entry['id']}: Calling Gemini API (Google Search)...")
+        google_search_tool = types.Tool(google_search=types.GoogleSearch())
+        response = self._client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=entry['prompt'],
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                tools=[google_search_tool],
+                max_output_tokens=1024,
+            ),
+        )
+        text = response.text.strip() if response.text else ''
+        if not text:
+            print(f"[SmartAnnounce] #{entry['id']}: empty response from Gemini")
+            return None
+        return text
+
+    def _call_duckduckgo(self, entry, system_prompt, max_words):
+        """Free web search via DuckDuckGo + Ollama for speech composition.
+        Falls back to formatted search snippets if Ollama is unavailable."""
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
+        import re
+
+        print(f"\n[SmartAnnounce] #{entry['id']}: DuckDuckGo web search...")
+        ddgs = DDGS()
+        search_results = ddgs.text(entry['prompt'], max_results=5)
+        if not search_results:
+            print(f"[SmartAnnounce] #{entry['id']}: no search results")
+            return None
+
+        search_context = "\n".join(
+            f"- {r.get('title', '')}: {r.get('body', '')}" for r in search_results
+        )
+
+        # If Ollama is available, use it to compose natural speech
+        if getattr(self, '_ollama_available', False):
+            return self._ollama_compose(entry, system_prompt, max_words, search_context)
+
+        # Fallback: format search snippets directly for TTS
+        print(f"[SmartAnnounce] #{entry['id']}: Composing from search snippets (no Ollama)...")
+        snippets = []
+        for r in search_results[:3]:
+            body = r.get('body', '').strip()
+            if body:
+                # Clean up for speech: remove URLs, extra whitespace
+                body = re.sub(r'https?://\S+', '', body)
+                body = re.sub(r'\s+', ' ', body).strip()
+                snippets.append(body)
+        text = '. '.join(snippets)
+        # Trim to word limit
+        words = text.split()
+        if len(words) > max_words:
+            text = ' '.join(words[:max_words])
+        return text if text else None
+
+    def _ollama_compose(self, entry, system_prompt, max_words, search_context):
+        """Use local Ollama to compose natural speech from search results."""
+        import urllib.request, json
+        print(f"[SmartAnnounce] #{entry['id']}: Ollama composing ({self._ollama_model})...")
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"Web search results:\n{search_context}\n\n"
+            f"Based on the above, compose a spoken radio announcement "
+            f"in {max_words} words or fewer for: {entry['prompt']}"
+        )
+        payload = json.dumps({
+            "model": self._ollama_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": max_words * 3},  # ~tokens, generous limit
+        }).encode()
+        req = urllib.request.Request(
+            'http://127.0.0.1:11434/api/generate',
+            data=payload,
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        resp = urllib.request.urlopen(req, timeout=120)
+        data = json.loads(resp.read())
+        text = data.get('response', '').strip()
+        if not text:
+            print(f"[SmartAnnounce] #{entry['id']}: empty response from Ollama")
+            return None
+        return text
 
     def trigger(self, entry_id):
         """Manually trigger a specific announcement. Returns True if found."""
         for e in self._entries:
             if e['id'] == entry_id:
-                threading.Thread(target=self._run_announcement, args=(e,),
+                threading.Thread(target=self._run_announcement, args=(e, True),
                                  daemon=True, name=f"SmartAnnounce-{entry_id}").start()
                 return True
         return False
@@ -4664,7 +4818,7 @@ class RadioGateway:
         self._charger_on_time = None   # (hour, minute) tuple
         self._charger_off_time = None  # (hour, minute) tuple
 
-        # Smart Announcements (AI-powered)
+        # Smart Announcements (AI-powered, Claude or Gemini)
         self.smart_announce = None  # SmartAnnouncementManager instance
 
         # TH-9800 CAT control
@@ -5810,7 +5964,7 @@ class RadioGateway:
                         self.mumble_server_2.state = MumbleServerManager.STATE_ERROR
                         self.mumble_server_2.error_msg = str(e)
 
-            # Initialize Smart Announcements (AI-powered via Claude API)
+            # Initialize Smart Announcements (AI-powered)
             if getattr(self.config, 'ENABLE_SMART_ANNOUNCE', False):
                 try:
                     self.smart_announce = SmartAnnouncementManager(self)
@@ -7624,6 +7778,23 @@ class RadioGateway:
                             self.speaker_muted = not self.speaker_muted
                             self._trace_events.append((time.monotonic(), 'spk_mute', 'on' if self.speaker_muted else 'off'))
 
+                    elif char == 'l':
+                        # Send CAT configuration commands to radio
+                        if self.cat_client:
+                            print(f"\n[CAT] Sending configuration commands...")
+                            def _send_cat_config():
+                                try:
+                                    self.cat_client._stop = False
+                                    self.cat_client.setup_radio(self.config)
+                                    if not self.cat_client._stop:
+                                        print(f"\n[CAT] Configuration commands sent successfully")
+                                except Exception as ex:
+                                    print(f"\n[CAT] Error sending commands: {ex}")
+                            threading.Thread(target=_send_cat_config, daemon=True,
+                                             name="CAT-ManualConfig").start()
+                        else:
+                            print(f"\n[CAT] CAT control not connected")
+
                     elif char in '0123456789':
                         # Play announcement 0-9 (requires AIOC for radio TX)
                         if not self.aioc_device:
@@ -8131,7 +8302,7 @@ class RadioGateway:
         print("  PTT:   'p'=Manual PTT toggle")
         print("  Play:  '1-9'=Announcements  '0'=StationID  '-'=Stop")
         print("  Net:   'k'=Reset remote audio connection")
-        print("  Relay: 'j'=Radio power button  'h'=Charger toggle")
+        print("  Relay: 'j'=Radio power button  'h'=Charger toggle  'l'=Send CAT config")
         print("  Smart: '['=Smart#1  ']'=Smart#2  '\\'=Smart#3")
         print("  Trace: 'i'=Start/stop audio trace  'u'=Start/stop watchdog trace")
         print("  Misc:  'q'=Restart gateway  'z'=Clear and reprint console")

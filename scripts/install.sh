@@ -43,7 +43,7 @@ echo "Package manager: $DISTRO"
 echo
 
 # ── 1. System packages ───────────────────────────────────────
-echo "[ 1/12 ] Installing system packages..."
+echo "[ 1/13 ] Installing system packages..."
 if [ "$DISTRO" = "arch" ]; then
     sudo pacman -Sy --noconfirm --needed \
         python \
@@ -72,7 +72,7 @@ echo "  ✓ System packages installed"
 echo
 
 # ── 2. ALSA loopback module ──────────────────────────────────
-echo "[ 2/12 ] Setting up ALSA loopback (for SDR input)..."
+echo "[ 2/13 ] Setting up ALSA loopback (for SDR input)..."
 
 # Write modprobe options first:
 #   enable=1,1,1 → enable 3 independent loopback cards
@@ -148,7 +148,7 @@ echo "$LOOPBACK_LINES" | grep "Loopback" | sed 's/^/    /' || true
 echo
 
 # ── 3. Python packages ───────────────────────────────────────
-echo "[ 3/12 ] Installing Python packages..."
+echo "[ 3/13 ] Installing Python packages..."
 
 # Helper: try --break-system-packages (Debian 12+), then plain pip
 _pip() {
@@ -166,16 +166,18 @@ set -e
 
 # Core packages (excluding pymumble — handled separately due to PyPI name variants)
 # Only install packages that are missing — avoids slow pip index checks on re-run
-CORE_PKGS="hid numpy pyaudio soundfile resampy psutil gtts pyserial anthropic"
+CORE_PKGS="hid numpy pyaudio soundfile resampy psutil gtts pyserial anthropic google-genai ddgs"
 MISSING_PKGS=""
 for pkg in $CORE_PKGS; do
     # Map pip names to Python import names where they differ
     case "$pkg" in
-        pyaudio)   imp="pyaudio" ;;
-        soundfile) imp="soundfile" ;;
-        gtts)      imp="gtts" ;;
-        pyserial)  imp="serial" ;;
-        *)         imp="$pkg" ;;
+        pyaudio)     imp="pyaudio" ;;
+        soundfile)   imp="soundfile" ;;
+        gtts)        imp="gtts" ;;
+        pyserial)    imp="serial" ;;
+        google-genai)       imp="google.genai" ;;
+        ddgs)               imp="ddgs" ;;
+        *)                  imp="$pkg" ;;
     esac
     if ! python3 -c "import $imp" 2>/dev/null; then
         MISSING_PKGS="$MISSING_PKGS $pkg"
@@ -214,10 +216,26 @@ if ! $MUMBLE_OK; then
     echo "    Try manually: pip3 install pymumble --break-system-packages"
     echo "              or: pip3 install pymumble-py3 --break-system-packages"
 fi
+
+# Fix protobuf version conflict: pymumble uses protobuf 3.x descriptors which
+# break with protobuf 5.x (installed by google-genai's dependency chain).
+# Protobuf 3.20.x is the latest 3.x release and works with both libraries.
+PROTO_VER=$(python3 -c "import google.protobuf; print(google.protobuf.__version__)" 2>/dev/null || echo "")
+if [ -n "$PROTO_VER" ]; then
+    PROTO_MAJOR=$(echo "$PROTO_VER" | cut -d. -f1)
+    if [ "$PROTO_MAJOR" -ge 4 ] 2>/dev/null; then
+        echo "  ⚠ protobuf $PROTO_VER detected — downgrading to 3.20.x (pymumble compatibility)"
+        _pip "protobuf>=3.20,<3.21" 2>/dev/null \
+            && echo "  ✓ protobuf pinned to 3.20.x" \
+            || echo "  ⚠ Could not downgrade protobuf — pymumble may fail to import"
+    else
+        echo "  ✓ protobuf $PROTO_VER OK (compatible with pymumble)"
+    fi
+fi
 echo
 
 # ── 4. UDEV rules for AIOC ──────────────────────────────────
-echo "[ 4/12 ] Setting up UDEV rules for AIOC USB device..."
+echo "[ 4/13 ] Setting up UDEV rules for AIOC USB device..."
 UDEV_RULE='SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="audio"
 SUBSYSTEM=="hidraw", SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="audio"
 SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="uucp"'
@@ -419,7 +437,7 @@ fi
 echo
 
 # ── 5. Audio group, realtime limits, and sudoers ─────────────────
-echo "[ 5/12 ] Setting up audio permissions..."
+echo "[ 5/13 ] Setting up audio permissions..."
 set +e   # None of this should abort the install
 
 # Determine the real (non-root) user running this script
@@ -500,7 +518,7 @@ fi
 echo
 
 # ── 6. Darkice (optional — for Broadcastify/Icecast streaming) ───
-echo "[ 6/12 ] Darkice streaming (optional)..."
+echo "[ 6/13 ] Darkice streaming (optional)..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
     if sudo pacman -S --noconfirm --needed lame 2>/dev/null; then
@@ -600,8 +618,59 @@ fi
 set -e
 echo
 
-# ── 7. Mumble GUI client ─────────────────────────────────────
-echo "[ 7/12 ] Installing Mumble client..."
+# ── 7. Ollama local LLM (optional — for free Smart Announcements) ──
+echo "[ 7/13 ] Installing Ollama local LLM (optional — for Smart Announcements)..."
+set +e
+if command -v ollama &>/dev/null; then
+    echo "  ✓ Ollama already installed"
+    # Check if a model is available
+    if ollama list 2>/dev/null | grep -q ":"; then
+        OLLAMA_MODEL=$(ollama list 2>/dev/null | awk 'NR==2{print $1}')
+        echo "  ✓ Model available: $OLLAMA_MODEL"
+    else
+        echo "  Pulling llama3.2:3b model (2GB download)..."
+        if $IS_PI; then
+            # Pi: use smaller model
+            if ollama pull llama3.2:1b 2>/dev/null; then
+                echo "  ✓ llama3.2:1b model ready (optimized for Pi)"
+            else
+                echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:1b"
+            fi
+        else
+            if ollama pull llama3.2:3b 2>/dev/null; then
+                echo "  ✓ llama3.2:3b model ready"
+            else
+                echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:3b"
+            fi
+        fi
+    fi
+else
+    echo "  Installing Ollama..."
+    if curl -fsSL https://ollama.com/install.sh | sh 2>/dev/null; then
+        echo "  ✓ Ollama installed"
+        # Wait for service to start
+        sleep 2
+        echo "  Pulling default model..."
+        if $IS_PI; then
+            ollama pull llama3.2:1b 2>/dev/null \
+                && echo "  ✓ llama3.2:1b model ready (optimized for Pi)" \
+                || echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:1b"
+        else
+            ollama pull llama3.2:3b 2>/dev/null \
+                && echo "  ✓ llama3.2:3b model ready" \
+                || echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:3b"
+        fi
+    else
+        echo "  ⚠ Could not install Ollama — Smart Announcements will use search snippets only"
+        echo "    Install manually: curl -fsSL https://ollama.com/install.sh | sh"
+        echo "    This is optional: only needed for SMART_ANNOUNCE_AI_BACKEND = duckduckgo"
+    fi
+fi
+set -e
+echo
+
+# ── 8. Mumble GUI client ─────────────────────────────────────
+echo "[ 8/13 ] Installing Mumble client..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
     sudo pacman -S --noconfirm --needed mumble 2>/dev/null
@@ -617,7 +686,7 @@ set -e
 echo
 
 # ── 8. Mumble server (murmurd) ───────────────────────────────
-echo "[ 8/12 ] Installing Mumble server (optional — for local server instances)..."
+echo "[ 9/13 ] Installing Mumble server (optional — for local server instances)..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
     if sudo pacman -S --noconfirm --needed mumble-server 2>/dev/null; then
@@ -666,7 +735,7 @@ set -e
 echo
 
 # ── 9. OpenSSL TLS compatibility (for older Mumble servers) ──
-echo "[ 9/12 ] Configuring OpenSSL for TLS 1.0 compatibility..."
+echo "[ 10/13 ] Configuring OpenSSL for TLS 1.0 compatibility..."
 OPENSSL_CNF="/etc/ssl/openssl.cnf"
 if [ -f "$OPENSSL_CNF" ]; then
     # Check if already patched
@@ -695,7 +764,7 @@ fi
 echo
 
 # ── 10. Gateway configuration ────────────────────────────────
-echo "[ 10/12 ] Setting up configuration..."
+echo "[ 11/13 ] Setting up configuration..."
 
 CONFIG_DEST="$GATEWAY_DIR/gateway_config.txt"
 CONFIG_SRC="$GATEWAY_DIR/examples/gateway_config.txt"
@@ -717,7 +786,7 @@ echo "  ✓ audio/ directory ready (place announcement files here)"
 echo
 
 # ── 11. Make scripts executable ──────────────────────────────
-echo "[ 11/12 ] Setting permissions..."
+echo "[ 12/13 ] Setting permissions..."
 chmod +x "$GATEWAY_DIR/radio_gateway.py" 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/scripts/"*.sh 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/start.sh" 2>/dev/null || true
@@ -725,7 +794,7 @@ echo "  ✓ Scripts are executable"
 echo
 
 # ── 12. Desktop shortcut ────────────────────────────────────
-echo "[ 12/12 ] Creating desktop shortcut..."
+echo "[ 13/13 ] Creating desktop shortcut..."
 DESKTOP_DIR="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
 if [ -d "$DESKTOP_DIR" ] || mkdir -p "$DESKTOP_DIR" 2>/dev/null; then
     # Pick the first available terminal emulator

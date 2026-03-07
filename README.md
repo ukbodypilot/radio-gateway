@@ -91,7 +91,7 @@ A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, A
 - **Voice Activity Detection (VAD)**: Smart audio gate prevents noise transmission (enabled by default)
 - **Real-Time Audio Processing**: Noise gate, AGC, filters, echo cancellation
 - **Live Status Display**: Real-time bars showing TX/RX/SDR levels with color coding
-- **Smart Announcements**: AI-powered scheduled broadcasts using Claude API with web search (weather, news, time)
+- **Smart Announcements**: AI-powered scheduled broadcasts with pluggable backend (DuckDuckGo+Ollama free, Claude, or Gemini)
 - **Local Mumble Server**: Run up to 2 managed mumble-server instances on the same machine
 
 ### Audio Sources (Priority-Based Mixing)
@@ -365,14 +365,18 @@ RELAY_CHARGER_OFF_TIME = 06:00
 
 ### Smart Announcements (AI-Powered)
 
-Scheduled radio announcements powered by Claude AI with real-time web search. The gateway calls the Anthropic API on a configurable interval, Claude gathers live data (weather, news, time, etc.) via web search, composes a natural spoken message, and the gateway broadcasts it via gTTS.
+Scheduled radio announcements with a pluggable AI backend. The gateway searches for live data, an AI composes a natural spoken message, and the gateway broadcasts it via gTTS.
+
+**AI Backends:**
+- **`duckduckgo`** (default) — Free, no API key needed. Uses DuckDuckGo web search for live data + Ollama local LLM for natural speech composition. Falls back to formatted search snippets if Ollama is not installed.
+- **`claude`** — Anthropic Claude API with built-in web search. Requires API key and credits.
+- **`gemini`** — Google Gemini API with Google Search grounding. Requires API key.
 
 **How it works:**
 1. Configure one or more announcement entries with an interval, voice, target length, and a prompt
-2. On each interval, the gateway calls Claude Sonnet with the prompt and web search enabled
-3. Claude researches current data and composes a spoken message within the word limit
-4. The text is converted to speech via gTTS and queued for radio broadcast
-5. If TH-9800 CAT control is active and RTS is USB Controlled, the gateway temporarily switches to Radio Controlled for the announcement, then restores the previous state
+2. On each interval, the backend searches for live data and composes a spoken message within the word limit
+3. The text is converted to speech via gTTS and broadcast on radio via AIOC PTT
+4. Manual triggers (keyboard/Mumble) ignore the time window restriction
 
 **Keyboard shortcuts:**
 - `[` = Trigger smart announcement #1 immediately
@@ -396,7 +400,15 @@ SMART_ANNOUNCE_3 = 7200, 2, 20, {Summarize the top 2 breaking news headlines fro
 **Configuration:**
 ```ini
 ENABLE_SMART_ANNOUNCE = true
-SMART_ANNOUNCE_API_KEY = sk-ant-api03-your-key-here    # From console.anthropic.com
+
+# AI Backend — choose: duckduckgo (free, no key), claude, or gemini
+SMART_ANNOUNCE_AI_BACKEND = duckduckgo
+
+# Claude API key (used when AI_BACKEND = claude)
+SMART_ANNOUNCE_API_KEY =
+
+# Gemini API key (used when AI_BACKEND = gemini)
+SMART_ANNOUNCE_GEMINI_API_KEY =
 
 # Time window (HH:MM, 24-hour). Blank = no restriction. Handles overnight wrap.
 SMART_ANNOUNCE_START_TIME = 08:00
@@ -406,7 +418,15 @@ SMART_ANNOUNCE_1 = interval_secs, voice, target_secs, {prompt text}
 # Up to 19 entries (SMART_ANNOUNCE_1 through SMART_ANNOUNCE_19)
 ```
 
-**Requires:** `pip3 install anthropic` (handled by `scripts/install.sh`) and an Anthropic API key with credits.
+**DuckDuckGo backend setup (free):**
+```bash
+pip3 install ddgs --break-system-packages
+# Optional: install Ollama for natural speech composition
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2:3b    # or llama3.2:1b on Raspberry Pi
+```
+
+**Requires:** `pip3 install ddgs` for the default backend (handled by `scripts/install.sh`). Claude/Gemini backends require their respective API keys.
 
 ### TH-9800 CAT Control
 
@@ -762,9 +782,10 @@ Press keys during operation to control the gateway:
 ### Network
 - `k` = Reset remote audio TCP connection (force reconnect to Windows client)
 
-### Relay Control
+### Relay / CAT Control
 - `j` = Radio power button (momentary pulse — relay ON 0.5s then OFF)
 - `h` = Charger relay manual toggle (overrides schedule until next timed transition)
+- `l` = Send CAT configuration commands to radio (works even if CAT_STARTUP_COMMANDS = false)
 
 ### Smart Announcements
 - `[` = Trigger smart announcement #1
@@ -1392,12 +1413,17 @@ PTT_TTS_DELAY = 1.0          # Silence padding before TTS (seconds)
 
 ```ini
 ENABLE_SMART_ANNOUNCE = false              # Enable AI-powered scheduled announcements
-SMART_ANNOUNCE_API_KEY =                   # Anthropic API key (console.anthropic.com)
+
+# AI Backend — duckduckgo (free, no key), claude, or gemini
+SMART_ANNOUNCE_AI_BACKEND = duckduckgo
+SMART_ANNOUNCE_API_KEY =                   # Claude API key (used when backend = claude)
+SMART_ANNOUNCE_GEMINI_API_KEY =            # Gemini API key (used when backend = gemini)
 
 # Time window — only play between these times (system clock, 24-hour HH:MM)
 # Leave blank for no restriction. Handles overnight wrap (e.g. 22:00 to 06:00).
-SMART_ANNOUNCE_START_TIME = 08:00          # Earliest time to play announcements
-SMART_ANNOUNCE_END_TIME = 22:00            # Latest time to play announcements
+# Manual triggers (keyboard/Mumble) always ignore the time window.
+SMART_ANNOUNCE_START_TIME = 08:00          # Earliest time for scheduled announcements
+SMART_ANNOUNCE_END_TIME = 22:00            # Latest time for scheduled announcements
 
 # Entry format: interval_secs, voice (1-9), target_secs (max 60), {prompt text}
 SMART_ANNOUNCE_1 = 3600, 1, 15, {Give a brief weather update for London, UK}
@@ -1409,9 +1435,9 @@ SMART_ANNOUNCE_2 = 1800, 1, 10, {What is the current UTC time and date}
 - `interval_secs` — how often to announce (e.g. 3600 = hourly)
 - `voice` — gTTS voice number (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
 - `target_secs` — target speech length in seconds (max 60, ~2.5 words/second)
-- `{prompt text}` — instructions for Claude AI (anything inside braces, can include punctuation)
+- `{prompt text}` — instructions for the AI (anything inside braces, can include punctuation)
 
-**Requires:** `pip3 install anthropic` and API credits at [console.anthropic.com](https://console.anthropic.com).
+**DuckDuckGo backend (default, free):** uses DuckDuckGo web search + Ollama local LLM. Install Ollama for best results: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2:3b`
 
 ### Audio Processing Settings
 
