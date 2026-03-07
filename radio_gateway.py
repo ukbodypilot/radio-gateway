@@ -4459,39 +4459,20 @@ class SmartAnnouncementManager:
             xdo('windowactivate', '--sync', best_wid)
             time.sleep(0.5)
 
-            # Navigate to Google search using firefox CLI (reliable even when
-            # the gateway's keyboard listener is in raw/cbreak mode)
+            # Navigate in the current tab — paste URL via clipboard (reliable in raw terminal mode)
             encoded_q = urllib.parse.quote_plus(search_query)
             url = f'https://www.google.com/search?q={encoded_q}&hl=en'
-            print(f"[SmartAnnounce] google-scrape: opening URL in Firefox...")
-            print(f"  DISPLAY={display_env.get('DISPLAY', 'NOT SET')}")
-            nav_result = subprocess.run(['firefox', '--new-tab', url],
-                                        env=display_env, timeout=10,
-                                        capture_output=True, text=True)
-            if nav_result.returncode != 0:
-                print(f"[SmartAnnounce] google-scrape: firefox returned {nav_result.returncode}")
-                print(f"  stderr: {nav_result.stderr[:200]}")
+            print(f"[SmartAnnounce] google-scrape: navigating Firefox...")
+            subprocess.run(['xclip', '-selection', 'clipboard'],
+                           input=url.encode(), env=display_env, timeout=3)
+            xdo('key', 'F6')
+            time.sleep(0.3)
+            xdo('key', 'ctrl+v')
+            time.sleep(0.3)
+            xdo('key', 'Return')
 
-            print(f"[SmartAnnounce] google-scrape: navigating, waiting for page load...")
-            time.sleep(10)
-
-            # Re-find the Firefox window (may have changed with new tab)
-            result = xdo('search', '--name', 'Mozilla Firefox')
-            for wid in [w.strip() for w in result.stdout.strip().split('\n') if w.strip()]:
-                try:
-                    geo = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', wid],
-                                         capture_output=True, text=True, timeout=3, env=display_env)
-                    w = h = 0
-                    for line in geo.stdout.strip().split('\n'):
-                        if line.startswith('WIDTH='): w = int(line.split('=')[1])
-                        if line.startswith('HEIGHT='): h = int(line.split('=')[1])
-                    if w * h > best_area:
-                        best_area = w * h
-                        best_wid = wid
-                except Exception:
-                    continue
-            xdo('windowactivate', '--sync', best_wid)
-            time.sleep(0.5)
+            print(f"[SmartAnnounce] google-scrape: waiting for page load...")
+            time.sleep(8)
 
             # Open browser console to click "AI Mode" or "Dive deeper in AI mode"
             # and "Show more" buttons to expand truncated content
