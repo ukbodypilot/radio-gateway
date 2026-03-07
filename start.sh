@@ -45,6 +45,8 @@ cleanup() {
     fi
     rm -f /tmp/darkice_audio 2>/dev/null
     sudo modprobe -r snd-aloop 2>/dev/null
+    # Restore terminal from raw mode (gateway sets cbreak for keyboard controls)
+    stty sane 2>/dev/null
     echo "Done"
     exit
 }
