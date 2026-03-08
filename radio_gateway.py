@@ -1250,12 +1250,12 @@ class EchoLinkSource(AudioSource):
         if self.rx_pipe:
             try:
                 self.rx_pipe.close()
-            except:
+            except Exception:
                 pass
         if self.tx_pipe:
             try:
                 self.tx_pipe.close()
-            except:
+            except Exception:
                 pass
 
 
@@ -1322,125 +1322,44 @@ class SDRSource(AudioSource):
         try:
             import pyaudio
             self.pyaudio = pyaudio.PyAudio()
-            
-            # Find the SDR loopback device
-            device_index = None
-            device_name = None
-            
-            # Determine which config parameter to use based on SDR name
-            if self.name == "SDR2":
-                config_device_attr = 'SDR2_DEVICE_NAME'
-                config_buffer_attr = 'SDR2_BUFFER_MULTIPLIER'
-            else:  # SDR1 or legacy "SDR"
-                config_device_attr = 'SDR_DEVICE_NAME'
-                config_buffer_attr = 'SDR_BUFFER_MULTIPLIER'
-            
-            if hasattr(self.config, config_device_attr) and getattr(self.config, config_device_attr):
-                # User specified a device name
-                target_name = getattr(self.config, config_device_attr)
-                
-                if self.config.VERBOSE_LOGGING:
-                    print(f"[{self.name}] Searching for device matching: {target_name}")
-                    print(f"[{self.name}] Available input devices:")
-                
-                # Search for matching device
+
+            if self.config.VERBOSE_LOGGING:
+                config_device_attr = 'SDR2_DEVICE_NAME' if self.name == "SDR2" else 'SDR_DEVICE_NAME'
+                target_name = getattr(self.config, config_device_attr, '')
+                print(f"[{self.name}] Searching for device matching: {target_name}")
+                print(f"[{self.name}] Available input devices:")
                 for i in range(self.pyaudio.get_device_count()):
                     info = self.pyaudio.get_device_info_by_index(i)
                     if info['maxInputChannels'] > 0:
-                        if self.config.VERBOSE_LOGGING:
-                            print(f"[{self.name}]   [{i}] {info['name']} (in:{info['maxInputChannels']})")
-                        
-                        # Match by name substring OR by hw device number
-                        # Examples:
-                        #   "Loopback" matches "Loopback: PCM (hw:2,0)"
-                        #   "hw:2,0" matches "Loopback: PCM (hw:2,0)"
-                        #   "hw:Loopback,2,0" extracts "hw:2,0" and matches
-                        name_lower = info['name'].lower()
-                        
-                        # Extract hw device from target if format is hw:Name,X,Y
-                        if target_name.startswith('hw:') and ',' in target_name:
-                            # Extract just the hw:X,Y part (skip the name)
-                            parts = target_name.split(',')
-                            if len(parts) >= 2:
-                                # hw:Loopback,2,0 -> look for hw:2,0
-                                hw_device = f"hw:{parts[-2]},{parts[-1]}"
-                                if hw_device in name_lower:
-                                    device_index = i
-                                    device_name = info['name']
-                                    break
-                        
-                        # Simple substring match
-                        if target_name.lower() in name_lower:
-                            device_index = i
-                            device_name = info['name']
-                            break
-            
+                        print(f"[{self.name}]   [{i}] {info['name']} (in:{info['maxInputChannels']})")
+
+            device_index, device_name = self._find_device()
+
             if device_index is None:
+                config_device_attr = 'SDR2_DEVICE_NAME' if self.name == "SDR2" else 'SDR_DEVICE_NAME'
                 print(f"[{self.name}] ✗ SDR device not found")
-                if hasattr(self.config, config_device_attr):
-                    print(f"[{self.name}]   Looked for: {getattr(self.config, config_device_attr)}")
+                target = getattr(self.config, config_device_attr, '')
+                if target:
+                    print(f"[{self.name}]   Looked for: {target}")
                     print(f"[{self.name}]   Try one of these formats:")
                     print(f"[{self.name}]     {config_device_attr} = Loopback")
                     print(f"[{self.name}]     {config_device_attr} = hw:2,0")
                     print(f"[{self.name}]   Or enable VERBOSE_LOGGING to see all devices")
                 return False
-            
-            # Open input stream in CALLBACK mode — same pattern as AIOC.
-            # PortAudio fires _sdr_callback at each ALSA period (~200ms),
-            # delivering one blob.  No reader thread, no blocking reads.
-            # get_audio() slices blobs into 50ms chunks via sub-buffer.
-            buffer_multiplier = getattr(self.config, config_buffer_attr, 4)
-            buffer_size = self.config.AUDIO_CHUNK_SIZE * buffer_multiplier
 
-            # Auto-detect supported channel count
-            # Try stereo first, fall back to mono
-            device_info = self.pyaudio.get_device_info_by_index(device_index)
-            max_channels = device_info['maxInputChannels']
-
-            # Use 2 channels if supported (stereo), otherwise use 1 (mono)
-            sdr_channels = min(2, max_channels)
-
-            try:
-                self.input_stream = self.pyaudio.open(
-                    format=pyaudio.paInt16,
-                    channels=sdr_channels,
-                    rate=self.config.AUDIO_RATE,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=buffer_size,
-                    stream_callback=self._sdr_callback
-                )
-                self.sdr_channels = sdr_channels  # Store for later use
-                self._chunk_bytes = self.config.AUDIO_CHUNK_SIZE * sdr_channels * 2
-                self._blob_bytes = self._chunk_bytes * buffer_multiplier
-            except Exception as e:
-                # If 2 channels failed, try 1 channel
-                if sdr_channels == 2:
-                    if self.config.VERBOSE_LOGGING:
-                        print(f"[{self.name}] Stereo failed, trying mono...")
-                    sdr_channels = 1
-                    self.input_stream = self.pyaudio.open(
-                        format=pyaudio.paInt16,
-                        channels=sdr_channels,
-                        rate=self.config.AUDIO_RATE,
-                        input=True,
-                        input_device_index=device_index,
-                        frames_per_buffer=buffer_size,
-                        stream_callback=self._sdr_callback
-                    )
-                    self.sdr_channels = sdr_channels
-                    self._chunk_bytes = self.config.AUDIO_CHUNK_SIZE * sdr_channels * 2
-                    self._blob_bytes = self._chunk_bytes * buffer_multiplier
-                else:
-                    raise
+            if not self._open_stream(device_index):
+                raise Exception(f"Failed to open audio stream on device {device_index}")
 
             # Start the stream explicitly (callback mode)
             if not self.input_stream.is_active():
                 self.input_stream.start_stream()
 
             if self.config.VERBOSE_LOGGING:
+                config_buffer_attr = 'SDR2_BUFFER_MULTIPLIER' if self.name == "SDR2" else 'SDR_BUFFER_MULTIPLIER'
+                buffer_multiplier = getattr(self.config, config_buffer_attr, 4)
+                buffer_size = self.config.AUDIO_CHUNK_SIZE * buffer_multiplier
                 print(f"[{self.name}] ✓ Audio input configured: {device_name}")
-                print(f"[{self.name}]   Channels: {sdr_channels} ({'stereo' if sdr_channels == 2 else 'mono'})")
+                print(f"[{self.name}]   Channels: {self.sdr_channels} ({'stereo' if self.sdr_channels == 2 else 'mono'})")
                 period_ms = buffer_size / self.config.AUDIO_RATE * 1000
                 print(f"[{self.name}]   Callback mode: {buffer_size} frames ({period_ms:.0f}ms per period)")
 
@@ -1527,12 +1446,12 @@ class SDRSource(AudioSource):
                     if jump > 500:
                         mid = (last_sample + first_sample) / 2.0
                         # Taper tail of sub-buffer toward midpoint
-                        tail_arr = np.frombuffer(self._sub_buffer[-_SMOOTH_BYTES:], dtype=np.int16).copy().astype(np.float32)
+                        tail_arr = np.frombuffer(self._sub_buffer[-_SMOOTH_BYTES:], dtype=np.int16).astype(np.float32)
                         w = np.linspace(0.0, 1.0, len(tail_arr), dtype=np.float32)
                         tail_arr = tail_arr * (1.0 - w) + mid * w
                         self._sub_buffer = self._sub_buffer[:-_SMOOTH_BYTES] + np.clip(tail_arr, -32768, 32767).astype(np.int16).tobytes()
                         # Taper head of blob from midpoint
-                        head_arr = np.frombuffer(blob[:_SMOOTH_BYTES], dtype=np.int16).copy().astype(np.float32)
+                        head_arr = np.frombuffer(blob[:_SMOOTH_BYTES], dtype=np.int16).astype(np.float32)
                         w = np.linspace(0.0, 1.0, len(head_arr), dtype=np.float32)
                         head_arr = mid * (1.0 - w) + head_arr * w
                         blob = np.clip(head_arr, -32768, 32767).astype(np.int16).tobytes() + blob[_SMOOTH_BYTES:]
@@ -2531,6 +2450,8 @@ class RemoteAudioSource(AudioSource):
                 pass
         if self._reader_thread and self._reader_thread.is_alive():
             self._reader_thread.join(timeout=2.0)
+            if self._reader_thread.is_alive():
+                print(f"[RemoteAudioSource] Warning: reader thread did not stop within 2s")
         self._sub_buffer = b''
 
 
@@ -2730,6 +2651,8 @@ class NetworkAnnouncementSource(AudioSource):
                 pass
         if self._reader_thread and self._reader_thread.is_alive():
             self._reader_thread.join(timeout=2.0)
+            if self._reader_thread.is_alive():
+                print(f"[ANNIN] Warning: reader thread did not stop within 2s")
         self._sub_buffer = b''
 
 
@@ -2993,9 +2916,9 @@ class AudioMixer:
                     db = 20 * _math_mod.log10(rms / 32767.0)
                     return db > _sdr_signal_threshold
                 return False
-            except:
+            except Exception:
                 return False
-        
+
         # Helper function with hysteresis for stable signal detection
         def has_actual_audio(audio_data, source_name):
             """
@@ -4037,6 +3960,7 @@ class SmartAnnouncementManager:
         self._entries = []  # list of dicts: {id, interval, voice, target_secs, prompt, last_run}
         self._thread = None
         self._stop = False
+        self._lock = threading.Lock()  # protects _entries mutations
         self._client = None  # AI client instance (anthropic.Anthropic or genai model)
         self._backend = str(getattr(self.config, 'SMART_ANNOUNCE_AI_BACKEND', 'duckduckgo')).strip().lower()
         self._parse_entries()
@@ -4077,6 +4001,35 @@ class SmartAnnouncementManager:
             'prompt': prompt,
             'last_run': 0,
         }
+
+    def _init_ollama(self, verbose=True):
+        """Detect Ollama and select a model. Sets _ollama_available and _ollama_model."""
+        self._ollama_available = False
+        configured_model = str(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_MODEL', '') or '').strip()
+        try:
+            import urllib.request, json
+            req = urllib.request.Request('http://127.0.0.1:11434/api/tags', method='GET')
+            resp = urllib.request.urlopen(req, timeout=2)
+            if resp.status == 200:
+                data = json.loads(resp.read())
+                models = [m.get('name', '') for m in data.get('models', [])]
+                if configured_model:
+                    if configured_model in models or any(m.startswith(configured_model) for m in models):
+                        self._ollama_model = configured_model
+                        self._ollama_available = True
+                    elif verbose:
+                        print(f"  [SmartAnnounce] Ollama model '{configured_model}' not found (available: {', '.join(models)})")
+                        print(f"    Pull it with: ollama pull {configured_model}")
+                elif models:
+                    self._ollama_model = models[0]
+                    self._ollama_available = True
+                elif verbose:
+                    print("  [SmartAnnounce] Ollama running but no models pulled")
+                    print("    Pull a model with: ollama pull llama3.1:8b")
+        except Exception:
+            pass
+        if self._ollama_available and verbose:
+            print(f"  [SmartAnnounce] Ollama — using model '{self._ollama_model}'")
 
     def _init_claude(self):
         """Initialize Claude (Anthropic) backend."""
@@ -4123,35 +4076,9 @@ class SmartAnnouncementManager:
                 print("  [SmartAnnounce] ddgs package not installed")
                 print("    Install with: pip3 install ddgs --break-system-packages")
                 return False
-        # Check if Ollama is available for natural speech composition
-        self._ollama_available = False
-        configured_model = str(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_MODEL', '') or '').strip()
-        try:
-            import urllib.request
-            req = urllib.request.Request('http://127.0.0.1:11434/api/tags', method='GET')
-            resp = urllib.request.urlopen(req, timeout=2)
-            if resp.status == 200:
-                import json
-                data = json.loads(resp.read())
-                models = [m.get('name', '') for m in data.get('models', [])]
-                if configured_model:
-                    # Use the configured model (verify it exists)
-                    if configured_model in models or any(m.startswith(configured_model) for m in models):
-                        self._ollama_model = configured_model
-                        self._ollama_available = True
-                        print(f"  [SmartAnnounce] Ollama — using configured model '{self._ollama_model}'")
-                    else:
-                        print(f"  [SmartAnnounce] Ollama model '{configured_model}' not found (available: {', '.join(models)})")
-                        print(f"    Pull it with: ollama pull {configured_model}")
-                elif models:
-                    self._ollama_model = models[0]  # use first available model
-                    self._ollama_available = True
-                    print(f"  [SmartAnnounce] Ollama — auto-selected model '{self._ollama_model}'")
-                else:
-                    print("  [SmartAnnounce] Ollama running but no models pulled — using search snippets directly")
-                    print("    Pull a model with: ollama pull llama3.1:8b")
-        except Exception:
-            print("  [SmartAnnounce] Ollama not detected — using search snippets directly")
+        self._init_ollama()
+        if not self._ollama_available:
+            print("  [SmartAnnounce] Ollama not available — using search snippets directly")
             print("    For better results, install Ollama: curl -fsSL https://ollama.com/install.sh | sh")
         return True
 
@@ -4186,27 +4113,8 @@ class SmartAnnouncementManager:
                 print("  [SmartAnnounce] Firefox not detected yet — will check again at announcement time")
         except Exception as e:
             print(f"  [SmartAnnounce] Cannot check Firefox: {e} — will retry at announcement time")
-        # Check Ollama for optional text composition
-        self._ollama_available = False
-        configured_model = str(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_MODEL', '') or '').strip()
-        try:
-            import urllib.request, json
-            req = urllib.request.Request('http://127.0.0.1:11434/api/tags', method='GET')
-            resp = urllib.request.urlopen(req, timeout=2)
-            if resp.status == 200:
-                data = json.loads(resp.read())
-                models = [m.get('name', '') for m in data.get('models', [])]
-                if configured_model and (configured_model in models or any(m.startswith(configured_model) for m in models)):
-                    self._ollama_model = configured_model
-                    self._ollama_available = True
-                elif models:
-                    self._ollama_model = models[0]
-                    self._ollama_available = True
-        except Exception:
-            pass
-        if self._ollama_available:
-            print(f"  [SmartAnnounce] Ollama — using model '{self._ollama_model}'")
-        else:
+        self._init_ollama()
+        if not self._ollama_available:
             print("  [SmartAnnounce] Ollama not available — AI Overview text sent directly to TTS")
         self._client = True  # marker that backend is ready
         return True
@@ -4270,20 +4178,23 @@ class SmartAnnouncementManager:
         """Check intervals and trigger announcements."""
         # Stagger first runs: don't all fire at t=0
         now = time.time()
-        for e in self._entries:
-            e['last_run'] = now
+        with self._lock:
+            for e in self._entries:
+                e['last_run'] = now
         while not self._stop:
             time.sleep(5)
             if not self._in_time_window():
                 continue
             now = time.time()
-            for e in self._entries:
-                if now - e['last_run'] >= e['interval']:
-                    e['last_run'] = now
-                    try:
-                        self._run_announcement(e)
-                    except Exception as ex:
-                        print(f"\n[SmartAnnounce] Error on #{e['id']}: {ex}")
+            with self._lock:
+                due = [(e, now) for e in self._entries if now - e['last_run'] >= e['interval']]
+                for e, t in due:
+                    e['last_run'] = t
+            for e, _ in due:
+                try:
+                    self._run_announcement(e)
+                except Exception as ex:
+                    print(f"\n[SmartAnnounce] Error on #{e['id']}: {ex}")
 
     def _run_announcement(self, entry, manual=False):
         """Call AI API, get text, speak it. manual=True skips time window check."""
@@ -4454,7 +4365,7 @@ class SmartAnnouncementManager:
         # Fallback: format search snippets directly for TTS
         print(f"[SmartAnnounce] #{entry['id']}: Composing from search snippets (no Ollama)...")
         snippets = []
-        for r in search_results[:3]:
+        for r in (news_results + web_results)[:3]:
             body = r.get('body', '').strip()
             if body:
                 # Clean up for speech: remove URLs, extra whitespace
@@ -4540,22 +4451,6 @@ class SmartAnnouncementManager:
             # Reopen console, click AI Mode + Show more via JS
             xdo('key', 'ctrl+shift+k')
             time.sleep(0.3)
-            js_click = (
-                '(async()=>{'
-                # Find AI Mode: the <a> immediately before the "All" link in the toolbar
-                'let links=Array.from(document.querySelectorAll("a"));'
-                'let allIdx=links.findIndex(e=>e.textContent.trim()==="All");'
-                'let ai=allIdx>0?links[allIdx-1]:null;'
-                # Fallback: match by text content
-                'if(!ai){ai=links.find(e=>e.textContent.trim()==="AI Mode")'
-                '||Array.from(document.querySelectorAll("a,div,span")).find(e=>{'
-                'let t=e.textContent.trim();'
-                'return t==="Dive deeper in AI mode"||t==="Dive deeper in AI Mode";});}'
-                'if(ai){ai.click();await new Promise(r=>setTimeout(r,10000));}'
-                'document.querySelectorAll("div[jsname],span,button").forEach(e=>{'
-                'if(e.textContent.trim()==="Show more")e.click();});'
-                '})();'
-            )
             # JS: click AI Mode, wait for response, click Show more
             js_click = (
                 '(async()=>{'
@@ -4604,8 +4499,8 @@ class SmartAnnouncementManager:
             time.sleep(0.3)
 
             # Clear clipboard so stale data from prior scrape can't leak through
-            subprocess.Popen('echo -n | xclip -selection clipboard',
-                             shell=True, env=display_env).wait(timeout=3)
+            subprocess.run(['xclip', '-selection', 'clipboard'],
+                           input=b'', env=display_env, timeout=3)
 
             # Click near the top-left of the page content (avoids ads which are
             # typically in the center/right) to focus the page, then select all + copy
@@ -4791,11 +4686,12 @@ class SmartAnnouncementManager:
 
     def trigger(self, entry_id):
         """Manually trigger a specific announcement. Returns True if found."""
-        for e in self._entries:
-            if e['id'] == entry_id:
-                threading.Thread(target=self._run_announcement, args=(e, True),
-                                 daemon=True, name=f"SmartAnnounce-{entry_id}").start()
-                return True
+        with self._lock:
+            entry = next((e for e in self._entries if e['id'] == entry_id), None)
+        if entry:
+            threading.Thread(target=self._run_announcement, args=(entry, True),
+                             daemon=True, name=f"SmartAnnounce-{entry_id}").start()
+            return True
         return False
 
     def get_entries(self):
@@ -6795,6 +6691,10 @@ class RadioGateway:
             except Exception as tts_error:
                 print(f"[TTS] ✗ gTTS generation failed: {tts_error}")
                 print(f"[TTS] Check internet connection (gTTS requires internet)")
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
                 return False
 
             # Apply speed adjustment if configured
@@ -6823,7 +6723,6 @@ class RadioGateway:
                     print(f"[TTS] ⚠ Speed adjustment error: {speed_err}")
 
             # Verify file exists and has valid content
-            import os
             if not os.path.exists(temp_path):
                 print(f"[TTS] ✗ File not created!")
                 return False
@@ -6872,6 +6771,10 @@ class RadioGateway:
                         
             except Exception as val_err:
                 print(f"[TTS] ✗ Could not validate file: {val_err}")
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
                 return False
             
             # File is valid MP3
