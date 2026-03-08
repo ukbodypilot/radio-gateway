@@ -343,7 +343,7 @@ Two optional CH340 USB relay modules for hardware control:
 - **Radio Power Button** (`j` key): Simulates a momentary power-button press — relay closes for 0.5 seconds then opens. Since the relay acts as a button press, the gateway does not track radio on/off state.
 - **Charger Schedule** (`h` key): Automatically switches a charger relay on/off based on a configurable time window (e.g. 23:00–06:00 for overnight charging). Handles overnight time wrap. Press `h` to manually override — the relay stays in the manual state until the next scheduled transition, then automatic control resumes.
 
-**Status bar:**
+**Status bar (line 2):**
 - `PWRB` — white when idle, yellow during the 0.5s button pulse
 - `CHG:CHRGE` / `CHG:DRAIN` — green/red showing current charger relay state (`*` suffix when manually overridden)
 
@@ -459,7 +459,7 @@ Connects to the [TH9800_CAT.py](https://github.com/your-repo/th9800) TCP server 
 5. Volume is set by stepping from the default level (25) to the target level
 6. Power is set by cycling the LOW button (L/M/H) until the target is reached
 
-**Status bar:**
+**Status bar (line 2):**
 - `CAT` — white when enabled but not connected, green when connected and idle, red when actively sending/receiving data (holds red for at least 1 second for visibility)
 
 **TH9800_CAT.py setup:**
@@ -508,7 +508,7 @@ Run one or two local mumble-server (murmurd) instances managed by the gateway. E
    - Monitors health every ~10 seconds
 2. On gateway exit, the mumble-server instances **keep running** (managed by systemd). Users stay connected between gateway restarts.
 
-**Status bar:**
+**Status bar (line 2):**
 - `MS1` / `MS2` — white when configured but not yet checked, green when running, red on error
 
 **Configuration:**
@@ -1202,7 +1202,7 @@ ANNOUNCE_INPUT_VOLUME = 4.0            # Volume multiplier for announcement audi
 
 ### Status Bar
 
-`AN:[red bar]` appears after the Remote Audio Link bar when `ENABLE_ANNOUNCE_INPUT = true`. The bar shows the live audio level when a client is connected and sending audio; it shows `0%` when no client is connected.
+`AN:[red bar]` appears at the end of line 1 (after the Remote Audio Link bar) when `ENABLE_ANNOUNCE_INPUT = true`. The bar shows the live audio level when a client is connected and sending audio; it shows `0%` when no client is connected.
 
 ### Firewall
 
@@ -1256,8 +1256,11 @@ Each role stores its own settings independently:
 | `l` | server | Toggle LIVE/IDLE — LIVE sends real audio (red), IDLE sends silence (green) |
 | `l` | client | Toggle LIVE/MUTE — LIVE plays received audio (red), MUTE discards it (yellow) |
 | `m` | any | Switch between server and client roles at runtime |
+| `,` / `<` | any | Volume down 5% (0-100% scale, default 100%) |
+| `.` / `>` | any | Volume up 5% |
 
 Server role starts in IDLE mode. Client role starts in LIVE mode.
+Volume percentage and a ceiling marker `|` are shown on the status bar. Client mode scales output audio by the selected volume.
 Each role has its own saved settings (devices, host/port) in the config file.
 
 ### Connection Examples
@@ -1540,7 +1543,7 @@ SPEAKER_VOLUME = 1.0
 ```
 
 Toggle speaker mute at runtime with the `o` key. The `SP:[bar]` indicator
-appears in the status bar when speaker output is enabled.
+appears on line 1 of the status bar when speaker output is enabled.
 
 ### Remote Audio Link Settings
 
@@ -1969,6 +1972,18 @@ class MySource(AudioSource):
 - PyAudio: Python audio interface
 
 ## Changelog
+
+### v1.2.0
+
+**Two-line status bar** — Status bar now uses two terminal lines. Line 1 shows audio indicators (M, PTT, VAD, TX, RX, SP, SDR1, SDR2, SV/CL, AN). Line 2 shows uptime, smart announcement countdowns, file slots, hardware indicators (PWRB, CHG, CAT, MS), volume, processing flags, and diagnostics.
+
+**Uptime and countdown timers** — Line 2 displays `UP:HH:MM:SS` gateway uptime and `S1:`/`S2:`/`S3:` countdowns to the next scheduled smart announcement, all in fixed-width `HH:MM:SS` format.
+
+**Windows audio client volume control** — `,`/`<` and `.`/`>` keys adjust output volume 0-100% in 5% steps. Level bar shows `|` marker at volume ceiling; dB value scaled by volume. Client mode scales PCM output by volume percentage.
+
+**Codebase cleanup** — Fixed crash bug (`search_results` undefined in DuckDuckGo fallback), eliminated ~97 lines through deduplication (SDR setup, Ollama init, duplicate JS), added thread safety lock to SmartAnnouncementManager, fixed temp file leak in `speak_text()`, replaced `shell=True` subprocess with safe `subprocess.run`.
+
+**Default updates** — `PLAYBACK_VOLUME` 2.0→1.0, `CW_VOLUME` 1.5→1.0, `TTS_SPEED` 1.0→1.3, `SMART_ANNOUNCE_AI_BACKEND` duckduckgo→google-scrape.
 
 ### v1.1.0
 
