@@ -98,9 +98,17 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `!speak <text>` or `!speak <voice#> <text>` — voice 1-9 via gTTS lang/tld combos
 - Mumble text messages arrive as HTML — stripped with `re.sub` + `html.unescape()`
 
+## PTT Methods
+- `PTT_METHOD`: `aioc` (default), `relay`, or `software`
+- AIOC: HID GPIO via `set_ptt_state()` → `_ptt_aioc()`, uses `AIOC_PTT_CHANNEL`
+- Relay: CH340 USB relay via `_ptt_relay()`, uses `PTT_RELAY_DEVICE` (`/dev/relay_ptt`)
+- Software: CAT TCP `!rts` via `_ptt_software()`, requires `ENABLE_CAT_CONTROL = true`
+- Status bar: `PTT:` (AIOC), `PTTR:` (relay), `PTTS:` (software)
+- Installer step 4b: `p` option for PTT relay udev assignment
+
 ## Relay Control (CH340 USB Relays)
 - `RelayController` class: 4-byte serial commands, lazy `import serial`
-- Radio power relay: `j` key, Charger relay: automatic schedule
+- Radio power relay: `j` key, Charger relay: automatic schedule, PTT relay: when `PTT_METHOD = relay`
 - Dependency: `pyserial` (added to installer core packages)
 
 ## SDR Rebroadcast

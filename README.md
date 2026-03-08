@@ -1373,8 +1373,29 @@ VAD_MIN_DURATION = 0.25      # Minimum transmission length (seconds)
 
 ### PTT (Push-to-Talk) Settings
 
+Three PTT methods are available:
+
+| Method | Config Value | Description |
+|--------|-------------|-------------|
+| **AIOC** | `aioc` (default) | AIOC USB HID GPIO — direct hardware PTT via composite USB device |
+| **Relay** | `relay` | CH340 USB relay module — separate relay dedicated to PTT control |
+| **Software** | `software` | CAT TCP command — sends `!rts` to TH9800_CAT.py for software PTT |
+
+Status bar shows the active method: `PTT:` (AIOC), `PTTR:` (relay), `PTTS:` (software).
+
 ```ini
-AIOC_PTT_CHANNEL = 3         # GPIO channel (1, 2, or 3)
+PTT_METHOD = aioc                # 'aioc', 'relay', or 'software'
+
+# AIOC PTT settings (PTT_METHOD = aioc)
+AIOC_PTT_CHANNEL = 3            # GPIO channel (1, 2, or 3)
+
+# Relay PTT settings (PTT_METHOD = relay)
+PTT_RELAY_DEVICE = /dev/relay_ptt  # CH340 USB relay device
+PTT_RELAY_BAUD = 9600              # Relay baud rate
+
+# Software PTT (PTT_METHOD = software)
+# Uses existing CAT connection (CAT_HOST, CAT_PORT) — requires ENABLE_CAT_CONTROL = true
+
 PTT_ACTIVATION_DELAY = 0.1   # Pre-PTT delay (seconds) — squelch tail settle time
 PTT_RELEASE_DELAY = 0.5      # Post-PTT tail (seconds)
 
@@ -1870,8 +1891,10 @@ scripts/loopback-status
 ### PTT Issues
 
 **Problem: PTT doesn't activate**
-- Check `AIOC_PTT_CHANNEL` (try 1, 2, or 3)
-- Verify AIOC device is detected
+- Check `PTT_METHOD` matches your hardware (`aioc`, `relay`, or `software`)
+- AIOC method: Check `AIOC_PTT_CHANNEL` (try 1, 2, or 3), verify AIOC device is detected
+- Relay method: Check `PTT_RELAY_DEVICE` exists (`ls -la /dev/relay_ptt`), run installer to set up udev rules
+- Software method: Ensure `ENABLE_CAT_CONTROL = true` and CAT client is connected
 - Check `PTT_ACTIVATION_DELAY` (try 0.1)
 
 **Problem: PTT releases too quickly**
@@ -2019,6 +2042,8 @@ class MySource(AudioSource):
 ## Changelog
 
 ### v1.3.0
+
+**Multi-method PTT** — Three PTT methods: AIOC (default, HID GPIO), Relay (CH340 USB relay), and Software (CAT TCP `!rts` command). Config: `PTT_METHOD = aioc|relay|software`. Status bar shows method: `PTT:` (AIOC), `PTTR:` (relay), `PTTS:` (software). Installer updated with PTT relay (`/dev/relay_ptt`) option.
 
 **Dynamic DNS** — Built-in No-IP compatible DDNS updater. Background thread updates hostname with public IP on startup and then at configured interval. Status bar shows `DNS:` indicator with current IP (green), error (red), or waiting (yellow). Config: `ENABLE_DDNS`, `DDNS_USERNAME`, `DDNS_PASSWORD`, `DDNS_HOSTNAME`, `DDNS_UPDATE_INTERVAL`, `DDNS_UPDATE_URL`.
 

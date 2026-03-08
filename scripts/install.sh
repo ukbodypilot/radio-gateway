@@ -314,11 +314,12 @@ except Exception as e:
         echo "  Assign this relay a purpose:"
         echo "    r = Radio power button (/dev/relay_radio)"
         echo "    c = Charger control    (/dev/relay_charger)"
+        echo "    p = PTT control        (/dev/relay_ptt)"
         echo "    t = Test (click relay to confirm it works)"
         echo "    s = Skip (don't assign)"
         echo ""
         while true; do
-            echo -n "  ${RELAY_DEVS[0]} — purpose? [r/c/t/s]: "
+            echo -n "  ${RELAY_DEVS[0]} — purpose? [r/c/p/t/s]: "
             read -r purpose
             case "$purpose" in
                 t|T)
@@ -339,12 +340,18 @@ except Exception as e:
                     echo "    → /dev/relay_charger"
                     break
                     ;;
+                p|P)
+                    printf 'SUBSYSTEM=="tty", KERNELS=="%s", SYMLINK+="relay_ptt", MODE="0666"\n' \
+                        "${RELAY_PORTS[0]}" | sudo tee /etc/udev/rules.d/99-relay-udev.rules > /dev/null
+                    echo "    → /dev/relay_ptt"
+                    break
+                    ;;
                 s|S|"")
                     echo "    → skipped"
                     sudo rm -f /etc/udev/rules.d/99-relay-udev.rules
                     break
                     ;;
-                *)  echo "    ⚠ Invalid — enter r, c, t, or s" ;;
+                *)  echo "    Invalid — enter r, c, p, t, or s" ;;
             esac
         done
     else
@@ -380,20 +387,22 @@ except Exception as e:
         echo "  Now assign each relay a purpose:"
         echo "    r = Radio power button (/dev/relay_radio)"
         echo "    c = Charger control    (/dev/relay_charger)"
+        echo "    p = PTT control        (/dev/relay_ptt)"
         echo "    s = Skip (don't assign)"
         echo ""
 
         RULES=""
         ASSIGNED_RADIO=false
         ASSIGNED_CHARGER=false
+        ASSIGNED_PTT=false
         for i in "${!RELAY_PORTS[@]}"; do
             while true; do
-                echo -n "  Relay $((i+1)) (${RELAY_DEVS[$i]}) — purpose? [r/c/s]: "
+                echo -n "  Relay $((i+1)) (${RELAY_DEVS[$i]}) — purpose? [r/c/p/s]: "
                 read -r purpose
                 case "$purpose" in
                     r|R)
                         if $ASSIGNED_RADIO; then
-                            echo "    ⚠ Radio relay already assigned — pick another"
+                            echo "    Radio relay already assigned — pick another"
                             continue
                         fi
                         RULES="${RULES}SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[$i]}\", SYMLINK+=\"relay_radio\", MODE=\"0666\"\n"
@@ -403,7 +412,7 @@ except Exception as e:
                         ;;
                     c|C)
                         if $ASSIGNED_CHARGER; then
-                            echo "    ⚠ Charger relay already assigned — pick another"
+                            echo "    Charger relay already assigned — pick another"
                             continue
                         fi
                         RULES="${RULES}SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[$i]}\", SYMLINK+=\"relay_charger\", MODE=\"0666\"\n"
@@ -411,11 +420,21 @@ except Exception as e:
                         echo "    → /dev/relay_charger"
                         break
                         ;;
+                    p|P)
+                        if $ASSIGNED_PTT; then
+                            echo "    PTT relay already assigned — pick another"
+                            continue
+                        fi
+                        RULES="${RULES}SUBSYSTEM==\"tty\", KERNELS==\"${RELAY_PORTS[$i]}\", SYMLINK+=\"relay_ptt\", MODE=\"0666\"\n"
+                        ASSIGNED_PTT=true
+                        echo "    → /dev/relay_ptt"
+                        break
+                        ;;
                     s|S|"")
                         echo "    → skipped"
                         break
                         ;;
-                    *)  echo "    ⚠ Invalid — enter r, c, or s" ;;
+                    *)  echo "    Invalid — enter r, c, p, or s" ;;
                 esac
             done
         done
@@ -436,6 +455,7 @@ except Exception as e:
         echo "  ✓ Relay UDEV rules installed"
         [ -L /dev/relay_radio ] && echo "    /dev/relay_radio   → $(readlink -f /dev/relay_radio)"
         [ -L /dev/relay_charger ] && echo "    /dev/relay_charger → $(readlink -f /dev/relay_charger)"
+        [ -L /dev/relay_ptt ] && echo "    /dev/relay_ptt     → $(readlink -f /dev/relay_ptt)"
     fi
 fi
 echo

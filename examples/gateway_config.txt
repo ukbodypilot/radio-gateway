@@ -97,6 +97,18 @@ OUTPUT_VOLUME = 1.0
 # ============================================================================
 # PTT (PUSH-TO-TALK)
 # ============================================================================
+# Three PTT methods available:
+#   aioc     = AIOC USB HID GPIO (default, requires AIOC device)
+#   relay    = CH340 USB relay module (separate from radio power/charger relays)
+#   software = CAT TCP command to TH9800_CAT.py (!rts)
+#
+# Status bar shows PTT method: PTT: (AIOC), PTTR: (relay), PTTS: (software)
+
+PTT_METHOD = aioc
+
+# PTT Relay settings (only used when PTT_METHOD = relay)
+PTT_RELAY_DEVICE = /dev/relay_ptt
+PTT_RELAY_BAUD = 9600
 
 PTT_ACTIVATION_DELAY = 0.1   # Seconds before keying PTT after audio detected
 PTT_RELEASE_DELAY = 0.5      # Seconds to hold PTT after audio stops

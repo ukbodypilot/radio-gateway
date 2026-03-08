@@ -130,6 +130,9 @@ class Config:
             'MUMBLE_BITRATE': 72000,
             'MUMBLE_VBR': True,
             'MUMBLE_JITTER_BUFFER': 10,
+            'PTT_METHOD': 'aioc',              # 'aioc', 'relay', or 'software'
+            'PTT_RELAY_DEVICE': '/dev/relay_ptt',
+            'PTT_RELAY_BAUD': 9600,
             'AIOC_PTT_CHANNEL': 3,
             'PTT_RELEASE_DELAY': 0.5,
             'PTT_ACTIVATION_DELAY': 0.1,
@@ -5371,6 +5374,9 @@ class RadioGateway:
         self.relay_radio = None              # RelayController instance
         self._relay_radio_pressing = False   # True during 0.5s button pulse
 
+        # Relay control — PTT relay (when PTT_METHOD = relay)
+        self.relay_ptt = None          # RelayController instance
+
         # Relay control — charger schedule
         self.relay_charger = None      # RelayController instance
         self.relay_charger_on = False  # Current charge state
@@ -5770,33 +5776,46 @@ class RadioGateway:
             return True  # On error, allow transmission
         
     def set_ptt_state(self, state_on):
-        """Control AIOC PTT"""
+        """Control PTT via configured method (aioc, relay, or software)."""
+        method = str(getattr(self.config, 'PTT_METHOD', 'aioc')).lower()
+        if method == 'relay':
+            self._ptt_relay(state_on)
+        elif method == 'software':
+            self._ptt_software(state_on)
+        else:
+            self._ptt_aioc(state_on)
+        self.ptt_active = state_on
+
+    def _ptt_aioc(self, state_on):
+        """PTT via AIOC HID GPIO."""
         if not self.aioc_device:
             return
-        
         try:
             state = 1 if state_on else 0
             iomask = 1 << (self.config.AIOC_PTT_CHANNEL - 1)
             iodata = state << (self.config.AIOC_PTT_CHANNEL - 1)
             data = Struct("<BBBBB").pack(0, 0, iodata, iomask, 0)
-            
             if self.config.VERBOSE_LOGGING:
-                print(f"\n[PTT] {'KEYING' if state_on else 'UNKEYING'} radio")
-                print(f"[PTT] Channel: GPIO{self.config.AIOC_PTT_CHANNEL}")
-                print(f"[PTT] Data: {data.hex()}")
-            
+                print(f"\n[PTT] {'KEYING' if state_on else 'UNKEYING'} radio (AIOC GPIO{self.config.AIOC_PTT_CHANNEL})")
             self.aioc_device.write(bytes(data))
-            
-            if self.config.VERBOSE_LOGGING:
-                print(f"[PTT] ✓ HID write successful")
-            
-            # Update PTT state (status line will show it)
-            self.ptt_active = state_on
-            
         except Exception as e:
-            print(f"\n[PTT] ✗ Error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"\n[PTT] AIOC error: {e}")
+
+    def _ptt_relay(self, state_on):
+        """PTT via CH340 USB relay."""
+        if not self.relay_ptt:
+            return
+        self.relay_ptt.set_state(state_on)
+        if self.config.VERBOSE_LOGGING:
+            print(f"\n[PTT] {'KEYING' if state_on else 'UNKEYING'} radio (relay)")
+
+    def _ptt_software(self, state_on):
+        """PTT via CAT TCP RTS command."""
+        if not self.cat_client:
+            return
+        self.cat_client.set_rts(state_on)
+        if self.config.VERBOSE_LOGGING:
+            print(f"\n[PTT] {'KEYING' if state_on else 'UNKEYING'} radio (software/CAT)")
     
     def sound_received_handler(self, user, soundchunk):
         """Called when audio is received from Mumble server"""
@@ -6446,6 +6465,23 @@ class RadioGateway:
                     print(f"  Warning: Could not initialize charger relay: {e}")
                     self.relay_charger = None
 
+            # Initialize PTT relay (when PTT_METHOD = relay)
+            ptt_method = str(getattr(self.config, 'PTT_METHOD', 'aioc')).lower()
+            if ptt_method == 'relay':
+                try:
+                    dev = self.config.PTT_RELAY_DEVICE
+                    print(f"Initializing PTT relay ({dev})...")
+                    self.relay_ptt = RelayController(dev, self.config.PTT_RELAY_BAUD)
+                    if self.relay_ptt.open():
+                        self.relay_ptt.set_state(False)  # Ensure PTT released on startup
+                        print(f"  PTT relay: ready")
+                    else:
+                        print(f"  PTT relay: FAILED to open — PTT will not work!")
+                        self.relay_ptt = None
+                except Exception as e:
+                    print(f"  Warning: Could not initialize PTT relay: {e}")
+                    self.relay_ptt = None
+
             # Initialize TH-9800 CAT control
             if getattr(self.config, 'ENABLE_CAT_CONTROL', False):
                 try:
@@ -6517,6 +6553,14 @@ class RadioGateway:
                     if self.mumble_server_2:
                         self.mumble_server_2.state = MumbleServerManager.STATE_ERROR
                         self.mumble_server_2.error_msg = str(e)
+
+            # Validate PTT method setup
+            if ptt_method == 'relay' and not self.relay_ptt:
+                print("WARNING: PTT_METHOD = relay but PTT relay not available — PTT will not work!")
+            elif ptt_method == 'software' and not self.cat_client:
+                print("WARNING: PTT_METHOD = software but CAT client not connected — PTT will not work!")
+            elif ptt_method not in ('aioc', 'relay', 'software'):
+                print(f"WARNING: Unknown PTT_METHOD '{ptt_method}' — defaulting to AIOC")
 
             # Initialize Smart Announcements (AI-powered)
             if getattr(self.config, 'ENABLE_SMART_ANNOUNCE', False):
@@ -8537,6 +8581,10 @@ class RadioGateway:
                 # Print status
                 # Status symbols with colors
                 mumble_status = f"{GREEN}✓{RESET}" if self.mumble else f"{RED}✗{RESET}"
+                # PTT method tag for status label
+                _ptt_m = str(getattr(self.config, 'PTT_METHOD', 'aioc')).lower()
+                _ptt_tag = {'aioc': '', 'relay': 'R', 'software': 'S'}.get(_ptt_m, '?')
+                _ptt_label = f"PTT{_ptt_tag}" if _ptt_tag else "PTT"
                 # PTT status: Always 4 chars wide for alignment
                 if self.manual_ptt_mode:
                     ptt_status = f"{YELLOW}M-{GREEN}ON{RESET}" if self.ptt_active else f"{YELLOW}M-{GRAY}--{RESET}"
@@ -8722,7 +8770,7 @@ class RadioGateway:
                             msrv_bar += f" {WHITE}{_ms_label}{RESET}"
 
                 # Line 1: audio indicators
-                status_line = f"{status_symbol} {WHITE}M:{RESET}{mumble_status} {WHITE}PTT:{RESET}{ptt_status} {WHITE}VAD:{RESET}{vad_status}{vad_info} {WHITE}TX:{RESET}{radio_tx_bar} {WHITE}RX:{RESET}{radio_rx_bar}{sp_bar}{sdr_bar}{sdr2_bar}{remote_bar}{annin_bar}     "
+                status_line = f"{status_symbol} {WHITE}M:{RESET}{mumble_status} {WHITE}{_ptt_label}:{RESET}{ptt_status} {WHITE}VAD:{RESET}{vad_status}{vad_info} {WHITE}TX:{RESET}{radio_tx_bar} {WHITE}RX:{RESET}{radio_rx_bar}{sp_bar}{sdr_bar}{sdr2_bar}{remote_bar}{annin_bar}     "
 
                 # Line 2: uptime, files, relays, CAT, servers, vol, proc, diag, smart countdowns
                 def _fmt_hms(secs):
@@ -9823,6 +9871,13 @@ class RadioGateway:
         if self.ddns_updater:
             try:
                 self.ddns_updater.stop()
+            except Exception:
+                pass
+
+        if self.relay_ptt:
+            try:
+                self.relay_ptt.set_state(False)
+                self.relay_ptt.close()
             except Exception:
                 pass
 
