@@ -503,32 +503,7 @@ WEB_CONFIG_PASSWORD =
 - Auto-reconnects when gateway restarts (no manual refresh needed)
 - Fixed-width grid layout — bars and values don't shift when levels change
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│                              Radio Gateway — Live Dashboard                                  │
-│                                                                                              │
-│  Mumble: OK     PTT: off (AIOC)  VAD: ON -52dB   Vol: 1.0x   Proc: [D]   Muted: None       │
-│  Duck: ON       Rebroadcast: OFF  Manual PTT: off  MS1: ON   MS2: ON  CAT: ON  PWRB: off   │
-│                                                                                              │
-│  Uptime: 0d 04:12:33    Smart#1: 0d 01:45:00    Smart#2: 0d 03:22:11    DNS: 203.0.113.5   │
-│                                                                                              │
-│  TX:    0% ░░░░░░░░░░     RX:   34% ████████░░     SDR1:  67% █████████████████░            │
-│  SV:   12% ███░░░░░░░     AN:    0% ░░░░░░░░░░                                              │
-│                                                                                              │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐   │
-│  │Mute TX │ │Mute RX │ │ Global │ │  SDR1  │ │  SDR2  │ │ Remote │ │Announce│ │Speaker │   │
-│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘   │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐   │
-│  │  VAD   │ │ Gate   │ │  HPF   │ │  AGC   │ │Spectral│ │ Wiener │ │  Echo  │ │Man PTT │   │
-│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘   │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐              │
-│  │  Vol-  │ │  Vol+  │ │  Duck  │ │Rebroad │ │Smart #1│ │Smart #2│ │Smart #3│              │
-│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘              │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐              │
-│  │ File 1 │ │ File 2 │ │ File 3 │ │  ...   │ │ File 0 │ │  Stop  │ │  PWR   │              │
-│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘              │
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
-```
+![Live Dashboard](docs/img/dashboard.png)
 
 **Status bar (line 2):** `WEB:8080` in green when enabled, showing the listen port.
 
