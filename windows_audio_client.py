@@ -25,6 +25,8 @@ Audio: 48000 Hz, mono, 16-bit signed little-endian PCM, 2400 frames per chunk.
 Keyboard controls:
   l = Toggle LIVE/IDLE (server) or LIVE/MUTE (client)
   m = Switch between server and client roles
+  , (or <) = Volume down 5%
+  . (or >) = Volume up 5%
 
 Usage:
     pip install sounddevice
@@ -124,6 +126,10 @@ def _keyboard_listener(state):
                     state["live"] = not state["live"]
                 elif ch == "m":
                     state["switch_role"] = True
+                elif ch in (",", "<"):
+                    state["volume"] = max(0, state["volume"] - 5)
+                elif ch in (".", ">"):
+                    state["volume"] = min(100, state["volume"] + 5)
             time.sleep(0.05)
     except ImportError:
         # Unix / Linux / macOS
@@ -141,6 +147,10 @@ def _keyboard_listener(state):
                         state["live"] = not state["live"]
                     elif ch == "m":
                         state["switch_role"] = True
+                    elif ch in (",", "<"):
+                        state["volume"] = max(0, state["volume"] - 5)
+                    elif ch in (".", ">"):
+                        state["volume"] = min(100, state["volume"] + 5)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
@@ -293,12 +303,35 @@ def rms_db(pcm_bytes):
     return 20.0 * math.log10(rms / 32768.0)
 
 
-def level_bar(db, width=20):
-    """Return a simple ASCII level bar."""
-    # Map -60..0 dBFS to 0..width
-    clamped = max(-60.0, min(0.0, db))
+def level_bar(db, width=20, vol_pct=100):
+    """Return an ASCII level bar with a volume ceiling marker.
+
+    *vol_pct* (0-100) scales the displayed level and places a '|' marker
+    on the bar to show where the volume ceiling sits relative to full scale.
+    """
+    # Scale the dB value by the volume percentage
+    vol_frac = max(0.0, min(1.0, vol_pct / 100.0))
+    if vol_frac > 0:
+        scaled_db = db + 20.0 * math.log10(vol_frac)
+    else:
+        scaled_db = -100.0
+
+    clamped = max(-60.0, min(0.0, scaled_db))
     filled = int((clamped + 60.0) / 60.0 * width)
-    return "#" * filled + "-" * (width - filled)
+
+    # Volume ceiling marker position
+    marker_pos = int(vol_frac * width)
+    marker_pos = max(0, min(width, marker_pos))
+
+    bar_chars = []
+    for i in range(width):
+        if i == marker_pos and marker_pos < width:
+            bar_chars.append("|")
+        elif i < filled:
+            bar_chars.append("#")
+        else:
+            bar_chars.append("-")
+    return "".join(bar_chars), scaled_db
 
 # ---------------------------------------------------------------------------
 # Screen helpers
@@ -319,6 +352,7 @@ def print_server_header(mode, dev_name, dev_index, host, port):
     print(f"Format : {SAMPLE_RATE} Hz, mono, 16-bit, {FRAMES_PER_BUFFER} frames/chunk")
     print(f"\nPress 'l' to toggle LIVE/IDLE — audio is NOT sent until you go LIVE")
     print(f"Press 'm' to switch to client role")
+    print(f"Press ','/'.' to adjust volume down/up (5% steps)")
     print("Press Ctrl+C to stop.\n")
 
 
@@ -331,6 +365,7 @@ def print_client_header(dev_name, dev_index, port, connected_from=None):
     print(f"Format : {SAMPLE_RATE} Hz, mono, 16-bit, {FRAMES_PER_BUFFER} frames/chunk")
     print(f"\nPress 'l' to toggle PLAY/MUTE — when MUTE, received audio is discarded")
     print(f"Press 'm' to switch to server role")
+    print(f"Press ','/'.' to adjust volume down/up (5% steps)")
     print("Press Ctrl+C to stop.\n")
     if connected_from:
         print(f"Gateway connected from {connected_from}")
@@ -479,9 +514,10 @@ def run_server(cfg, state):
             else:
                 status = f"{GREEN}IDLE{RESET}"
             db = rms_db(pcm)
-            bar = level_bar(db)
+            bar, scaled_db = level_bar(db, vol_pct=state["volume"])
+            vol = state["volume"]
             role_tag = f"{CYAN}SV{RESET}"
-            sys.stdout.write(f"\r  {role_tag} {status}  [{bar}] {db:+6.1f} dBFS ")
+            sys.stdout.write(f"\r  {role_tag} {status}  [{bar}] {scaled_db:+6.1f} dBFS  Vol:{vol:3d}% ")
             sys.stdout.flush()
 
         switched = state["switch_role"]
@@ -603,7 +639,9 @@ def run_client(cfg, state):
                         else:
                             status = f"{YELLOW}MUTE{RESET}"
                         role_tag = f"{CYAN}CL{RESET}"
-                        sys.stdout.write(f"\r  {role_tag} {status}  [{level_bar(-100)}] {-100:+6.1f} dBFS ")
+                        idle_bar, idle_db = level_bar(-100, vol_pct=state["volume"])
+                        vol = state["volume"]
+                        sys.stdout.write(f"\r  {role_tag} {status}  [{idle_bar}] {idle_db:+6.1f} dBFS  Vol:{vol:3d}% ")
                         sys.stdout.flush()
                         continue
                     if hdr is None:
@@ -621,9 +659,16 @@ def run_client(cfg, state):
 
                     is_live = state["live"]
 
-                    # Play or discard
+                    # Play or discard (scale by volume)
+                    vol = state["volume"]
                     if is_live:
-                        out_stream.write(pcm)
+                        if vol < 100:
+                            samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                            samples *= vol / 100.0
+                            pcm_out = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+                        else:
+                            pcm_out = pcm
+                        out_stream.write(pcm_out)
 
                     # Status line
                     if is_live:
@@ -631,9 +676,9 @@ def run_client(cfg, state):
                     else:
                         status = f"{YELLOW}MUTE{RESET}"
                     db = rms_db(pcm)
-                    bar = level_bar(db)
+                    bar, scaled_db = level_bar(db, vol_pct=vol)
                     role_tag = f"{CYAN}CL{RESET}"
-                    sys.stdout.write(f"\r  {role_tag} {status}  [{bar}] {db:+6.1f} dBFS ")
+                    sys.stdout.write(f"\r  {role_tag} {status}  [{bar}] {scaled_db:+6.1f} dBFS  Vol:{vol:3d}% ")
                     sys.stdout.flush()
 
             except (ConnectionResetError, BrokenPipeError, OSError):
@@ -671,7 +716,7 @@ def main():
     save_config(cfg)
 
     # Shared state lives across role switches — keyboard thread stays running
-    state = {"live": False, "running": True, "switch_role": False}
+    state = {"live": False, "running": True, "switch_role": False, "volume": 100}
     kb_thread = threading.Thread(target=_keyboard_listener, args=(state,), daemon=True)
     kb_thread.start()
 
