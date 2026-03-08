@@ -49,11 +49,11 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `AUDIO_CHUNK_SIZE = 2400` (50ms), `SDR_BUFFER_MULTIPLIER = 4`
 - SDR: `pw:sdr_capture` / `pw:sdr_capture2` (PipeWire default)
 - AIOC pre-buffer: 3 blobs / 600ms; SDR pre-buffer: 2 blobs / 400ms
-- `PLAYBACK_VOLUME = 2.0`, `ANNOUNCE_INPUT_VOLUME = 4.0`, `ENABLE_ANNOUNCE_INPUT = True`
+- `PLAYBACK_VOLUME = 1.0`, `ANNOUNCE_INPUT_VOLUME = 4.0`, `ENABLE_ANNOUNCE_INPUT = True`
 - `SDR_AUDIO_BOOST = 1.0`, `SDR2_AUDIO_BOOST = 1.5`
 - `SDR_DUCK_COOLDOWN = 3.0`, `SDR_SIGNAL_THRESHOLD = -70.0`, `SIGNAL_ATTACK_TIME = 0.25`
 - `TTS_SPEED = 1.0` (speech speed, requires ffmpeg for != 1.0)
-- `CW_WPM = 20`, `CW_FREQUENCY = 600`, `CW_VOLUME = 1.5`, `PTT_TTS_DELAY = 0.5`
+- `CW_WPM = 20`, `CW_FREQUENCY = 600`, `CW_VOLUME = 1.0`, `PTT_TTS_DELAY = 0.5`
 - `REMOTE_AUDIO_PRIORITY = 0`, `ENABLE_PLAYBACK = True`, EchoLink: full bridge
 
 ## Keyboard Controls

@@ -294,7 +294,7 @@ ENABLE_PLAYBACK = true
 PLAYBACK_DIRECTORY = audio
 
 # Volume multiplier (clipped to int16; 1.0=normal, 2.0=double)
-PLAYBACK_VOLUME = 2.0
+PLAYBACK_VOLUME = 1.0
 
 # Auto-play station ID interval (seconds, 0=disabled)
 # Example: 3600 = play station_id file once per hour
@@ -303,7 +303,7 @@ PLAYBACK_ANNOUNCEMENT_INTERVAL = 0
 # --- Morse Code (CW) ---
 CW_WPM = 20           # Words per minute (PARIS timing)
 CW_FREQUENCY = 600    # Tone frequency (Hz)
-CW_VOLUME = 1.5       # CW-specific volume (PLAYBACK_VOLUME also applies)
+CW_VOLUME = 1.0       # CW-specific volume (PLAYBACK_VOLUME also applies)
 
 # File naming:
 #   Station ID (key 0): station_id.mp3 or station_id.wav
@@ -321,7 +321,7 @@ CW_VOLUME = 1.5       # CW-specific volume (PLAYBACK_VOLUME also applies)
 ENABLE_TTS = true
 ENABLE_TEXT_COMMANDS = true
 TTS_VOLUME = 1.0          # Volume boost (1.0=normal, 2.0=double)
-TTS_SPEED = 1.0           # Speech speed (1.0=normal, 1.3=faster, max 3.0, requires ffmpeg)
+TTS_SPEED = 1.3           # Speech speed (1.0=normal, 1.3=faster, max 3.0, requires ffmpeg)
 
 # Default voice: 1=US 2=British 3=Australian 4=Indian 5=South African
 #                6=Canadian 7=Irish 8=French 9=German
@@ -429,7 +429,7 @@ ENABLE_SMART_ANNOUNCE = true
 # AI Backend — choose: duckduckgo (free), google-scrape (free), claude, or gemini
 # google-scrape: uses xdotool to drive your real Firefox browser, scrapes Google AI Overview
 #   Requires: xdotool, xclip, Firefox running and logged into Google on DISPLAY=:0
-SMART_ANNOUNCE_AI_BACKEND = duckduckgo
+SMART_ANNOUNCE_AI_BACKEND = google-scrape
 
 # Ollama model for duckduckgo/google-scrape backends (blank = auto-detect first available)
 # Recommended: llama3.1:8b (PC w/ GPU), llama3.2:3b (PC CPU-only), llama3.2:1b (Pi)

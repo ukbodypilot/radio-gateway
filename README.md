@@ -369,8 +369,8 @@ RELAY_CHARGER_OFF_TIME = 06:00
 Scheduled radio announcements with a pluggable AI backend. The gateway searches for live data, an AI composes a natural spoken message, and the gateway broadcasts it via gTTS.
 
 **AI Backends:**
-- **`google-scrape`** — Free, no API key needed. Drives the user's real Firefox browser via `xdotool` to perform a Google search, clicks AI Mode, and extracts the AI Overview text. Optionally feeds the result through Ollama for speech formatting. Requires Firefox running and logged into Google on the desktop (`DISPLAY=:0`), plus `xdotool` and `xclip`.
-- **`duckduckgo`** (default) — Free, no API key needed. Uses DuckDuckGo web search for live data + Ollama local LLM for natural speech composition. Falls back to formatted search snippets if Ollama is not installed.
+- **`google-scrape`** (default) — Free, no API key needed. Drives the user's real Firefox browser via `xdotool` to perform a Google search, clicks AI Mode, and extracts the AI Overview text. Optionally feeds the result through Ollama for speech formatting. Requires Firefox running and logged into Google on the desktop (`DISPLAY=:0`), plus `xdotool` and `xclip`.
+- **`duckduckgo`** — Free, no API key needed. Uses DuckDuckGo web search for live data + Ollama local LLM for natural speech composition. Falls back to formatted search snippets if Ollama is not installed.
 - **`claude`** — Anthropic Claude API with built-in web search. Requires API key and credits.
 - **`gemini`** — Google Gemini API with Google Search grounding. Requires API key.
 
@@ -405,12 +405,12 @@ SMART_ANNOUNCE_3 = 7200, 2, 20, {Summarize the top 2 breaking news headlines fro
 ENABLE_SMART_ANNOUNCE = true
 
 # AI Backend — choose: google-scrape (free), duckduckgo (free), claude, or gemini
-SMART_ANNOUNCE_AI_BACKEND = duckduckgo
+SMART_ANNOUNCE_AI_BACKEND = google-scrape
 
 # Ollama model for google-scrape/duckduckgo backends (blank = auto-detect)
-SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:3b
+SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:1b
 SMART_ANNOUNCE_OLLAMA_TEMPERATURE = 0.5
-SMART_ANNOUNCE_OLLAMA_TOP_P = 0.9
+SMART_ANNOUNCE_OLLAMA_TOP_P = 0.5
 
 # Claude API key (used when AI_BACKEND = claude)
 SMART_ANNOUNCE_API_KEY =
@@ -1400,12 +1400,12 @@ SWITCH_PADDING_TIME = 1.0        # seconds (default 1.0)
 ENABLE_PLAYBACK = true               # Enable file playback
 PLAYBACK_DIRECTORY = audio           # Directory for audio files
 PLAYBACK_ANNOUNCEMENT_INTERVAL = 0   # Auto-play interval (0 = disabled)
-PLAYBACK_VOLUME = 2.0                # Volume multiplier (1.0 = normal, >1.0 boosts)
+PLAYBACK_VOLUME = 1.0                # Volume multiplier (1.0 = normal, >1.0 boosts)
                                      # Audio is clipped to int16 range — safe to set above 1.0
                                      # Values above ~3.0 will distort before getting louder
 
-CW_WPM = 15                          # Morse code words per minute (standard PARIS timing)
-CW_FREQUENCY = 700                   # CW tone frequency in Hz (typical range: 400–900 Hz)
+CW_WPM = 20                          # Morse code words per minute (standard PARIS timing)
+CW_FREQUENCY = 600                   # CW tone frequency in Hz (typical range: 400–900 Hz)
 CW_VOLUME = 1.0                      # CW PCM volume before WAV write; PLAYBACK_VOLUME also applies
 
 PTT_ANNOUNCEMENT_DELAY = 0.5         # Seconds after PTT key-up before audio starts
@@ -1424,9 +1424,9 @@ PTT_ANNOUNCEMENT_DELAY = 0.5         # Seconds after PTT key-up before audio sta
 ENABLE_TTS = true            # Enable TTS (requires gtts)
 ENABLE_TEXT_COMMANDS = true  # Allow Mumble text commands
 TTS_VOLUME = 1.0             # TTS volume boost (1.0-3.0)
-TTS_SPEED = 1.0              # Speech speed (1.0=normal, 1.3=faster, max 3.0, requires ffmpeg)
+TTS_SPEED = 1.3              # Speech speed (1.0=normal, 1.3=faster, max 3.0, requires ffmpeg)
 TTS_DEFAULT_VOICE = 1        # Default voice (1=US 2=UK 3=AU 4=IN 5=SA 6=CA 7=IE 8=FR 9=DE)
-PTT_TTS_DELAY = 1.0          # Silence padding before TTS (seconds)
+PTT_TTS_DELAY = 0.5          # Silence padding before TTS (seconds)
 ```
 
 ### Smart Announcement Settings
@@ -1436,10 +1436,10 @@ ENABLE_SMART_ANNOUNCE = false              # Enable AI-powered scheduled announc
 
 # AI Backend — google-scrape (free), duckduckgo (free), claude, or gemini
 # google-scrape: drives real Firefox via xdotool, scrapes Google AI Overview
-SMART_ANNOUNCE_AI_BACKEND = duckduckgo
-SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:3b  # Ollama model for google-scrape/duckduckgo
+SMART_ANNOUNCE_AI_BACKEND = google-scrape
+SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:1b  # Ollama model for google-scrape/duckduckgo
 SMART_ANNOUNCE_OLLAMA_TEMPERATURE = 0.5    # 0.0=focused, 1.0=creative
-SMART_ANNOUNCE_OLLAMA_TOP_P = 0.9          # Nucleus sampling (0.0-1.0)
+SMART_ANNOUNCE_OLLAMA_TOP_P = 0.5          # Nucleus sampling (0.0-1.0)
 SMART_ANNOUNCE_API_KEY =                   # Claude API key (used when backend = claude)
 SMART_ANNOUNCE_GEMINI_API_KEY =            # Gemini API key (used when backend = gemini)
 
@@ -1465,7 +1465,7 @@ SMART_ANNOUNCE_2 = 1800, 1, 10, {What is the current UTC time and date}
 - `target_secs` — target speech length in seconds (max 60, ~2.5 words/second)
 - `{prompt text}` — instructions for the AI (anything inside braces, can include punctuation)
 
-**DuckDuckGo backend (default, free):** uses DuckDuckGo web search + Ollama local LLM. Install Ollama for best results: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2:3b`
+**Google-scrape backend (default, free):** drives your real Firefox via xdotool, scrapes Google AI Overview. Install Ollama for best results: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2:1b`
 
 ### Audio Processing Settings
 

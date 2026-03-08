@@ -177,16 +177,16 @@ class Config:
             'PLAYBACK_DIRECTORY': './audio/',
             'PLAYBACK_ANNOUNCEMENT_FILE': '',
             'PLAYBACK_ANNOUNCEMENT_INTERVAL': 0,  # seconds, 0 = disabled
-            'PLAYBACK_VOLUME': 2.0,               # float (multiplier; >1.0 boosts, audio is clipped to int16 range)
+            'PLAYBACK_VOLUME': 1.0,               # float (multiplier; >1.0 boosts, audio is clipped to int16 range)
             # Morse Code (CW)
             'CW_WPM': 20,          # Morse code words per minute
             'CW_FREQUENCY': 600,   # Tone frequency in Hz
-            'CW_VOLUME': 1.5,      # Volume multiplier (applied before WAV write; PLAYBACK_VOLUME also applies)
+            'CW_VOLUME': 1.0,      # Volume multiplier (applied before WAV write; PLAYBACK_VOLUME also applies)
             # Text-to-Speech and Text Commands (Phase 4)
             'ENABLE_TTS': True,
             'ENABLE_TEXT_COMMANDS': True,
             'TTS_VOLUME': 1.0,  # Volume multiplier for TTS audio (1.0 = normal, 2.0 = double, 3.0 = triple)
-            'TTS_SPEED': 1.0,   # Speech speed (1.0 = normal, 1.3 = 30% faster, 0.8 = slower)
+            'TTS_SPEED': 1.3,   # Speech speed (1.0 = normal, 1.3 = 30% faster, 0.8 = slower, requires ffmpeg)
             'TTS_DEFAULT_VOICE': 1, # Default voice (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
             'PTT_TTS_DELAY': 0.5,   # Silence padding before TTS (seconds) to prevent cutoff
             'PTT_ANNOUNCEMENT_DELAY': 0.5,  # Seconds after PTT key-up before announcement audio starts
@@ -271,7 +271,7 @@ class Config:
             'RELAY_CHARGER_OFF_TIME': '06:00',
             # Smart Announcements (AI-powered)
             'ENABLE_SMART_ANNOUNCE': True,
-            'SMART_ANNOUNCE_AI_BACKEND': 'duckduckgo',  # duckduckgo, google-scrape, claude, or gemini
+            'SMART_ANNOUNCE_AI_BACKEND': 'google-scrape',  # google-scrape, duckduckgo, claude, or gemini
             'SMART_ANNOUNCE_OLLAMA_MODEL': 'llama3.2:1b',  # Ollama model (blank = auto-detect)
             'SMART_ANNOUNCE_OLLAMA_TEMPERATURE': 0.5,  # 0.0=focused, 1.0=creative
             'SMART_ANNOUNCE_OLLAMA_TOP_P': 0.5,        # nucleus sampling (0.0-1.0)
