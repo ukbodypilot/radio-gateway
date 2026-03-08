@@ -321,6 +321,7 @@ CW_VOLUME = 1.5       # CW-specific volume (PLAYBACK_VOLUME also applies)
 ENABLE_TTS = true
 ENABLE_TEXT_COMMANDS = true
 TTS_VOLUME = 1.0          # Volume boost (1.0=normal, 2.0=double)
+TTS_SPEED = 1.0           # Speech speed (1.0=normal, 1.3=faster, max 3.0, requires ffmpeg)
 
 # Default voice: 1=US 2=British 3=Australian 4=Indian 5=South African
 #                6=Canadian 7=Irish 8=French 9=German
@@ -458,6 +459,11 @@ SMART_ANNOUNCE_GEMINI_API_KEY =
 # Handles overnight wrap (e.g. 22:00 start, 06:00 end = 10pm to 6am)
 SMART_ANNOUNCE_START_TIME = 08:00
 SMART_ANNOUNCE_END_TIME = 22:00
+
+# Optional text spoken before/after each announcement (leave blank for none)
+# Example: TOP_TEXT = "This is an automated announcement." TAIL_TEXT = "End of announcement."
+SMART_ANNOUNCE_TOP_TEXT =
+SMART_ANNOUNCE_TAIL_TEXT =
 
 # Example announcements (uncomment and customize):
 SMART_ANNOUNCE_1 = 3600, 1, 15, {weather update los angeles usa including temperature and conditions}

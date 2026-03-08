@@ -52,6 +52,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `PLAYBACK_VOLUME = 2.0`, `ANNOUNCE_INPUT_VOLUME = 4.0`, `ENABLE_ANNOUNCE_INPUT = True`
 - `SDR_AUDIO_BOOST = 1.0`, `SDR2_AUDIO_BOOST = 1.5`
 - `SDR_DUCK_COOLDOWN = 3.0`, `SDR_SIGNAL_THRESHOLD = -70.0`, `SIGNAL_ATTACK_TIME = 0.25`
+- `TTS_SPEED = 1.0` (speech speed, requires ffmpeg for != 1.0)
 - `CW_WPM = 20`, `CW_FREQUENCY = 600`, `CW_VOLUME = 1.5`, `PTT_TTS_DELAY = 0.5`
 - `REMOTE_AUDIO_PRIORITY = 0`, `ENABLE_PLAYBACK = True`, EchoLink: full bridge
 
@@ -113,6 +114,8 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `CAT_STARTUP_COMMANDS = false` → connect TCP but skip channel/volume/power setup
 - `_logmsg` defaults to log-only (console=False); verbose shows on screen
 - `setup_radio` prints concise summary, not per-step spam
+- `_with_usb_rts()` — wraps setup tasks: sets RTS=USB, runs tasks, restores RTS
+- `set_channel()` auto-detects VFO mode and presses V/M to switch to channel mode
 - RTS set/toggle via TCP: `!rts`, `!rts True`, `!rts False`
 - `set_rts()` parses response from TH9800 to track actual state
 - TH9800_CAT.py `bool("False")` bug fixed → string comparison now
@@ -133,7 +136,8 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Keyboard: `[`=Smart#1, `]`=Smart#2, `\`=Smart#3
 - Mumble commands: `!smart` (list), `!smart N` (trigger)
 - Manual triggers (keyboard/Mumble) skip time window check
-- Skips if radio busy (VAD active or playback in progress)
+- Waits for radio to be free (VAD/playback) up to ~8min before dropping
+- `SMART_ANNOUNCE_TOP_TEXT` / `SMART_ANNOUNCE_TAIL_TEXT` — optional spoken prefix/suffix
 - Dependencies: `xdotool`+`xclip` (google-scrape), `ddgs` (duckduckgo), `anthropic` (claude), `google-genai` (gemini), Ollama (optional)
 - Installer step 7: installs Ollama + pulls model (llama3.2:3b on PC, llama3.2:1b on Pi)
 

@@ -311,6 +311,7 @@ Google TTS (gTTS) integration — Mumble users send a text message to trigger sp
 - Rate limiting detection (gTTS throttles after many requests)
 - HTML tags stripped from Mumble messages before TTS processing
 - Configurable volume boost and PTT delay before speech starts
+- Adjustable speech speed via `TTS_SPEED` (requires ffmpeg)
 - Default voice set via `TTS_DEFAULT_VOICE` (1-9)
 
 ### Audio Processing
@@ -377,7 +378,8 @@ Scheduled radio announcements with a pluggable AI backend. The gateway searches 
 1. Configure one or more announcement entries with an interval, voice, target length, and a prompt
 2. On each interval, the backend searches for live data and composes a spoken message within the word limit
 3. The text is converted to speech via gTTS and broadcast on radio via AIOC PTT
-4. Manual triggers (keyboard/Mumble) ignore the time window restriction
+4. If the radio is busy (VAD active or playback running), the announcement waits up to ~8 minutes for a clear channel
+5. Manual triggers (keyboard/Mumble) ignore the time window restriction
 
 **Keyboard shortcuts:**
 - `[` = Trigger smart announcement #1 immediately
@@ -451,7 +453,9 @@ Connects to the [TH9800_CAT.py](https://github.com/your-repo/th9800) TCP server 
 1. TH9800_CAT.py runs on the same machine, connected to the radio via USB serial (FT232R)
 2. TH9800_CAT.py exposes a TCP server (default port 9800) for remote control
 3. On startup, the gateway connects, authenticates, enables USB TX control (RTS), then sends setup commands (if `CAT_STARTUP_COMMANDS = true`; set to `false` to connect without sending setup commands)
-4. Channel is set by stepping the per-VFO dial until the target channel is reached
+4. Setup commands run with RTS in USB-controlled mode and restore the previous RTS state afterwards
+5. If the radio is in VFO mode, the gateway automatically presses V/M to switch to channel mode before setting the channel
+6. Channel is set by stepping the per-VFO dial until the target channel is reached
 5. Volume is set by stepping from the default level (25) to the target level
 6. Power is set by cycling the LOW button (L/M/H) until the target is reached
 
@@ -1420,6 +1424,7 @@ PTT_ANNOUNCEMENT_DELAY = 0.5         # Seconds after PTT key-up before audio sta
 ENABLE_TTS = true            # Enable TTS (requires gtts)
 ENABLE_TEXT_COMMANDS = true  # Allow Mumble text commands
 TTS_VOLUME = 1.0             # TTS volume boost (1.0-3.0)
+TTS_SPEED = 1.0              # Speech speed (1.0=normal, 1.3=faster, max 3.0, requires ffmpeg)
 TTS_DEFAULT_VOICE = 1        # Default voice (1=US 2=UK 3=AU 4=IN 5=SA 6=CA 7=IE 8=FR 9=DE)
 PTT_TTS_DELAY = 1.0          # Silence padding before TTS (seconds)
 ```
@@ -1443,6 +1448,10 @@ SMART_ANNOUNCE_GEMINI_API_KEY =            # Gemini API key (used when backend =
 # Manual triggers (keyboard/Mumble) always ignore the time window.
 SMART_ANNOUNCE_START_TIME = 08:00          # Earliest time for scheduled announcements
 SMART_ANNOUNCE_END_TIME = 22:00            # Latest time for scheduled announcements
+
+# Optional text spoken before/after each announcement (leave blank for none)
+SMART_ANNOUNCE_TOP_TEXT =                  # e.g. "This is an automated announcement."
+SMART_ANNOUNCE_TAIL_TEXT =                 # e.g. "End of announcement."
 
 # Entry format: interval_secs, voice (1-9), target_secs (max 60), {prompt text}
 SMART_ANNOUNCE_1 = 3600, 1, 15, {Give a brief weather update for London, UK}

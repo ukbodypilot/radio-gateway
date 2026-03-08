@@ -186,6 +186,7 @@ class Config:
             'ENABLE_TTS': True,
             'ENABLE_TEXT_COMMANDS': True,
             'TTS_VOLUME': 1.0,  # Volume multiplier for TTS audio (1.0 = normal, 2.0 = double, 3.0 = triple)
+            'TTS_SPEED': 1.0,   # Speech speed (1.0 = normal, 1.3 = 30% faster, 0.8 = slower)
             'TTS_DEFAULT_VOICE': 1, # Default voice (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
             'PTT_TTS_DELAY': 0.5,   # Silence padding before TTS (seconds) to prevent cutoff
             'PTT_ANNOUNCEMENT_DELAY': 0.5,  # Seconds after PTT key-up before announcement audio starts
@@ -278,6 +279,8 @@ class Config:
             'SMART_ANNOUNCE_OLLAMA_NUM_THREAD': 2,     # CPU threads (0 = all cores)
             'SMART_ANNOUNCE_API_KEY': '',            # Claude API key
             'SMART_ANNOUNCE_GEMINI_API_KEY': '',     # Gemini API key
+            'SMART_ANNOUNCE_TOP_TEXT': '',           # Text spoken before announcement (empty = none)
+            'SMART_ANNOUNCE_TAIL_TEXT': '',          # Text spoken after announcement (empty = none)
             'SMART_ANNOUNCE_START_TIME': '08:00',   # HH:MM — empty = no restriction
             'SMART_ANNOUNCE_END_TIME': '22:00',     # HH:MM — empty = no restriction
             # TH-9800 CAT Control
@@ -3584,6 +3587,17 @@ class RadioCATClient:
             self._logmsg(f"  CAT send error: {e}")
             return None
 
+    def _with_usb_rts(self, func):
+        """Run func() with RTS in USB Controlled mode, restore afterwards if changed."""
+        rts_was = self._rts_usb
+        if rts_was is not True:
+            self.set_rts(True)
+        try:
+            return func()
+        finally:
+            if rts_was is not True and rts_was is not None:
+                self.set_rts(rts_was)
+
     def _recv_line(self, timeout=2.0):
         """Read from socket until newline, with timeout. Parses binary radio packets inline."""
         if not self._sock:
@@ -3772,6 +3786,10 @@ class RadioCATClient:
 
         self._drain()
 
+        # Clear stale channel data before reading fresh state
+        self._channel = ''
+        self._channel_vfo = ''
+
         # Press the VFO dial to trigger a display update
         if vfo == self.LEFT:
             self._send_button([0x00, 0x25], 3, 5)  # L_DIAL_PRESS
@@ -3784,6 +3802,49 @@ class RadioCATClient:
         # Drain and read channel
         self._drain(0.5)
         self._logmsg(f"    Current: vfo={self._channel_vfo} ch='{self._channel}'", console=False)
+
+        # If channel is blank/non-numeric or from wrong VFO, radio is in VFO mode
+        in_vfo_mode = False
+        if self._channel_vfo != vfo:
+            in_vfo_mode = True  # no channel data came back for this side
+        else:
+            try:
+                int(self._channel)
+            except (ValueError, TypeError):
+                in_vfo_mode = True
+        if in_vfo_mode:
+            self._logmsg(f"    Radio in VFO mode (vfo={self._channel_vfo} ch='{self._channel}'), pressing V/M...", console=True)
+            if vfo == self.LEFT:
+                self._send_button([0x00, 0x22], 3, 5)  # L_VM
+            else:
+                self._send_button([0x00, 0xA2], 3, 5)  # R_VM
+            time.sleep(0.15)
+            self._send_button_release()
+            time.sleep(0.5)
+            self._drain(0.5)
+
+            # Press the dial again to force a channel text update for this side
+            self._channel = ''
+            self._channel_vfo = ''
+            if vfo == self.LEFT:
+                self._send_button([0x00, 0x25], 3, 5)  # L_DIAL_PRESS
+            else:
+                self._send_button([0x00, 0xA5], 3, 5)  # R_DIAL_PRESS
+            time.sleep(0.15)
+            self._send_button_release()
+            time.sleep(0.3)
+            self._drain(0.5)
+
+            self._logmsg(f"    After V/M: vfo={self._channel_vfo} ch='{self._channel}'", console=True)
+            if self._channel_vfo != vfo:
+                self._logmsg(f"    No channel data for {vfo} after V/M, aborting")
+                return False
+            try:
+                int(self._channel)
+            except (ValueError, TypeError):
+                self._logmsg(f"    Still not in channel mode after V/M press, aborting")
+                return False
+
         if self._channel_vfo == vfo and self._channel_matches(target_int):
             self._logmsg(f"    Already on channel {target_int}")
             return True
@@ -3932,27 +3993,29 @@ class RadioCATClient:
             print("  CAT: No setup tasks configured")
             return
 
-        print(f"  CAT: Sending {len(tasks)} setup commands...")
-        results = []
-        for name, func in tasks:
-            if self._stop:
-                results.append((name, 'interrupted'))
-                break
-            try:
-                ok = func()
-                results.append((name, 'ok' if ok else 'failed'))
-            except Exception as e:
-                results.append((name, f'error: {e}'))
-                self._logmsg(f"  CAT: {name} error: {e}")
+        def _run_tasks():
+            print(f"  CAT: Sending {len(tasks)} setup commands...")
+            results = []
+            for name, func in tasks:
+                if self._stop:
+                    results.append((name, 'interrupted'))
+                    break
+                try:
+                    ok = func()
+                    results.append((name, 'ok' if ok else 'failed'))
+                except Exception as e:
+                    results.append((name, f'error: {e}'))
+                    self._logmsg(f"  CAT: {name} error: {e}")
 
-        # Print concise summary
-        ok_count = sum(1 for _, r in results if r == 'ok')
-        summary_parts = [f"{name}={status}" for name, status in results]
-        if ok_count == len(results):
-            print(f"  CAT: Setup complete ({ok_count}/{len(tasks)} ok)")
-        else:
-            print(f"  CAT: Setup done ({ok_count}/{len(tasks)} ok) — {', '.join(summary_parts)}")
-        return
+            # Print concise summary
+            ok_count = sum(1 for _, r in results if r == 'ok')
+            summary_parts = [f"{name}={status}" for name, status in results]
+            if ok_count == len(results):
+                print(f"  CAT: Setup complete ({ok_count}/{len(tasks)} ok)")
+            else:
+                print(f"  CAT: Setup done ({ok_count}/{len(tasks)} ok) — {', '.join(summary_parts)}")
+
+        self._with_usb_rts(_run_tasks)
 
 
 class SmartAnnouncementManager:
@@ -4231,36 +4294,15 @@ class SmartAnnouncementManager:
             if not manual and not self._in_time_window():
                 print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — outside time window")
                 return
-            # Don't announce while radio is busy (PTT active, playback in progress)
-            if getattr(self.gateway, 'vad_active', False):
-                print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — VAD active (radio busy)")
-                return
-            if self.gateway.playback_source and self.gateway.playback_source.current_file:
-                print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — playback in progress")
-                return
         except Exception as e:
             print(f"\n[SmartAnnounce] #{entry['id']}: Pre-check error: {e}")
             return
 
         max_words = int(entry['target_secs'] * self.WORDS_PER_SECOND)
         system_prompt = (
-            f"Extract facts from the search results and rewrite them as spoken text. "
-            f"Maximum {max_words} words.\n\n"
-            "DO:\n"
-            "- Start directly with the facts. Example: 'In Moscow, protests continued today...'\n"
-            "- Use natural spoken English with contractions\n"
-            "- Write numbers as words (twenty-three, not 23)\n"
-            "- Write times in 12-hour format (three forty-five PM)\n\n"
-            "DO NOT:\n"
-            "- No greetings (Good evening, Hello, Welcome)\n"
-            "- No sign-offs (Stay tuned, We'll keep you updated, That's all)\n"
-            "- No station names or placeholders ([station name])\n"
-            "- No intros (Here are the headlines, Breaking news)\n"
-            "- No website names (BBC, CNN, Reuters)\n"
-            "- No filler or padding — every word must be factual content\n"
-            "- No website boilerplate, navigation text, or descriptions of websites\n\n"
-            "If the search results only contain website descriptions and no actual facts, "
-            "say 'No current information available.'"
+            f"Summarize the search results as spoken text in {max_words} words or fewer. "
+            "Start directly with facts. No greetings, no sign-offs, no intros, no station names, "
+            "no website names. Write numbers as words. Only include facts from the provided text."
         )
 
         try:
@@ -4280,8 +4322,30 @@ class SmartAnnouncementManager:
             if len(words) > max_words + 10:
                 text = ' '.join(words[:max_words])
 
-            print(f"[SmartAnnounce] #{entry['id']}: ── SENDING TO gTTS ({len(words)} words, voice {entry['voice']}) ──")
+            # Add optional top/tail text with pauses
+            top_text = str(getattr(self.config, 'SMART_ANNOUNCE_TOP_TEXT', '') or '').strip()
+            tail_text = str(getattr(self.config, 'SMART_ANNOUNCE_TAIL_TEXT', '') or '').strip()
+            if top_text:
+                text = f"{top_text} ... {text}"
+            if tail_text:
+                text = f"{text} ... {tail_text}"
+
+            print(f"[SmartAnnounce] #{entry['id']}: ── SENDING TO gTTS ({len(text.split())} words, voice {entry['voice']}) ──")
             print(f"  {text}")
+
+            # Wait for radio to be free before transmitting
+            for attempt in range(100):
+                vad_busy = getattr(self.gateway, 'vad_active', False)
+                pb_busy = (self.gateway.playback_source and
+                           self.gateway.playback_source.current_file)
+                if not vad_busy and not pb_busy:
+                    break
+                if attempt == 0:
+                    print(f"[SmartAnnounce] #{entry['id']}: Waiting for radio to be free...")
+                time.sleep(5)
+            else:
+                print(f"[SmartAnnounce] #{entry['id']}: Radio busy too long, dropping announcement")
+                return
 
             # Playback triggers AIOC PTT automatically via the audio loop
             # (set_ptt_state writes HID GPIO to key the radio).
@@ -4292,7 +4356,7 @@ class SmartAnnouncementManager:
 
     def _call_claude(self, entry, system_prompt, max_words):
         """Call Claude API with web search, return announcement text or None."""
-        print(f"\n[SmartAnnounce] #{entry['id']}: Calling Claude API (web search)...")
+        print(f"\n[SmartAnnounce] #{entry['id']}: Calling Claude API...")
         response = self._client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1024,
@@ -4340,8 +4404,8 @@ class SmartAnnouncementManager:
         import re
 
         search_query = entry['prompt']
-        print(f"\n[SmartAnnounce] #{entry['id']}: ── SEARCH QUERY ──")
-        print(f"  {search_query}")
+        verbose = getattr(self.config, 'VERBOSE_LOGGING', False)
+        print(f"\n[SmartAnnounce] #{entry['id']}: Searching: {search_query}")
         ddgs = DDGS()
 
         # Use both web search and news search for richer results
@@ -4372,15 +4436,16 @@ class SmartAnnouncementManager:
                 context_parts.append(f"- {r.get('title', '')}: {r.get('body', '')}")
         search_context = "\n".join(context_parts)
 
-        print(f"[SmartAnnounce] #{entry['id']}: ── SEARCH RESULTS ({len(news_results)} news, {len(web_results)} web) ──")
-        if news_results:
-            print(f"  NEWS:")
-            for r in news_results:
-                print(f"    {r.get('title', '')}: {r.get('body', '')[:120]}")
-        if web_results:
-            print(f"  WEB:")
-            for r in web_results:
-                print(f"    {r.get('title', '')}: {r.get('body', '')[:120]}")
+        if verbose:
+            print(f"[SmartAnnounce] #{entry['id']}: ── SEARCH RESULTS ({len(news_results)} news, {len(web_results)} web) ──")
+            if news_results:
+                print(f"  NEWS:")
+                for r in news_results:
+                    print(f"    {r.get('title', '')}: {r.get('body', '')[:120]}")
+            if web_results:
+                print(f"  WEB:")
+                for r in web_results:
+                    print(f"    {r.get('title', '')}: {r.get('body', '')[:120]}")
 
         # If Ollama is available, use it to compose natural speech
         if getattr(self, '_ollama_available', False):
@@ -4538,6 +4603,10 @@ class SmartAnnouncementManager:
             xdo('windowactivate', '--sync', best_wid2)
             time.sleep(0.3)
 
+            # Clear clipboard so stale data from prior scrape can't leak through
+            subprocess.Popen('echo -n | xclip -selection clipboard',
+                             shell=True, env=display_env).wait(timeout=3)
+
             # Click near the top-left of the page content (avoids ads which are
             # typically in the center/right) to focus the page, then select all + copy
             xdo('mousemove', '--window', best_wid2, '150', '300')
@@ -4618,18 +4687,19 @@ class SmartAnnouncementManager:
     def _call_google_scrape(self, entry, system_prompt, max_words):
         """Scrape Google AI Overview via Firefox, pre-clean, then summarize with Ollama."""
         import re
+        verbose = getattr(self.config, 'VERBOSE_LOGGING', False)
         search_query = entry['prompt']
-        print(f"\n[SmartAnnounce] #{entry['id']}: ── GOOGLE SCRAPE SEARCH ──")
-        print(f"  Query: {search_query}")
+        print(f"\n[SmartAnnounce] #{entry['id']}: Searching: {search_query}")
 
         ai_text = self._scrape_google_ai_overview(search_query)
         if not ai_text:
             print(f"[SmartAnnounce] #{entry['id']}: no AI Overview found")
             return None
 
-        print(f"[SmartAnnounce] #{entry['id']}: ── AI OVERVIEW ({len(ai_text)} chars) ──")
-        for line in ai_text.split('\n'):
-            print(f"  {line}")
+        if verbose:
+            print(f"[SmartAnnounce] #{entry['id']}: ── AI OVERVIEW ({len(ai_text)} chars) ──")
+            for line in ai_text.split('\n'):
+                print(f"  {line}")
 
         # Pre-clean: strip junk so Ollama processes less text
         lines = ai_text.split('\n')
@@ -4659,8 +4729,9 @@ class SmartAnnouncementManager:
         if len(words) > 200:
             pre_cleaned = ' '.join(words[:200])
 
-        print(f"[SmartAnnounce] #{entry['id']}: ── PRE-CLEANED ({len(pre_cleaned.split())} words) ──")
-        print(f"  {pre_cleaned[:300]}...")
+        if verbose:
+            print(f"[SmartAnnounce] #{entry['id']}: ── PRE-CLEANED ({len(pre_cleaned.split())} words) ──")
+            print(f"  {pre_cleaned[:300]}...")
 
         # Send pre-cleaned text through Ollama for natural spoken summary
         return self._ollama_compose(entry, system_prompt, max_words, pre_cleaned)
@@ -4674,9 +4745,12 @@ class SmartAnnouncementManager:
             f"Based on the above, compose a summary in not more than "
             f"{max_words} words. No intro, no date or time, just the content."
         )
-        print(f"[SmartAnnounce] #{entry['id']}: ── LLM PROMPT ({self._ollama_model}) ──")
-        for line in prompt.split('\n'):
-            print(f"  {line}")
+        verbose = getattr(self.config, 'VERBOSE_LOGGING', False)
+        print(f"[SmartAnnounce] #{entry['id']}: Sending to LLM ({self._ollama_model})...")
+        if verbose:
+            print(f"[SmartAnnounce] #{entry['id']}: ── LLM PROMPT ──")
+            for line in prompt.split('\n'):
+                print(f"  {line}")
         temperature = float(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_TEMPERATURE', 0.7))
         top_p = float(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_TOP_P', 0.9))
         num_ctx = int(getattr(self.config, 'SMART_ANNOUNCE_OLLAMA_NUM_CTX', 1024))
@@ -4689,12 +4763,14 @@ class SmartAnnouncementManager:
         }
         if num_thread > 0:
             options["num_thread"] = num_thread
-        print(f"[SmartAnnounce] #{entry['id']}: Ollama options: temp={temperature}, top_p={top_p}, ctx={num_ctx}, threads={num_thread or 'all'}, max_tokens={max_words * 3}")
+        if verbose:
+            print(f"[SmartAnnounce] #{entry['id']}: Ollama options: temp={temperature}, top_p={top_p}, ctx={num_ctx}, threads={num_thread or 'all'}, max_tokens={max_words * 3}")
         payload = json.dumps({
             "model": self._ollama_model,
             "prompt": prompt,
             "stream": False,
             "options": options,
+            "context": [],  # fresh context — don't carry over from previous calls
         }).encode()
         req = urllib.request.Request(
             'http://127.0.0.1:11434/api/generate',
@@ -4708,8 +4784,9 @@ class SmartAnnouncementManager:
         if not text:
             print(f"[SmartAnnounce] #{entry['id']}: empty response from Ollama")
             return None
-        print(f"[SmartAnnounce] #{entry['id']}: ── LLM RESPONSE ──")
-        print(f"  {text}")
+        if verbose:
+            print(f"[SmartAnnounce] #{entry['id']}: ── LLM RESPONSE ──")
+            print(f"  {text}")
         return text
 
     def trigger(self, entry_id):
@@ -6719,7 +6796,32 @@ class RadioGateway:
                 print(f"[TTS] ✗ gTTS generation failed: {tts_error}")
                 print(f"[TTS] Check internet connection (gTTS requires internet)")
                 return False
-            
+
+            # Apply speed adjustment if configured
+            tts_speed = float(getattr(self.config, 'TTS_SPEED', 1.0))
+            if tts_speed != 1.0 and 0.5 <= tts_speed <= 3.0:
+                try:
+                    import subprocess as sp
+                    speed_path = temp_path + '.speed.mp3'
+                    # ffmpeg atempo range is 0.5-2.0; chain filters for values outside
+                    filters = []
+                    remaining = tts_speed
+                    while remaining > 2.0:
+                        filters.append('atempo=2.0')
+                        remaining /= 2.0
+                    filters.append(f'atempo={remaining:.4f}')
+                    sp.run(['ffmpeg', '-y', '-i', temp_path, '-filter:a',
+                            ','.join(filters), speed_path],
+                           capture_output=True, timeout=30)
+                    if os.path.exists(speed_path) and os.path.getsize(speed_path) > 500:
+                        os.replace(speed_path, temp_path)
+                        if self.config.VERBOSE_LOGGING:
+                            print(f"[TTS] Speed adjusted to {tts_speed}x")
+                    else:
+                        print(f"[TTS] ⚠ Speed adjustment failed, using original")
+                except Exception as speed_err:
+                    print(f"[TTS] ⚠ Speed adjustment error: {speed_err}")
+
             # Verify file exists and has valid content
             import os
             if not os.path.exists(temp_path):
