@@ -3483,9 +3483,12 @@ class RadioCATClient:
         # Radio state parsed from forwarded packets
         self._channel = ''       # Latest channel text (3-char, e.g. "001")
         self._channel_vfo = ''   # Which VFO the channel belongs to ('LEFT' or 'RIGHT')
-        self._vfo_text = ''      # Display text (6-char name)
+        self._vfo_text = {}      # {'LEFT': '...', 'RIGHT': '...'} display text per VFO
+        self._channel_text = {}  # {'LEFT': '001', 'RIGHT': '002'} channel number per VFO
         self._power = {}         # {'LEFT': 'H', 'RIGHT': 'L'}
-        self._lock = threading.Lock()
+        self._signal = {}        # {'LEFT': 0-9, 'RIGHT': 0-9} S-meter
+        self._icons = {'LEFT': {}, 'RIGHT': {}, 'COMMON': {}}  # icon states
+        self._drain_paused = False  # pause drain thread during command sequences
         self._last_activity = 0  # monotonic timestamp of last send/recv (for status bar)
         self._stop = False       # set True to abort loops (ctrl+c)
         self._log = None         # file handle for debug log
@@ -3635,9 +3638,9 @@ class RadioCATClient:
     def set_rts(self, usb_controlled):
         """Set RTS state. True = USB Controlled, False = Radio Controlled."""
         resp = self._send_cmd(f"!rts {usb_controlled}")
-        # Parse actual state from response (TH9800 returns 'True' or 'False')
+        # Response format: "CMD{rts[True]} True" — check for 'true' anywhere
         if resp:
-            self._rts_usb = resp.strip().lower() == 'true'
+            self._rts_usb = 'true' in resp.lower()
         else:
             self._rts_usb = usb_controlled
         self._logmsg(f"  CAT RTS set to {'USB' if self._rts_usb else 'Radio'} Controlled: {resp}")
@@ -3651,6 +3654,144 @@ class RadioCATClient:
     def get_rts(self):
         """Return last known RTS state. True = USB Controlled, False = Radio Controlled."""
         return self._rts_usb
+
+    def get_radio_state(self):
+        """Return full radio state dict for web dashboard."""
+        return {
+            'connected': self._sock is not None,
+            'rts_usb': self._rts_usb,
+            'left': {
+                'display': self._vfo_text.get(self.LEFT, ''),
+                'channel': self._channel_text.get(self.LEFT, ''),
+                'power': self._power.get(self.LEFT, ''),
+                'signal': self._signal.get(self.LEFT, 0),
+                'icons': dict(self._icons.get(self.LEFT, {})),
+            },
+            'right': {
+                'display': self._vfo_text.get(self.RIGHT, ''),
+                'channel': self._channel_text.get(self.RIGHT, ''),
+                'power': self._power.get(self.RIGHT, ''),
+                'signal': self._signal.get(self.RIGHT, 0),
+                'icons': dict(self._icons.get(self.RIGHT, {})),
+            },
+            'common': dict(self._icons.get('COMMON', {})),
+        }
+
+    # Command lookup table for web buttons — maps label to (cmd_bytes, start, end)
+    # Mirrors TH9800_Enums.RADIO_TX_CMD
+    WEB_COMMANDS = {
+        # Left VFO buttons
+        'L_LOW': ([0x00, 0x21], 3, 5), 'L_LOW_HOLD': ([0x01, 0x21], 3, 5),
+        'L_VM': ([0x00, 0x22], 3, 5), 'L_VM_HOLD': ([0x01, 0x22], 3, 5),
+        'L_HM': ([0x00, 0x23], 3, 5), 'L_HM_HOLD': ([0x01, 0x23], 3, 5),
+        'L_SCN': ([0x00, 0x24], 3, 5), 'L_SCN_HOLD': ([0x01, 0x24], 3, 5),
+        'L_DIAL_LEFT': ([0x01], 2, 3), 'L_DIAL_RIGHT': ([0x02], 2, 3),
+        'L_DIAL_PRESS': ([0x00, 0x25], 3, 5), 'L_DIAL_HOLD': ([0x01, 0x25], 3, 5),
+        'L_SET_VFO': ([0x23, 0x24], 3, 5),
+        # Right VFO buttons
+        'R_LOW': ([0x00, 0xA1], 3, 5), 'R_LOW_HOLD': ([0x01, 0xA1], 3, 5),
+        'R_VM': ([0x00, 0xA2], 3, 5), 'R_VM_HOLD': ([0x01, 0xA2], 3, 5),
+        'R_HM': ([0x00, 0xA3], 3, 5), 'R_HM_HOLD': ([0x01, 0xA3], 3, 5),
+        'R_SCN': ([0x00, 0xA4], 3, 5), 'R_SCN_HOLD': ([0x01, 0xA4], 3, 5),
+        'R_DIAL_LEFT': ([0x81], 2, 3), 'R_DIAL_RIGHT': ([0x82], 2, 3),
+        'R_DIAL_PRESS': ([0x00, 0xA5], 3, 5), 'R_DIAL_HOLD': ([0x01, 0xA5], 3, 5),
+        'R_SET_VFO': ([0x24, 0x23], 3, 5),
+        # Menu / SET
+        'N_SET': ([0x00, 0x20], 3, 5), 'N_SET_HOLD': ([0x01, 0x20], 3, 5),
+        # Mic keypad
+        'MIC_0': ([0x00, 0x00], 3, 5), 'MIC_1': ([0x00, 0x01], 3, 5),
+        'MIC_2': ([0x00, 0x02], 3, 5), 'MIC_3': ([0x00, 0x03], 3, 5),
+        'MIC_4': ([0x00, 0x04], 3, 5), 'MIC_5': ([0x00, 0x05], 3, 5),
+        'MIC_6': ([0x00, 0x06], 3, 5), 'MIC_7': ([0x00, 0x07], 3, 5),
+        'MIC_8': ([0x00, 0x08], 3, 5), 'MIC_9': ([0x00, 0x09], 3, 5),
+        'MIC_A': ([0x00, 0x0A], 3, 5), 'MIC_B': ([0x00, 0x0B], 3, 5),
+        'MIC_C': ([0x00, 0x0C], 3, 5), 'MIC_D': ([0x00, 0x0D], 3, 5),
+        'MIC_STAR': ([0x00, 0x0E], 3, 5), 'MIC_POUND': ([0x00, 0x0F], 3, 5),
+        'MIC_P1': ([0x00, 0x10], 3, 5), 'MIC_P2': ([0x00, 0x11], 3, 5),
+        'MIC_P3': ([0x00, 0x12], 3, 5), 'MIC_P4': ([0x00, 0x13], 3, 5),
+        'MIC_UP': ([0x00, 0x14], 3, 5), 'MIC_DOWN': ([0x00, 0x15], 3, 5),
+        'MIC_PTT': ([0x00], 1, 2),
+        # Hyper memories
+        'HYPER_A': ([0x00, 0x27], 3, 5), 'HYPER_B': ([0x00, 0x28], 3, 5),
+        'HYPER_C': ([0x00, 0x29], 3, 5), 'HYPER_D': ([0x00, 0xAA], 3, 5),
+        'HYPER_E': ([0x00, 0xAB], 3, 5), 'HYPER_F': ([0x00, 0xAC], 3, 5),
+        # Single VFO (L_VOLUME_HOLD)
+        'L_VOLUME_HOLD': ([0x00, 0x26], 3, 5),
+    }
+
+    def send_web_command(self, cmd_name):
+        """Send a named button command from web UI. Returns True on success."""
+        if cmd_name == 'DEFAULT':
+            self._send_button_release()
+            return True
+        if cmd_name == 'TOGGLE_RTS':
+            resp = self._send_cmd("!rts")
+            if resp:
+                # Response format: "CMD{rts} True" or "CMD{rts} False"
+                self._rts_usb = 'true' in resp.lower()
+            return True
+        if cmd_name == 'MIC_PTT':
+            # Use !ptt command for proper PTT toggle (handles mic_ptt state)
+            self._send_cmd("!ptt")
+            return True
+        entry = self.WEB_COMMANDS.get(cmd_name)
+        if not entry:
+            return False
+        cmd_bytes, start, end = entry
+        self._drain_paused = True
+        try:
+            self._send_button(cmd_bytes, start, end)
+            # Normal buttons: auto-release after brief delay
+            time.sleep(0.15)
+            self._send_button_release()
+        finally:
+            self._drain_paused = False
+        self._drain(0.3)
+        return True
+
+    def reconnect(self):
+        """Close and reopen the TCP connection to CAT server."""
+        self._stop = True
+        self.close()
+        time.sleep(0.5)
+        self._stop = False
+        self._buf = b''
+        if self.connect():
+            self.start_background_drain()
+            return True
+        return False
+
+    def start_background_drain(self):
+        """Start background thread that continuously reads radio packets for live state updates."""
+        def _drain_loop():
+            while self._sock and not self._stop:
+                if self._drain_paused:
+                    time.sleep(0.05)
+                    continue
+                try:
+                    self._drain(0.5)
+                except Exception:
+                    pass
+                time.sleep(0.1)
+        t = threading.Thread(target=_drain_loop, daemon=True, name='cat-drain')
+        t.start()
+
+    def send_web_volume(self, vfo, level):
+        """Set volume from web UI. vfo='LEFT'/'RIGHT', level=0-100."""
+        level = max(0, min(100, int(level)))
+        vfo_letter = 'LEFT' if vfo == self.LEFT else 'RIGHT'
+        return self._send_cmd(f"!vol {vfo_letter} {level}")
+
+    def send_web_squelch(self, vfo, level):
+        """Set squelch from web UI via raw packet. vfo='LEFT'/'RIGHT', level=0-100."""
+        level = max(0, min(100, int(level)))
+        # Squelch: L_SQUELCH = bytes at position 8-11, R_SQUELCH at 8-11
+        # Payload: [vfo_byte, 0xEB, sq_level_byte] at position 8-11
+        if vfo == self.LEFT:
+            cmd_bytes = [0x02, 0xEB, level & 0xFF]
+        else:
+            cmd_bytes = [0x82, 0xEB, level & 0xFF]
+        self._send_button(cmd_bytes, 8, 11)
 
     def _parse_radio_packet(self, data):
         """Parse forwarded binary radio packets to update internal state."""
@@ -3674,19 +3815,23 @@ class RadioCATClient:
             if len(data) >= 6:
                 try:
                     self._channel = data[3:6].decode('ascii', errors='replace').strip()
-                    self._logmsg(f"    [pkt] CHANNEL_TEXT vfo={self._channel_vfo} ch='{self._channel}'", console=False)
+                    self._channel_text[self._channel_vfo] = self._channel
+                    self._logmsg(f"    [pkt] CHANNEL_TEXT vfo_byte=0x{vfo_byte:02X} -> {self._channel_vfo} ch='{self._channel}'", console=False)
                 except Exception:
                     pass
 
         elif pkt_type == 0x01:  # DISPLAY_TEXT
             if len(data) >= 9:
                 try:
-                    self._vfo_text = data[3:9].decode('ascii', errors='replace').strip()
-                    self._logmsg(f"    [pkt] DISPLAY_TEXT text='{self._vfo_text}'", console=False)
+                    text = data[3:9].decode('ascii', errors='replace').strip()
+                    # Associate with the VFO from the most recent DISPLAY_CHANGE
+                    if self._channel_vfo:
+                        self._vfo_text[self._channel_vfo] = text
+                    self._logmsg(f"    [pkt] DISPLAY_TEXT vfo={self._channel_vfo} text='{text}'", console=False)
                 except Exception:
                     pass
 
-        elif pkt_type == 0x04:  # DISPLAY_ICONS
+        elif pkt_type == 0x04:  # DISPLAY_ICONS (full icon state)
             if vfo_byte == 0x40:
                 vfo = self.LEFT
             elif vfo_byte == 0xC0:
@@ -3695,14 +3840,86 @@ class RadioCATClient:
                 self._logmsg(f"    [pkt] DISPLAY_ICONS unknown vfo=0x{vfo_byte:02X}", console=False)
                 return
             if len(data) >= 8:
-                power_byte = data[7]
-                if power_byte & 0x08:
+                # Parse all icon bytes
+                icons = self._icons[vfo]
+                # Index 2: APO, LOCK, KEY2, SET
+                if len(data) > 3:
+                    b = data[3]
+                    self._icons['COMMON']['APO'] = bool(b & 0x02)
+                    self._icons['COMMON']['LOCK'] = bool(b & 0x08)
+                    self._icons['COMMON']['KEY2'] = bool(b & 0x20)
+                    self._icons['COMMON']['SET'] = bool(b & 0x80)
+                # Index 3: NEG, POS, TX, MAIN
+                if len(data) > 4:
+                    b = data[4]
+                    icons['NEG'] = bool(b & 0x02)
+                    icons['POS'] = bool(b & 0x08)
+                    icons['TX'] = bool(b & 0x20)
+                    icons['MAIN'] = bool(b & 0x80)
+                # Index 4: PREF, SKIP, ENC, DEC
+                if len(data) > 5:
+                    b = data[5]
+                    icons['PREF'] = bool(b & 0x02)
+                    icons['SKIP'] = bool(b & 0x08)
+                    icons['ENC'] = bool(b & 0x20)
+                    icons['DEC'] = bool(b & 0xA0 == 0xA0)
+                # Index 5: DCS, MUTE, MT, BUSY
+                if len(data) > 6:
+                    b = data[6]
+                    icons['DCS'] = bool(b & 0x02)
+                    icons['MUTE'] = bool(b & 0x08)
+                    icons['MT'] = bool(b & 0x20)
+                    icons['BUSY'] = bool(b & 0x80)
+                # Index 6: power (L/M/H), AM
+                if len(data) > 7:
+                    b = data[7]
+                    icons['AM'] = bool(b & 0x80)
+                    if b & 0x08:
+                        self._power[vfo] = 'L'
+                    elif b & 0x02:
+                        self._power[vfo] = 'M'
+                    else:
+                        self._power[vfo] = 'H'
+                self._logmsg(f"    [pkt] DISPLAY_ICONS vfo={vfo} power={self._power.get(vfo,'')} icons={icons}", console=False)
+
+        elif pkt_type == 0x1D:  # ICON_SIG_BARS
+            sig_val = vfo_byte
+            if sig_val >= 0x80:
+                vfo = self.RIGHT
+                sig_val -= 0x80
+            else:
+                vfo = self.LEFT
+            self._signal[vfo] = min(sig_val, 9)
+            self._logmsg(f"    [pkt] SIG_BARS vfo={vfo} S{self._signal[vfo]}", console=False)
+
+        elif 0x10 <= pkt_type <= 0x27:  # Individual icon commands
+            # Determine VFO from vfo_byte
+            if vfo_byte >= 0x80:
+                vfo = self.RIGHT
+            else:
+                vfo = self.LEFT
+            icon_on = bool(vfo_byte & 0x01) if pkt_type not in (0x1D,) else True
+            icon_names = {
+                0x10: 'SET', 0x11: 'KEY2', 0x12: 'LOCK', 0x13: 'APO',
+                0x14: 'MAIN', 0x15: 'TX', 0x16: 'POS', 0x17: 'NEG',
+                0x18: 'ENCDEC', 0x19: 'ENC', 0x1A: 'SKIP', 0x1B: 'PREF',
+                0x1C: 'BUSY', 0x1E: 'MT', 0x1F: 'MUTE', 0x20: 'DCS',
+                0x21: 'AM', 0x23: 'PWR_LOW', 0x24: 'PWR_MED',
+            }
+            name = icon_names.get(pkt_type)
+            if name:
+                target = 'COMMON' if name in ('SET', 'KEY2', 'LOCK', 'APO') else vfo
+                self._icons[target][name] = icon_on
+                # Update power from individual icon commands
+                if name == 'PWR_LOW' and icon_on:
                     self._power[vfo] = 'L'
-                elif power_byte & 0x02:
+                elif name == 'PWR_MED' and icon_on:
                     self._power[vfo] = 'M'
-                else:
-                    self._power[vfo] = 'H'
-                self._logmsg(f"    [pkt] DISPLAY_ICONS vfo={vfo} power={self._power[vfo]}", console=False)
+                elif name in ('PWR_LOW', 'PWR_MED') and not icon_on:
+                    # If both off, it's high
+                    if not self._icons.get(vfo, {}).get('PWR_LOW') and not self._icons.get(vfo, {}).get('PWR_MED'):
+                        self._power[vfo] = 'H'
+            self._logmsg(f"    [pkt] ICON 0x{pkt_type:02X} vfo={vfo} on={icon_on} name={name}", console=False)
         else:
             self._logmsg(f"    [pkt] type=0x{pkt_type:02X} vfo=0x{vfo_byte:02X} data={data.hex()}", console=False)
 
@@ -3740,15 +3957,19 @@ class RadioCATClient:
             return False
 
     def set_channel(self, vfo, target_channel):
-        """Set channel on specified VFO by stepping the dial. Returns True on success."""
+        """Set channel on specified VFO by stepping the dial. Returns True on success.
+
+        TH9800 CHANNEL_TEXT VFO mapping quirk (verified by packet capture):
+          - Dial PRESS response → _channel_text[other_vfo]  (swapped)
+          - Dial STEP response  → _channel_text[vfo]        (correct)
+        This is consistent across both LEFT and RIGHT VFOs.
+        Never presses V/M — skips if radio is in VFO mode."""
         target_int = int(target_channel)
+        other_vfo = self.RIGHT if vfo == self.LEFT else self.LEFT
         self._logmsg(f"  CAT: Setting {vfo} channel to {target_int}...")
 
         self._drain()
-
-        # Clear stale channel data before reading fresh state
-        self._channel = ''
-        self._channel_vfo = ''
+        self._channel_text.clear()
 
         # Press the VFO dial to trigger a display update
         if vfo == self.LEFT:
@@ -3758,58 +3979,21 @@ class RadioCATClient:
         time.sleep(0.15)
         self._send_button_release()
         time.sleep(0.3)
-
-        # Drain and read channel
         self._drain(0.5)
-        self._logmsg(f"    Current: vfo={self._channel_vfo} ch='{self._channel}'", console=False)
 
-        # If channel is blank/non-numeric or from wrong VFO, radio is in VFO mode
-        in_vfo_mode = False
-        if self._channel_vfo != vfo:
-            in_vfo_mode = True  # no channel data came back for this side
-        else:
-            try:
-                int(self._channel)
-            except (ValueError, TypeError):
-                in_vfo_mode = True
-        if in_vfo_mode:
-            self._logmsg(f"    Radio in VFO mode (vfo={self._channel_vfo} ch='{self._channel}'), pressing V/M...", console=True)
-            if vfo == self.LEFT:
-                self._send_button([0x00, 0x22], 3, 5)  # L_VM
-            else:
-                self._send_button([0x00, 0xA2], 3, 5)  # R_VM
-            time.sleep(0.15)
-            self._send_button_release()
-            time.sleep(0.5)
-            self._drain(0.5)
+        # Press response maps to _channel_text[other_vfo] (swapped)
+        ch = self._channel_text.get(other_vfo, '').strip()
+        self._logmsg(f"    Current channel: {ch}", console=False)
 
-            # Press the dial again to force a channel text update for this side
-            self._channel = ''
-            self._channel_vfo = ''
-            if vfo == self.LEFT:
-                self._send_button([0x00, 0x25], 3, 5)  # L_DIAL_PRESS
-            else:
-                self._send_button([0x00, 0xA5], 3, 5)  # R_DIAL_PRESS
-            time.sleep(0.15)
-            self._send_button_release()
-            time.sleep(0.3)
-            self._drain(0.5)
+        if not ch or not ch.isdigit():
+            self._logmsg(f"    {vfo}: no channel data, skipping (VFO mode?)")
+            return False
 
-            self._logmsg(f"    After V/M: vfo={self._channel_vfo} ch='{self._channel}'", console=True)
-            if self._channel_vfo != vfo:
-                self._logmsg(f"    No channel data for {vfo} after V/M, aborting")
-                return False
-            try:
-                int(self._channel)
-            except (ValueError, TypeError):
-                self._logmsg(f"    Still not in channel mode after V/M press, aborting")
-                return False
-
-        if self._channel_vfo == vfo and self._channel_matches(target_int):
+        if int(ch) == target_int:
             self._logmsg(f"    Already on channel {target_int}")
             return True
 
-        start_channel = self._channel if self._channel_vfo == vfo else ''
+        start_channel = ch
 
         # Step through channels
         for i in range(200):
@@ -3823,14 +4007,15 @@ class RadioCATClient:
             time.sleep(0.05)
             self._send_button_release()
             time.sleep(0.15)
+            self._drain(0.3)
 
-            # Read response
-            self._drain(0.2)
-            self._logmsg(f"    Step {i+1}: vfo={self._channel_vfo} ch='{self._channel}'", console=False)
-            if self._channel_vfo == vfo and self._channel_matches(target_int):
+            # Step response maps to _channel_text[vfo] (correct — opposite of press)
+            ch = self._channel_text.get(vfo, '').strip()
+            self._logmsg(f"    Step {i+1}: ch='{ch}'", console=False)
+            if ch.isdigit() and int(ch) == target_int:
                 self._logmsg(f"    Channel set to {target_int} (stepped {i+1})")
                 return True
-            if start_channel and self._channel_vfo == vfo and self._channel == start_channel and i > 0:
+            if start_channel and ch == start_channel and i > 0:
                 self._logmsg(f"    Channel {target_int} not found (looped around after {i+1} steps)")
                 return False
 
@@ -3892,7 +4077,7 @@ class RadioCATClient:
         self._drain(0.5)
 
         current = self._power.get(vfo, '')
-        self._logmsg(f"    Current power: vfo={vfo} power='{current}' target='{target}'", console=False)
+        self._logmsg(f"    Current power: {current}", console=False)
         if current == target:
             self._logmsg(f"    Already at power {target}")
             return True
@@ -3934,6 +4119,11 @@ class RadioCATClient:
         left_pwr = str(getattr(config, 'CAT_LEFT_POWER', '')).strip()
         right_pwr = str(getattr(config, 'CAT_RIGHT_POWER', '')).strip()
 
+        # Set RTS to USB controlled once (no restore — simpler, avoids serial disruption)
+        print("  CAT: Setting RTS to USB Controlled...")
+        self.set_rts(True)
+        time.sleep(0.5)
+
         # Build list of tasks to run (default args capture values, not references)
         tasks = []
         if int(left_ch) != -1:
@@ -3953,29 +4143,26 @@ class RadioCATClient:
             print("  CAT: No setup tasks configured")
             return
 
-        def _run_tasks():
-            print(f"  CAT: Sending {len(tasks)} setup commands...")
-            results = []
-            for name, func in tasks:
-                if self._stop:
-                    results.append((name, 'interrupted'))
-                    break
-                try:
-                    ok = func()
-                    results.append((name, 'ok' if ok else 'failed'))
-                except Exception as e:
-                    results.append((name, f'error: {e}'))
-                    self._logmsg(f"  CAT: {name} error: {e}")
+        print(f"  CAT: Sending {len(tasks)} setup commands...")
+        results = []
+        for name, func in tasks:
+            if self._stop:
+                results.append((name, 'interrupted'))
+                break
+            try:
+                ok = func()
+                results.append((name, 'ok' if ok else 'failed'))
+            except Exception as e:
+                results.append((name, f'error: {e}'))
+                print(f"  CAT: {name} error: {e}")
 
-            # Print concise summary
-            ok_count = sum(1 for _, r in results if r == 'ok')
-            summary_parts = [f"{name}={status}" for name, status in results]
-            if ok_count == len(results):
-                print(f"  CAT: Setup complete ({ok_count}/{len(tasks)} ok)")
-            else:
-                print(f"  CAT: Setup done ({ok_count}/{len(tasks)} ok) — {', '.join(summary_parts)}")
-
-        self._with_usb_rts(_run_tasks)
+        # Print concise summary
+        ok_count = sum(1 for _, r in results if r == 'ok')
+        summary_parts = [f"{name}={status}" for name, status in results]
+        if ok_count == len(results):
+            print(f"  CAT: Setup complete ({ok_count}/{len(tasks)} ok)")
+        else:
+            print(f"  CAT: Setup done ({ok_count}/{len(tasks)} ok) — {', '.join(summary_parts)}")
 
 
 class DDNSUpdater:
@@ -5482,6 +5669,26 @@ class WebConfigServer:
                     self.send_header('Cache-Control', 'no-cache')
                     self.end_headers()
                     self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                elif self.path == '/catstatus':
+                    # JSON radio CAT state endpoint
+                    data = {'connected': False, 'cat_enabled': False}
+                    if parent.gateway:
+                        data['cat_enabled'] = getattr(parent.gateway.config, 'ENABLE_CAT_CONTROL', False)
+                        if parent.gateway.cat_client:
+                            data = parent.gateway.cat_client.get_radio_state()
+                            data['cat_enabled'] = True
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                elif self.path == '/radio':
+                    # Radio control page
+                    html = parent._generate_radio_page()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(html.encode('utf-8'))
                 elif self.path == '/stream':
                     # MP3 audio stream from shared encoder
                     _client_ip = self.client_address[0]
@@ -5578,6 +5785,82 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(b'{"ok":true}')
                     return
+                elif self.path == '/catcmd':
+                    # CAT radio command endpoint
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    result = {'ok': False}
+                    try:
+                        data = json_mod.loads(body)
+                        cmd = data.get('cmd', '')
+                        gw = parent.gateway
+                        if cmd == 'CAT_DISCONNECT' and gw and gw.cat_client:
+                            gw.cat_client._stop = True
+                            gw.cat_client.close()
+                            gw.cat_client = None
+                            print("\n  [CAT] Disconnected via web")
+                            result = {'ok': True}
+                        elif cmd == 'SERIAL_DISCONNECT' and gw and gw.cat_client:
+                            resp = gw.cat_client._send_cmd("!serial disconnect")
+                            print(f"\n  [CAT] Serial disconnect: {resp}")
+                            result = {'ok': resp and 'disconnected' in resp, 'status': resp or ''}
+                        elif cmd == 'SERIAL_CONNECT' and gw and gw.cat_client:
+                            # serial connect takes ~4s (startup sequence with sleeps)
+                            gw.cat_client._drain_paused = True
+                            try:
+                                gw.cat_client._sock.sendall(b"!serial connect\n")
+                                gw.cat_client._last_activity = time.monotonic()
+                                resp = gw.cat_client._recv_line(timeout=10.0)
+                            finally:
+                                gw.cat_client._drain_paused = False
+                            print(f"\n  [CAT] Serial connect: {resp}")
+                            result = {'ok': resp and 'connected' in resp, 'status': resp or ''}
+                        elif cmd == 'SERIAL_STATUS' and gw and gw.cat_client:
+                            resp = gw.cat_client._send_cmd("!serial status")
+                            result = {'ok': True, 'status': resp or 'unknown'}
+                        elif cmd == 'CAT_RECONNECT' and gw:
+                            if gw.cat_client:
+                                ok = gw.cat_client.reconnect()
+                                print(f"\n  [CAT] Reconnected via web: {'ok' if ok else 'failed'}")
+                                result = {'ok': ok}
+                            else:
+                                # Create fresh client
+                                host = str(getattr(gw.config, 'CAT_HOST', '127.0.0.1'))
+                                port = int(getattr(gw.config, 'CAT_PORT', 9800))
+                                pw = str(getattr(gw.config, 'CAT_PASSWORD', '') or '')
+                                cat = RadioCATClient(host, port, pw)
+                                if cat.connect():
+                                    cat.start_background_drain()
+                                    gw.cat_client = cat
+                                    print("\n  [CAT] Connected via web")
+                                    result = {'ok': True}
+                                else:
+                                    print("\n  [CAT] Connect failed via web")
+                                    result = {'ok': False, 'error': 'Connection failed'}
+                        elif cmd and gw and gw.cat_client:
+                            cat = gw.cat_client
+                            if cmd == 'VOL_LEFT':
+                                cat.send_web_volume(cat.LEFT, data.get('value', 50))
+                                result = {'ok': True}
+                            elif cmd == 'VOL_RIGHT':
+                                cat.send_web_volume(cat.RIGHT, data.get('value', 50))
+                                result = {'ok': True}
+                            elif cmd == 'SQ_LEFT':
+                                cat.send_web_squelch(cat.LEFT, data.get('value', 25))
+                                result = {'ok': True}
+                            elif cmd == 'SQ_RIGHT':
+                                cat.send_web_squelch(cat.RIGHT, data.get('value', 25))
+                                result = {'ok': True}
+                            else:
+                                ok = cat.send_web_command(cmd)
+                                result = {'ok': ok}
+                    except Exception as e:
+                        result = {'ok': False, 'error': str(e)}
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps(result).encode('utf-8'))
+                    return
 
                 length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(length).decode('utf-8')
@@ -5603,7 +5886,7 @@ class WebConfigServer:
                     msg = parent._wrap_html('Restarting...',
                         '<h2>Configuration saved</h2>'
                         '<p>Gateway is restarting... this page will reload in 5 seconds.</p>'
-                        f'<script>setTimeout(function(){{window.location="http://"+window.location.hostname+":{port}/"}},5000)</script>')
+                        f'<script>setTimeout(function(){{window.location="http://"+window.location.hostname+":"+window.location.port+"/"}},5000)</script>')
                     self.wfile.write(msg.encode('utf-8'))
                     # Signal restart via main loop
                     parent.gateway.restart_requested = True
@@ -6009,12 +6292,444 @@ class WebConfigServer:
 </style>
 </head><body>{body}</body></html>'''
 
+    def _generate_radio_page(self):
+        """Build the TH-9800 radio control HTML page."""
+        body = '''
+<h1 style="font-size:1.8em">TH-9800 Radio Control</h1>
+<p><a href="/dashboard">Dashboard</a> | <a href="/">Config Editor</a></p>
+
+<div id="cat-offline" style="display:none; background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px; margin-bottom:14px;">
+  <span id="cat-offline-msg" style="color:#e74c3c; font-weight:bold;">CAT not connected</span>
+  <button id="cat-connect-btn" onclick="catConnect()" class="rb" style="margin-left:14px;">Connect</button>
+  <span id="cat-connect-status" style="color:#888; margin-left:10px; font-size:0.9em;"></span>
+</div>
+
+<div id="radio-panel" style="display:none;">
+
+<!-- Connection + RTS Control -->
+<div style="margin-bottom:14px; background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+  <span style="color:#888; font-size:0.85em;">TCP:</span>
+  <button onclick="catDisconnect()" class="rb rb-sm" style="background:#c0392b; border-color:#e74c3c;">Disconnect</button>
+  <button onclick="catReconnect()" class="rb rb-sm">Reconnect</button>
+  <span style="color:#333;">|</span>
+  <span style="color:#888; font-size:0.85em;">Serial:</span>
+  <span id="serial-state" style="font-size:0.85em; color:#888;">—</span>
+  <button onclick="serialDisconnect()" class="rb rb-sm" style="background:#c0392b; border-color:#e74c3c;">Disconnect</button>
+  <button onclick="serialConnect()" class="rb rb-sm">Connect</button>
+  <span style="color:#333;">|</span>
+  <span style="color:#888; font-size:0.85em;">RTS TX:</span>
+  <span id="rts-state" style="font-weight:bold;">—</span>
+  <button onclick="catCmd('TOGGLE_RTS')" class="rb rb-sm">Toggle RTS</button>
+</div>
+
+<!-- Hyper Memories -->
+<div style="margin-bottom:14px; background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:10px 14px;">
+  <div style="color:#00d4ff; font-weight:bold; margin-bottom:8px;">Hyper Memories</div>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="rb" onclick="catCmd('HYPER_A')">A</button>
+    <button class="rb" onclick="catCmd('HYPER_B')">B</button>
+    <button class="rb" onclick="catCmd('HYPER_C')">C</button>
+    <button class="rb" onclick="catCmd('HYPER_D')">D</button>
+    <button class="rb" onclick="catCmd('HYPER_E')">E</button>
+    <button class="rb" onclick="catCmd('HYPER_F')">F</button>
+    <button class="rb" onclick="catCmd('L_VOLUME_HOLD')" style="margin-left:14px;">Single VFO</button>
+  </div>
+</div>
+
+<!-- Two-column VFO display -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
+
+  <!-- LEFT VFO -->
+  <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <span style="color:#00d4ff; font-weight:bold; font-size:1.1em;">LEFT VFO</span>
+      <span id="l-main" class="icon-badge" style="display:none;">MAIN</span>
+    </div>
+
+    <!-- Icons row -->
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; font-size:0.8em;">
+      <span id="l-enc" class="icon-off">ENC</span>
+      <span id="l-dec" class="icon-off">DEC</span>
+      <span id="l-pos" class="icon-off">+</span>
+      <span id="l-neg" class="icon-off">-</span>
+      <span id="l-tx" class="icon-off">TX</span>
+      <span id="l-pref" class="icon-off">PREF</span>
+      <span id="l-skip" class="icon-off">SKIP</span>
+      <span id="l-dcs" class="icon-off">DCS</span>
+      <span id="l-mute" class="icon-off">MUTE</span>
+      <span id="l-mt" class="icon-off">MT</span>
+      <span id="l-busy" class="icon-off">BUSY</span>
+      <span id="l-am" class="icon-off">AM</span>
+    </div>
+
+    <!-- Channel & Frequency display -->
+    <div style="background:#0d1b2a; border:1px solid #1b3a5c; border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span style="color:#888; font-size:0.85em;">CH: <span id="l-ch" style="color:#2ecc71;">—</span></span>
+        <span id="l-power" style="color:#f39c12; font-size:0.85em;">—</span>
+      </div>
+      <div id="l-freq" style="color:#2ecc71; font-size:1.8em; text-align:center; letter-spacing:2px; margin:6px 0;">———</div>
+    </div>
+
+    <!-- Signal meter -->
+    <div style="margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em;">S:</span>
+        <div style="flex:1; background:#0d1b2a; border:1px solid #1b3a5c; border-radius:3px; height:18px; position:relative; overflow:hidden;">
+          <div id="l-sig-bar" style="height:100%; background:#2ecc71; width:0%; transition:width 0.3s;"></div>
+          <span id="l-sig-text" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.75em; color:#fff; font-weight:bold;">S0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dial controls -->
+    <div style="display:flex; gap:6px; justify-content:center; margin-bottom:8px;">
+      <button class="rb" onclick="catCmd('L_DIAL_LEFT')">&#9664; Down</button>
+      <button class="rb" onclick="catCmd('L_DIAL_PRESS')">SEL</button>
+      <button class="rb" onclick="catCmd('L_DIAL_RIGHT')">Up &#9654;</button>
+    </div>
+
+    <!-- Volume & Squelch sliders -->
+    <div style="margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">VOL</span>
+        <input id="l-vol" type="range" min="0" max="100" value="25" style="flex:1; accent-color:#00d4ff;" oninput="catVol('LEFT',this.value)">
+        <span id="l-vol-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">SQ</span>
+        <input id="l-sq" type="range" min="0" max="100" value="25" style="flex:1; accent-color:#f39c12;" oninput="catVol('LEFT_SQ',this.value)">
+        <span id="l-sq-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+    </div>
+
+    <!-- Function buttons -->
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+      <button class="rb" onclick="catCmd('L_LOW')">LOW</button>
+      <button class="rb" onclick="catCmd('L_VM')">V/M</button>
+      <button class="rb" onclick="catCmd('L_HM')">HM</button>
+      <button class="rb" onclick="catCmd('L_SCN')">SCN</button>
+    </div>
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-top:4px; opacity:0.7;">
+      <button class="rb rb-sm" onclick="catCmd('L_LOW_HOLD')">LOW2</button>
+      <button class="rb rb-sm" onclick="catCmd('L_VM_HOLD')">V/M2</button>
+      <button class="rb rb-sm" onclick="catCmd('L_HM_HOLD')">HM2</button>
+      <button class="rb rb-sm" onclick="catCmd('L_SCN_HOLD')">SCN2</button>
+    </div>
+  </div>
+
+  <!-- RIGHT VFO -->
+  <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <span style="color:#00d4ff; font-weight:bold; font-size:1.1em;">RIGHT VFO</span>
+      <span id="r-main" class="icon-badge" style="display:none;">MAIN</span>
+    </div>
+
+    <!-- Icons row -->
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; font-size:0.8em;">
+      <span id="r-enc" class="icon-off">ENC</span>
+      <span id="r-dec" class="icon-off">DEC</span>
+      <span id="r-pos" class="icon-off">+</span>
+      <span id="r-neg" class="icon-off">-</span>
+      <span id="r-tx" class="icon-off">TX</span>
+      <span id="r-pref" class="icon-off">PREF</span>
+      <span id="r-skip" class="icon-off">SKIP</span>
+      <span id="r-dcs" class="icon-off">DCS</span>
+      <span id="r-mute" class="icon-off">MUTE</span>
+      <span id="r-mt" class="icon-off">MT</span>
+      <span id="r-busy" class="icon-off">BUSY</span>
+      <span id="r-am" class="icon-off">AM</span>
+    </div>
+
+    <!-- Channel & Frequency display -->
+    <div style="background:#0d1b2a; border:1px solid #1b3a5c; border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span style="color:#888; font-size:0.85em;">CH: <span id="r-ch" style="color:#2ecc71;">—</span></span>
+        <span id="r-power" style="color:#f39c12; font-size:0.85em;">—</span>
+      </div>
+      <div id="r-freq" style="color:#2ecc71; font-size:1.8em; text-align:center; letter-spacing:2px; margin:6px 0;">———</div>
+    </div>
+
+    <!-- Signal meter -->
+    <div style="margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em;">S:</span>
+        <div style="flex:1; background:#0d1b2a; border:1px solid #1b3a5c; border-radius:3px; height:18px; position:relative; overflow:hidden;">
+          <div id="r-sig-bar" style="height:100%; background:#2ecc71; width:0%; transition:width 0.3s;"></div>
+          <span id="r-sig-text" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.75em; color:#fff; font-weight:bold;">S0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dial controls -->
+    <div style="display:flex; gap:6px; justify-content:center; margin-bottom:8px;">
+      <button class="rb" onclick="catCmd('R_DIAL_LEFT')">&#9664; Down</button>
+      <button class="rb" onclick="catCmd('R_DIAL_PRESS')">SEL</button>
+      <button class="rb" onclick="catCmd('R_DIAL_RIGHT')">Up &#9654;</button>
+    </div>
+
+    <!-- Volume & Squelch sliders -->
+    <div style="margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">VOL</span>
+        <input id="r-vol" type="range" min="0" max="100" value="25" style="flex:1; accent-color:#00d4ff;" oninput="catVol('RIGHT',this.value)">
+        <span id="r-vol-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">SQ</span>
+        <input id="r-sq" type="range" min="0" max="100" value="25" style="flex:1; accent-color:#f39c12;" oninput="catVol('RIGHT_SQ',this.value)">
+        <span id="r-sq-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+    </div>
+
+    <!-- Function buttons -->
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+      <button class="rb" onclick="catCmd('R_LOW')">LOW</button>
+      <button class="rb" onclick="catCmd('R_VM')">V/M</button>
+      <button class="rb" onclick="catCmd('R_HM')">HM</button>
+      <button class="rb" onclick="catCmd('R_SCN')">SCN</button>
+    </div>
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-top:4px; opacity:0.7;">
+      <button class="rb rb-sm" onclick="catCmd('R_LOW_HOLD')">LOW2</button>
+      <button class="rb rb-sm" onclick="catCmd('R_VM_HOLD')">V/M2</button>
+      <button class="rb rb-sm" onclick="catCmd('R_HM_HOLD')">HM2</button>
+      <button class="rb rb-sm" onclick="catCmd('R_SCN_HOLD')">SCN2</button>
+    </div>
+  </div>
+</div>
+
+<!-- Common controls: SET button + common icons -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
+  <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
+    <div style="color:#00d4ff; font-weight:bold; margin-bottom:8px;">Menu / SET</div>
+    <div style="display:flex; gap:6px; justify-content:center;">
+      <button class="rb" onclick="catCmd('N_SET')">SET</button>
+      <button class="rb" onclick="catCmd('N_SET_HOLD')">SET (Hold)</button>
+      <button class="rb" onclick="catCmd('L_SET_VFO')">VFO&#8594;L</button>
+      <button class="rb" onclick="catCmd('R_SET_VFO')">VFO&#8594;R</button>
+    </div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; font-size:0.85em;">
+      <span id="c-apo" class="icon-off">APO</span>
+      <span id="c-lock" class="icon-off">LOCK</span>
+      <span id="c-set" class="icon-off">SET</span>
+      <span id="c-key2" class="icon-off">KEY2</span>
+    </div>
+  </div>
+
+  <!-- PTT -->
+  <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+    <button id="ptt-btn" class="rb" style="width:80px; height:80px; font-size:1.4em; font-weight:bold; border-radius:50%;"
+      onclick="togglePTT()">PTT</button>
+    <span style="color:#888; font-size:0.8em; margin-top:6px;">Click to toggle TX</span>
+  </div>
+</div>
+
+<!-- Mic Keypad -->
+<div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px; margin-bottom:14px;">
+  <div style="color:#00d4ff; font-weight:bold; margin-bottom:8px;">Microphone Keypad</div>
+  <div style="display:grid; grid-template-columns:repeat(4, 50px) 1fr; gap:6px; justify-items:center;">
+    <button class="rb" onclick="catCmd('MIC_1')">1</button>
+    <button class="rb" onclick="catCmd('MIC_2')">2</button>
+    <button class="rb" onclick="catCmd('MIC_3')">3</button>
+    <button class="rb" onclick="catCmd('MIC_A')">A</button>
+    <div></div>
+
+    <button class="rb" onclick="catCmd('MIC_4')">4</button>
+    <button class="rb" onclick="catCmd('MIC_5')">5</button>
+    <button class="rb" onclick="catCmd('MIC_6')">6</button>
+    <button class="rb" onclick="catCmd('MIC_B')">B</button>
+    <div></div>
+
+    <button class="rb" onclick="catCmd('MIC_7')">7</button>
+    <button class="rb" onclick="catCmd('MIC_8')">8</button>
+    <button class="rb" onclick="catCmd('MIC_9')">9</button>
+    <button class="rb" onclick="catCmd('MIC_C')">C</button>
+    <div></div>
+
+    <button class="rb" onclick="catCmd('MIC_STAR')">*</button>
+    <button class="rb" onclick="catCmd('MIC_0')">0</button>
+    <button class="rb" onclick="catCmd('MIC_POUND')">#</button>
+    <button class="rb" onclick="catCmd('MIC_D')">D</button>
+    <div></div>
+  </div>
+  <div style="display:flex; gap:6px; justify-content:center; margin-top:8px;">
+    <button class="rb" onclick="catCmd('MIC_P1')">P1</button>
+    <button class="rb" onclick="catCmd('MIC_P2')">P2</button>
+    <button class="rb" onclick="catCmd('MIC_P3')">P3</button>
+    <button class="rb" onclick="catCmd('MIC_P4')">P4</button>
+    <button class="rb" onclick="catCmd('MIC_UP')">&#9650; UP</button>
+    <button class="rb" onclick="catCmd('MIC_DOWN')">&#9660; DOWN</button>
+  </div>
+</div>
+
+</div><!-- /radio-panel -->
+
+<style>
+  .rb { padding:8px 14px; border:1px solid #1b3a5c; border-radius:4px; background:#0d1b2a;
+        color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; min-width:44px; }
+  .rb:hover { background:#1a2744; border-color:#00d4ff; }
+  .rb:active { background:#0f3460; }
+  .rb-sm { font-size:0.8em; padding:5px 10px; }
+  .icon-off { padding:2px 6px; border-radius:3px; background:#0d1b2a; color:#555; border:1px solid #1b3a5c; }
+  .icon-on { padding:2px 6px; border-radius:3px; background:#c0392b; color:#fff; border:1px solid #e74c3c; }
+  .icon-badge { padding:2px 8px; border-radius:3px; background:#c0392b; color:#fff; font-size:0.85em; font-weight:bold; }
+</style>
+
+<script>
+var _volTimer = {};
+
+var _pttActive = false;
+
+function catCmd(cmd) {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:cmd})});
+}
+
+function togglePTT() {
+  var btn = document.getElementById('ptt-btn');
+  catCmd('MIC_PTT');
+  _pttActive = !_pttActive;
+  if (_pttActive) {
+    btn.style.background = '#c0392b';
+    btn.style.borderColor = '#e74c3c';
+    btn.style.color = '#fff';
+  } else {
+    btn.style.background = '#0d1b2a';
+    btn.style.borderColor = '#1b3a5c';
+    btn.style.color = '#e0e0e0';
+  }
+}
+
+function catConnect() {
+  var btn = document.getElementById('cat-connect-btn');
+  var st = document.getElementById('cat-connect-status');
+  btn.disabled = true; btn.textContent = 'Connecting...';
+  st.textContent = '';
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'CAT_RECONNECT'})})
+    .then(function(r){return r.json()}).then(function(d) {
+      btn.disabled = false; btn.textContent = 'Connect';
+      if (!d.ok) st.textContent = d.error || 'Failed';
+    }).catch(function(){ btn.disabled = false; btn.textContent = 'Connect'; });
+}
+
+function catDisconnect() {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'CAT_DISCONNECT'})});
+}
+
+function catReconnect() {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'CAT_RECONNECT'})});
+}
+
+function serialDisconnect() {
+  var el = document.getElementById('serial-state');
+  el.textContent = 'disconnecting...'; el.style.color = '#f39c12';
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'SERIAL_DISCONNECT'})})
+    .then(function(r){return r.json()}).then(function(d) {
+      el.textContent = d.status || (d.ok ? 'disconnected' : 'failed');
+      el.style.color = d.ok ? '#e74c3c' : '#888';
+    }).catch(function(){ el.textContent = 'error'; el.style.color = '#e74c3c'; });
+}
+
+function serialConnect() {
+  var el = document.getElementById('serial-state');
+  el.textContent = 'connecting...'; el.style.color = '#f39c12';
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'SERIAL_CONNECT'})})
+    .then(function(r){return r.json()}).then(function(d) {
+      el.textContent = d.status || (d.ok ? 'connected' : 'failed');
+      el.style.color = d.ok ? '#2ecc71' : '#e74c3c';
+    }).catch(function(){ el.textContent = 'error'; el.style.color = '#e74c3c'; });
+}
+
+function catVol(target, value) {
+  // Update display immediately
+  var id = target.replace('_SQ','').toLowerCase().charAt(0);
+  var isSq = target.indexOf('_SQ') >= 0;
+  document.getElementById(id + (isSq ? '-sq-val' : '-vol-val')).textContent = value;
+  // Debounce: send after 100ms of no change
+  clearTimeout(_volTimer[target]);
+  _volTimer[target] = setTimeout(function() {
+    var cmd = isSq ? 'SQ_' + target.replace('_SQ','') : 'VOL_' + target;
+    fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cmd:cmd, value:parseInt(value)})});
+  }, 100);
+}
+
+function setIcon(id, on) {
+  var el = document.getElementById(id);
+  if (el) el.className = on ? 'icon-on' : 'icon-off';
+}
+
+function updateRadio() {
+  fetch('/catstatus').then(function(r){return r.json()}).then(function(d) {
+    if (!d.connected) {
+      document.getElementById('cat-offline').style.display = 'block';
+      document.getElementById('radio-panel').style.display = 'none';
+      return;
+    }
+    document.getElementById('cat-offline').style.display = 'none';
+    document.getElementById('radio-panel').style.display = 'block';
+
+    // RTS
+    var rts = document.getElementById('rts-state');
+    if (d.rts_usb === true) { rts.textContent = 'USB Controlled'; rts.style.color = '#2ecc71'; }
+    else if (d.rts_usb === false) { rts.textContent = 'Radio Controlled'; rts.style.color = '#e74c3c'; }
+    else { rts.textContent = 'Unknown'; rts.style.color = '#888'; }
+
+    // LEFT VFO
+    var L = d.left;
+    document.getElementById('l-freq').textContent = L.display || '\\u2014\\u2014\\u2014';
+    document.getElementById('l-ch').textContent = L.channel || '\\u2014';
+    document.getElementById('l-power').textContent = L.power ? 'PWR: ' + L.power : '';
+    document.getElementById('l-sig-bar').style.width = (L.signal / 9 * 100) + '%';
+    document.getElementById('l-sig-text').textContent = 'S' + L.signal;
+    document.getElementById('l-main').style.display = (L.icons && L.icons.MAIN) ? 'inline' : 'none';
+    var li = L.icons || {};
+    setIcon('l-enc', li.ENC); setIcon('l-dec', li.DEC); setIcon('l-pos', li.POS);
+    setIcon('l-neg', li.NEG); setIcon('l-tx', li.TX); setIcon('l-pref', li.PREF);
+    setIcon('l-skip', li.SKIP); setIcon('l-dcs', li.DCS); setIcon('l-mute', li.MUTE);
+    setIcon('l-mt', li.MT); setIcon('l-busy', li.BUSY); setIcon('l-am', li.AM);
+
+    // Note: PTT button state is controlled by user clicks only (togglePTT)
+
+    // RIGHT VFO
+    var R = d.right;
+    document.getElementById('r-freq').textContent = R.display || '\\u2014\\u2014\\u2014';
+    document.getElementById('r-ch').textContent = R.channel || '\\u2014';
+    document.getElementById('r-power').textContent = R.power ? 'PWR: ' + R.power : '';
+    document.getElementById('r-sig-bar').style.width = (R.signal / 9 * 100) + '%';
+    document.getElementById('r-sig-text').textContent = 'S' + R.signal;
+    document.getElementById('r-main').style.display = (R.icons && R.icons.MAIN) ? 'inline' : 'none';
+    var ri = R.icons || {};
+    setIcon('r-enc', ri.ENC); setIcon('r-dec', ri.DEC); setIcon('r-pos', ri.POS);
+    setIcon('r-neg', ri.NEG); setIcon('r-tx', ri.TX); setIcon('r-pref', ri.PREF);
+    setIcon('r-skip', ri.SKIP); setIcon('r-dcs', ri.DCS); setIcon('r-mute', ri.MUTE);
+    setIcon('r-mt', ri.MT); setIcon('r-busy', ri.BUSY); setIcon('r-am', ri.AM);
+
+    // Common icons
+    var ci = d.common || {};
+    setIcon('c-apo', ci.APO); setIcon('c-lock', ci.LOCK);
+    setIcon('c-set', ci.SET); setIcon('c-key2', ci.KEY2);
+
+  }).catch(function(){});
+}
+
+setInterval(updateRadio, 1000);
+updateRadio();
+</script>
+'''
+        return self._wrap_html('Radio Control', body)
+
     def _generate_dashboard(self):
         """Build the live status dashboard HTML page."""
         port = int(getattr(self.config, 'WEB_CONFIG_PORT', 8080))
         body = '''
 <h1 style="font-size:1.8em">Radio Gateway Dashboard</h1>
-<p style="margin:0 0 14px;font-size:1.1em"><a href="/">Config Editor</a></p>
+<p style="margin:0 0 14px;font-size:1.1em"><a href="/">Config Editor</a> | <a href="/radio">Radio Control</a></p>
 
 <div id="status">Loading...</div>
 
@@ -7735,6 +8450,8 @@ class RadioGateway:
                                 print("\n  CAT setup interrupted")
                         else:
                             print("  CAT startup commands disabled (CAT_STARTUP_COMMANDS = false)")
+                        # Start background drain after setup (must not run during setup)
+                        self.cat_client.start_background_drain()
                     else:
                         print("  Failed to connect to CAT server")
                         self.cat_client = None

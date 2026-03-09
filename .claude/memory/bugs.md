@@ -1,56 +1,37 @@
 # Bug History — Radio Gateway
 
-## Audio Pipeline Bugs
-- **SDR-to-SDR ducking inconsistency / sources switching over each other** (commit 3808066): Rule 2 (higher-priority SDR ducks lower-priority SDR) used `check_signal_instant()` — zero attack, fires on any chunk above -50 dBFS including SDR noise floor. Also checked `sig or hold` for `other_has_signal`, meaning a single noisy 200ms chunk from SDR1 silenced SDR2 for 3s via the hold timer. With intermittent SDR noise both sources flipped rapidly. Fixed: `_sdr_trace['sig']` now stores `has_actual_audio()` result (requires `SIGNAL_ATTACK_TIME=0.15s` continuous signal before firing); Rule 2 reads only `sig` — `hold` is for inclusion/fade-out only, not ducking decisions. Release unchanged at 3s.
-- **SDR burst/choppy audio**: `frames_per_buffer=153600` (16× chunk) caused ALSA DMA to fire every 3.2s. Fixed to `AUDIO_CHUNK_SIZE` (9600 = 200ms).
-- **Pop at SDR onset**: Old 0.1s attack timer dropped first chunk. Fixed: instant-attack (`check_signal_instant`, -50dB) + 10ms fade-in.
-- **Pop at SDR offset (timing-window bug)**: Fade-out triggered by `(hold_until - current_time) < chunk_dur` — missed when AIOC read took >200ms. Fixed: transition-based fade-out when `prev_included` flips False.
-- **SDR gated on AIOC failures**: Mixer was inside AIOC gate. Fixed: mixer runs unconditionally; AIOC errors absorbed in `get_audio()`.
-- **Sequential double-blocking (400ms loop)**: AIOC 200ms + SDR 200ms in same thread. Fixed: SDR background reader thread, `get_audio()` is non-blocking queue pop.
-- **GIL contention causing ALSA overruns**: Reader thread did numpy between reads, competing with main loop. Fixed: reader thread does read+append only; all processing in main thread.
-- **Mumble encoder starvation**: `data is None → continue` skipped `add_sound()`. Opus resets across gaps. Fixed: substitute silence, fall through to `add_sound()`.
-- **duck-out regression (all audio broken)**: `sdr_active_at_transition` used `check_signal_instant` on raw loopback — always True with SDR app running, silencing first 1s of every AIOC transmission. Fixed: use `sdr_prev_included` instead.
-- **SDR audio drops (periodic gaps every ~800ms)**: SDRSource.get_audio() had no cushion-rebuild mechanism — after sub_buffer depleted it served immediately from the next blob, giving zero margin against ALSA jitter. AIOCRadioSource has a `_prebuffering` gate that refuses to serve until 3 full blobs accumulate after any depletion; SDR lacked this entirely. Also: drain only ran when sub_buffer < cb (not every tick), so the cushion never grew. Fixed: always-drain every tick + `_prebuffering` gate identical to AIOC. Also added `_blob_bytes` (chunk_bytes × buffer_multiplier), reader blob timestamp deque (`_blob_times`), SDR2 queue/sub_buffer visibility in trace, and all-ticks trace output. Verified: zero silence gaps in trace, prebuffering fires correctly ~1–2× per trace when ALSA reader stalls >500ms, other SDR covers during rebuild.
-- **SDR2 duck-through on SDR1 buffer gaps**: SDR-to-SDR duck check iterated `sdrs_to_include` (only sources with actual audio data). When SDR1's buffer ran dry between bursty deliveries, SDR1 wasn't in `sdrs_to_include` (get_audio returned None → `continue` at line 1942), so SDR2 didn't see SDR1's active hold timer and played through. Fixed: iterate `sorted_sdrs` (all processed SDRs) instead, checking `_sdr_trace` which is populated even when audio is None.
-- **AIOC audio output stale state**: AIOC USB audio output gets stuck after extended runtime or PipeWire/WirePlumber interaction — PTT keys radio via HID but no audio reaches radio. `speaker-test -D hw:N,0` also produces no audio. Not a software bug — hardware state issue. Fixed: added USB reset (sysfs authorized cycle) to start.sh step 4.
-- **Sub-buffer latency buildup causing stale audio / corruption**: SDRSource and AIOC eager-drain all queue blobs into sub_buffer every tick but had no upper cap. Under CPU contention from competing processes (e.g. SDRconnect at 85%+ CPU), blobs arrive faster than ticks can consume them, causing 1.5–2.2s latency. Audio that old sounds corrupted (you hear radio from 2s ago). Fixed: after eager drain, cap `sub_buffer` at `blob_bytes × 5` (≈4s); keep only the most recent portion. Normal steady-state is ~3–4 blobs so cap only trims abnormal buildup. Also added `nice -n -10` to gateway launch in start.sh and CPU governor set to `performance` at startup.
-- **No-signal SDR polluting mix via sole_source bypass**: When no AIOC audio was present, `sdr_is_sole_source` was True for ALL SDRs regardless of whether they had signal. An SDR with no input (e.g. no app feeding the loopback) would be force-included, adding loopback noise to the output alongside SDRs that had real audio. Fixed: refined sole_source logic — an SDR without signal is only force-included if no OTHER SDR has instant signal this tick. Pre-scan pass checks `check_signal_instant()` for all SDRs before the main inclusion loop.
-- **SDR prebuffer gap too long (400ms silence on depletion)**: SDR prebuffering gate required 3 blobs (600ms) before resuming service after sub_buffer depletion. With SDR2 delivery stalls up to 604ms, this created ~400ms audible gaps where only a no-signal SDR played (RMS=0). Fixed: reduced SDR prebuffer threshold from 3 blobs to 2 blobs (400ms). AIOC keeps 3-blob gate (different USB jitter characteristics). Recovery gap reduced to ~200ms.
-- **SDR-to-SDR rapid switching (duck toggle oscillation)**: When SDR1 has intermittent signal near the VAD threshold, SDR2 rapidly toggles between ducked and unducked. `SIGNAL_RELEASE_TIME` (3s) gives SDR1 a hold after its signal stops — but there was no symmetric protection for SDR2 after it unducks. Once SDR1's 3s hold expired and SDR2 started playing, SDR1 noise could re-trigger `has_sig_hyst` after just 0.15s (attack time), immediately re-ducking SDR2. This created a rapid 3s-ducked → 0.15s-unducked cycle. Fixed: added `SDR_DUCK_COOLDOWN` (default 3.0s). After SDR2 transitions from ducked to unducked (Rule 2), it gets `SDR_DUCK_COOLDOWN` seconds of immunity from SDR-to-SDR re-ducking. AIOC Rule 1 ducking is unaffected (radio RX always wins immediately). State tracked via `_sdr_duck_cooldown_until` and `_sdr_prev_ducked_by_sdr` dicts in AudioMixer.
+## TH9800 CAT CHANNEL_TEXT VFO Mapping (2026-03-09) — MAJOR
+**Symptom:** `set_channel()` set channels on the wrong VFO, detected wrong mode, or failed entirely.
+**Root cause:** The TH9800 radio protocol has inconsistent VFO byte mapping in CHANNEL_TEXT (0x02) packets:
+- Dial PRESS response: CHANNEL_TEXT vfo_byte maps to the OPPOSITE VFO in `_channel_text` dict
+- Dial STEP response: CHANNEL_TEXT vfo_byte maps to the CORRECT VFO in `_channel_text` dict
+- `_channel_vfo` (set by DISPLAY_CHANGE 0x03 packets) always ends up as the OPPOSITE VFO after a press
 
-## SDR Rebroadcast Bugs
-- **AIOC TX feedback ducking SDR during rebroadcast**: When rebroadcast keyed PTT, AIOC input picked up TX feedback, triggering `aioc_ducks_sdrs` and ducking SDR sources — causing choppy audio. Fixed: set `radio_source.enabled = False` when rebroadcast PTT activates, re-enable on release.
-- **PTT release timer killing rebroadcast PTT every tick**: `status_monitor_loop()` PTT timeout checked `last_sound_time` which rebroadcast never updated, resetting `ptt_active=False` every tick. Caused `rebro_ptt on` spam (130+ events). Fixed: (1) guard timer with `not self._rebroadcast_ptt_active`, (2) update `last_sound_time` in rebroadcast block, (3) change PTT key guard from `not self.ptt_active` to `not self._rebroadcast_ptt_active`.
-- **TX bar level too low during rebroadcast**: Was measuring `sdr_only_audio` before `OUTPUT_VOLUME` scaling. Fixed: measure `pcm` after volume applied; also set `last_rx_audio_time` to prevent decay.
-- **Excessive prebuffering gaps during rebroadcast (16.2%)**: SDR 2-blob prebuffer gate caused 400ms silence gaps every ~600ms during rebroadcast. Fixed: reduced to 1 blob when `self.gateway.sdr_rebroadcast` is active. Final trace: 4.1% prebuffering, 88.2% signal.
-- **SDR periodic silence gaps (200-450ms) from ALSA delivery jitter**: Reader thread read one full ALSA period (200ms / 9600 frames) at a time. Loopback delivery jitter (stdev 118ms, max 607ms) meant blobs sometimes arrived 400-600ms apart, depleting the sub-buffer and triggering 200-450ms silence gaps (5 gaps in 33s). Fixed: reader reads 50ms chunks (2400 frames) instead, delivering 4x more frequently. Jitter dropped to stdev ~10ms. Prebuffer simplified to always 1 blob (no rebroadcast conditional). Queue increased 8→32 slots. Result: zero silence gaps in 47s trace.
+**What didn't work:**
+- Using `_channel_vfo` to determine which VFO responded (always wrong after DISPLAY_CHANGE)
+- Using `_capture_vfo` to force all packets under one key (other VFO's packet comes last, overwrites)
+- Using `self._channel` directly (both VFOs respond; last packet wins, unreliable)
+- Swapping CHANNEL_TEXT vfo_byte mapping (fixes press, breaks step or vice versa)
+- Swapping dial command bytes (breaks other things)
+- `_drain()` loop (`while self._buf: _recv_line()`) — breaks ALL packet parsing; must use single `_recv_line(0.1)`
 
-## Status Bar / UI Bugs
-- **SV status bar stuck / not tracking outbound audio**: SV bar used `tx_audio_level` which measures AIOC radio input level, not the audio actually sent to the remote client. The bar appeared stuck because AIOC input and remote output are different audio paths. Fixed: added `sv_audio_level` field updated at all three `remote_audio_server.send_audio()` call sites with fast-attack/slow-decay smoothing. Status bar now reads `sv_audio_level` instead. Commit 68f90de.
-- **SDR2 failure shown as silent (indistinguishable)**: When SDR2 `setup_audio()` returns False, object kept with `enabled=False` but status bar checked only `if self.sdr2_source:` — showed `SDR2:[----------] 0%` identical to a working-but-silent source. Fixed: gate on `self.sdr2_source.enabled` so failed/disabled SDR2 is omitted from status bar.
-- **SDR2 error message hardcoded `hw:4,1`**: Warning on init failure always printed the default device name regardless of config. Fixed: use `self.config.SDR2_DEVICE_NAME`.
-- **SDR2 init leftover debug prints**: Two unconditional prints dumping `SDR2_DEVICE_NAME from config:` and `SDR2_PRIORITY from config:` were not guarded by VERBOSE_LOGGING. Removed.
-- **Announcement/PTT keys spam errors without AIOC**: Pressing 0-9 or 'p' without AIOC queued file playback → `set_ptt_state()` printed "[PTT] No AIOC device available!" every 50ms tick because it returned without setting `ptt_active`, causing re-trigger. Fixed: keyboard handler rejects keys when `aioc_device` is absent; `set_ptt_state` silently returns.
-- **Status bar width shift on mute/duck**: Muted/ducked bars were 10 visible chars vs normal bars at 11. Fixed: padded M/D suffix to 4 chars (`M   ` / `D   `).
-- **PTT trace always showed RMS=0**: The RMS measurement point in audio_transmit_loop was after the PTT branch `continue`, so it never executed for PTT ticks. Trace showed RMS=0 for all file playback/announcement ticks, making it look like silence was being sent. Fixed: added RMS measurement inside the PTT branch itself.
+**Fix:** Read from different dict keys for press vs step:
+```python
+other_vfo = self.RIGHT if vfo == self.LEFT else self.LEFT
+# After press: ch = _channel_text.get(other_vfo, '')  # SWAPPED
+# After step:  ch = _channel_text.get(vfo, '')         # CORRECT
+```
 
-## TTS / Text Command Bugs
-- **Mumble HTML tags read aloud by gTTS**: Mumble sends text messages as HTML (e.g. `<a href="...">!speak</a> text` with `&amp;` entities). `on_text_message` passed raw HTML to `speak_text()` → gTTS read tags and escape sequences aloud. Fixed: strip HTML tags with `re.sub(r'<[^>]+>', '', msg)` and decode entities with `html.unescape()` before any command parsing.
+**Also fixed:**
+- `setup_radio` simplified: RTS set once (no `_with_usb_rts` save/restore that could disrupt serial)
+- Never presses V/M button (was causing mode toggles when `_channel_vfo` misdetected VFO mode)
+- Background drain thread uses `_drain_paused` flag instead of locks (RLock caused timing issues)
 
-## Config / Code Bugs
-- **Config parser crash on decimal**: `int('0.3')` raised ValueError, silently abandoning all config after that line. Fixed: `VAD_RELEASE: 1.0` default (float); parser tries `float()` fallback on ValueError.
-- **global_muted UnboundLocalError**: Set inside `if self.sdr_source:` block, used in `if self.sdr2_source:` block. Fixed: calculated before both blocks.
-- **NetworkAnnouncementSource missing muted check**: `get_audio()` checked `self.enabled` but not `self.muted`, so pressing 'a' to mute wouldn't stop audio flow. Fixed: added `self.muted` check.
+## Audio Streaming Ring Buffer (2026-03-08)
+**Symptom:** "No encoder data" errors, gaps in browser audio playback.
+**Root cause:** `pop(0)` shifted list indices but `pos` was absolute sequence number.
+**Fix:** Sequence-number ring buffer (`_mp3_seq`) immune to index shifting.
 
-## Installer Bugs
-- **numlids=3 silently ignored on Debian**: RPi kernel param, not standard. Fixed: `enable=1,1,1 index=4,5,6`.
-- **Loopback card count wrong**: `grep -c "Loopback"` counted 2 lines per card. Fixed: count `device 0` lines only.
-- **Installer aborted at step 5**: `set -e` + `sudo tee /etc/security/limits.d/...` failed (dir missing on minimal Debian). Fixed: `set +e` around step 5, `sudo mkdir -p` first.
-- **darkice.cfg never created**: Path pointed to `examples/darkice.cfg.example` but file is in `scripts/`. Fixed.
-- **DarkIce 1.5 parser crash**: Word "password" in comment before first `[section]` header → "no current section" crash. Fixed: removed from comment text.
-- **WirePlumber locks loopback to S32_LE**: DarkIce needs S16_LE. Fixed: WirePlumber rule disabling `alsa_card.platform-snd_aloop.*`.
-- **WirePlumber hides AIOC from PyAudio**: Fixed: WirePlumber rule disabling `alsa_card.usb-AIOC_*`.
-- **AIOC hidraw inaccessible**: udev rule only covered `SUBSYSTEM=="usb"`, not `SUBSYSTEM=="hidraw"`. PTT HID access requires hidraw. Fixed: added hidraw rule.
-- **AIOC hidraw permission denied on Arch**: hidraw udev rule used `ATTRS{idVendor}` with `SUBSYSTEM=="hidraw"` but idVendor is on a USB parent device — needs `SUBSYSTEMS=="usb"` (plural) to walk device tree. Also used `GROUP="plugdev"` which doesn't exist on Arch. Fixed: changed to `SUBSYSTEMS=="usb"` and `GROUP="audio"` in both `/etc/udev/rules.d/99-aioc.rules` and `scripts/install.sh`.
-- **Wrong Python HID package**: Installer installed `hidapi`; gateway uses `hid.Device` from `hid` package. Fixed.
-- **pymumble-py3 SSL broken on Python 3.12+**: `ssl.wrap_socket` removed, `ssl.PROTOCOL_TLSv1_2` deprecated. Fixed: monkey-patch before import.
+## Save & Restart UnboundLocalError (2026-03-08)
+**Symptom:** `UnboundLocalError: cannot access local variable 'port'` on Save & Restart from web UI.
+**Fix:** Use `window.location.port` in JavaScript instead of Python-side `port` variable.

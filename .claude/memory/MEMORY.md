@@ -124,6 +124,11 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
   - Auto-reconnect: on fetch failure shows "offline" message, polls until gateway returns, then reloads
   - Button grid for all keyboard shortcuts (mute, PTT, playback, smart triggers, etc.)
   - Terminal-only keys (`i`, `u`, `z`) stay in keyboard loop, not exposed to web
+  - **Audio player**: `/stream` endpoint serves MP3 via shared FFmpeg encoder
+  - Shared encoder starts with web server, silence feeder keeps it alive
+  - Sequence-number ring buffer (`_mp3_seq`) — immune to `pop(0)` index shifting
+  - Dashboard UI: play/stop button, volume slider, elapsed timer, green indicator dot
+  - ~10-15s browser latency (HTML5 `<audio>` element buffering, not reducible without WebSocket+WebAudio)
 
 ## INI Config Format
 - Config files use standard INI `[section]` headers (v1.4.0)
@@ -147,13 +152,24 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `RadioCATClient` class: TCP client for TH9800_CAT.py server
 - Config: `ENABLE_CAT_CONTROL`, `CAT_STARTUP_COMMANDS`, `CAT_HOST`, `CAT_PORT`, `CAT_PASSWORD`
 - `CAT_STARTUP_COMMANDS = false` → connect TCP but skip channel/volume/power setup
-- `_logmsg` defaults to log-only (console=False); verbose shows on screen
-- `setup_radio` prints concise summary, not per-step spam
-- `_with_usb_rts()` — wraps setup tasks: sets RTS=USB, runs tasks, restores RTS
-- `set_channel()` auto-detects VFO mode and presses V/M to switch to channel mode
+- `setup_radio`: sets RTS once (no restore), runs channel/volume/power tasks, prints summary
+- `set_channel()`: never presses V/M — skips if radio is in VFO mode
+- **CRITICAL VFO mapping quirk** (verified by packet capture):
+  - Dial PRESS response: CHANNEL_TEXT maps to `_channel_text[other_vfo]` (SWAPPED)
+  - Dial STEP response: CHANNEL_TEXT maps to `_channel_text[vfo]` (CORRECT)
+  - Must read from `other_vfo` for press, `vfo` for stepping
+  - `_channel_vfo` (set by DISPLAY_CHANGE 0x03) is unreliable — always ends up opposite
+  - `_drain()` must use single `_recv_line(0.1)` — loop version breaks all packet parsing
+- `_drain_paused` flag: background drain thread yields when set (used by web commands)
+- `start_background_drain()` runs AFTER `setup_radio()` (must not run during setup)
 - RTS set/toggle via TCP: `!rts`, `!rts True`, `!rts False`
-- `set_rts()` parses response from TH9800 to track actual state
+- `set_rts()` parses `'true' in resp.lower()` (response format: `CMD{rts} True`)
 - TH9800_CAT.py `bool("False")` bug fixed → string comparison now
+- **Web radio control** (`/radio`): full TH-9800 front panel replica in browser
+  - `/catstatus` returns radio state JSON, `/catcmd` handles button/command POSTs
+  - TCP/Serial connect/disconnect, RTS toggle, PTT toggle (`!ptt` command)
+  - Two-column VFO layout, signal meters, VOL/SQ sliders, all buttons
+  - `WEB_COMMANDS` dict maps button labels to binary payloads
 
 ## Smart Announcements (Modular AI Backend)
 - `SmartAnnouncementManager`: scheduled AI-powered spoken announcements
