@@ -984,25 +984,6 @@ Bars appear in this order on line 1: TX → RX → SP → SDR1 → SDR2 → SV o
 
 All timers use fixed-width `Xd HH:MM:SS` format (e.g. `0d 02:14:37`).
 
-### Line 3 — Dynamic DNS
-
-| Indicator | Color | Meaning |
-|-----------|-------|---------|
-| **DNS:hostname → IP** | Yellow | DDNS updated successfully (shows hostname and current public IP) |
-| **DNS:ERR** | Red | Last DDNS update failed |
-| **DNS:...** | Yellow | Waiting for first update |
-
-Only shown when `ENABLE_DDNS = true`.
-
-### Line 3 — Cloudflare Tunnel
-
-| Indicator | Color | Meaning |
-|-----------|-------|---------|
-| **CF:https://...** | Yellow | Full Cloudflare tunnel URL (clickable in some terminals) |
-| **CF:starting...** | Yellow | Tunnel connecting |
-
-Only shown when `ENABLE_CLOUDFLARE_TUNNEL = true`.
-
 ### Line 2 — Web Config
 
 | Indicator | Color | Meaning |
@@ -1049,6 +1030,27 @@ Flags appear in yellow brackets: `[N,F,G,W,E,D]`
 | **R:5** | Stream restart count (only if >0) |
 | **S:2** | DarkIce restart count (only if >0) |
 | **W2** | SDR watchdog recovery count (only if >0; appended directly after SDR bar on line 1, no colon) |
+
+### Line 3 — Dynamic DNS
+
+| Indicator | Color | Meaning |
+|-----------|-------|---------|
+| **DNS:hostname → IP** | Yellow | DDNS updated successfully (shows hostname and current public IP) |
+| **DNS:ERR** | Red | Last DDNS update failed |
+| **DNS:...** | Yellow | Waiting for first update |
+
+Only shown when `ENABLE_DDNS = true`.
+
+### Line 3 — Cloudflare Tunnel
+
+| Indicator | Color | Meaning |
+|-----------|-------|---------|
+| **CF:https://...** | Yellow | Full Cloudflare tunnel URL (clickable in some terminals) |
+| **CF:starting...** | Yellow | Tunnel connecting |
+
+Only shown when `ENABLE_CLOUDFLARE_TUNNEL = true`.
+
+Line 3 only appears when at least one of DDNS or Cloudflare Tunnel is enabled.
 
 ## Audio Level Calculation
 
