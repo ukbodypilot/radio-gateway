@@ -508,6 +508,7 @@ WEB_CONFIG_PASSWORD =
 - **Audio player** — listen to the gateway's mixed audio output live in the browser (MP3 stream via shared FFmpeg encoder, with play/stop button, volume slider, and elapsed timer)
 
 ![Live Dashboard](docs/img/dashboard.png)
+*Live dashboard showing gateway status, audio level bars, control buttons, and the browser audio player streaming at 2:51 elapsed.*
 
 **Status bar (line 2):** `WEB:8080` in green when enabled, showing the listen port.
 
