@@ -95,6 +95,7 @@ A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, A
 - **Local Mumble Server**: Run up to 2 managed mumble-server instances on the same machine
 - **Cloudflare Tunnel**: Free public HTTPS access via `*.trycloudflare.com` — no port forwarding or domain needed
 - **Email Notifications**: Gmail SMTP alerts with gateway status and tunnel URL on startup or on demand
+- **Browser Audio Player**: Listen to gateway audio live from the dashboard — MP3 stream with play/stop, volume control, and elapsed timer
 
 ### Audio Sources (Priority-Based Mixing)
 
@@ -504,6 +505,7 @@ WEB_CONFIG_PASSWORD =
 - Remote key control buttons — same keyboard shortcuts available via clickable buttons
 - Auto-reconnects when gateway restarts (no manual refresh needed)
 - Fixed-width grid layout — bars and values don't shift when levels change
+- **Audio player** — listen to the gateway's mixed audio output live in the browser (MP3 stream via shared FFmpeg encoder, with play/stop button, volume slider, and elapsed timer)
 
 ![Live Dashboard](docs/img/dashboard.png)
 

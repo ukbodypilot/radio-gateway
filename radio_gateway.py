@@ -5422,6 +5422,14 @@ class WebConfigServer:
         self._server = None
         self._thread = None
         self._defaults = getattr(config, '_defaults', {})
+        self._stream_subscribers = []  # list of events for audio stream listeners
+        self._stream_events = []      # events to notify listeners of new data
+        self._stream_lock = threading.Lock()
+        self._mp3_buffer = []         # shared ring buffer of MP3 chunks
+        self._mp3_seq = 0             # sequence number of next append
+        self._encoder_proc = None     # shared FFmpeg process
+        self._encoder_stdin = None    # stdin pipe for encoder
+        self._last_audio_push = 0     # monotonic time of last real audio
 
     def start(self):
         """Start the HTTP server on a daemon thread."""
@@ -5474,6 +5482,65 @@ class WebConfigServer:
                     self.send_header('Cache-Control', 'no-cache')
                     self.end_headers()
                     self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                elif self.path == '/stream':
+                    # MP3 audio stream from shared encoder
+                    _client_ip = self.client_address[0]
+                    print(f"\n[Stream] Connection from {_client_ip}")
+                    ev, seq = parent._subscribe_stream()
+                    _bytes_sent = 0
+                    try:
+                        # Wait for encoder to produce initial MP3 data
+                        for _wait in range(50):  # up to 5 seconds
+                            ev.wait(timeout=0.1)
+                            ev.clear()
+                            with parent._stream_lock:
+                                if parent._mp3_seq > seq:
+                                    break
+                        with parent._stream_lock:
+                            if parent._mp3_seq <= seq:
+                                print(f"[Stream] No encoder data for {_client_ip} — aborting")
+                                self.send_response(503)
+                                self.end_headers()
+                                return
+
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'audio/mpeg')
+                        self.send_header('Cache-Control', 'no-cache, no-store')
+                        self.send_header('Connection', 'close')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.send_header('icy-name', 'Radio Gateway')
+                        self.end_headers()
+                        print(f"[Stream] Streaming to {_client_ip}")
+
+                        while True:
+                            ev.wait(timeout=5)
+                            ev.clear()
+                            with parent._stream_lock:
+                                buf = parent._mp3_buffer
+                                cur_seq = parent._mp3_seq
+                                # How many new chunks since our last read
+                                available = cur_seq - seq
+                                if available > 0:
+                                    # Clamp to buffer size (in case we fell behind)
+                                    available = min(available, len(buf))
+                                    chunks = buf[-available:] if available < len(buf) else list(buf)
+                                    seq = cur_seq
+                                else:
+                                    chunks = []
+                            for chunk in chunks:
+                                self.wfile.write(chunk)
+                                _bytes_sent += len(chunk)
+                            if chunks:
+                                self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    except Exception as e:
+                        print(f"\n[Stream] Error for {_client_ip}: {e}")
+                    finally:
+                        _kb = _bytes_sent // 1024
+                        print(f"[Stream] Disconnected {_client_ip} ({_kb}KB sent)")
+                        parent._unsubscribe_stream(ev)
+                    return
                 elif self.path == '/dashboard':
                     # Live status dashboard
                     html = parent._generate_dashboard()
@@ -5587,15 +5654,116 @@ class WebConfigServer:
                                             name='WebConfig', daemon=True)
             self._thread.start()
             print(f"  [WebConfig] Listening on {scheme}://0.0.0.0:{port}/")
+            self._start_encoder()
         except Exception as e:
             print(f"  [WebConfig] Failed to start: {e}")
 
     def stop(self):
-        """Shut down the HTTP server."""
+        """Shut down the HTTP server and encoder."""
+        self._stop_encoder()
         if self._server:
             try:
                 self._server.shutdown()
             except Exception:
+                pass
+
+    def push_audio(self, pcm_data):
+        """Push PCM audio to the shared encoder (called from transmit loop)."""
+        if self._encoder_stdin:
+            try:
+                self._encoder_stdin.write(pcm_data)
+                self._last_audio_push = time.monotonic()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+
+    def _start_encoder(self):
+        """Start the shared FFmpeg MP3 encoder and reader thread."""
+        import subprocess as sp
+        if self._encoder_proc:
+            return
+        try:
+            self._encoder_proc = sp.Popen([
+                'ffmpeg', '-hide_banner', '-loglevel', 'error',
+                '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
+                '-c:a', 'libmp3lame', '-b:a', '96k',
+                '-flush_packets', '1',
+                '-fflags', '+nobuffer',
+                '-f', 'mp3', 'pipe:1'
+            ], stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.DEVNULL)
+            self._encoder_stdin = self._encoder_proc.stdin
+            # Reader thread: reads MP3 from FFmpeg, pushes to ring buffer
+            def _reader():
+                while self._encoder_proc and self._encoder_proc.poll() is None:
+                    data = self._encoder_proc.stdout.read(4096)
+                    if not data:
+                        break
+                    with self._stream_lock:
+                        self._mp3_buffer.append(data)
+                        self._mp3_seq += 1
+                        # Keep ~30 seconds of buffered MP3 (~360KB at 96kbps)
+                        while len(self._mp3_buffer) > 90:
+                            self._mp3_buffer.pop(0)
+                        # Notify all waiting listeners
+                        for ev in self._stream_events:
+                            ev.set()
+            t = threading.Thread(target=_reader, daemon=True, name='mp3-reader')
+            t.start()
+            # Feed silence when no real audio is arriving — keeps encoder producing output
+            def _silence_feed():
+                _silence = b'\x00' * 4800  # 50ms
+                while self._encoder_proc and self._encoder_proc.poll() is None:
+                    time.sleep(0.05)
+                    if (self._encoder_stdin
+                            and time.monotonic() - self._last_audio_push > 0.2):
+                        try:
+                            self._encoder_stdin.write(_silence)
+                        except (BrokenPipeError, OSError, ValueError):
+                            break
+            t2 = threading.Thread(target=_silence_feed, daemon=True, name='mp3-silence')
+            t2.start()
+            print(f"  [Stream] MP3 encoder started (PID {self._encoder_proc.pid})")
+        except FileNotFoundError:
+            print(f"  [Stream] FFmpeg not found")
+        except Exception as e:
+            print(f"  [Stream] Encoder start error: {e}")
+
+    def _stop_encoder(self):
+        """Stop the shared FFmpeg encoder."""
+        self._encoder_stdin = None
+        if self._encoder_proc:
+            try:
+                self._encoder_proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                self._encoder_proc.terminate()
+                self._encoder_proc.wait(timeout=3)
+            except Exception:
+                try:
+                    self._encoder_proc.kill()
+                except Exception:
+                    pass
+            self._encoder_proc = None
+
+    def _subscribe_stream(self):
+        """Register a new stream listener. Returns (event, seq)."""
+        ev = threading.Event()
+        with self._stream_lock:
+            seq = self._mp3_seq  # Start from current sequence number
+            self._stream_events.append(ev)
+            self._stream_subscribers.append(ev)
+        return ev, seq
+
+    def _unsubscribe_stream(self, ev):
+        """Remove a stream listener."""
+        with self._stream_lock:
+            try:
+                self._stream_events.remove(ev)
+            except ValueError:
+                pass
+            try:
+                self._stream_subscribers.remove(ev)
+            except ValueError:
                 pass
 
     def _get_cert(self, mode):
@@ -5915,6 +6083,15 @@ class WebConfigServer:
   </div>
 </div>
 
+<div id="audio-player" style="margin-top:18px; background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px; display:flex; align-items:center; gap:14px;">
+  <button id="play-btn" onclick="toggleStream()" style="padding:10px 18px; border:1px solid #1b3a5c; border-radius:4px; background:#0d1b2a; color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:1.1em; min-width:80px;">&#9654; Listen</button>
+  <span id="stream-indicator" style="display:none; width:10px; height:10px; border-radius:50%; background:#2ecc71; box-shadow:0 0 6px #2ecc71; flex-shrink:0;"></span>
+  <span style="color:#888; font-size:0.9em;">Vol</span>
+  <input id="vol-slider" type="range" min="0" max="100" value="80" style="width:120px; accent-color:#00d4ff;" oninput="setVolume(this.value)">
+  <span id="vol-label" style="color:#ccc; font-family:monospace; font-size:0.9em; min-width:3em;">80%</span>
+  <span id="stream-status" style="color:#888; font-size:0.9em; margin-left:auto;">Radio audio — click Listen to start</span>
+</div>
+
 <style>
   .controls { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 18px; }
   .ctrl-group { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 14px; min-width: 220px; }
@@ -6034,6 +6211,84 @@ setInterval(function() {
   }
 }, 1000);
 updateStatus();
+
+var _audio = null;
+var _playing = false;
+var _streamTimer = null;
+var _streamStart = 0;
+
+function toggleStream() {
+  if (_playing) {
+    stopStream();
+  } else {
+    startStream();
+  }
+}
+
+function startStream() {
+  var btn = document.getElementById('play-btn');
+  var ind = document.getElementById('stream-indicator');
+  var st = document.getElementById('stream-status');
+  btn.innerHTML = '&#8987; Connecting...';
+  btn.style.color = '#f39c12';
+  st.textContent = 'Buffering...';
+  st.style.color = '#f39c12';
+
+  _audio = new Audio('/stream');
+  _audio.volume = document.getElementById('vol-slider').value / 100;
+
+  _audio.onplaying = function() {
+    _playing = true;
+    _streamStart = Date.now();
+    btn.innerHTML = '&#9724; Stop';
+    btn.style.color = '#e74c3c';
+    btn.style.borderColor = '#e74c3c';
+    ind.style.display = 'inline-block';
+    st.textContent = 'Streaming 0:00';
+    st.style.color = '#2ecc71';
+    _streamTimer = setInterval(function() {
+      var secs = Math.floor((Date.now() - _streamStart) / 1000);
+      var m = Math.floor(secs / 60);
+      var s = secs % 60;
+      st.textContent = 'Streaming ' + m + ':' + (s < 10 ? '0' : '') + s;
+    }, 1000);
+  };
+
+  _audio.onerror = function() {
+    st.textContent = 'Stream error — try again';
+    st.style.color = '#e74c3c';
+    stopStream();
+  };
+
+  _audio.onended = function() { stopStream(); };
+
+  _audio.play().catch(function(e) {
+    st.textContent = 'Error: ' + e.message;
+    st.style.color = '#e74c3c';
+    stopStream();
+  });
+}
+
+function stopStream() {
+  if (_streamTimer) { clearInterval(_streamTimer); _streamTimer = null; }
+  if (_audio) {
+    _audio.pause();
+    _audio.src = '';
+    _audio = null;
+  }
+  _playing = false;
+  document.getElementById('play-btn').innerHTML = '&#9654; Listen';
+  document.getElementById('play-btn').style.color = '#e0e0e0';
+  document.getElementById('play-btn').style.borderColor = '#1b3a5c';
+  document.getElementById('stream-indicator').style.display = 'none';
+  document.getElementById('stream-status').textContent = 'Radio audio — click Listen to start';
+  document.getElementById('stream-status').style.color = '#888';
+}
+
+function setVolume(v) {
+  document.getElementById('vol-label').textContent = v + '%';
+  if (_audio) _audio.volume = v / 100;
+}
 </script>
 '''
         return self._wrap_html('Dashboard', body)
@@ -8872,6 +9127,10 @@ class RadioGateway:
                         if self.config.VERBOSE_LOGGING:
                             print(f"\n[Stream] Send error: {stream_err}")
 
+                # Push to web audio stream listeners
+                if self.web_config_server and self.web_config_server._stream_subscribers:
+                    self.web_config_server.push_audio(data)
+
             except Exception as e:
                 consecutive_errors += 1
                 self.audio_capture_active = False
@@ -9414,7 +9673,11 @@ class RadioGateway:
 
         # Audio levels (note: rx_audio_level = Mumble→Radio TX, tx_audio_level = Radio→Mumble RX)
         radio_tx = getattr(self, 'rx_audio_level', 0)
-        radio_rx = getattr(self, 'tx_audio_level', 0)
+        # Match console: show 0% when VAD is blocking (not actually transmitting)
+        if self.config.ENABLE_VAD and not self.vad_active:
+            radio_rx = 0
+        else:
+            radio_rx = getattr(self, 'tx_audio_level', 0)
         sdr1_level = self.sdr_source.audio_level if self.sdr_source and hasattr(self.sdr_source, 'audio_level') else 0
         sdr2_level = self.sdr2_source.audio_level if self.sdr2_source and hasattr(self.sdr2_source, 'audio_level') else 0
         sv_level = getattr(self, 'sv_audio_level', 0)
@@ -9550,6 +9813,13 @@ class RadioGateway:
                     self.rx_audio_level = int(self.rx_audio_level * 0.5)  # Fast decay
                     if self.rx_audio_level < 5:
                         self.rx_audio_level = 0
+
+                # Decay TX level (Radio → Mumble) — AIOC noise floor can
+                # keep the bar stuck at a low level via 0.7/0.3 smoothing
+                if self.tx_audio_level > 0:
+                    self.tx_audio_level = int(self.tx_audio_level * 0.5)
+                    if self.tx_audio_level < 3:
+                        self.tx_audio_level = 0
                 
                 # Check audio transmit status
                 time_since_last_capture = current_time - self.last_audio_capture_time
