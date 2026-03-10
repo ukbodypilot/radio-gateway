@@ -2,7 +2,7 @@
 RADIO GATEWAY - USER GUIDE
 ================================================================================
 
-VERSION: 1.1.0 (see `git describe --tags` for exact version)
+VERSION: 1.5.0 (see `git describe --tags` for exact version)
 Last Updated: March 2026
 
 ================================================================================
@@ -1103,6 +1103,92 @@ For Announcements:
   - Set PTT_ANNOUNCEMENT_DELAY = 0.5 to 1.0 (radio dependent)
   - Use WAV files at 48 kHz / 16-bit mono for best compatibility
   - Place files in audio/ directory with numeric prefix for easy mapping
+
+================================================================================
+WEB USER INTERFACE
+================================================================================
+
+The gateway includes a built-in web interface accessible from any browser.
+All pages share a dark theme and navigation links between each other.
+
+Enable in gateway_config.txt:
+  [web]
+  ENABLE_WEB_CONFIG = true
+  WEB_CONFIG_PORT = 8080
+  WEB_CONFIG_PASSWORD =          (blank = no auth; set for Basic auth)
+
+PAGES:
+
+  /              Configuration Editor
+                 Edit all gateway settings grouped by INI section. Collapsible
+                 panels, password-masked sensitive fields, Save and Save &
+                 Restart buttons. Preserves comments in config file.
+
+  /dashboard     Live Dashboard
+                 Real-time status updated every 1 second. Audio level bars for
+                 TX, RX, SP, SDR1, SDR2, SV/CL, AN. Uptime, smart announce
+                 countdowns, Mumble/PTT/VAD/mute states. Clickable buttons for
+                 all keyboard shortcuts. Browser audio player (MP3 stream).
+
+  /radio         TH-9800 Radio Control
+                 Full front-panel replica: dual VFO display with channel and
+                 signal meters, VOL/SQ sliders, all radio buttons (ENC, DEC,
+                 TX, PREF, SKIP, DCS, MUTE, LOW, V/M, HM, SCN). Menu/SET,
+                 hyper memories (A-F), mic keypad, P1-P4, UP/DN. PTT toggle.
+                 TCP/Serial connect/disconnect, RTS control.
+
+  /sdr           SDR Control (RTLSDR-Airband + SoapySDR)
+                 Full SDR receiver control. Requires rtl_airband and SoapySDR.
+
+                 Status bar: process state (RUNNING/STOPPED), frequency,
+                 modulation, sample rate, antenna. Live audio level bar.
+
+                 Tuning controls:
+                   Frequency    — numeric input + step buttons (6.25/12.5/25 kHz)
+                   Modulation   — AM or NFM
+                   Sample Rate  — 200 kHz to 10.66 MHz (= device capture bandwidth)
+                   Antenna      — Tuner 1 50 ohm, Tuner 1 Hi-Z, Tuner 2 50 ohm
+
+                 Gain control:
+                   AGC (Auto)   — AGC setpoint slider (-72 to 0 dB)
+                   Manual       — RFGR (0-9) and IFGR (20-59) sliders
+
+                 Squelch & device options:
+                   Squelch      — threshold in dBFS (-60 to 0), 0 = auto
+                   Bias-T, RF Notch, DAB Notch, IQ Correction, External Ref
+                   Continuous   — keep audio stream open during squelch
+
+                 Audio filters:
+                   Amp Factor   — volume multiplier (1.0 = unity)
+                   Highpass     — HP filter cutoff in Hz (default 100)
+                   Lowpass      — LP filter cutoff in Hz (default 2500)
+                   Channel BW   — pre-demod bandwidth limit in Hz (0 = off)
+                   Notch        — notch filter frequency in Hz (0 = off)
+                   Notch Q      — notch selectivity (default 10)
+
+                 Device tuning:
+                   Correction   — frequency correction in ppm
+                   NFM Tau      — deemphasis time constant (0 = off, 50/75/200/
+                                  530/1000 microseconds)
+
+                 Channel memory:
+                   10 slots (CH 0-9) with 1-press recall
+                   Save current settings with a name, delete slots
+                   Settings persist across gateway restarts
+
+                 Apply & Restart writes the config and restarts rtl_airband.
+                 Stop kills the rtl_airband process.
+
+                 Config file: /etc/rtl_airband/rspduo_gateway.conf (auto-generated)
+                 Channel data: sdr_channels.json (in gateway directory)
+
+  /logs          Gateway Logs
+                 Live scrolling log viewer with auto-scroll toggle, regex filter,
+                 clear button, and new-line counter.
+
+  /status        JSON status endpoint (used by dashboard)
+  /sdrstatus     JSON SDR status endpoint (used by SDR page)
+  /stream        MP3 audio stream (used by dashboard audio player)
 
 ================================================================================
 SYSTEM REQUIREMENTS

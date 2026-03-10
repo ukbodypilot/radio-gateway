@@ -496,6 +496,9 @@ WEB_CONFIG_PASSWORD =
 - **Save & Restart** button saves and restarts the gateway for changes to take effect
 - Dark theme matching the gateway console aesthetic
 
+![Config Editor](docs/img/config-editor.png)
+*Configuration editor with collapsible sections, Save & Restart, and Exit Server controls.*
+
 **Live Dashboard** (`http://<gateway-ip>:8080/dashboard`):
 - Real-time gateway status updated every second via JSON polling
 - Audio level bars for all sources (TX, RX, SP, SDR1, SDR2, SV/CL, AN) — same order as console
@@ -508,7 +511,41 @@ WEB_CONFIG_PASSWORD =
 - **Audio player** — listen to the gateway's mixed audio output live in the browser (MP3 stream via shared FFmpeg encoder, with play/stop button, volume slider, and elapsed timer)
 
 ![Live Dashboard](docs/img/dashboard.png)
-*Live dashboard showing gateway status, audio level bars, control buttons, and the browser audio player streaming at 2:51 elapsed.*
+*Live dashboard showing gateway status, audio level bars, mute/processing/playback controls, and the browser audio player.*
+
+**TH-9800 Radio Control** (`http://<gateway-ip>:8080/radio`):
+- Full front-panel replica of the TH-9800 dual-band radio in the browser
+- Dual VFO display with channel, signal meter, volume/squelch sliders
+- All radio buttons: ENC, DEC, TX, PREF, SKIP, DCS, MUTE, LOW, V/M, HM, SCN
+- Menu/SET controls, hyper memories (A-F), mic keypad, mic P1-P4 and UP/DN
+- PTT toggle button, TCP/Serial connect/disconnect, RTS control
+
+![Radio Control](docs/img/radio-control.png)
+*TH-9800 radio control page with dual VFO, signal meters, and full button panel.*
+
+**SDR Control** (`http://<gateway-ip>:8080/sdr`):
+- Full SDR receiver control via RTLSDR-Airband + SoapySDR
+- Live status bar: process state, frequency, modulation, sample rate, antenna
+- Live audio level bar updated every second
+- Frequency input with step buttons (6.25k, 12.5k, 25k)
+- Modulation (AM/NFM), sample rate (200 kHz — 10.66 MHz), antenna selection
+- Gain control: AGC with setpoint or manual RFGR/IFGR sliders
+- Squelch threshold (dBFS), device options (Bias-T, RF/DAB notch, IQ correction, external ref)
+- Audio filters: amp factor, highpass/lowpass, channel bandwidth, notch filter with Q
+- Device tuning: frequency correction (ppm), NFM deemphasis tau
+- 10-slot channel memory with 1-press recall, save with name, delete
+- Settings persist across gateway restarts
+
+![SDR Control](docs/img/sdr-control.png)
+*SDR control page tuned to 446.760 MHz NFM with gain, squelch, audio filters, and channel memory.*
+
+**Gateway Logs** (`http://<gateway-ip>:8080/logs`):
+- Live scrolling log viewer with auto-scroll toggle
+- Regex filter for searching log output
+- Clear button and new-line counter
+
+![Gateway Logs](docs/img/logs.png)
+*Live log viewer showing gateway startup sequence, keyboard controls, and service status.*
 
 ### Cloudflare Tunnel
 
@@ -2155,6 +2192,16 @@ class MySource(AudioSource):
 - PyAudio: Python audio interface
 
 ## Changelog
+
+### v1.5.0
+
+**SDR control page** — Full web-based SDR receiver control at `/sdr` via RTLSDR-Airband + SoapySDR. `RTLAirbandManager` class handles process lifecycle, config generation (`/etc/rtl_airband/rspduo_gateway.conf`), and settings persistence (`sdr_channels.json`). Live status bar with process state, frequency, modulation, sample rate, antenna, and audio level (1s polling). Frequency input with step buttons, modulation (AM/NFM), sample rate selection (200 kHz — 10.66 MHz for RSPduo), antenna selection, AGC/manual gain with RFGR/IFGR sliders, squelch (dBFS), and device options (Bias-T, RF/DAB notch, IQ correction, external ref, continuous output). Audio processing: amp factor, highpass/lowpass filters, channel bandwidth, notch filter with Q factor. Device tuning: frequency correction (ppm), NFM deemphasis tau (0-1000 µs). 10-slot channel memory with 1-press recall, save with name, delete. All settings persist across gateway restarts.
+
+**TH-9800 radio control page** — Full front-panel replica at `/radio` with dual VFO display, signal meters, volume/squelch sliders, all radio buttons, menu/SET controls, hyper memories, mic keypad, PTT toggle, TCP/Serial connect/disconnect.
+
+**Systemd service** — `radio-gateway.service` template for auto-start, with desktop shortcuts (start/stop/restart) and passwordless sudo via `/etc/sudoers.d/radio-gateway`. Added to installer.
+
+**Screenshots** — Added screenshots of all 5 web UI pages to README and docs.
 
 ### v1.4.0
 
