@@ -154,9 +154,11 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `CAT_STARTUP_COMMANDS = false` → connect TCP but skip channel/volume/power setup
 - `setup_radio`: sets RTS once (no restore), runs channel/volume/power tasks, prints summary
 - `set_channel()`: never presses V/M — skips if radio is in VFO mode
-- **CRITICAL VFO mapping quirk** (verified by packet capture):
-  - Dial PRESS response: CHANNEL_TEXT maps to `_channel_text[other_vfo]` (SWAPPED)
-  - Dial STEP response: CHANNEL_TEXT maps to `_channel_text[vfo]` (CORRECT)
+- **CRITICAL: press response unreliable** — returns OTHER VFO's channel, not pressed VFO's
+  - Fix: press dial, then step-right + step-left (net zero) to read actual channel from step response
+  - Step response `_channel_text[vfo]` is always correct
+  - `_drain_paused = True` during entire set_channel (prevents background drain race)
+- Response tracking: `_cmd_sent`, `_cmd_no_response`, `_last_no_response` — shown on web dashboard
   - Must read from `other_vfo` for press, `vfo` for stepping
   - `_channel_vfo` (set by DISPLAY_CHANGE 0x03) is unreliable — always ends up opposite
   - `_drain()` must use single `_recv_line(0.1)` — loop version breaks all packet parsing

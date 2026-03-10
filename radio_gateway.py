@@ -3462,7 +3462,50 @@ class RelayController:
 
 
 class RadioCATClient:
-    """TCP client for TH-9800 CAT control via TH9800_CAT.py server."""
+    """TCP client for TH-9800 CAT control via TH9800_CAT.py server.
+
+    IMPORTANT — TH9800 radio protocol quirks (hard-won knowledge, do NOT change
+    without reading this):
+
+    1. PRESS RESPONSE IS UNRELIABLE: When you press a VFO dial, the radio sends
+       back a CHANNEL_TEXT packet containing the OTHER VFO's channel, not the
+       pressed VFO's channel.  DO NOT use the press response to read the current
+       channel.  Instead, press the dial (activates for editing), then step right
+       + step left (net zero movement) and read _channel_text[vfo] from the step
+       response, which is always correct.
+
+    2. STEP RESPONSE IS RELIABLE: After a dial step (right/left), _channel_text[vfo]
+       always contains the stepped VFO's actual channel number.
+
+    3. BACKGROUND DRAIN MUST BE PAUSED: set_channel() and send_web_command() must
+       set _drain_paused = True for the duration of the operation.  The background
+       drain thread will otherwise populate _channel_text concurrently, causing
+       stale data to overwrite the response we're trying to read.
+
+    4. _drain() MUST USE SINGLE _recv_line(): Using a loop (while self._buf:
+       _recv_line()) breaks ALL packet parsing — state dicts end up empty.  The
+       drain method reads raw socket data in a loop, then calls _recv_line() once
+       to process buffered packets.
+
+    5. NEVER PRESS V/M BUTTON: set_channel() must not attempt to detect or switch
+       VFO/memory mode.  The V/M detection via _channel_vfo is unreliable
+       (DISPLAY_CHANGE 0x03 packets always report the opposite VFO after a press).
+       If the radio is in VFO mode, set_channel() returns False and the user must
+       switch manually.
+
+    6. RTS: Set once at startup to USB Controlled.  Do not use save/restore
+       patterns (_with_usb_rts) as they can disrupt the serial connection.
+
+    7. SOCKET CONTENTION: The background drain thread and command senders share
+       one TCP socket.  Before sending any command, call _pause_drain() which
+       sets _drain_paused AND waits for _drain_active to go False.  Just setting
+       the flag is not enough — the drain thread may already be inside _drain()
+       reading from the socket and will consume command responses.
+
+    8. AUTH PER-CONNECTION: TH9800_CAT.py uses per-connection auth (conn_loggedin
+       local variable).  If _send_cmd gets 'Unauthorized', it auto-re-auths and
+       retries.  This handles cases where the server resets auth unexpectedly.
+    """
 
     START_BYTES = b'\xAA\xFD'
 
@@ -3482,17 +3525,24 @@ class RadioCATClient:
         self._buf = b''
         # Radio state parsed from forwarded packets
         self._channel = ''       # Latest channel text (3-char, e.g. "001")
-        self._channel_vfo = ''   # Which VFO the channel belongs to ('LEFT' or 'RIGHT')
+        self._channel_vfo = ''   # VFO from last CHANNEL_TEXT (UNRELIABLE after press — see class docstring)
         self._vfo_text = {}      # {'LEFT': '...', 'RIGHT': '...'} display text per VFO
         self._channel_text = {}  # {'LEFT': '001', 'RIGHT': '002'} channel number per VFO
         self._power = {}         # {'LEFT': 'H', 'RIGHT': 'L'}
+        self._volume = {}        # {'LEFT': 62, 'RIGHT': 0} last-set volume per VFO
         self._signal = {}        # {'LEFT': 0-9, 'RIGHT': 0-9} S-meter
         self._icons = {'LEFT': {}, 'RIGHT': {}, 'COMMON': {}}  # icon states
         self._drain_paused = False  # pause drain thread during command sequences
+        self._drain_active = False  # True while drain thread is inside _drain()
+        self._sock_lock = threading.Lock()  # serialize all socket reads (drain vs commands)
         self._last_activity = 0  # monotonic timestamp of last send/recv (for status bar)
         self._stop = False       # set True to abort loops (ctrl+c)
         self._log = None         # file handle for debug log
         self._rts_usb = None     # True = USB Controlled, False = Radio Controlled, None = unknown
+        self._serial_connected = False  # Cached serial state (set by connect/disconnect handlers)
+        self._cmd_sent = 0       # total commands sent
+        self._cmd_no_response = 0  # commands with no radio response
+        self._last_no_response = ''  # description of last no-response event
 
     def _logmsg(self, msg, console=False):
         """Write debug message to cat_debug.log. Only prints to console if verbose or console=True."""
@@ -3539,16 +3589,31 @@ class RadioCATClient:
             self._log = None
 
     def _send_cmd(self, cmd):
-        """Send text command and return response line."""
+        """Send text command and return response line.
+        Auto-re-authenticates if server returns 'Unauthorized'.
+        Acquires _sock_lock to prevent drain thread from reading concurrently."""
         if not self._sock:
             return None
-        try:
-            self._sock.sendall(f"{cmd}\n".encode())
-            self._last_activity = time.monotonic()
-            return self._recv_line(timeout=2.0)
-        except Exception as e:
-            self._logmsg(f"  CAT send error: {e}")
-            return None
+        with self._sock_lock:
+            try:
+                self._sock.sendall(f"{cmd}\n".encode())
+                self._last_activity = time.monotonic()
+                resp = self._recv_line(timeout=2.0)
+                if resp and 'Unauthorized' in resp:
+                    self._logmsg(f"  CAT: session lost auth, re-authenticating...", console=True)
+                    self._sock.sendall(f"!pass {self._password}\n".encode())
+                    auth_resp = self._recv_line(timeout=2.0)
+                    if auth_resp and 'Login Successful' in auth_resp:
+                        # Retry the original command
+                        self._sock.sendall(f"{cmd}\n".encode())
+                        self._last_activity = time.monotonic()
+                        resp = self._recv_line(timeout=2.0)
+                    else:
+                        self._logmsg(f"  CAT: re-auth failed: {auth_resp}", console=True)
+                return resp
+            except Exception as e:
+                self._logmsg(f"  CAT send error: {e}")
+                return None
 
     def _with_usb_rts(self, func):
         """Run func() with RTS in USB Controlled mode, restore afterwards if changed."""
@@ -3617,23 +3682,29 @@ class RadioCATClient:
         return None
 
     def _drain(self, duration=0.3):
-        """Drain any pending data from socket, parsing packets along the way."""
+        """Drain any pending data from socket, parsing packets along the way.
+
+        IMPORTANT: Must end with a SINGLE _recv_line() call, NOT a loop.
+        Using 'while self._buf: _recv_line()' breaks all packet parsing and
+        leaves state dicts (_channel_text, _power, etc.) empty.  See bugs.md.
+        Acquires _sock_lock to prevent concurrent reads with _send_cmd."""
         if not self._sock:
             return
-        end = time.time() + duration
-        self._sock.settimeout(0.05)
-        while time.time() < end:
-            try:
-                data = self._sock.recv(4096)
-                if not data:
+        with self._sock_lock:
+            end = time.time() + duration
+            self._sock.settimeout(0.05)
+            while time.time() < end:
+                try:
+                    data = self._sock.recv(4096)
+                    if not data:
+                        break
+                    self._buf += data
+                except socket.timeout:
+                    pass
+                except Exception:
                     break
-                self._buf += data
-            except socket.timeout:
-                pass
-            except Exception:
-                break
-        # Process any buffered packets
-        self._recv_line(timeout=0.1)
+            # Process any buffered packets
+            self._recv_line(timeout=0.1)
 
     def set_rts(self, usb_controlled):
         """Set RTS state. True = USB Controlled, False = Radio Controlled."""
@@ -3655,11 +3726,22 @@ class RadioCATClient:
         """Return last known RTS state. True = USB Controlled, False = Radio Controlled."""
         return self._rts_usb
 
+    def get_serial_status(self):
+        """Return cached serial connection state (set by connect/disconnect commands).
+        Does NOT poll TH9800_CAT — polling over TCP steals radio packets and
+        causes lock contention that stalls button commands."""
+        return self._serial_connected
+
     def get_radio_state(self):
         """Return full radio state dict for web dashboard."""
         return {
             'connected': self._sock is not None,
+            'serial_connected': self._serial_connected,
             'rts_usb': self._rts_usb,
+            'volume': {
+                'left': self._volume.get(self.LEFT, -1),
+                'right': self._volume.get(self.RIGHT, -1),
+            },
             'left': {
                 'display': self._vfo_text.get(self.LEFT, ''),
                 'channel': self._channel_text.get(self.LEFT, ''),
@@ -3720,33 +3802,69 @@ class RadioCATClient:
     }
 
     def send_web_command(self, cmd_name):
-        """Send a named button command from web UI. Returns True on success."""
+        """Send a named button command from web UI.
+        Returns True on success, False on no-response, or string error message."""
         if cmd_name == 'DEFAULT':
-            self._send_button_release()
+            resp = self._send_button_release()
+            if resp and 'serial not connected' in resp:
+                return 'serial not connected'
             return True
         if cmd_name == 'TOGGLE_RTS':
-            resp = self._send_cmd("!rts")
-            if resp:
-                # Response format: "CMD{rts} True" or "CMD{rts} False"
-                self._rts_usb = 'true' in resp.lower()
+            self._pause_drain()
+            try:
+                resp = self._send_cmd("!rts")
+                if resp and 'serial not connected' in resp:
+                    return 'serial not connected'
+                if resp:
+                    self._rts_usb = 'true' in resp.lower()
+            finally:
+                self._drain_paused = False
             return True
         if cmd_name == 'MIC_PTT':
-            # Use !ptt command for proper PTT toggle (handles mic_ptt state)
-            self._send_cmd("!ptt")
+            self._pause_drain()
+            try:
+                resp = self._send_cmd("!ptt")
+                if resp and 'serial not connected' in resp:
+                    return 'serial not connected'
+            finally:
+                self._drain_paused = False
             return True
         entry = self.WEB_COMMANDS.get(cmd_name)
         if not entry:
             return False
         cmd_bytes, start, end = entry
-        self._drain_paused = True
+        is_dial = cmd_name in ('L_DIAL_RIGHT', 'L_DIAL_LEFT', 'R_DIAL_RIGHT', 'R_DIAL_LEFT',
+                               'L_DIAL_PRESS', 'R_DIAL_PRESS')
+        pre_channel = dict(self._channel_text) if is_dial else None
+        self._cmd_sent += 1
+        self._pause_drain()
         try:
-            self._send_button(cmd_bytes, start, end)
-            # Normal buttons: auto-release after brief delay
+            resp1 = self._send_button(cmd_bytes, start, end)
+            # Check if serial is not connected before continuing
+            if resp1 and 'serial not connected' in resp1:
+                return 'serial not connected'
             time.sleep(0.15)
-            self._send_button_release()
+            resp2 = self._send_button_release()
+            time.sleep(0.15)
+            # Read response while drain is still paused — if we unpause first,
+            # the drain thread races us for the radio's binary response packets
+            pre_buf = len(self._buf)
+            self._drain(0.3)
+            post_buf = len(self._buf)
         finally:
             self._drain_paused = False
-        self._drain(0.3)
+        # For dial commands, verify radio responded
+        if is_dial:
+            post_channel = dict(self._channel_text)
+            if post_channel == pre_channel:
+                self._cmd_no_response += 1
+                self._last_no_response = f"web {cmd_name} @ {time.strftime('%H:%M:%S')}"
+                self._logmsg(f"    Web {cmd_name}: no response (sent={self._cmd_sent} missed={self._cmd_no_response}) "
+                             f"resp1={resp1!r} resp2={resp2!r} buf={pre_buf}->{post_buf} ch={pre_channel}", console=True)
+                return False
+            else:
+                # Reset consecutive failure counter on success
+                self._cmd_no_response = 0
         return True
 
     def reconnect(self):
@@ -3761,37 +3879,92 @@ class RadioCATClient:
             return True
         return False
 
+    def serial_reconnect(self):
+        """Disconnect and reconnect the radio serial via CAT server.
+        Returns True if reconnect succeeded."""
+        self._logmsg("  CAT: Auto-recovering serial (disconnect/reconnect)...", console=True)
+        self._pause_drain()
+        try:
+            with self._sock_lock:
+                self._sock.sendall(b"!serial disconnect\n")
+                resp = self._recv_line(timeout=3.0)
+            self._logmsg(f"  CAT: Serial disconnect: {resp}", console=True)
+            time.sleep(1.0)
+            with self._sock_lock:
+                self._sock.sendall(b"!serial connect\n")
+                # connect takes ~3s (startup sequence + sleeps)
+                resp = self._recv_line(timeout=10.0)
+            if resp and 'connected' in resp:
+                self._logmsg("  CAT: Serial reconnected successfully", console=True)
+                self._cmd_no_response = 0
+                return True
+            else:
+                self._logmsg(f"  CAT: Serial reconnect failed: {resp}", console=True)
+                return False
+        except Exception as e:
+            self._logmsg(f"  CAT: Serial reconnect error: {e}", console=True)
+            return False
+        finally:
+            self._drain_paused = False
+
+    def _pause_drain(self):
+        """Pause background drain and wait for it to actually stop reading."""
+        self._drain_paused = True
+        # Wait for drain thread to exit _drain() (up to 1s)
+        for _ in range(20):
+            if not self._drain_active:
+                break
+            time.sleep(0.05)
+
     def start_background_drain(self):
         """Start background thread that continuously reads radio packets for live state updates."""
         def _drain_loop():
             while self._sock and not self._stop:
                 if self._drain_paused:
+                    self._drain_active = False
                     time.sleep(0.05)
                     continue
                 try:
+                    self._drain_active = True
                     self._drain(0.5)
+                    self._drain_active = False
                 except Exception:
-                    pass
+                    self._drain_active = False
                 time.sleep(0.1)
         t = threading.Thread(target=_drain_loop, daemon=True, name='cat-drain')
         t.start()
 
     def send_web_volume(self, vfo, level):
-        """Set volume from web UI. vfo='LEFT'/'RIGHT', level=0-100."""
+        """Set volume from web UI. vfo='LEFT'/'RIGHT', level=0-100.
+        Returns response string or 'serial not connected'."""
         level = max(0, min(100, int(level)))
         vfo_letter = 'LEFT' if vfo == self.LEFT else 'RIGHT'
-        return self._send_cmd(f"!vol {vfo_letter} {level}")
+        self._pause_drain()
+        try:
+            resp = self._send_cmd(f"!vol {vfo_letter} {level}")
+            if resp and 'serial not connected' in resp:
+                return 'serial not connected'
+            self._volume[vfo] = level
+            return resp
+        finally:
+            self._drain_paused = False
 
     def send_web_squelch(self, vfo, level):
-        """Set squelch from web UI via raw packet. vfo='LEFT'/'RIGHT', level=0-100."""
+        """Set squelch from web UI via raw packet. vfo='LEFT'/'RIGHT', level=0-100.
+        Returns 'serial not connected' on failure."""
         level = max(0, min(100, int(level)))
-        # Squelch: L_SQUELCH = bytes at position 8-11, R_SQUELCH at 8-11
-        # Payload: [vfo_byte, 0xEB, sq_level_byte] at position 8-11
         if vfo == self.LEFT:
             cmd_bytes = [0x02, 0xEB, level & 0xFF]
         else:
             cmd_bytes = [0x82, 0xEB, level & 0xFF]
-        self._send_button(cmd_bytes, 8, 11)
+        self._pause_drain()
+        try:
+            resp = self._send_button(cmd_bytes, 8, 11)
+            if resp and 'serial not connected' in resp:
+                return 'serial not connected'
+            return resp
+        finally:
+            self._drain_paused = False
 
     def _parse_radio_packet(self, data):
         """Parse forwarded binary radio packets to update internal state."""
@@ -3808,15 +3981,21 @@ class RadioCATClient:
             self._logmsg(f"    [pkt] DISPLAY_CHANGE vfo=0x{vfo_byte:02X} -> {self._channel_vfo}", console=False)
 
         elif pkt_type == 0x02:  # CHANNEL_TEXT
+            # NOTE: vfo_byte mapping is correct for STEP responses but misleading
+            # for PRESS responses (press returns the OTHER VFO's channel).
+            # Do NOT use press response to determine the pressed VFO's channel.
+            # See class docstring and set_channel() for the full explanation.
             if vfo_byte in (0x40, 0x60):
                 self._channel_vfo = self.LEFT
             elif vfo_byte in (0xC0, 0xE0):
                 self._channel_vfo = self.RIGHT
             if len(data) >= 6:
                 try:
-                    self._channel = data[3:6].decode('ascii', errors='replace').strip()
-                    self._channel_text[self._channel_vfo] = self._channel
-                    self._logmsg(f"    [pkt] CHANNEL_TEXT vfo_byte=0x{vfo_byte:02X} -> {self._channel_vfo} ch='{self._channel}'", console=False)
+                    ch = data[3:6].decode('ascii', errors='replace').strip()
+                    if ch:  # Don't blank channel with empty radio packet
+                        self._channel = ch
+                        self._channel_text[self._channel_vfo] = self._channel
+                    self._logmsg(f"    [pkt] CHANNEL_TEXT vfo_byte=0x{vfo_byte:02X} -> {self._channel_vfo} ch='{ch}'", console=False)
                 except Exception:
                     pass
 
@@ -3825,7 +4004,8 @@ class RadioCATClient:
                 try:
                     text = data[3:9].decode('ascii', errors='replace').strip()
                     # Associate with the VFO from the most recent DISPLAY_CHANGE
-                    if self._channel_vfo:
+                    # Don't overwrite with empty text (radio sends blank packets during refresh)
+                    if self._channel_vfo and text:
                         self._vfo_text[self._channel_vfo] = text
                     self._logmsg(f"    [pkt] DISPLAY_TEXT vfo={self._channel_vfo} text='{text}'", console=False)
                 except Exception:
@@ -3949,6 +4129,24 @@ class RadioCATClient:
         hex_str = self._build_packet(self.DEFAULT_PAYLOAD)
         return self._send_cmd(f"!data {hex_str}")
 
+    def _send_button_checked(self, cmd_bytes, start, end, label='button'):
+        """Send button press + release and verify radio responded.
+        Returns True if _channel_text changed, False if no response detected."""
+        pre_state = dict(self._channel_text)
+        self._cmd_sent += 1
+        self._send_button(cmd_bytes, start, end)
+        time.sleep(0.15)
+        self._send_button_release()
+        time.sleep(0.3)
+        self._drain(0.5)
+        post_state = dict(self._channel_text)
+        if post_state == pre_state:
+            self._cmd_no_response += 1
+            self._last_no_response = f"{label} @ {time.strftime('%H:%M:%S')}"
+            self._logmsg(f"    {label}: no radio response (sent={self._cmd_sent} missed={self._cmd_no_response})", console=True)
+            return False
+        return True
+
     def _channel_matches(self, target_int):
         """Compare current channel to target as integers, tolerant of padding/spaces."""
         try:
@@ -3959,19 +4157,33 @@ class RadioCATClient:
     def set_channel(self, vfo, target_channel):
         """Set channel on specified VFO by stepping the dial. Returns True on success.
 
-        TH9800 CHANNEL_TEXT VFO mapping quirk (verified by packet capture):
-          - Dial PRESS response → _channel_text[other_vfo]  (swapped)
-          - Dial STEP response  → _channel_text[vfo]        (correct)
-        This is consistent across both LEFT and RIGHT VFOs.
-        Never presses V/M — skips if radio is in VFO mode."""
+        The press response is UNRELIABLE (returns the other VFO's channel).
+        To read the current channel, we press then step-right + step-left (net
+        zero) and read _channel_text[vfo] from the step response, which is
+        always correct.  Background drain is paused for the entire operation.
+        Never presses V/M — returns False if radio is in VFO mode."""
         target_int = int(target_channel)
         other_vfo = self.RIGHT if vfo == self.LEFT else self.LEFT
         self._logmsg(f"  CAT: Setting {vfo} channel to {target_int}...")
 
+        # Pause background drain so it doesn't race with our reads
+        self._pause_drain()
+        try:
+            return self._set_channel_inner(vfo, target_int, other_vfo)
+        finally:
+            self._drain_paused = False
+
+    def _set_channel_inner(self, vfo, target_int, other_vfo):
+        """Inner channel-setting logic (called with drain paused).
+
+        Press response is unreliable — it returns the OTHER VFO's channel, not
+        the pressed VFO's.  To read the current channel reliably, we press the
+        dial (activates it for editing), then step right + step left (net zero
+        movement) and read from the step response which is always correct."""
+
+        # Press the VFO dial to activate it for editing
         self._drain()
         self._channel_text.clear()
-
-        # Press the VFO dial to trigger a display update
         if vfo == self.LEFT:
             self._send_button([0x00, 0x25], 3, 5)  # L_DIAL_PRESS
         else:
@@ -3981,25 +4193,41 @@ class RadioCATClient:
         time.sleep(0.3)
         self._drain(0.5)
 
-        # Press response maps to _channel_text[other_vfo] (swapped)
-        ch = self._channel_text.get(other_vfo, '').strip()
-        self._logmsg(f"    Current channel: {ch}", console=False)
+        # Step right then left (net zero) to read current channel from step response
+        step_r = [0x02] if vfo == self.LEFT else [0x82]  # DIAL_RIGHT
+        step_l = [0x01] if vfo == self.LEFT else [0x81]  # DIAL_LEFT
+        for step_cmd in (step_r, step_l):
+            self._channel_text.pop(vfo, None)
+            self._send_button(step_cmd, 2, 3)
+            time.sleep(0.05)
+            self._send_button_release()
+            time.sleep(0.15)
+            self._drain(0.3)
+
+        # After step-left, _channel_text[vfo] = current channel (back to original)
+        ch = self._channel_text.get(vfo, '').strip()
+        self._logmsg(f"    {vfo} current: ch='{ch}'", console=True)
 
         if not ch or not ch.isdigit():
-            self._logmsg(f"    {vfo}: no channel data, skipping (VFO mode?)")
+            self._logmsg(f"    {vfo}: no channel data, skipping (VFO mode or radio unresponsive)")
             return False
 
         if int(ch) == target_int:
-            self._logmsg(f"    Already on channel {target_int}")
+            self._logmsg(f"    {vfo} already on channel {target_int}", console=True)
             return True
 
         start_channel = ch
 
         # Step through channels
+        no_response_count = 0
         for i in range(200):
             if self._stop:
                 self._logmsg(f"    Aborted")
                 return False
+
+            # Save channel text before step to detect if radio responded
+            pre_step = self._channel_text.get(vfo, '').strip()
+
             if vfo == self.LEFT:
                 self._send_button([0x02], 2, 3)  # L_DIAL_RIGHT
             else:
@@ -4011,7 +4239,22 @@ class RadioCATClient:
 
             # Step response maps to _channel_text[vfo] (correct — opposite of press)
             ch = self._channel_text.get(vfo, '').strip()
-            self._logmsg(f"    Step {i+1}: ch='{ch}'", console=False)
+            self._logmsg(f"    {vfo} step {i+1}: ch='{ch}'")
+
+            # Detect no response — channel should always change on a step
+            if ch == pre_step:
+                no_response_count += 1
+                if no_response_count <= 3:
+                    self._logmsg(f"    Step {i+1}: no response (ch unchanged '{ch}'), retrying...")
+                    time.sleep(0.3)
+                    self._drain(0.3)
+                    continue
+                else:
+                    self._logmsg(f"    Radio unresponsive after {no_response_count} retries, aborting")
+                    return False
+            else:
+                no_response_count = 0  # reset on successful response
+
             if ch.isdigit() and int(ch) == target_int:
                 self._logmsg(f"    Channel set to {target_int} (stepped {i+1})")
                 return True
@@ -4054,6 +4297,7 @@ class RadioCATClient:
                 break
 
         self._logmsg(f"    Volume set to {target_level}%")
+        self._volume[vfo] = target_level
         return True
 
     def set_power(self, vfo, target):
@@ -4155,6 +4399,15 @@ class RadioCATClient:
             except Exception as e:
                 results.append((name, f'error: {e}'))
                 print(f"  CAT: {name} error: {e}")
+
+        # Send final button release, re-confirm RTS, and settle — rapid setup
+        # commands can leave the radio serial in a state where subsequent commands
+        # are ignored until RTS is reasserted
+        self._send_button_release()
+        time.sleep(0.3)
+        self.set_rts(True)
+        time.sleep(0.3)
+        self._drain(0.5)
 
         # Print concise summary
         ok_count = sum(1 for _, r in results if r == 'ok')
@@ -5677,11 +5930,14 @@ class WebConfigServer:
                         if parent.gateway.cat_client:
                             data = parent.gateway.cat_client.get_radio_state()
                             data['cat_enabled'] = True
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.send_header('Cache-Control', 'no-cache')
-                    self.end_headers()
-                    self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
                 elif self.path == '/radio':
                     # Radio control page
                     html = parent._generate_radio_page()
@@ -5801,20 +6057,63 @@ class WebConfigServer:
                             print("\n  [CAT] Disconnected via web")
                             result = {'ok': True}
                         elif cmd == 'SERIAL_DISCONNECT' and gw and gw.cat_client:
-                            resp = gw.cat_client._send_cmd("!serial disconnect")
+                            gw.cat_client._pause_drain()
+                            try:
+                                resp = gw.cat_client._send_cmd("!serial disconnect")
+                            finally:
+                                gw.cat_client._drain_paused = False
+                            if resp and 'disconnected' in resp:
+                                gw.cat_client._serial_connected = False
                             print(f"\n  [CAT] Serial disconnect: {resp}")
                             result = {'ok': resp and 'disconnected' in resp, 'status': resp or ''}
                         elif cmd == 'SERIAL_CONNECT' and gw and gw.cat_client:
                             # serial connect takes ~4s (startup sequence with sleeps)
-                            gw.cat_client._drain_paused = True
+                            cat = gw.cat_client
+                            cat._pause_drain()
                             try:
-                                gw.cat_client._sock.sendall(b"!serial connect\n")
-                                gw.cat_client._last_activity = time.monotonic()
-                                resp = gw.cat_client._recv_line(timeout=10.0)
+                                with cat._sock_lock:
+                                    cat._sock.sendall(b"!serial connect\n")
+                                    cat._last_activity = time.monotonic()
+                                    resp = cat._recv_line(timeout=10.0)
                             finally:
-                                gw.cat_client._drain_paused = False
+                                cat._drain_paused = False
+                            ok = resp and 'connected' in resp and 'already' not in resp
+                            if ok:
+                                cat._serial_connected = True
+                                # Display refresh: press+release each VFO dial
+                                time.sleep(0.3)
+                                cat._pause_drain()
+                                try:
+                                    cat._send_button([0x00, 0x25], 3, 5)  # L_DIAL_PRESS
+                                    time.sleep(0.15)
+                                    cat._send_button_release()
+                                    time.sleep(0.3)
+                                    cat._drain(0.5)
+                                    cat._send_button([0x00, 0xA5], 3, 5)  # R_DIAL_PRESS
+                                    time.sleep(0.15)
+                                    cat._send_button_release()
+                                    time.sleep(0.3)
+                                    cat._drain(0.5)
+                                finally:
+                                    cat._drain_paused = False
+                                # Read RTS state from saved file (TH9800 persists it)
+                                try:
+                                    with open('/tmp/th9800_rts_state', 'r') as f:
+                                        cat._rts_usb = f.read().strip() == '1'
+                                except Exception:
+                                    cat._rts_usb = None
+
                             print(f"\n  [CAT] Serial connect: {resp}")
-                            result = {'ok': resp and 'connected' in resp, 'status': resp or ''}
+                            result = {'ok': ok, 'status': resp or ''}
+                        elif cmd == 'SETUP_RADIO' and gw and gw.cat_client:
+                            # Run setup_radio (channels, volume, power) from config
+                            cat = gw.cat_client
+                            try:
+                                cat.setup_radio(gw.config)
+                                result = {'ok': True, 'status': 'setup complete'}
+                            except Exception as e:
+                                print(f"\n  [CAT] Setup error: {e}")
+                                result = {'ok': False, 'status': str(e)}
                         elif cmd == 'SERIAL_STATUS' and gw and gw.cat_client:
                             resp = gw.cat_client._send_cmd("!serial status")
                             result = {'ok': True, 'status': resp or 'unknown'}
@@ -5840,20 +6139,25 @@ class WebConfigServer:
                         elif cmd and gw and gw.cat_client:
                             cat = gw.cat_client
                             if cmd == 'VOL_LEFT':
-                                cat.send_web_volume(cat.LEFT, data.get('value', 50))
-                                result = {'ok': True}
+                                ret = cat.send_web_volume(cat.LEFT, data.get('value', 50))
+                                result = {'ok': False, 'error': ret} if ret == 'serial not connected' else {'ok': True}
                             elif cmd == 'VOL_RIGHT':
-                                cat.send_web_volume(cat.RIGHT, data.get('value', 50))
-                                result = {'ok': True}
+                                ret = cat.send_web_volume(cat.RIGHT, data.get('value', 50))
+                                result = {'ok': False, 'error': ret} if ret == 'serial not connected' else {'ok': True}
                             elif cmd == 'SQ_LEFT':
-                                cat.send_web_squelch(cat.LEFT, data.get('value', 25))
-                                result = {'ok': True}
+                                ret = cat.send_web_squelch(cat.LEFT, data.get('value', 25))
+                                result = {'ok': False, 'error': ret} if ret == 'serial not connected' else {'ok': True}
                             elif cmd == 'SQ_RIGHT':
-                                cat.send_web_squelch(cat.RIGHT, data.get('value', 25))
-                                result = {'ok': True}
+                                ret = cat.send_web_squelch(cat.RIGHT, data.get('value', 25))
+                                result = {'ok': False, 'error': ret} if ret == 'serial not connected' else {'ok': True}
                             else:
-                                ok = cat.send_web_command(cmd)
-                                result = {'ok': ok}
+                                ret = cat.send_web_command(cmd)
+                                if isinstance(ret, str):
+                                    if 'serial not connected' in ret:
+                                        cat._serial_connected = False
+                                    result = {'ok': False, 'error': ret}
+                                else:
+                                    result = {'ok': bool(ret)}
                     except Exception as e:
                         result = {'ok': False, 'error': str(e)}
                     self.send_response(200)
@@ -6313,27 +6617,14 @@ class WebConfigServer:
   <button onclick="catReconnect()" class="rb rb-sm">Reconnect</button>
   <span style="color:#333;">|</span>
   <span style="color:#888; font-size:0.85em;">Serial:</span>
-  <span id="serial-state" style="font-size:0.85em; color:#888;">—</span>
+  <span id="serial-state" style="font-size:0.85em; color:#888; display:inline-block; width:110px; text-align:center;">—</span>
   <button onclick="serialDisconnect()" class="rb rb-sm" style="background:#c0392b; border-color:#e74c3c;">Disconnect</button>
   <button onclick="serialConnect()" class="rb rb-sm">Connect</button>
+  <button onclick="setupRadio()" class="rb rb-sm" style="background:#2c3e50; border-color:#34495e;">Setup</button>
   <span style="color:#333;">|</span>
   <span style="color:#888; font-size:0.85em;">RTS TX:</span>
   <span id="rts-state" style="font-weight:bold;">—</span>
   <button onclick="catCmd('TOGGLE_RTS')" class="rb rb-sm">Toggle RTS</button>
-</div>
-
-<!-- Hyper Memories -->
-<div style="margin-bottom:14px; background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:10px 14px;">
-  <div style="color:#00d4ff; font-weight:bold; margin-bottom:8px;">Hyper Memories</div>
-  <div style="display:flex; gap:6px; flex-wrap:wrap;">
-    <button class="rb" onclick="catCmd('HYPER_A')">A</button>
-    <button class="rb" onclick="catCmd('HYPER_B')">B</button>
-    <button class="rb" onclick="catCmd('HYPER_C')">C</button>
-    <button class="rb" onclick="catCmd('HYPER_D')">D</button>
-    <button class="rb" onclick="catCmd('HYPER_E')">E</button>
-    <button class="rb" onclick="catCmd('HYPER_F')">F</button>
-    <button class="rb" onclick="catCmd('L_VOLUME_HOLD')" style="margin-left:14px;">Single VFO</button>
-  </div>
 </div>
 
 <!-- Two-column VFO display -->
@@ -6363,7 +6654,7 @@ class WebConfigServer:
     </div>
 
     <!-- Channel & Frequency display -->
-    <div style="background:#0d1b2a; border:1px solid #1b3a5c; border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace;">
+    <div id="l-freq-box" style="background:#0d1b2a; border:1px solid #1b3a5c; border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace; transition:background 0.2s, border-color 0.2s;">
       <div style="display:flex; justify-content:space-between; align-items:baseline;">
         <span style="color:#888; font-size:0.85em;">CH: <span id="l-ch" style="color:#2ecc71;">—</span></span>
         <span id="l-power" style="color:#f39c12; font-size:0.85em;">—</span>
@@ -6442,7 +6733,7 @@ class WebConfigServer:
     </div>
 
     <!-- Channel & Frequency display -->
-    <div style="background:#0d1b2a; border:1px solid #1b3a5c; border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace;">
+    <div id="r-freq-box" style="background:#0d1b2a; border:1px solid #1b3a5c; border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace; transition:background 0.2s, border-color 0.2s;">
       <div style="display:flex; justify-content:space-between; align-items:baseline;">
         <span style="color:#888; font-size:0.85em;">CH: <span id="r-ch" style="color:#2ecc71;">—</span></span>
         <span id="r-power" style="color:#f39c12; font-size:0.85em;">—</span>
@@ -6524,6 +6815,20 @@ class WebConfigServer:
   </div>
 </div>
 
+<!-- Hyper Memories -->
+<div style="margin-bottom:14px; background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:10px 14px;">
+  <div style="color:#00d4ff; font-weight:bold; margin-bottom:8px;">Hyper Memories</div>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="rb" onclick="catCmd('HYPER_A')">A</button>
+    <button class="rb" onclick="catCmd('HYPER_B')">B</button>
+    <button class="rb" onclick="catCmd('HYPER_C')">C</button>
+    <button class="rb" onclick="catCmd('HYPER_D')">D</button>
+    <button class="rb" onclick="catCmd('HYPER_E')">E</button>
+    <button class="rb" onclick="catCmd('HYPER_F')">F</button>
+    <button class="rb" onclick="catCmd('L_VOLUME_HOLD')" style="margin-left:14px;">Single VFO</button>
+  </div>
+</div>
+
 <!-- Mic Keypad -->
 <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px; margin-bottom:14px;">
   <div style="color:#00d4ff; font-weight:bold; margin-bottom:8px;">Microphone Keypad</div>
@@ -6580,9 +6885,23 @@ var _volTimer = {};
 
 var _pttActive = false;
 
+function showError(msg) {
+  var el = document.getElementById('cmd-error');
+  if (!el) { el = document.createElement('div'); el.id='cmd-error';
+    el.style.cssText='position:fixed;top:0;left:0;right:0;padding:8px;background:#c0392b;color:#fff;text-align:center;font-weight:bold;z-index:9999;cursor:pointer';
+    el.onclick=function(){el.style.display='none'};
+    document.body.appendChild(el); }
+  el.textContent = msg; el.style.display = 'block';
+  setTimeout(function(){ el.style.display='none'; }, 5000);
+}
+
 function catCmd(cmd) {
   fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cmd:cmd})});
+    body:JSON.stringify({cmd:cmd})})
+    .then(function(r){return r.json()}).then(function(d) {
+      if (!d.ok && d.error) showError(d.error === 'serial not connected' ?
+        'Serial not connected — press Connect first' : d.error);
+    }).catch(function(){});
 }
 
 function togglePTT() {
@@ -6624,25 +6943,23 @@ function catReconnect() {
 }
 
 function serialDisconnect() {
-  var el = document.getElementById('serial-state');
-  el.textContent = 'disconnecting...'; el.style.color = '#f39c12';
   fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cmd:'SERIAL_DISCONNECT'})})
-    .then(function(r){return r.json()}).then(function(d) {
-      el.textContent = d.status || (d.ok ? 'disconnected' : 'failed');
-      el.style.color = d.ok ? '#e74c3c' : '#888';
-    }).catch(function(){ el.textContent = 'error'; el.style.color = '#e74c3c'; });
+    body:JSON.stringify({cmd:'SERIAL_DISCONNECT'})});
 }
 
 function serialConnect() {
   var el = document.getElementById('serial-state');
-  el.textContent = 'connecting...'; el.style.color = '#f39c12';
+  el.textContent = 'connecting'; el.style.color = '#f39c12';
   fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cmd:'SERIAL_CONNECT'})})
+    body:JSON.stringify({cmd:'SERIAL_CONNECT'})});
+}
+
+function setupRadio() {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'SETUP_RADIO'})})
     .then(function(r){return r.json()}).then(function(d) {
-      el.textContent = d.status || (d.ok ? 'connected' : 'failed');
-      el.style.color = d.ok ? '#2ecc71' : '#e74c3c';
-    }).catch(function(){ el.textContent = 'error'; el.style.color = '#e74c3c'; });
+      if (!d.ok) showError(d.status || 'setup failed');
+    });
 }
 
 function catVol(target, value) {
@@ -6655,8 +6972,20 @@ function catVol(target, value) {
   _volTimer[target] = setTimeout(function() {
     var cmd = isSq ? 'SQ_' + target.replace('_SQ','') : 'VOL_' + target;
     fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({cmd:cmd, value:parseInt(value)})});
+      body:JSON.stringify({cmd:cmd, value:parseInt(value)})})
+      .then(function(r){return r.json()}).then(function(d) {
+        if (!d.ok && d.error) showError(d.error === 'serial not connected' ?
+          'Serial not connected — press Connect first' : d.error);
+      }).catch(function(){});
   }, 100);
+}
+
+function fmtFreq(s) {
+  if (!s || s.indexOf('\\u2014') >= 0) return s;
+  // Strip existing periods/spaces, keep only digits
+  var d = s.replace(/[^0-9]/g, '');
+  if (d.length > 3) return d.slice(0, d.length - 3) + '.' + d.slice(d.length - 3);
+  return s;
 }
 
 function setIcon(id, on) {
@@ -6674,6 +7003,11 @@ function updateRadio() {
     document.getElementById('cat-offline').style.display = 'none';
     document.getElementById('radio-panel').style.display = 'block';
 
+    // Serial state
+    var sel = document.getElementById('serial-state');
+    if (d.serial_connected) { sel.textContent = 'connected'; sel.style.color = '#2ecc71'; }
+    else { sel.textContent = 'disconnected'; sel.style.color = '#e74c3c'; }
+
     // RTS
     var rts = document.getElementById('rts-state');
     if (d.rts_usb === true) { rts.textContent = 'USB Controlled'; rts.style.color = '#2ecc71'; }
@@ -6682,7 +7016,7 @@ function updateRadio() {
 
     // LEFT VFO
     var L = d.left;
-    document.getElementById('l-freq').textContent = L.display || '\\u2014\\u2014\\u2014';
+    document.getElementById('l-freq').textContent = fmtFreq(L.display) || '\\u2014\\u2014\\u2014';
     document.getElementById('l-ch').textContent = L.channel || '\\u2014';
     document.getElementById('l-power').textContent = L.power ? 'PWR: ' + L.power : '';
     document.getElementById('l-sig-bar').style.width = (L.signal / 9 * 100) + '%';
@@ -6694,11 +7028,14 @@ function updateRadio() {
     setIcon('l-skip', li.SKIP); setIcon('l-dcs', li.DCS); setIcon('l-mute', li.MUTE);
     setIcon('l-mt', li.MT); setIcon('l-busy', li.BUSY); setIcon('l-am', li.AM);
 
-    // Note: PTT button state is controlled by user clicks only (togglePTT)
+    // PTT indication — red background on freq display when TX active
+    var lBox = document.getElementById('l-freq-box');
+    if (li.TX) { lBox.style.background = '#5c1a1a'; lBox.style.borderColor = '#e74c3c'; }
+    else { lBox.style.background = '#0d1b2a'; lBox.style.borderColor = '#1b3a5c'; }
 
     // RIGHT VFO
     var R = d.right;
-    document.getElementById('r-freq').textContent = R.display || '\\u2014\\u2014\\u2014';
+    document.getElementById('r-freq').textContent = fmtFreq(R.display) || '\\u2014\\u2014\\u2014';
     document.getElementById('r-ch').textContent = R.channel || '\\u2014';
     document.getElementById('r-power').textContent = R.power ? 'PWR: ' + R.power : '';
     document.getElementById('r-sig-bar').style.width = (R.signal / 9 * 100) + '%';
@@ -6710,10 +7047,23 @@ function updateRadio() {
     setIcon('r-skip', ri.SKIP); setIcon('r-dcs', ri.DCS); setIcon('r-mute', ri.MUTE);
     setIcon('r-mt', ri.MT); setIcon('r-busy', ri.BUSY); setIcon('r-am', ri.AM);
 
+    // PTT indication — red background on freq display when TX active
+    var rBox = document.getElementById('r-freq-box');
+    if (ri.TX) { rBox.style.background = '#5c1a1a'; rBox.style.borderColor = '#e74c3c'; }
+    else { rBox.style.background = '#0d1b2a'; rBox.style.borderColor = '#1b3a5c'; }
+
     // Common icons
     var ci = d.common || {};
     setIcon('c-apo', ci.APO); setIcon('c-lock', ci.LOCK);
     setIcon('c-set', ci.SET); setIcon('c-key2', ci.KEY2);
+
+    // Sync volume sliders from actual radio state
+    if (d.volume) {
+      var lv=document.getElementById('l-vol'), rv=document.getElementById('r-vol');
+      var lvt=document.getElementById('l-vol-val'), rvt=document.getElementById('r-vol-val');
+      if (lv && d.volume.left >= 0 && !lv.matches(':active')) { lv.value=d.volume.left; if(lvt) lvt.textContent=d.volume.left; }
+      if (rv && d.volume.right >= 0 && !rv.matches(':active')) { rv.value=d.volume.right; if(rvt) rvt.textContent=d.volume.right; }
+    }
 
   }).catch(function(){});
 }
@@ -6878,7 +7228,9 @@ function updateStatus() {
     }
     if(s.ddns) h += '<div class="st-item"><span class="st-label">DNS:</span><span class="st-val green">'+s.ddns+'</span></div>';
     if(s.charger) h += '<div class="st-item"><span class="st-label">Charger:</span><span class="st-val '+(s.charger.startsWith("CHARGING")?'green':'red')+'">'+s.charger+'</span></div>';
-    if(s.cat) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==="idle"?'green':s.cat==="active"?'red':'white')+'">'+s.cat+'</span></div>';
+    if(s.cat) { h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==="idle"?'green':s.cat==="active"?'red':'white')+'">'+s.cat+'</span></div>'; }
+    if(s.cat_reliability && s.cat_reliability.sent) { var r=s.cat_reliability; var missClr=r.missed>0?'red':'green'; h += '<div class="st-item"><span class="st-label">CMD:</span><span class="st-val green">'+r.sent+'</span>/<span class="st-val '+missClr+'">'+r.missed+' miss</span></div>'; }
+    if(s.cat_reliability && s.cat_reliability.last_miss) { h += '<div class="st-item"><span class="st-val red" style="font-size:11px">'+s.cat_reliability.last_miss+'</span></div>'; }
     h += '</div>';
 
     // Audio levels — same order as console: TX RX SP SDR1 SDR2 SV/CL AN
@@ -6914,6 +7266,13 @@ function updateStatus() {
     setBtn('btn-y', s.processing.indexOf('Spectral')>=0, 'active');
     setBtn('btn-w', s.processing.indexOf('Wiener')>=0, 'active');
     setBtn('btn-e', s.processing.indexOf('Echo')>=0, 'active');
+    // Sync radio volume sliders with actual values from CAT
+    if(s.cat_vol) {
+      var lv=document.getElementById('l-vol'), rv=document.getElementById('r-vol');
+      var lvt=document.getElementById('l-vol-val'), rvt=document.getElementById('r-vol-val');
+      if(lv && !lv.matches(':active')) { lv.value=s.cat_vol.left; if(lvt) lvt.textContent=s.cat_vol.left; }
+      if(rv && !rv.matches(':active')) { rv.value=s.cat_vol.right; if(rvt) rvt.textContent=s.cat_vol.right; }
+    }
   }).catch(function(){ _lost=true; document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>'; });
 }
 
@@ -8433,6 +8792,14 @@ class RadioGateway:
                     self.cat_client = RadioCATClient(host, port, password, verbose=verbose)
                     if self.cat_client.connect():
                         print("  Connected to CAT server")
+                        # Pre-set volume from config so dashboard sliders show
+                        # correct values even if setup_radio is disabled or fails
+                        left_vol = getattr(self.config, 'CAT_LEFT_VOLUME', -1)
+                        right_vol = getattr(self.config, 'CAT_RIGHT_VOLUME', -1)
+                        if int(left_vol) != -1:
+                            self.cat_client._volume[self.cat_client.LEFT] = int(left_vol)
+                        if int(right_vol) != -1:
+                            self.cat_client._volume[self.cat_client.RIGHT] = int(right_vol)
                         if self.config.CAT_STARTUP_COMMANDS:
                             # Install SIGINT handler to stop CAT loops
                             _cat_ref = self.cat_client
@@ -10437,8 +10804,19 @@ class RadioGateway:
 
         # CAT
         cat_state = ''
+        cat_reliability = {}
+        cat_vol = {}
         if self.cat_client:
             cat_state = 'active' if time.monotonic() - self.cat_client._last_activity < 1.0 else 'idle'
+            cat_reliability = {
+                'sent': self.cat_client._cmd_sent,
+                'missed': self.cat_client._cmd_no_response,
+                'last_miss': self.cat_client._last_no_response,
+            }
+            cat_vol = {
+                'left': self.cat_client._volume.get(self.cat_client.LEFT, 25),
+                'right': self.cat_client._volume.get(self.cat_client.RIGHT, 25),
+            }
         elif getattr(self.config, 'ENABLE_CAT_CONTROL', False):
             cat_state = 'disconnected'
 
@@ -10483,6 +10861,8 @@ class RadioGateway:
             'ddns': ddns_status,
             'charger': charger_state,
             'cat': cat_state,
+            'cat_reliability': cat_reliability,
+            'cat_vol': cat_vol,
             'relay_pressing': getattr(self, '_relay_radio_pressing', False),
             'sdr1_enabled': bool(self.sdr_source),
             'sdr2_enabled': bool(self.sdr2_source),

@@ -27,8 +27,12 @@
 [startup]
 # Startup script options (used by start.sh, not the gateway itself)
 
-# Launch TH-9800 CAT control GUI on startup
+# Launch TH-9800 CAT control on startup
 START_TH9800_CAT = false
+
+# Run TH-9800 CAT headless (no GUI, no dearpygui dependency)
+# Requires: pyserial, pyserial-asyncio
+TH9800_CAT_HEADLESS = false
 
 # Open Claude Code in a new terminal on startup
 START_CLAUDE_CODE = false

@@ -23,6 +23,7 @@ read_config() {
 # Read startup options from config
 ENABLE_STREAM_OUTPUT="$(read_config ENABLE_STREAM_OUTPUT false)"
 START_TH9800_CAT="$(read_config START_TH9800_CAT false)"
+TH9800_CAT_HEADLESS="$(read_config TH9800_CAT_HEADLESS false)"
 START_CLAUDE_CODE="$(read_config START_CLAUDE_CODE false)"
 
 echo "=========================================="
@@ -126,18 +127,66 @@ else
         fi
     done
 
-    if [ -n "$TH9800_DIR" ]; then
-        # Prefer run.sh (uses venv), fall back to running TH9800_CAT.py directly
-        if [ -f "$TH9800_DIR/run.sh" ]; then
-            TH9800_CMD="$TH9800_DIR/run.sh"
-        elif [ -f "$TH9800_DIR/TH9800_CAT.py" ]; then
-            TH9800_CMD="python3 $TH9800_DIR/TH9800_CAT.py"
-        else
-            TH9800_CMD=""
-        fi
+    if [ -n "$TH9800_DIR" ] && [ -f "$TH9800_DIR/TH9800_CAT.py" ]; then
+        ts "  Found TH-9800 at: $TH9800_DIR"
 
-        if [ -n "$TH9800_CMD" ]; then
-            ts "  Found TH-9800 at: $TH9800_DIR"
+        if [ "$TH9800_CAT_HEADLESS" = "true" ]; then
+            # Headless mode: no GUI, no dearpygui dependency
+            # Read serial device and baud rate from TH9800_CAT config.txt
+            TH9800_CFG="$TH9800_DIR/config.txt"
+            TH9800_BAUD="19200"
+            TH9800_DEVICE=""
+            if [ -f "$TH9800_CFG" ]; then
+                TH9800_BAUD="$(grep -m1 '^baud_rate=' "$TH9800_CFG" | cut -d= -f2 | tr -d ' ')"
+                TH9800_DEVICE_NAME="$(grep -m1 '^device=' "$TH9800_CFG" | cut -d= -f2 | sed 's/^[[:space:]]*//')"
+                [ -z "$TH9800_BAUD" ] && TH9800_BAUD="19200"
+            fi
+            # Find COM port matching device name from config
+            if [ -n "$TH9800_DEVICE_NAME" ]; then
+                TH9800_DEVICE="$(python3 -c "
+import serial.tools.list_ports
+for p in serial.tools.list_ports.comports():
+    if '$TH9800_DEVICE_NAME' in p.description:
+        print(p.device)
+        break
+" 2>/dev/null)"
+            fi
+            if [ -z "$TH9800_DEVICE" ]; then
+                ts "  No serial device matching '$TH9800_DEVICE_NAME' found"
+                ts "  Available ports:"
+                python3 -c "import serial.tools.list_ports; [print(f'    {p.device}: {p.description}') for p in serial.tools.list_ports.comports() if 'ttyUSB' in p.device or 'ttyACM' in p.device]" 2>/dev/null
+            else
+                CAT_PORT="$(read_config CAT_PORT 9800)"
+                CAT_PASSWORD="$(read_config CAT_PASSWORD "")"
+                ts "  Starting headless: $TH9800_DEVICE @ $TH9800_BAUD, port $CAT_PORT"
+                python3 -u "$TH9800_DIR/TH9800_CAT.py" \
+                    -s -c "$TH9800_DEVICE" -b "$TH9800_BAUD" \
+                    -p "$CAT_PASSWORD" -sH 0.0.0.0 -sP "$CAT_PORT" \
+                    > /tmp/th9800_cat.log 2>&1 &
+                TH9800_PID=$!
+                # Wait for TCP port to be ready (up to 10s)
+                for i in $(seq 1 20); do
+                    if ss -tlnp 2>/dev/null | grep -q ":${CAT_PORT} " ; then
+                        break
+                    fi
+                    sleep 0.5
+                done
+                if ps -p $TH9800_PID > /dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${CAT_PORT} "; then
+                    ts "  TH-9800 CAT headless started (PID: $TH9800_PID, port $CAT_PORT)"
+                else
+                    ts "  TH-9800 CAT headless failed to start"
+                    [ -f /tmp/th9800_cat.log ] && cat /tmp/th9800_cat.log
+                    TH9800_PID=""
+                fi
+            fi
+        else
+            # GUI mode: prefer run.sh (uses venv), fall back to direct
+            if [ -f "$TH9800_DIR/run.sh" ]; then
+                TH9800_CMD="$TH9800_DIR/run.sh"
+            else
+                TH9800_CMD="python3 $TH9800_DIR/TH9800_CAT.py"
+            fi
+            ts "  Starting GUI mode..."
             $TH9800_CMD > /tmp/th9800_cat.log 2>&1 &
             TH9800_PID=$!
             sleep 2
@@ -147,9 +196,9 @@ else
                 ts "  TH-9800 CAT failed to start (continuing anyway)"
                 TH9800_PID=""
             fi
-        else
-            ts "  TH-9800 folder found ($TH9800_DIR) but no run.sh or TH9800_CAT.py inside"
         fi
+    elif [ -n "$TH9800_DIR" ]; then
+        ts "  TH-9800 folder found ($TH9800_DIR) but no TH9800_CAT.py inside"
     else
         ts "  No TH-9800 folder found in ~/Downloads (skipping)"
     fi
