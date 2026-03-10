@@ -311,6 +311,8 @@ class Config:
             'WEB_CONFIG_PASSWORD': '',    # Basic auth password (user: admin), blank = no auth
             'WEB_CONFIG_HTTPS': False,    # false, self-signed, or letsencrypt
             # Cloudflare Tunnel (free public HTTPS access, no port forwarding needed)
+            'SDR_INTERNAL_AUTOSTART': True,    # Auto-start internal SDR (rtl_airband) on gateway startup
+            'SDR_INTERNAL_AUTOSTART_CHANNEL': 1,   # Channel slot to recall on autostart (-1 = use last settings)
             'ENABLE_CLOUDFLARE_TUNNEL': False,
             # Email notifications (Gmail SMTP)
             'ENABLE_EMAIL': False,
@@ -6177,6 +6179,20 @@ class WebConfigServer:
                 print(f"  [SDR] Manager init failed: {e}")
                 self.sdr_manager = None
 
+            # Auto-start internal SDR if configured
+            if self.sdr_manager and getattr(self.config, 'SDR_INTERNAL_AUTOSTART', False):
+                try:
+                    ch = int(getattr(self.config, 'SDR_INTERNAL_AUTOSTART_CHANNEL', -1))
+                    if 0 <= ch <= 9 and self.sdr_manager.channels[ch]:
+                        result = self.sdr_manager.recall_channel(ch)
+                        print(f"  [SDR] Autostart: recalled CH {ch} — {'OK' if result.get('ok') else result.get('error', 'failed')}")
+                    else:
+                        # Use last saved settings (already loaded by _load_channels)
+                        result = self.sdr_manager.apply_settings()
+                        print(f"  [SDR] Autostart: using last settings — {'OK' if result.get('ok') else result.get('error', 'failed')}")
+                except Exception as e:
+                    print(f"  [SDR] Autostart failed: {e}")
+
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, format, *args):
                 pass  # Suppress request logging
@@ -8161,7 +8177,7 @@ pollTimer = setInterval(pollStatus, 1000);
     <h3>System</h3>
     <button onclick="sendKey('@')">Send Email</button>
     <button onclick="if(confirm('Restart gateway?'))sendKey('q')" class="btn-restart">Restart</button>
-    <button onclick="if(confirm('Exit the gateway server? This will stop all services.')){fetch('/exit',{method:'POST'}).then(()=>{document.body.innerHTML='<h1 style=\"color:#e0e0e0;text-align:center;margin-top:40vh\">Gateway stopped.</h1>';});}" class="btn-exit">Exit Server</button>
+    <button onclick="if(confirm('Exit the gateway server? This will stop all services.')){fetch('/exit',{method:'POST'}).then(()=>{document.body.innerHTML='<h1 style=&quot;color:#e0e0e0;text-align:center;margin-top:40vh&quot;>Gateway stopped.</h1>';});}" class="btn-exit">Exit Server</button>
   </div>
 </div>
 
