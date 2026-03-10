@@ -1,6 +1,6 @@
 [Unit]
 Description=Radio Gateway — Mumble to Radio Bridge
-After=network-online.target sound.target
+After=network-online.target sound.target graphical.target
 Wants=network-online.target
 
 [Service]
@@ -8,6 +8,10 @@ Type=simple
 User=__USER__
 Group=__USER__
 WorkingDirectory=__GATEWAY_DIR__
+
+# Wait for PipeWire/WirePlumber to be fully ready after graphical login
+# (SDR capture sinks, PulseAudio bridge, and audio routing need the user session)
+ExecStartPre=/bin/sleep 5
 ExecStart=__GATEWAY_DIR__/start.sh
 ExecStop=/bin/kill -TERM $MAINPID
 KillMode=process
@@ -34,6 +38,7 @@ SupplementaryGroups=audio uucp
 Environment=HOME=__HOME__
 Environment=XDG_RUNTIME_DIR=/run/user/__UID__
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/__UID__/bus
+Environment=DISPLAY=:0
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
