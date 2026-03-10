@@ -43,7 +43,7 @@ echo "Package manager: $DISTRO"
 echo
 
 # ── 1. System packages ───────────────────────────────────────
-echo "[ 1/14 ] Installing system packages..."
+echo "[ 1/15 ] Installing system packages..."
 if [ "$DISTRO" = "arch" ]; then
     sudo pacman -Sy --noconfirm --needed \
         python \
@@ -76,7 +76,7 @@ echo "  ✓ System packages installed"
 echo
 
 # ── 2. ALSA loopback module ──────────────────────────────────
-echo "[ 2/14 ] Setting up ALSA loopback (for SDR input)..."
+echo "[ 2/15 ] Setting up ALSA loopback (for SDR input)..."
 
 # Write modprobe options first:
 #   enable=1,1,1 → enable 3 independent loopback cards
@@ -152,7 +152,7 @@ echo "$LOOPBACK_LINES" | grep "Loopback" | sed 's/^/    /' || true
 echo
 
 # ── 3. Python packages ───────────────────────────────────────
-echo "[ 3/14 ] Installing Python packages..."
+echo "[ 3/15 ] Installing Python packages..."
 
 # Helper: try --break-system-packages (Debian 12+), then plain pip
 _pip() {
@@ -239,7 +239,7 @@ fi
 echo
 
 # ── 4. UDEV rules for AIOC ──────────────────────────────────
-echo "[ 4/14 ] Setting up UDEV rules for AIOC USB device..."
+echo "[ 4/15 ] Setting up UDEV rules for AIOC USB device..."
 UDEV_RULE='SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="audio"
 SUBSYSTEM=="hidraw", SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="audio"
 SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", MODE="0666", GROUP="uucp"'
@@ -461,7 +461,7 @@ fi
 echo
 
 # ── 5. Audio group, realtime limits, and sudoers ─────────────────
-echo "[ 5/14 ] Setting up audio permissions..."
+echo "[ 5/15 ] Setting up audio permissions..."
 set +e   # None of this should abort the install
 
 # Determine the real (non-root) user running this script
@@ -542,7 +542,7 @@ fi
 echo
 
 # ── 6. Darkice (optional — for Broadcastify/Icecast streaming) ───
-echo "[ 6/14 ] Darkice streaming (optional)..."
+echo "[ 6/15 ] Darkice streaming (optional)..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
     if sudo pacman -S --noconfirm --needed lame 2>/dev/null; then
@@ -642,8 +642,163 @@ fi
 set -e
 echo
 
-# ── 7. Ollama local LLM (optional — for free Smart Announcements) ──
-echo "[ 7/14 ] Installing Ollama local LLM (optional — for Smart Announcements)..."
+# ── 7. SDR stack (optional — for SDR receiver input via rtl_airband) ──
+echo "[ 7/15 ] Installing SDR receiver stack (optional — for web-controlled SDR input)..."
+set +e
+
+SDR_INSTALLED=false
+
+if [ "$DISTRO" = "arch" ]; then
+    # SDR packages are in AUR — need an AUR helper
+    AUR_USER=${SUDO_USER:-$USER}
+    AUR_HELPER=""
+    for helper in yay paru; do
+        if sudo -u "$AUR_USER" bash -c "command -v $helper" &>/dev/null; then
+            AUR_HELPER="$helper"
+            break
+        fi
+    done
+
+    if [ -n "$AUR_HELPER" ]; then
+        # Install SDRplay API library (provides sdrplay_apiService daemon)
+        if command -v sdrplay_apiService &>/dev/null || pacman -Q libsdrplay 2>/dev/null | grep -q libsdrplay; then
+            echo "  ✓ SDRplay API (libsdrplay) already installed"
+        else
+            echo "  Installing SDRplay API (libsdrplay) from AUR..."
+            if sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm libsdrplay 2>/dev/null; then
+                echo "  ✓ libsdrplay installed"
+            else
+                echo "  ⚠ Could not install libsdrplay — install manually: $AUR_HELPER -S libsdrplay"
+            fi
+        fi
+
+        # Install SoapySDR + SDRplay plugin (SoapySDR bridge for rtl_airband)
+        if python3 -c "import SoapySDR" 2>/dev/null || pacman -Q soapysdr 2>/dev/null | grep -q soapysdr; then
+            echo "  ✓ SoapySDR already installed"
+        else
+            echo "  Installing SoapySDR from AUR..."
+            if sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm soapysdr 2>/dev/null; then
+                echo "  ✓ SoapySDR installed"
+            else
+                echo "  ⚠ Could not install SoapySDR — install manually: $AUR_HELPER -S soapysdr"
+            fi
+        fi
+
+        if pacman -Q soapysdrplay3-git 2>/dev/null | grep -q soapysdrplay3; then
+            echo "  ✓ SoapySDRPlay3 plugin already installed"
+        else
+            echo "  Installing SoapySDRPlay3 plugin from AUR..."
+            if sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm soapysdrplay3-git 2>/dev/null; then
+                echo "  ✓ SoapySDRPlay3 installed"
+            else
+                echo "  ⚠ Could not install SoapySDRPlay3 — install manually: $AUR_HELPER -S soapysdrplay3-git"
+            fi
+        fi
+
+        # Install rtl_airband (SDR demodulator — outputs audio to PulseAudio)
+        if command -v rtl_airband &>/dev/null; then
+            echo "  ✓ rtl_airband already installed"
+            SDR_INSTALLED=true
+        else
+            echo "  Installing rtl_airband from AUR..."
+            if sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm rtlsdr-airband-git 2>/dev/null; then
+                echo "  ✓ rtl_airband installed"
+                SDR_INSTALLED=true
+            else
+                echo "  ⚠ Could not install rtl_airband — install manually: $AUR_HELPER -S rtlsdr-airband-git"
+            fi
+        fi
+    else
+        echo "  ⚠ No AUR helper found (yay/paru) — cannot install SDR packages"
+        echo "    Install an AUR helper, then run:"
+        echo "      yay -S libsdrplay soapysdr soapysdrplay3-git rtlsdr-airband-git"
+    fi
+else
+    # Debian/Ubuntu — SoapySDR is in apt, others need manual install
+    echo "  Installing SoapySDR from apt..."
+    sudo apt-get install -y soapysdr-tools libsoapysdr-dev 2>/dev/null \
+        && echo "  ✓ SoapySDR installed" \
+        || echo "  ⚠ Could not install SoapySDR — install manually"
+
+    if command -v rtl_airband &>/dev/null; then
+        echo "  ✓ rtl_airband already installed"
+        SDR_INSTALLED=true
+    else
+        echo "  ⚠ rtl_airband not available in apt — build from source:"
+        echo "    https://github.com/charlie-foxtrot/RTLSDR-Airband"
+    fi
+
+    if ! command -v sdrplay_apiService &>/dev/null; then
+        echo "  ⚠ SDRplay API not installed — download from https://www.sdrplay.com/downloads/"
+        echo "    Install the .run file, then: sudo systemctl enable sdrplay.service"
+    fi
+fi
+
+# Create rtl_airband config directory
+sudo mkdir -p /etc/rtl_airband
+echo "  ✓ /etc/rtl_airband/ directory ready"
+
+# Enable sdrplay.service (the API daemon that rtl_airband talks to)
+if systemctl list-unit-files sdrplay.service &>/dev/null 2>&1; then
+    sudo systemctl enable sdrplay.service 2>/dev/null || true
+    echo "  ✓ sdrplay.service enabled (starts on boot)"
+else
+    echo "  ⚠ sdrplay.service not found — SDRplay API not installed yet"
+fi
+
+# Deploy WirePlumber null-audio-sink config for SDR capture
+# Creates sdr_capture + sdr_capture2 PipeWire sinks that the gateway reads via FFmpeg
+WIREPLUMBER_SDR_SRC="$GATEWAY_DIR/scripts/90-sdr-capture-sink.conf"
+WIREPLUMBER_SDR_DEST="$WIREPLUMBER_CONF_DIR/90-sdr-capture-sink.conf"
+if [ -d "$WIREPLUMBER_CONF_DIR" ] || mkdir -p "$WIREPLUMBER_CONF_DIR" 2>/dev/null; then
+    if [ ! -f "$WIREPLUMBER_SDR_DEST" ]; then
+        if [ -f "$WIREPLUMBER_SDR_SRC" ]; then
+            cp "$WIREPLUMBER_SDR_SRC" "$WIREPLUMBER_SDR_DEST" \
+                && echo "  ✓ WirePlumber SDR capture sinks configured (sdr_capture + sdr_capture2)" \
+                || echo "  ⚠ Could not install WirePlumber SDR sink config"
+        else
+            echo "  ⚠ $WIREPLUMBER_SDR_SRC not found — skipping SDR sink config"
+        fi
+    else
+        echo "  ✓ WirePlumber SDR capture sink config already exists"
+    fi
+    systemctl --user restart wireplumber 2>/dev/null || true
+else
+    echo "  ⚠ Could not create WirePlumber config directory — SDR audio routing needs manual setup"
+fi
+
+# Sudoers: allow passwordless sudo for SDR operations
+# rtl_airband config writes, process management, sdrplay service control
+SUDOERS_SDR="/etc/sudoers.d/radio-gateway-sdr"
+KILLALL_BIN=$(which killall 2>/dev/null || echo /usr/bin/killall)
+SYSTEMCTL_SDR=$(which systemctl 2>/dev/null || echo /usr/bin/systemctl)
+TEE_BIN=$(which tee 2>/dev/null || echo /usr/bin/tee)
+if [ -n "$ACTUAL_USER" ]; then
+    cat > /tmp/_sudoers_sdr <<SUDOERS_EOF
+# Radio Gateway — SDR operations (passwordless)
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $TEE_BIN /etc/rtl_airband/*
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $KILLALL_BIN rtl_airband
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $KILLALL_BIN -9 rtl_airband
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $KILLALL_BIN -9 sdrplay_apiService
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_SDR start sdrplay.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_SDR stop sdrplay.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_SDR restart sdrplay.service
+SUDOERS_EOF
+    if visudo -cf /tmp/_sudoers_sdr > /dev/null 2>&1; then
+        sudo cp /tmp/_sudoers_sdr "$SUDOERS_SDR"
+        sudo chmod 440 "$SUDOERS_SDR"
+        echo "  ✓ Passwordless sudo configured for SDR operations"
+    else
+        echo "  ⚠ Could not validate SDR sudoers rule"
+    fi
+    rm -f /tmp/_sudoers_sdr
+fi
+
+set -e
+echo
+
+# ── 8. Ollama local LLM (optional — for free Smart Announcements) ──
+echo "[ 8/15 ] Installing Ollama local LLM (optional — for Smart Announcements)..."
 set +e
 if command -v ollama &>/dev/null; then
     echo "  ✓ Ollama already installed"
@@ -694,7 +849,7 @@ set -e
 echo
 
 # ── 8. Mumble GUI client ─────────────────────────────────────
-echo "[ 8/14 ] Installing Mumble client..."
+echo "[ 9/15 ] Installing Mumble client..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
     sudo pacman -S --noconfirm --needed mumble 2>/dev/null
@@ -710,7 +865,7 @@ set -e
 echo
 
 # ── 8. Mumble server (murmurd) ───────────────────────────────
-echo "[ 9/14 ] Installing Mumble server (optional — for local server instances)..."
+echo "[ 10/15 ] Installing Mumble server (optional — for local server instances)..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
     if sudo pacman -S --noconfirm --needed mumble-server 2>/dev/null; then
@@ -759,7 +914,7 @@ set -e
 echo
 
 # ── 9. OpenSSL TLS compatibility (for older Mumble servers) ──
-echo "[ 10/14 ] Configuring OpenSSL for TLS 1.0 compatibility..."
+echo "[ 11/15 ] Configuring OpenSSL for TLS 1.0 compatibility..."
 OPENSSL_CNF="/etc/ssl/openssl.cnf"
 if [ -f "$OPENSSL_CNF" ]; then
     # Check if already patched
@@ -788,7 +943,7 @@ fi
 echo
 
 # ── 10. Gateway configuration ────────────────────────────────
-echo "[ 11/14 ] Setting up configuration..."
+echo "[ 12/15 ] Setting up configuration..."
 
 CONFIG_DEST="$GATEWAY_DIR/gateway_config.txt"
 CONFIG_SRC="$GATEWAY_DIR/examples/gateway_config.txt"
@@ -810,7 +965,7 @@ echo "  ✓ audio/ directory ready (place announcement files here)"
 echo
 
 # ── 11. Make scripts executable ──────────────────────────────
-echo "[ 12/14 ] Setting permissions..."
+echo "[ 13/15 ] Setting permissions..."
 chmod +x "$GATEWAY_DIR/radio_gateway.py" 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/scripts/"*.sh 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/start.sh" 2>/dev/null || true
@@ -818,7 +973,7 @@ echo "  ✓ Scripts are executable"
 echo
 
 # ── 12. Systemd service ─────────────────────────────────────
-echo "[ 13/14 ] Installing systemd service..."
+echo "[ 14/15 ] Installing systemd service..."
 ACTUAL_USER=${SUDO_USER:-$USER}
 ACTUAL_HOME=$(eval echo "~$ACTUAL_USER")
 ACTUAL_UID=$(id -u "$ACTUAL_USER")
@@ -862,7 +1017,7 @@ rm -f /tmp/_sudoers_gw
 echo
 
 # ── 13. Desktop shortcuts ──────────────────────────────────
-echo "[ 14/14 ] Creating desktop shortcuts..."
+echo "[ 15/15 ] Creating desktop shortcuts..."
 DESKTOP_DIR="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
 if [ -d "$DESKTOP_DIR" ] || mkdir -p "$DESKTOP_DIR" 2>/dev/null; then
     # Remove old manual-launch shortcut (replaced by systemd service shortcuts)
@@ -919,11 +1074,12 @@ echo "  5. Start the gateway (use desktop shortcuts or systemctl):"
 echo "       sudo systemctl start radio-gateway"
 echo "     Or use the Gateway Start shortcut on your desktop"
 echo
-echo "SDR INPUT (optional):"
-echo "  Route SDR software audio output to ALSA loopback hw:X,0"
-echo "  Gateway reads from the capture side: hw:X,1"
-echo "  Set SDR_DEVICE_NAME in gateway_config.txt"
-echo "  Verify loopback devices: aplay -l | grep Loopback"
+echo "SDR RECEIVER (optional — RSPduo / RTL-SDR via rtl_airband):"
+echo "  The installer configured rtl_airband, SoapySDR, and PipeWire SDR sinks."
+echo "  Set ENABLE_SDR = true and SDR_DEVICE_TYPE = sdrplay in gateway_config.txt"
+echo "  Use the SDR Control page (http://<gateway-ip>:8080/sdr) to tune and manage"
+echo "  Audio chain: RSPduo → SoapySDR → rtl_airband → PulseAudio → sdr_capture sink → gateway"
+echo "  Verify SDR sinks: pw-cli list-objects | grep sdr_capture"
 echo
 echo "STREAMING (optional):"
 echo "  Configure /etc/darkice.cfg with your Broadcastify credentials"
@@ -940,6 +1096,9 @@ echo "WEB CONFIGURATION UI & LIVE DASHBOARD (optional):"
 echo "  Set ENABLE_WEB_CONFIG = true in gateway_config.txt"
 echo "  Config editor: http://<gateway-ip>:8080/"
 echo "  Live dashboard: http://<gateway-ip>:8080/dashboard"
+echo "  Radio control:  http://<gateway-ip>:8080/radio"
+echo "  SDR control:    http://<gateway-ip>:8080/sdr"
+echo "  Log viewer:     http://<gateway-ip>:8080/logs"
 echo "  Set WEB_CONFIG_PASSWORD for basic auth (user: admin)"
 echo "  Firewall: sudo ufw allow 8080/tcp"
 echo
