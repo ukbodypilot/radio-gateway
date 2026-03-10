@@ -33,6 +33,7 @@ ENABLE_STREAM_OUTPUT="$(read_config ENABLE_STREAM_OUTPUT false)"
 START_TH9800_CAT="$(read_config START_TH9800_CAT false)"
 TH9800_CAT_HEADLESS="$(read_config TH9800_CAT_HEADLESS false)"
 START_CLAUDE_CODE="$(read_config START_CLAUDE_CODE false)"
+HEADLESS_MODE="$(read_config HEADLESS_MODE false)"
 
 echo "=========================================="
 ts "Starting Radio Gateway"
@@ -109,9 +110,11 @@ for svc in mumble-server-gw1 mumble-server-gw2; do
 done
 sleep 1
 
-# 2. Start Mumble GUI client if not already running
+# 2. Start Mumble GUI client if not already running (skip in headless mode)
 ts "[2/11] Checking Mumble client..."
-if pgrep -x "mumble" > /dev/null 2>&1; then
+if [ "$HEADLESS_MODE" = "true" ]; then
+    ts "  Skipped — headless mode"
+elif pgrep -x "mumble" > /dev/null 2>&1; then
     ts "  Mumble already running (PID: $(pgrep -x mumble | head -1))"
 else
     if command -v mumble > /dev/null 2>&1; then
