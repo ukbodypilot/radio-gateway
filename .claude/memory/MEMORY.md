@@ -101,15 +101,24 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Fix: save terminal settings on instance (`self._terminal_settings`), restore in `cleanup()`
 - Safety net: `start.sh` cleanup runs `stty sane` to guarantee terminal restored on any exit
 
-## DarkIce Notes
+## DarkIce / Broadcastify Notes
 - DarkIce 1.5 parser bug: crashes if "password" appears before first `[section]` header
 - Config template: `scripts/darkice.cfg.example`
 - udev: needs BOTH `SUBSYSTEM=="usb"` AND `SUBSYSTEM=="hidraw"` rules for AIOC
+- Dashboard: `/darkicecmd` POST endpoint (start/stop/restart). Stop sets `_darkice_was_running=False` to prevent auto-restart
+- Stats: `_get_darkice_stats()` reads `/proc/pid/stat` (uptime) + `ss -ti` (bytes_sent, rtt, send_rate), cached 5s
+- `/proc/pid/io` blocked by Yama ptrace_scope=1 — use `ss -ti` instead for throughput data
 
-## Audio Processing — Vectorised (commit a41a0bc)
-- `_mix_audio_streams()` → `np.frombuffer` + `np.clip` (~10× faster)
-- `apply_highpass_filter()` → `scipy.signal.lfilter` with `zi` state carry
-- `apply_spectral_noise_suppression()` → `scipy.ndimage.uniform_filter1d`
+## Audio Processing — Per-Source AudioProcessor (2026-03-10)
+- `AudioProcessor` class: independent filter state per source (radio, SDR)
+- Each source gets own HPF/LPF/notch/de-esser/spectral NS/noise gate state
+- **Radio:** uses global config keys (`ENABLE_HIGHPASS_FILTER`, etc.) synced via `_sync_radio_processor()`
+- **SDR:** uses `SDR_PROC_*` config keys synced via `_sync_sdr_processor()`
+- Dashboard: separate "Radio Processing" and "SDR Processing" button groups
+- API: `/proc_toggle` POST endpoint `{source:"radio"|"sdr", filter:"gate"|"hpf"|"lpf"|"notch"|"deesser"|"spectral"}`
+- Keyboard shortcuts (n, f, y, w) still work for radio processing (backwards compat)
+- Filter chain order: HPF → LPF → Notch → De-esser → Spectral NS → Noise Gate
+- Vectorised: `scipy.signal.lfilter` with `zi` state carry, `scipy.ndimage.uniform_filter1d`
 
 ## Text-to-Speech (gTTS)
 - `!speak <text>` or `!speak <voice#> <text>` — voice 1-9 via gTTS lang/tld combos
@@ -137,7 +146,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
   - `get_status_dict()` — returns runtime state as JSON (uptime, levels, mutes, smart countdowns, etc.)
   - Audio bars for all sources: TX, RX, SP, SDR1, SDR2, SV/CL, AN (same order as console)
   - Fixed-width CSS grid layout (220px columns) — bars and values don't shift
-  - Bar width: pct × 1.5px (max 150px), percentage shown left of bar in fixed-width span
+  - Bar width: pct × 1.0px (max 100px), percentage shown left of bar in fixed-width span
   - Auto-reconnect: on fetch failure shows "offline" message, polls until gateway returns, then reloads
   - Button grid for all keyboard shortcuts (mute, PTT, playback, smart triggers, etc.)
   - Terminal-only keys (`i`, `u`, `z`) stay in keyboard loop, not exposed to web
@@ -145,7 +154,12 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
   - Shared encoder starts with web server, silence feeder keeps it alive
   - Sequence-number ring buffer (`_mp3_seq`) — immune to `pop(0)` index shifting
   - Dashboard UI: play/stop button, volume slider, elapsed timer, green indicator dot
-  - ~10-15s browser latency (HTML5 `<audio>` element buffering, not reducible without WebSocket+WebAudio)
+  - ~10-15s browser latency (HTML5 `<audio>` element buffering)
+  - **Low-latency WebSocket PCM**: AudioWorklet + 200ms pre-buffer (9600 samples), ScriptProcessor fallback
+  - **Broadcastify controls**: `/darkicecmd` POST (start/stop/restart), live stats via `ss -ti` + `/proc/pid/stat`
+  - `get_status_dict()` includes: `streaming_enabled`, `darkice_running`, `darkice_stats` (uptime, bytes_sent, send_rate, rtt, connected)
+  - **Smart Announce status**: `_activity` dict tracks steps (Searching/Waiting/Speaking/Done/Error), shown in control group
+  - **Playback file status**: separate section at bottom, shows slot names + playing indicator
 
 ## INI Config Format
 - Config files use standard INI `[section]` headers (v1.4.0)

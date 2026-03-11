@@ -95,7 +95,8 @@ A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, A
 - **Local Mumble Server**: Run up to 2 managed mumble-server instances on the same machine
 - **Cloudflare Tunnel**: Free public HTTPS access via `*.trycloudflare.com` — no port forwarding or domain needed
 - **Email Notifications**: Gmail SMTP alerts with gateway status and tunnel URL on startup or on demand
-- **Browser Audio Player**: Listen to gateway audio live from the dashboard — MP3 stream with play/stop, volume control, and elapsed timer
+- **Browser Audio Player**: Listen to gateway audio live from the dashboard — MP3 stream and low-latency WebSocket PCM player with pre-buffering
+- **Broadcastify Dashboard**: Live streaming status, DarkIce process control (start/stop/restart), and TCP connection stats (bytes sent, send rate, RTT)
 
 ### Audio Sources (Priority-Based Mixing)
 
@@ -508,7 +509,12 @@ WEB_CONFIG_PASSWORD =
 - Remote key control buttons — same keyboard shortcuts available via clickable buttons
 - Auto-reconnects when gateway restarts (no manual refresh needed)
 - Fixed-width grid layout — bars and values don't shift when levels change
-- **Audio player** — listen to the gateway's mixed audio output live in the browser (MP3 stream via shared FFmpeg encoder, with play/stop button, volume slider, and elapsed timer)
+- **Audio player** — listen to the gateway's mixed audio output live in the browser:
+  - **MP3 stream** — shared FFmpeg encoder, play/stop button, volume slider, elapsed timer
+  - **Low-latency WebSocket PCM** — AudioWorklet-based player with 200ms pre-buffer for smooth playback
+- **Broadcastify controls** — DarkIce process status and start/stop/restart buttons. Live TCP stats: bytes sent, send rate, RTT, connection age, restart counts
+- **Smart Announce status** — live step-by-step progress (Searching, Waiting for radio, Speaking, Done/Error)
+- **Playback file status** — shows all loaded audio slots with filenames, highlights currently playing file
 
 ![Live Dashboard](docs/img/dashboard.png)
 *Live dashboard showing gateway status, audio level bars, mute/processing/playback controls, and the browser audio player.*
@@ -2192,6 +2198,22 @@ class MySource(AudioSource):
 - PyAudio: Python audio interface
 
 ## Changelog
+
+### v1.6.0
+
+**Broadcastify dashboard controls** — DarkIce streaming status and controls added to the live dashboard. Shows real-time connection state (LIVE/NO CONN/OFF), process age, total bytes sent, TCP send rate, RTT (color-coded), and restart counts. Start/Stop/Restart buttons with auto-restart prevention on manual stop. Stats collected via `ss -ti` and `/proc/pid/stat`, cached every 5s.
+
+**Smart Announce live status** — Step-by-step progress shown in the Smart Announce control group: Searching, Waiting for radio, Speaking (word count), Done, or Error. Replaces countdown timer while active, auto-expires after 120s.
+
+**Playback file status** — New "Playback Files" section at bottom of dashboard shows all loaded audio slots with filenames. Currently playing file highlighted in red with play icon. Playback buttons highlight red when active, dimmed when slot is empty, with filename tooltips.
+
+**Google AI scrape fix** — Fixed navigation failure caused by Firefox dev console (`Ctrl+Shift+K`) being intercepted by dashboard keyboard handler. Now uses URL bar (`Ctrl+L`) for navigation and `udm=50` URL parameter for direct AI Mode access — eliminates fragile JS click heuristics.
+
+**WebSocket audio pre-buffer** — Fixed stuttering in low-latency WebSocket PCM player by adding 200ms pre-buffer (9600 samples). Both AudioWorklet and ScriptProcessor paths now accumulate audio before playback starts, absorbing network jitter.
+
+**Audio bar scaling fix** — Dashboard audio level bars changed from 1.5x to 1x multiplier so bar width matches percentage value.
+
+**Status endpoint robustness** — `/status` JSON endpoint now handles `BrokenPipeError` (client disconnect during write) silently, matching all other endpoints.
 
 ### v1.5.0
 

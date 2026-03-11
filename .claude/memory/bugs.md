@@ -1,5 +1,26 @@
 # Bug History — Radio Gateway
 
+## Google AI Scrape Navigation Failure (2026-03-11)
+**Symptom:** Smart Announce `google-scrape` backend always returned "no AI Overview found".
+
+**Root cause:** `_scrape_google_ai_overview()` used Firefox dev console (`Ctrl+Shift+K`) to navigate and execute JS. When Firefox was showing the gateway dashboard, the dashboard's keyboard event handler intercepted `Ctrl+Shift+K` before Firefox could open the console. The JS navigation command never ran, so the clipboard copy returned dashboard text instead of Google results.
+
+**Fix:** Replaced dev console approach with URL bar (`Ctrl+L`) for navigation and `udm=50` Google URL parameter for direct AI Mode access. Eliminates all console JS (AI Mode click heuristic was also broken). Much simpler and more reliable.
+
+## WebSocket PCM Audio Stuttering (2026-03-11)
+**Symptom:** Low-latency WebSocket audio player had constant small gaps/stuttering.
+
+**Root cause:** AudioWorklet and ScriptProcessor had no pre-buffering. Audio started playing immediately on first WebSocket message, so any network jitter caused buffer underruns (128-sample frames drained faster than 2400-sample WS messages arrived).
+
+**Fix:** Added 200ms pre-buffer (9600 samples at 48kHz) to both AudioWorklet and ScriptProcessor paths. Audio accumulates before playback starts, absorbing jitter.
+
+## /status BrokenPipeError (2026-03-11)
+**Symptom:** Stack trace logged when browser disconnected during `/status` JSON response.
+
+**Root cause:** `/status` endpoint was missing `BrokenPipeError` handling that all other endpoints already had.
+
+**Fix:** Wrapped `/status` write in try/except BrokenPipeError: pass.
+
 ## SDR Control Page — Multiple Init Bugs (2026-03-10)
 **Symptom:** Web UI crashed entirely (no pages served), SDR commands returned NameError, settings lost on restart, sample rate dropdown showed blank.
 

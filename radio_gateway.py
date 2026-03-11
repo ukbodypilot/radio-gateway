@@ -154,6 +154,35 @@ class Config:
             'ENABLE_HIGHPASS_FILTER': False,
             'HIGHPASS_CUTOFF_FREQ': 300,
             'ENABLE_ECHO_CANCELLATION': False,
+            'ENABLE_LOWPASS_FILTER': False,
+            'LOWPASS_CUTOFF_FREQ': 3000,
+            'ENABLE_NOTCH_FILTER': False,
+            'NOTCH_FREQ': 1000,
+            'NOTCH_Q': 30.0,
+            'ENABLE_DEESSER': False,
+            'DEESSER_FREQ': 5000,
+            'DEESSER_STRENGTH': 0.6,
+            # Per-source processing overrides (SDR).
+            # When set, SDR sources use these instead of the global settings.
+            # When not set (empty string / default), SDR processing is disabled
+            # to preserve backwards compatibility.
+            'SDR_PROC_ENABLE_NOISE_GATE': False,
+            'SDR_PROC_NOISE_GATE_THRESHOLD': -40,
+            'SDR_PROC_NOISE_GATE_ATTACK': 0.01,
+            'SDR_PROC_NOISE_GATE_RELEASE': 0.1,
+            'SDR_PROC_ENABLE_HPF': False,
+            'SDR_PROC_HPF_CUTOFF': 300,
+            'SDR_PROC_ENABLE_LPF': False,
+            'SDR_PROC_LPF_CUTOFF': 3000,
+            'SDR_PROC_ENABLE_NOTCH': False,
+            'SDR_PROC_NOTCH_FREQ': 1000,
+            'SDR_PROC_NOTCH_Q': 30.0,
+            'SDR_PROC_ENABLE_NS': False,
+            'SDR_PROC_NS_METHOD': 'spectral',
+            'SDR_PROC_NS_STRENGTH': 0.5,
+            'SDR_PROC_ENABLE_DEESSER': False,
+            'SDR_PROC_DEESSER_FREQ': 5000,
+            'SDR_PROC_DEESSER_STRENGTH': 0.6,
             'INPUT_VOLUME': 1.0,
             'OUTPUT_VOLUME': 1.0,
             'MUMBLE_LOOP_RATE': 0.01,
@@ -478,6 +507,289 @@ class AudioSource:
     def get_status(self):
         """Return status string for display"""
         return f"{self.name}: {'ON' if self.enabled else 'OFF'}"
+
+
+class AudioProcessor:
+    """Per-source audio processing chain with independent filter state.
+
+    Each audio source (Radio, SDR1, SDR2, etc.) gets its own AudioProcessor
+    instance so filters run independently with their own state (envelope,
+    filter memory, etc.) and can be toggled per-source.
+    """
+
+    def __init__(self, name, config):
+        self.name = name          # e.g. "radio", "sdr"
+        self.config = config      # gateway Config object (for AUDIO_RATE, etc.)
+
+        # Per-source enable flags (set from config or toggled at runtime)
+        self.enable_hpf = False
+        self.hpf_cutoff = 300         # Hz
+        self.enable_lpf = False
+        self.lpf_cutoff = 3000        # Hz
+        self.enable_notch = False
+        self.notch_freq = 1000        # Hz — target frequency
+        self.notch_q = 30.0           # Q factor (higher = narrower notch)
+        self.enable_noise_gate = False
+        self.gate_threshold = -40     # dB
+        self.gate_attack = 0.01       # seconds
+        self.gate_release = 0.1       # seconds
+        self.enable_noise_suppression = False
+        self.noise_suppression_method = 'spectral'
+        self.noise_suppression_strength = 0.5
+        self.enable_deesser = False
+        self.deesser_freq = 5000      # Hz — sibilance target
+        self.deesser_strength = 0.6   # reduction amount
+
+        # Filter state (persists across audio chunks for continuity)
+        self.highpass_state = None
+        self.lowpass_state = None
+        self.notch_state = None
+        self.gate_envelope = 0.0
+        self.noise_profile = None
+        self.deesser_state = None
+
+    def reset_state(self):
+        """Reset all filter states (e.g. when source restarts)."""
+        self.highpass_state = None
+        self.lowpass_state = None
+        self.notch_state = None
+        self.gate_envelope = 0.0
+        self.noise_profile = None
+        self.deesser_state = None
+
+    def process(self, pcm_data):
+        """Run the full processing chain on PCM data. Order:
+        HPF → LPF → Notch → De-esser → Spectral NS → Noise Gate
+        """
+        if not pcm_data:
+            return pcm_data
+
+        processed = pcm_data
+
+        if self.enable_hpf:
+            processed = self._apply_hpf(processed)
+
+        if self.enable_lpf:
+            processed = self._apply_lpf(processed)
+
+        if self.enable_notch:
+            processed = self._apply_notch(processed)
+
+        if self.enable_deesser:
+            processed = self._apply_deesser(processed)
+
+        if self.enable_noise_suppression:
+            if self.noise_suppression_method == 'spectral':
+                processed = self._apply_spectral_ns(processed)
+
+        if self.enable_noise_gate:
+            processed = self._apply_noise_gate(processed)
+
+        return processed
+
+    def get_active_list(self):
+        """Return list of active filter names for status display."""
+        active = []
+        if self.enable_noise_gate: active.append('Gate')
+        if self.enable_hpf: active.append('HPF')
+        if self.enable_lpf: active.append('LPF')
+        if self.enable_notch: active.append(f'Notch')
+        if self.enable_deesser: active.append('DeEss')
+        if self.enable_noise_suppression: active.append(self.noise_suppression_method.title())
+        return active
+
+    # --- Filter implementations ---
+
+    def _apply_hpf(self, pcm_data):
+        """First-order IIR high-pass filter."""
+        try:
+            import math
+            from scipy.signal import lfilter, lfilter_zi
+
+            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
+            if len(samples) == 0:
+                return pcm_data
+
+            cutoff = self.hpf_cutoff
+            sample_rate = self.config.AUDIO_RATE
+            rc = 1.0 / (2.0 * math.pi * cutoff)
+            dt = 1.0 / sample_rate
+            alpha = rc / (rc + dt)
+
+            b = np.array([alpha, -alpha], dtype=np.float64)
+            a = np.array([1.0, -alpha], dtype=np.float64)
+
+            if self.highpass_state is None:
+                self.highpass_state = lfilter_zi(b, a) * 0.0
+
+            filtered, self.highpass_state = lfilter(b, a, samples, zi=self.highpass_state)
+            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
+        except Exception:
+            return pcm_data
+
+    def _apply_lpf(self, pcm_data):
+        """First-order IIR low-pass filter — cuts high-frequency hiss above cutoff."""
+        try:
+            import math
+            from scipy.signal import lfilter, lfilter_zi
+
+            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
+            if len(samples) == 0:
+                return pcm_data
+
+            cutoff = self.lpf_cutoff
+            sample_rate = self.config.AUDIO_RATE
+            rc = 1.0 / (2.0 * math.pi * cutoff)
+            dt = 1.0 / sample_rate
+            alpha = dt / (rc + dt)
+
+            b = np.array([alpha], dtype=np.float64)
+            a = np.array([1.0, -(1.0 - alpha)], dtype=np.float64)
+
+            if self.lowpass_state is None:
+                self.lowpass_state = lfilter_zi(b, a) * 0.0
+
+            filtered, self.lowpass_state = lfilter(b, a, samples, zi=self.lowpass_state)
+            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
+        except Exception:
+            return pcm_data
+
+    def _apply_notch(self, pcm_data):
+        """Second-order IIR notch (band-stop) filter — removes a specific frequency."""
+        try:
+            import math
+            from scipy.signal import lfilter, lfilter_zi
+
+            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
+            if len(samples) == 0:
+                return pcm_data
+
+            sample_rate = self.config.AUDIO_RATE
+            w0 = 2.0 * math.pi * self.notch_freq / sample_rate
+            bw = w0 / self.notch_q
+            r = 1.0 - (bw / 2.0)
+            r = max(0.0, min(r, 0.9999))  # clamp for stability
+
+            # Transfer function: H(z) = (1 - 2cos(w0)z^-1 + z^-2) / (1 - 2r*cos(w0)z^-1 + r^2*z^-2)
+            cos_w0 = math.cos(w0)
+            b = np.array([1.0, -2.0 * cos_w0, 1.0], dtype=np.float64)
+            a = np.array([1.0, -2.0 * r * cos_w0, r * r], dtype=np.float64)
+            # Normalize so passband gain = 1
+            b = b / (1.0 + abs(1.0 - r))
+
+            if self.notch_state is None:
+                self.notch_state = lfilter_zi(b, a) * 0.0
+
+            filtered, self.notch_state = lfilter(b, a, samples, zi=self.notch_state)
+            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
+        except Exception:
+            return pcm_data
+
+    def _apply_deesser(self, pcm_data):
+        """Simple de-esser — attenuates sibilance around the target frequency.
+        Works by detecting energy in the sibilance band and applying gain reduction.
+        """
+        try:
+            import math
+            from scipy.signal import lfilter, lfilter_zi
+
+            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
+            if len(samples) == 0:
+                return pcm_data
+
+            sample_rate = self.config.AUDIO_RATE
+            # HPF to isolate sibilance band
+            cutoff = self.deesser_freq
+            rc = 1.0 / (2.0 * math.pi * cutoff)
+            dt = 1.0 / sample_rate
+            alpha = rc / (rc + dt)
+
+            b_hpf = np.array([alpha, -alpha], dtype=np.float64)
+            a_hpf = np.array([1.0, -alpha], dtype=np.float64)
+
+            if self.deesser_state is None:
+                self.deesser_state = lfilter_zi(b_hpf, a_hpf) * 0.0
+
+            sibilance, self.deesser_state = lfilter(b_hpf, a_hpf, samples, zi=self.deesser_state)
+
+            # Calculate per-sample gain reduction based on sibilance energy
+            # Use a simple envelope follower on the sibilance band
+            strength = self.deesser_strength
+            sib_abs = np.abs(sibilance)
+            sig_abs = np.maximum(np.abs(samples), 1.0)
+            ratio = sib_abs / sig_abs
+            # Where sibilance dominates, reduce gain
+            gain = np.where(ratio > 0.3, 1.0 - strength * np.minimum(ratio, 1.0), 1.0)
+            processed = samples * gain
+
+            return np.clip(processed, -32768, 32767).astype(np.int16).tobytes()
+        except Exception:
+            return pcm_data
+
+    def _apply_spectral_ns(self, pcm_data):
+        """Spectral subtraction noise suppression."""
+        try:
+            from scipy.ndimage import uniform_filter1d
+
+            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
+            if len(samples) == 0:
+                return pcm_data
+
+            window_size = 32
+            strength = self.noise_suppression_strength
+
+            noise_estimate = uniform_filter1d(np.abs(samples), size=window_size, mode='nearest')
+
+            above_threshold = np.abs(samples) > noise_estimate * (1.0 + strength)
+            reduction = strength * noise_estimate
+            reduced = np.where(samples > 0,
+                               np.maximum(0.0, samples - reduction),
+                               np.minimum(0.0, samples + reduction))
+
+            processed = np.where(above_threshold, samples, reduced)
+            return np.clip(processed, -32768, 32767).astype(np.int16).tobytes()
+        except Exception:
+            return pcm_data
+
+    def _apply_noise_gate(self, pcm_data):
+        """Noise gate with attack/release envelope."""
+        try:
+            import array as _arr
+            import math
+
+            samples = _arr.array('h', pcm_data)
+            if len(samples) == 0:
+                return pcm_data
+
+            threshold_db = self.gate_threshold
+            threshold = 32767.0 * pow(10.0, threshold_db / 20.0)
+
+            attack_samples = self.gate_attack * self.config.AUDIO_RATE
+            release_samples = self.gate_release * self.config.AUDIO_RATE
+
+            attack_coef = 1.0 / attack_samples if attack_samples > 0 else 1.0
+            release_coef = 1.0 / release_samples if release_samples > 0 else 0.1
+
+            gated = []
+            for sample in samples:
+                level = abs(sample)
+
+                if level > self.gate_envelope:
+                    self.gate_envelope += (level - self.gate_envelope) * attack_coef
+                else:
+                    self.gate_envelope += (level - self.gate_envelope) * release_coef
+
+                if self.gate_envelope > threshold:
+                    gain = 1.0
+                else:
+                    ratio = self.gate_envelope / threshold if threshold > 0 else 0
+                    gain = ratio * ratio
+
+                gated.append(int(sample * gain))
+
+            return _arr.array('h', gated).tobytes()
+        except Exception:
+            return pcm_data
 
 
 class AIOCRadioSource(AudioSource):
@@ -1573,6 +1885,9 @@ class SDRSource(AudioSource):
             if audio_boost != 1.0:
                 arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
                 raw = arr.tobytes()
+
+        # Apply per-source audio processing (HPF, LPF, notch, gate, etc.)
+        raw = self.gateway.process_audio_for_sdr(raw)
 
         return raw, False  # SDR never triggers PTT
 
@@ -4707,6 +5022,7 @@ class SmartAnnouncementManager:
         self._lock = threading.Lock()  # protects _entries mutations
         self._client = None  # AI client instance (anthropic.Anthropic or genai model)
         self._backend = str(getattr(self.config, 'SMART_ANNOUNCE_AI_BACKEND', 'duckduckgo')).strip().lower()
+        self._activity = {}  # {entry_id: {'step': str, 'time': float}} — live status for web UI
         self._parse_entries()
 
     def _parse_entries(self):
@@ -4971,17 +5287,36 @@ class SmartAnnouncementManager:
                 except Exception as ex:
                     print(f"\n[SmartAnnounce] Error on #{e['id']}: {ex}")
 
+    def _set_activity(self, entry_id, step):
+        """Update live activity status for web UI."""
+        self._activity[entry_id] = {'step': step, 'time': time.time()}
+
+    def _clear_activity(self, entry_id):
+        """Clear activity status after completion."""
+        self._activity.pop(entry_id, None)
+
+    def get_activity(self):
+        """Return current activity dict for all entries. Auto-expires after 120s."""
+        now = time.time()
+        expired = [k for k, v in self._activity.items() if now - v['time'] > 120]
+        for k in expired:
+            del self._activity[k]
+        return {k: v['step'] for k, v in self._activity.items()}
+
     def _run_announcement(self, entry, manual=False):
         """Call AI API, get text, speak it. manual=True skips time window check."""
+        eid = entry['id']
         try:
             if not self._client:
-                print(f"\n[SmartAnnounce] #{entry['id']}: No API client (missing key?)")
+                self._set_activity(eid, 'No API client')
+                print(f"\n[SmartAnnounce] #{eid}: No API client (missing key?)")
                 return
             if not manual and not self._in_time_window():
-                print(f"\n[SmartAnnounce] #{entry['id']}: Skipped — outside time window")
+                print(f"\n[SmartAnnounce] #{eid}: Skipped — outside time window")
                 return
         except Exception as e:
-            print(f"\n[SmartAnnounce] #{entry['id']}: Pre-check error: {e}")
+            self._set_activity(eid, f'Error: {e}')
+            print(f"\n[SmartAnnounce] #{eid}: Pre-check error: {e}")
             return
 
         max_words = int(entry['target_secs'] * self.WORDS_PER_SECOND)
@@ -4992,6 +5327,7 @@ class SmartAnnouncementManager:
         )
 
         try:
+            self._set_activity(eid, f'Searching ({self._backend})')
             if self._backend == 'duckduckgo':
                 text = self._call_duckduckgo(entry, system_prompt, max_words)
             elif self._backend == 'google-scrape':
@@ -5001,6 +5337,7 @@ class SmartAnnouncementManager:
             else:
                 text = self._call_claude(entry, system_prompt, max_words)
             if not text:
+                self._set_activity(eid, 'No results')
                 return
 
             # Truncate if over word limit (safety net)
@@ -5020,6 +5357,7 @@ class SmartAnnouncementManager:
             print(f"  {text}")
 
             # Wait for radio to be free before transmitting
+            self._set_activity(eid, 'Waiting for radio')
             for attempt in range(100):
                 vad_busy = getattr(self.gateway, 'vad_active', False)
                 pb_busy = (self.gateway.playback_source and
@@ -5030,14 +5368,18 @@ class SmartAnnouncementManager:
                     print(f"[SmartAnnounce] #{entry['id']}: Waiting for radio to be free...")
                 time.sleep(5)
             else:
+                self._set_activity(eid, 'Dropped (radio busy)')
                 print(f"[SmartAnnounce] #{entry['id']}: Radio busy too long, dropping announcement")
                 return
 
             # Playback triggers AIOC PTT automatically via the audio loop
             # (set_ptt_state writes HID GPIO to key the radio).
+            self._set_activity(eid, f'Speaking ({len(text.split())}w)')
             self.gateway.speak_text(text, voice=entry['voice'])
+            self._set_activity(eid, 'Done')
 
         except Exception as e:
+            self._set_activity(eid, f'Error: {e}')
             print(f"\n[SmartAnnounce] #{entry['id']}: API error: {e}")
 
     def _call_claude(self, entry, system_prompt, max_words):
@@ -5237,69 +5579,28 @@ class SmartAnnouncementManager:
             xdo('windowactivate', '--sync', best_wid)
             time.sleep(0.2)
 
-            # Open console, navigate via JS, close console, wait for page
+            # Navigate via URL bar (Ctrl+L) — dev console doesn't work reliably
+            # when Firefox is showing a page with keyboard event handlers.
+            # Use udm=50 to go directly to Google AI Mode (no JS click needed).
             encoded_q = urllib.parse.quote_plus(search_query)
-            url = f'https://www.google.com/search?q={encoded_q}&hl=en'
-            print(f"[SmartAnnounce] google-scrape: navigating Firefox...")
-            xdo('key', 'ctrl+shift+k')
+            url = f'https://www.google.com/search?q={encoded_q}&hl=en&udm=50'
+            print(f"[SmartAnnounce] google-scrape: navigating Firefox to AI Mode...")
+            xdo('key', 'ctrl+l')
             time.sleep(0.3)
-            nav_js = f'window.location.href="{url}";'
-            subprocess.run(['xclip', '-selection', 'clipboard'],
-                           input=nav_js.encode(), env=display_env, timeout=3)
-            xdo('key', 'ctrl+v')
+            xdo('key', 'ctrl+a')
             time.sleep(0.1)
-            xdo('key', 'Return')
-            time.sleep(0.2)
-            xdo('key', 'ctrl+shift+k')
-            time.sleep(5)
-
-            # Reopen console, click AI Mode + Show more via JS
-            xdo('key', 'ctrl+shift+k')
-            time.sleep(0.3)
-            # JS: click AI Mode, wait for response, click Show more
-            js_click = (
-                '(async()=>{'
-                'let links=Array.from(document.querySelectorAll("a"));'
-                'let allIdx=links.findIndex(e=>e.textContent.trim()==="All");'
-                'let ai=allIdx>0?links[allIdx-1]:null;'
-                'if(!ai){ai=links.find(e=>e.textContent.trim()==="AI Mode")'
-                '||Array.from(document.querySelectorAll("a,div,span")).find(e=>{'
-                'let t=e.textContent.trim();'
-                'return t==="Dive deeper in AI mode"||t==="Dive deeper in AI Mode";});}'
-                'if(ai){ai.click();await new Promise(r=>setTimeout(r,10000));}'
-                'document.querySelectorAll("div[jsname],span,button").forEach(e=>{'
-                'if(e.textContent.trim()==="Show more")e.click();});'
-                '})();'
-            )
             subprocess.run(['xclip', '-selection', 'clipboard'],
-                           input=js_click.encode(), env=display_env, timeout=3)
+                           input=url.encode(), env=display_env, timeout=3)
             xdo('key', 'ctrl+v')
             time.sleep(0.1)
             xdo('key', 'Return')
             print(f"[SmartAnnounce] google-scrape: waiting for AI Mode response...")
-            time.sleep(12)
+            time.sleep(10)
 
-            # Close console
-            xdo('key', 'ctrl+shift+k')
-            time.sleep(0.3)
-
-            # Re-find and re-activate our Firefox window (in case an ad stole focus)
-            result = xdo('search', '--name', 'Mozilla Firefox')
-            best_wid2 = best_wid
-            best_area2 = 0
-            for wid in [w.strip() for w in result.stdout.strip().split('\n') if w.strip()]:
-                try:
-                    geo = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', wid],
-                                         capture_output=True, text=True, timeout=3, env=display_env)
-                    w = h = 0
-                    for line in geo.stdout.strip().split('\n'):
-                        if line.startswith('WIDTH='): w = int(line.split('=')[1])
-                        if line.startswith('HEIGHT='): h = int(line.split('=')[1])
-                    if w * h > best_area2:
-                        best_area2 = w * h
-                        best_wid2 = wid
-                except Exception:
-                    continue
+            # Re-find and re-activate Firefox (in case an ad/popup stole focus)
+            best_wid2, _ = _find_firefox_window()
+            if not best_wid2:
+                best_wid2 = best_wid
             xdo('windowactivate', '--sync', best_wid2)
             time.sleep(0.3)
 
@@ -6160,6 +6461,9 @@ class WebConfigServer:
         self._encoder_stdin = None    # stdin pipe for encoder
         self._last_audio_push = 0     # monotonic time of last real audio
         self.sdr_manager = None       # RTLAirbandManager instance
+        # WebSocket PCM streaming (low-latency)
+        self._ws_clients = []         # list of socket objects for WebSocket PCM clients
+        self._ws_lock = threading.Lock()
 
     def start(self):
         """Start the HTTP server on a daemon thread."""
@@ -6194,6 +6498,20 @@ class WebConfigServer:
                     print(f"  [SDR] Autostart failed: {e}")
 
         class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"  # Required for WebSocket upgrade
+
+            def end_headers(self):
+                # For non-WebSocket responses, close connection to avoid
+                # HTTP/1.1 keep-alive issues (no Content-Length on dynamic responses)
+                if not self._upgrading_ws:
+                    self.send_header('Connection', 'close')
+                    self.close_connection = True
+                super().end_headers()
+
+            def setup(self):
+                super().setup()
+                self._upgrading_ws = False
+
             def log_message(self, format, *args):
                 pass  # Suppress request logging
 
@@ -6230,11 +6548,14 @@ class WebConfigServer:
                 if self.path == '/status':
                     # JSON status endpoint for live dashboard
                     data = parent.gateway.get_status_dict() if parent.gateway else {}
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.send_header('Cache-Control', 'no-cache')
-                    self.end_headers()
-                    self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
                 elif self.path == '/catstatus':
                     # JSON radio CAT state endpoint
                     data = {'connected': False, 'cat_enabled': False}
@@ -6287,6 +6608,90 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
+                elif self.path == '/ws_audio':
+                    # WebSocket upgrade for low-latency PCM audio streaming
+                    self._upgrading_ws = True
+                    import hashlib, base64
+                    ws_key = self.headers.get('Sec-WebSocket-Key', '')
+                    if not ws_key or self.headers.get('Upgrade', '').lower() != 'websocket':
+                        self._upgrading_ws = False
+                        self.send_response(400)
+                        self.end_headers()
+                        return
+                    # WebSocket handshake — write raw bytes to bypass
+                    # BaseHTTPRequestHandler's send_response which adds
+                    # Server/Date headers that can confuse strict WS clients
+                    _WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+                    accept = base64.b64encode(
+                        hashlib.sha1((ws_key + _WS_MAGIC).encode()).digest()
+                    ).decode()
+                    # Flush any buffered wfile data, then write handshake
+                    # directly to raw socket to avoid BufferedWriter issues
+                    self.wfile.flush()
+                    handshake = (
+                        'HTTP/1.1 101 Switching Protocols\r\n'
+                        'Upgrade: websocket\r\n'
+                        'Connection: Upgrade\r\n'
+                        f'Sec-WebSocket-Accept: {accept}\r\n'
+                        '\r\n'
+                    )
+                    self.request.sendall(handshake.encode('ascii'))
+                    self.close_connection = True  # prevent handler loop after do_GET returns
+                    _sock = self.request  # raw TCP socket for binary frames
+                    _client_ip = self.client_address[0]
+                    print(f"\n[WS-Audio] Low-latency client connected from {_client_ip}")
+                    _sock.settimeout(30)  # 30s recv timeout for keepalive
+                    with parent._ws_lock:
+                        parent._ws_clients.append(_sock)
+                    try:
+                        # Keep connection alive — read and discard client frames
+                        # (we only send, but must handle pings/close)
+                        while True:
+                            try:
+                                hdr = _sock.recv(2)
+                                if not hdr or len(hdr) < 2:
+                                    break
+                                opcode = hdr[0] & 0x0F
+                                masked = (hdr[1] & 0x80) != 0
+                                payload_len = hdr[1] & 0x7F
+                                if payload_len == 126:
+                                    ext = _sock.recv(2)
+                                    payload_len = int.from_bytes(ext, 'big')
+                                elif payload_len == 127:
+                                    ext = _sock.recv(8)
+                                    payload_len = int.from_bytes(ext, 'big')
+                                mask_key = _sock.recv(4) if masked else b''
+                                payload = b''
+                                while len(payload) < payload_len:
+                                    chunk = _sock.recv(payload_len - len(payload))
+                                    if not chunk:
+                                        break
+                                    payload += chunk
+                                if opcode == 0x8:  # Close
+                                    # Send close frame back
+                                    _sock.sendall(b'\x88\x00')
+                                    break
+                                elif opcode == 0x9:  # Ping → Pong
+                                    if masked and mask_key:
+                                        payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+                                    pong = bytearray()
+                                    pong.append(0x8A)  # FIN + Pong
+                                    if len(payload) < 126:
+                                        pong.append(len(payload))
+                                    pong.extend(payload)
+                                    _sock.sendall(bytes(pong))
+                            except socket.timeout:
+                                continue  # recv timeout is normal, keep waiting
+                            except (ConnectionResetError, BrokenPipeError, OSError):
+                                break
+                    finally:
+                        with parent._ws_lock:
+                            try:
+                                parent._ws_clients.remove(_sock)
+                            except ValueError:
+                                pass
+                        print(f"[WS-Audio] Disconnected {_client_ip}")
+                    return
                 elif self.path == '/stream':
                     # MP3 audio stream from shared encoder
                     _client_ip = self.client_address[0]
@@ -6403,6 +6808,23 @@ class WebConfigServer:
                         key_char = data.get('key', '')
                         if key_char and parent.gateway:
                             parent.gateway.handle_key(key_char)
+                    except Exception:
+                        pass
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"ok":true}')
+                    return
+                elif self.path == '/proc_toggle':
+                    # Per-source audio processing toggle endpoint
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    try:
+                        data = json_mod.loads(body)
+                        source = data.get('source', '')  # "radio" or "sdr"
+                        filt = data.get('filter', '')    # "gate", "hpf", "lpf", "notch", "deesser", "spectral"
+                        if source and filt and parent.gateway:
+                            parent.gateway.handle_proc_toggle(source, filt)
                     except Exception:
                         pass
                     self.send_response(200)
@@ -6576,6 +6998,62 @@ class WebConfigServer:
                     except BrokenPipeError:
                         pass
                     return
+                elif self.path == '/darkicecmd':
+                    # DarkIce / Broadcastify feeder control
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    result = {'ok': False}
+                    try:
+                        data = json_mod.loads(body)
+                        cmd = data.get('cmd', '')
+                        gw = parent.gateway
+                        if gw:
+                            if cmd == 'start':
+                                if not gw._find_darkice_pid():
+                                    gw._restart_darkice()
+                                    result = {'ok': True, 'msg': 'DarkIce started'}
+                                else:
+                                    result = {'ok': True, 'msg': 'DarkIce already running'}
+                            elif cmd == 'stop':
+                                pid = gw._find_darkice_pid()
+                                if pid:
+                                    import signal as sig_mod
+                                    try:
+                                        os.kill(pid, sig_mod.SIGTERM)
+                                        time.sleep(1)
+                                        # Check if still alive
+                                        if gw._find_darkice_pid():
+                                            os.kill(pid, sig_mod.SIGKILL)
+                                    except ProcessLookupError:
+                                        pass
+                                    gw._darkice_pid = None
+                                    gw._darkice_was_running = False  # Prevent auto-restart
+                                    result = {'ok': True, 'msg': 'DarkIce stopped'}
+                                else:
+                                    result = {'ok': True, 'msg': 'DarkIce not running'}
+                            elif cmd == 'restart':
+                                pid = gw._find_darkice_pid()
+                                if pid:
+                                    import signal as sig_mod
+                                    try:
+                                        os.kill(pid, sig_mod.SIGTERM)
+                                        time.sleep(1)
+                                        if gw._find_darkice_pid():
+                                            os.kill(pid, sig_mod.SIGKILL)
+                                    except ProcessLookupError:
+                                        pass
+                                    gw._darkice_pid = None
+                                    time.sleep(1)
+                                gw._restart_darkice()
+                                gw._darkice_was_running = True  # Re-enable auto-restart
+                                result = {'ok': True, 'msg': 'DarkIce restarted'}
+                    except Exception as e:
+                        result = {'ok': False, 'msg': str(e)}
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps(result).encode('utf-8'))
+                    return
                 elif self.path == '/exit':
                     # Graceful full shutdown (no restart)
                     self.send_response(200)
@@ -6675,14 +7153,44 @@ class WebConfigServer:
             except Exception:
                 pass
 
+    def _ws_send_binary(self, sock, data):
+        """Send a WebSocket binary frame (opcode 0x02)."""
+        header = bytearray()
+        header.append(0x82)  # FIN + binary opcode
+        dlen = len(data)
+        if dlen < 126:
+            header.append(dlen)
+        elif dlen < 65536:
+            header.append(126)
+            header.extend(dlen.to_bytes(2, 'big'))
+        else:
+            header.append(127)
+            header.extend(dlen.to_bytes(8, 'big'))
+        sock.sendall(bytes(header) + data)
+
     def push_audio(self, pcm_data):
-        """Push PCM audio to the shared encoder (called from transmit loop)."""
+        """Push PCM audio to the shared MP3 encoder (called after VAD gate)."""
         if self._encoder_stdin:
             try:
                 self._encoder_stdin.write(pcm_data)
                 self._last_audio_push = time.monotonic()
             except (BrokenPipeError, OSError, ValueError):
                 pass
+
+    def push_ws_audio(self, pcm_data):
+        """Push raw PCM to WebSocket clients (called before VAD gate for continuous audio)."""
+        with self._ws_lock:
+            dead = []
+            for sock in self._ws_clients:
+                try:
+                    self._ws_send_binary(sock, pcm_data)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    dead.append(sock)
+            for sock in dead:
+                try:
+                    self._ws_clients.remove(sock)
+                except ValueError:
+                    pass
 
     def _start_encoder(self):
         """Start the shared FFmpeg MP3 encoder and reader thread."""
@@ -8134,13 +8642,22 @@ pollTimer = setInterval(pollStatus, 1000);
     <button onclick="sendKey('.')">. Vol+</button>
   </div>
   <div class="ctrl-group">
-    <h3>Processing</h3>
-    <button onclick="sendKey('n')" id="btn-n">Gate</button>
-    <button onclick="sendKey('f')" id="btn-f">HPF</button>
-    <button onclick="sendKey('g')" id="btn-g">AGC</button>
-    <button onclick="sendKey('y')" id="btn-y">Spectral</button>
-    <button onclick="sendKey('w')" id="btn-w">Wiener</button>
-    <button onclick="sendKey('e')" id="btn-e">Echo</button>
+    <h3>Radio Processing</h3>
+    <button onclick="togProc('radio','gate')" id="btn-rp-gate">Gate</button>
+    <button onclick="togProc('radio','hpf')" id="btn-rp-hpf">HPF</button>
+    <button onclick="togProc('radio','lpf')" id="btn-rp-lpf">LPF</button>
+    <button onclick="togProc('radio','notch')" id="btn-rp-notch">Notch</button>
+    <button onclick="togProc('radio','deesser')" id="btn-rp-deesser">DeEss</button>
+    <button onclick="togProc('radio','spectral')" id="btn-rp-spectral">Spectral</button>
+  </div>
+  <div class="ctrl-group">
+    <h3>SDR Processing</h3>
+    <button onclick="togProc('sdr','gate')" id="btn-sp-gate">Gate</button>
+    <button onclick="togProc('sdr','hpf')" id="btn-sp-hpf">HPF</button>
+    <button onclick="togProc('sdr','lpf')" id="btn-sp-lpf">LPF</button>
+    <button onclick="togProc('sdr','notch')" id="btn-sp-notch">Notch</button>
+    <button onclick="togProc('sdr','deesser')" id="btn-sp-deesser">DeEss</button>
+    <button onclick="togProc('sdr','spectral')" id="btn-sp-spectral">Spectral</button>
   </div>
   <div class="ctrl-group">
     <h3>SDR</h3>
@@ -8155,20 +8672,21 @@ pollTimer = setInterval(pollStatus, 1000);
   </div>
   <div class="ctrl-group">
     <h3>Playback</h3>
-    <button onclick="sendKey('0')">0 StationID</button>
-    <button onclick="sendKey('1')">1</button>
-    <button onclick="sendKey('2')">2</button>
-    <button onclick="sendKey('3')">3</button>
-    <button onclick="sendKey('4')">4</button>
-    <button onclick="sendKey('5')">5</button>
-    <button onclick="sendKey('6')">6</button>
-    <button onclick="sendKey('7')">7</button>
-    <button onclick="sendKey('8')">8</button>
-    <button onclick="sendKey('9')">9</button>
+    <button onclick="sendKey('0')" id="btn-f0">0 StationID</button>
+    <button onclick="sendKey('1')" id="btn-f1">1</button>
+    <button onclick="sendKey('2')" id="btn-f2">2</button>
+    <button onclick="sendKey('3')" id="btn-f3">3</button>
+    <button onclick="sendKey('4')" id="btn-f4">4</button>
+    <button onclick="sendKey('5')" id="btn-f5">5</button>
+    <button onclick="sendKey('6')" id="btn-f6">6</button>
+    <button onclick="sendKey('7')" id="btn-f7">7</button>
+    <button onclick="sendKey('8')" id="btn-f8">8</button>
+    <button onclick="sendKey('9')" id="btn-f9">9</button>
     <button onclick="sendKey('-')">Stop</button>
   </div>
   <div class="ctrl-group">
     <h3>Smart Announce</h3>
+    <div id="smart-status" style="margin-bottom:8px; font-size:0.9em; color:#888;">Idle</div>
     <button onclick="sendKey('[')">Smart #1</button>
     <button onclick="sendKey(']')">Smart #2</button>
     <button onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
@@ -8179,15 +8697,38 @@ pollTimer = setInterval(pollStatus, 1000);
     <button onclick="if(confirm('Restart gateway?'))sendKey('q')" class="btn-restart">Restart</button>
     <button onclick="if(confirm('Exit the gateway server? This will stop all services.')){fetch('/exit',{method:'POST'}).then(()=>{document.body.innerHTML='<h1 style=&quot;color:#e0e0e0;text-align:center;margin-top:40vh&quot;>Gateway stopped.</h1>';});}" class="btn-exit">Exit Server</button>
   </div>
+  <div class="ctrl-group" id="broadcastify-group">
+    <h3>Broadcastify</h3>
+    <div style="margin-bottom:8px;">
+      <span id="bc-status" style="font-size:0.95em;">...</span>
+    </div>
+    <button onclick="darkiceCmd('start')" id="btn-bc-start">Start</button>
+    <button onclick="darkiceCmd('stop')" id="btn-bc-stop">Stop</button>
+    <button onclick="darkiceCmd('restart')" id="btn-bc-restart">Restart</button>
+  </div>
+  <div class="ctrl-group">
+    <h3>Listen</h3>
+    <div style="display:flex; align-items:center; gap:6px; flex-wrap:nowrap;">
+      <button id="play-btn" onclick="toggleStream()">&#9654; MP3</button>
+      <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#2ecc71; box-shadow:0 0 6px #2ecc71;"></span>
+      <input id="vol-slider" type="range" min="0" max="100" value="80" style="width:50px; accent-color:#00d4ff;" oninput="setVolume(this.value)">
+      <span id="vol-label" style="color:#ccc; font-size:0.8em;">80%</span>
+      <span id="stream-status" style="color:#888; font-size:0.75em;"></span>
+      <span style="color:#0f3460; margin:0 2px;">|</span>
+      <button id="ws-btn" onclick="toggleWS()">&#9654; Live</button>
+      <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#00d4ff; box-shadow:0 0 6px #00d4ff;"></span>
+      <input id="ws-vol" type="range" min="0" max="100" value="80" style="width:50px; accent-color:#00d4ff;" oninput="setWSVol(this.value)">
+      <span id="ws-vol-label" style="color:#ccc; font-size:0.8em;">80%</span>
+      <span id="ws-status" style="color:#888; font-size:0.75em;"></span>
+    </div>
+  </div>
 </div>
 
-<div id="audio-player" style="margin-top:18px; background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px; display:flex; align-items:center; gap:14px;">
-  <button id="play-btn" onclick="toggleStream()" style="padding:10px 18px; border:1px solid #1b3a5c; border-radius:4px; background:#0d1b2a; color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:1.1em; min-width:80px;">&#9654; Listen</button>
-  <span id="stream-indicator" style="display:none; width:10px; height:10px; border-radius:50%; background:#2ecc71; box-shadow:0 0 6px #2ecc71; flex-shrink:0;"></span>
-  <span style="color:#888; font-size:0.9em;">Vol</span>
-  <input id="vol-slider" type="range" min="0" max="100" value="80" style="width:120px; accent-color:#00d4ff;" oninput="setVolume(this.value)">
-  <span id="vol-label" style="color:#ccc; font-family:monospace; font-size:0.9em; min-width:3em;">80%</span>
-  <span id="stream-status" style="color:#888; font-size:0.9em; margin-left:auto;">Radio audio — click Listen to start</span>
+<div id="playback-section" style="margin-top:18px;">
+  <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
+    <h3 style="margin:0 0 10px; color:#00d4ff; font-size:1.1em;">Playback Files</h3>
+    <div id="playback-status" style="font-family:monospace; font-size:0.95em;">Loading...</div>
+  </div>
 </div>
 
 <style>
@@ -8213,15 +8754,23 @@ pollTimer = setInterval(pollStatus, 1000);
   .bar-pct { display: inline-block; width: 3.5em; text-align: right; color: #ccc; }
   .green { color: #2ecc71; } .red { color: #e74c3c; } .yellow { color: #f39c12; }
   .cyan { color: #00d4ff; } .white { color: #e0e0e0; }
+  .pb-slot { display: inline-block; margin: 3px 12px 3px 0; white-space: nowrap; }
+  .pb-key { font-weight: bold; display: inline-block; width: 1.5em; }
 </style>
 
 <script>
 function sendKey(k) {
   fetch('/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:k})});
 }
+function togProc(source, filter) {
+  fetch('/proc_toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source:source, filter:filter})});
+}
+function darkiceCmd(cmd) {
+  fetch('/darkicecmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+}
 
 function bar(pct, cls) {
-  var w = Math.round(Math.min(Math.max(pct, 0), 100) * 1.5);
+  var w = Math.round(Math.min(Math.max(pct, 0), 100));
   var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
   return '<span class="bar-pct">'+p+'%</span><span class="bar '+cls+'" style="width:'+w+'px"></span>';
 }
@@ -8233,7 +8782,8 @@ function updateStatus() {
     h += '<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(s.ptt_active?'red':'green')+'">'+(s.ptt_active?'ON':'off')+'</span> <span class="st-label">('+s.ptt_method+')</span></div>';
     h += '<div class="st-item"><span class="st-label">VAD:</span><span class="st-val '+(s.vad_enabled?'green':'red')+'">'+(s.vad_enabled?'ON':'off')+'</span> <span class="st-val yellow">'+s.vad_db+'dB</span></div>';
     h += '<div class="st-item"><span class="st-label">Vol:</span><span class="st-val yellow">'+s.volume+'x</span></div>';
-    if(s.processing.length) h += '<div class="st-item"><span class="st-label">Proc:</span><span class="st-val yellow">['+s.processing.join(',')+']</span></div>';
+    if(s.radio_proc && s.radio_proc.length) h += '<div class="st-item"><span class="st-label">Radio:</span><span class="st-val yellow">['+s.radio_proc.join(',')+']</span></div>';
+    if(s.sdr_proc && s.sdr_proc.length) h += '<div class="st-item"><span class="st-label">SDR:</span><span class="st-val cyan">['+s.sdr_proc.join(',')+']</span></div>';
     var mutes = [];
     if(s.tx_muted) mutes.push('TX');
     if(s.rx_muted) mutes.push('RX');
@@ -8264,6 +8814,22 @@ function updateStatus() {
     if(s.cat) { h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==="idle"?'green':s.cat==="active"?'red':'white')+'">'+s.cat+'</span></div>'; }
     if(s.cat_reliability && s.cat_reliability.sent) { var r=s.cat_reliability; var missClr=r.missed>0?'red':'green'; h += '<div class="st-item"><span class="st-label">CMD:</span><span class="st-val green">'+r.sent+'</span>/<span class="st-val '+missClr+'">'+r.missed+' miss</span></div>'; }
     if(s.cat_reliability && s.cat_reliability.last_miss) { h += '<div class="st-item"><span class="st-val red" style="font-size:11px">'+s.cat_reliability.last_miss+'</span></div>'; }
+    if(s.streaming_enabled) {
+      var bcRun = s.darkice_running;
+      var bcPipe = s.stream_pipe_ok;
+      var ds = s.darkice_stats || {};
+      var conn = ds.connected;
+      var stClr = bcRun&&conn?'green':bcRun?'yellow':'red';
+      var stTxt = bcRun?(conn?'LIVE':'NO CONN'):'OFF';
+      h += '<div class="st-item"><span class="st-label">Stream:</span><span class="st-val '+stClr+'">'+stTxt+'</span></div>';
+      if(ds.uptime) { var u=ds.uptime; var uh=Math.floor(u/3600); var um=Math.floor((u%3600)/60); var us=u%60; h += '<div class="st-item"><span class="st-label">Age:</span><span class="st-val white">'+uh+'h '+('0'+um).slice(-2)+'m '+('0'+us).slice(-2)+'s</span></div>'; }
+      if(ds.bytes_sent) { var kb=ds.bytes_sent/1024; var mb=kb/1024; h += '<div class="st-item"><span class="st-label">Sent:</span><span class="st-val cyan">'+(mb>=1?mb.toFixed(1)+' MB':kb.toFixed(0)+' KB')+'</span></div>'; }
+      if(ds.send_rate) h += '<div class="st-item"><span class="st-label">Rate:</span><span class="st-val cyan">'+ds.send_rate+'</span></div>';
+      if(ds.rtt) h += '<div class="st-item"><span class="st-label">RTT:</span><span class="st-val '+(ds.rtt<100?'green':ds.rtt<500?'yellow':'red')+'">'+ds.rtt.toFixed(0)+'ms</span></div>';
+      var rTot = (s.darkice_restarts||0) + (s.stream_restarts||0);
+      if(rTot > 0) h += '<div class="st-item"><span class="st-label">Restarts:</span><span class="st-val yellow">'+(s.darkice_restarts||0)+'d/'+(s.stream_restarts||0)+'s</span></div>';
+      h += '<div class="st-item"><span class="st-label">Health:</span><span class="st-val '+(s.stream_health?'green':'red')+'">'+(s.stream_health?'ON':'off')+'</span></div>';
+    }
     h += '</div>';
 
     // Audio levels — same order as console: TX RX SP SDR1 SDR2 SV/CL AN
@@ -8279,6 +8845,22 @@ function updateStatus() {
 
     document.getElementById('status').innerHTML = h;
 
+    // Playback file slots — separate section below controls
+    var pbDiv = document.getElementById('playback-status');
+    if(pbDiv && s.files) {
+      var ph = '';
+      var order = ['0','1','2','3','4','5','6','7','8','9'];
+      for(var fi=0;fi<order.length;fi++) {
+        var fk = order[fi];
+        var f = s.files[fk];
+        if(!f || !f.loaded) continue;
+        var fClr = f.playing?'red':'green';
+        var fName = f.name.length > 28 ? f.name.substring(0,28)+'...' : f.name;
+        ph += '<div class="pb-slot"><span class="pb-key '+(f.playing?'red':'cyan')+'">'+(fk==='0'?'ID':fk)+'</span> <span class="'+fClr+'">'+fName+'</span>'+(f.playing?' <span class="red">&#9654; Playing</span>':'')+'</div>';
+      }
+      pbDiv.innerHTML = ph || '<span class="white">No files loaded</span>';
+    }
+
     // Update button states
     function setBtn(id, active, cls) { var b=document.getElementById(id); if(b) { b.className=active?(cls||'active'):''; } }
     setBtn('btn-t', s.tx_muted, 'muted');
@@ -8293,12 +8875,69 @@ function updateStatus() {
     setBtn('btn-p', s.manual_ptt, 'active');
     setBtn('btn-d', s.sdr1_duck, 'active');
     setBtn('btn-b', s.sdr_rebroadcast, 'active');
-    setBtn('btn-n', s.processing.indexOf('Gate')>=0, 'active');
-    setBtn('btn-f', s.processing.indexOf('HPF')>=0, 'active');
-    setBtn('btn-g', s.processing.indexOf('AGC')>=0, 'active');
-    setBtn('btn-y', s.processing.indexOf('Spectral')>=0, 'active');
-    setBtn('btn-w', s.processing.indexOf('Wiener')>=0, 'active');
-    setBtn('btn-e', s.processing.indexOf('Echo')>=0, 'active');
+    // Radio processing buttons
+    if(s.radio_proc) {
+      setBtn('btn-rp-gate', s.radio_proc.indexOf('Gate')>=0, 'active');
+      setBtn('btn-rp-hpf', s.radio_proc.indexOf('HPF')>=0, 'active');
+      setBtn('btn-rp-lpf', s.radio_proc.indexOf('LPF')>=0, 'active');
+      setBtn('btn-rp-notch', s.radio_proc.indexOf('Notch')>=0, 'active');
+      setBtn('btn-rp-deesser', s.radio_proc.indexOf('DeEss')>=0, 'active');
+      setBtn('btn-rp-spectral', s.radio_proc.indexOf('Spectral')>=0, 'active');
+    }
+    // SDR processing buttons
+    if(s.sdr_proc) {
+      setBtn('btn-sp-gate', s.sdr_proc.indexOf('Gate')>=0, 'active');
+      setBtn('btn-sp-hpf', s.sdr_proc.indexOf('HPF')>=0, 'active');
+      setBtn('btn-sp-lpf', s.sdr_proc.indexOf('LPF')>=0, 'active');
+      setBtn('btn-sp-notch', s.sdr_proc.indexOf('Notch')>=0, 'active');
+      setBtn('btn-sp-deesser', s.sdr_proc.indexOf('DeEss')>=0, 'active');
+      setBtn('btn-sp-spectral', s.sdr_proc.indexOf('Spectral')>=0, 'active');
+    }
+    // Smart announce activity status
+    var smSt = document.getElementById('smart-status');
+    if(smSt && s.smart_activity) {
+      var parts = [];
+      for(var sk in s.smart_activity) {
+        var sv = s.smart_activity[sk];
+        var sClr = sv==='Done'?'green':sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped')?'red':'yellow';
+        parts.push('<span class="'+sClr+'">#'+sk+': '+sv+'</span>');
+      }
+      smSt.innerHTML = parts.length ? parts.join(' ') : '<span style="color:#888">Idle</span>';
+    }
+    // Playback button states
+    if(s.files) {
+      for(var fk in s.files) {
+        var fb = document.getElementById('btn-f'+fk);
+        if(fb) {
+          var fi = s.files[fk];
+          if(fi.playing) { fb.className='muted'; }
+          else if(fi.loaded) { fb.className=''; }
+          else { fb.className=''; fb.style.opacity='0.4'; }
+          if(fi.name) fb.title=fi.name;
+        }
+      }
+    }
+    // Broadcastify buttons & status text
+    var bcGrp = document.getElementById('broadcastify-group');
+    if(bcGrp) {
+      if(!s.streaming_enabled) { bcGrp.style.display='none'; } else { bcGrp.style.display=''; }
+      var bcSt = document.getElementById('bc-status');
+      if(bcSt) {
+        var ds = s.darkice_stats || {};
+        if(s.darkice_running && ds.connected) {
+          var extra = '';
+          if(ds.send_rate) extra += ' '+ds.send_rate;
+          if(ds.rtt) extra += ' RTT:'+ds.rtt.toFixed(0)+'ms';
+          bcSt.innerHTML='<span class="green">&#9679; LIVE'+extra+'</span>';
+        } else if(s.darkice_running) {
+          bcSt.innerHTML='<span class="yellow">&#9679; Running (no connection)</span>';
+        } else {
+          bcSt.innerHTML='<span class="red">&#9679; Stopped</span>';
+        }
+      }
+      setBtn('btn-bc-start', s.darkice_running, 'active');
+      setBtn('btn-bc-stop', !s.darkice_running && s.streaming_enabled, 'muted');
+    }
     // Sync radio volume sliders with actual values from CAT
     if(s.cat_vol) {
       var lv=document.getElementById('l-vol'), rv=document.getElementById('r-vol');
@@ -8384,17 +9023,188 @@ function stopStream() {
     _audio = null;
   }
   _playing = false;
-  document.getElementById('play-btn').innerHTML = '&#9654; Listen';
+  document.getElementById('play-btn').innerHTML = '&#9654; MP3';
   document.getElementById('play-btn').style.color = '#e0e0e0';
   document.getElementById('play-btn').style.borderColor = '#1b3a5c';
   document.getElementById('stream-indicator').style.display = 'none';
-  document.getElementById('stream-status').textContent = 'Radio audio — click Listen to start';
+  document.getElementById('stream-status').textContent = '';
   document.getElementById('stream-status').style.color = '#888';
 }
 
 function setVolume(v) {
   document.getElementById('vol-label').textContent = v + '%';
   if (_audio) _audio.volume = v / 100;
+}
+
+// --- Low-latency WebSocket PCM player ---
+var _ws = null;
+var _wsCtx = null;
+var _wsGain = null;
+var _wsPlaying = false;
+var _wsTimer = null;
+var _wsStart = 0;
+var _wsWorklet = null;
+
+function toggleWS() {
+  if (_wsPlaying) { stopWS(); } else { startWS(); }
+}
+
+function startWS() {
+  var btn = document.getElementById('ws-btn');
+  var ind = document.getElementById('ws-indicator');
+  var st = document.getElementById('ws-status');
+  btn.innerHTML = '&#8987; Connecting...';
+  btn.style.color = '#f39c12';
+  st.textContent = 'Connecting...';
+  st.style.color = '#f39c12';
+
+  // Prevent double-click race
+  if (_wsCtx) { stopWS(); return; }
+
+  try {
+    _wsCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
+    console.log('[WS-Audio] AudioContext created, state:', _wsCtx.state, 'sampleRate:', _wsCtx.sampleRate);
+  } catch(e) {
+    st.textContent = 'No AudioContext: ' + e.message;
+    st.style.color = '#e74c3c';
+    btn.innerHTML = '&#9654; Live';
+    btn.style.color = '#e0e0e0';
+    return;
+  }
+
+  // Resume AudioContext (browsers require user gesture)
+  if (_wsCtx.state === 'suspended') {
+    _wsCtx.resume().then(function() { console.log('[WS-Audio] AudioContext resumed'); });
+  }
+
+  // Create gain node for volume control
+  _wsGain = _wsCtx.createGain();
+  _wsGain.gain.value = document.getElementById('ws-vol').value / 100;
+  _wsGain.connect(_wsCtx.destination);
+
+  // PCM ring buffer shared between WS onmessage and audio output
+  var _pcmBuf = [];
+  var _pcmPos = 0;
+  var _pcmTotal = 0;
+  var _pcmReady = false;
+
+  function _drainPCM(output) {
+    var w = 0, need = output.length;
+    // Pre-buffer 200ms (9600 samples at 48kHz) before starting playback
+    if (!_pcmReady) {
+      if (_pcmTotal < 9600) { for (w = 0; w < need; w++) output[w] = 0; return; }
+      _pcmReady = true;
+    }
+    while (w < need) {
+      if (!_pcmBuf.length) { for (; w < need; w++) output[w] = 0; break; }
+      var cur = _pcmBuf[0], avail = cur.length - _pcmPos;
+      var take = Math.min(avail, need - w);
+      for (var j = 0; j < take; j++) output[w++] = cur[_pcmPos++];
+      if (_pcmPos >= cur.length) { _pcmTotal -= cur.length; _pcmBuf.shift(); _pcmPos = 0; }
+    }
+  }
+
+  function _connectWS() {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    _ws = new WebSocket(proto + '//' + location.host + '/ws_audio');
+    _ws.binaryType = 'arraybuffer';
+
+    _ws.onopen = function() {
+      console.log('[WS-Audio] WebSocket connected');
+      _wsPlaying = true;
+      _wsStart = Date.now();
+      btn.innerHTML = '&#9724; Stop';
+      btn.style.color = '#00d4ff';
+      btn.style.borderColor = '#00d4ff';
+      ind.style.display = 'inline-block';
+      st.textContent = '0:00';
+      st.style.color = '#00d4ff';
+      _wsTimer = setInterval(function() {
+        var secs = Math.floor((Date.now() - _wsStart) / 1000);
+        var m = Math.floor(secs / 60);
+        var s = secs % 60;
+        st.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+      }, 1000);
+    };
+
+    _ws.onmessage = function(ev) {
+      if (ev.data instanceof ArrayBuffer) {
+        var int16 = new Int16Array(ev.data);
+        var float32 = new Float32Array(int16.length);
+        for (var i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
+        if (_wsWorklet && _wsWorklet.port) {
+          _wsWorklet.port.postMessage(float32);
+        } else {
+          _pcmBuf.push(float32);
+          _pcmTotal += float32.length;
+          // Cap buffer to ~500ms to prevent buildup
+          while (_pcmBuf.length > 12) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
+        }
+      }
+    };
+
+    _ws.onerror = function(ev) {
+      console.log('[WS-Audio] WebSocket error:', ev);
+      st.textContent = 'WS error';
+      st.style.color = '#e74c3c';
+      stopWS();
+    };
+
+    _ws.onclose = function(ev) {
+      console.log('[WS-Audio] WebSocket closed, code:', ev.code, 'reason:', ev.reason);
+      if (_wsPlaying) stopWS();
+    };
+  }
+
+  // Try AudioWorklet first (requires secure context), fall back to ScriptProcessor
+  if (_wsCtx.audioWorklet) {
+    var workletCode = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[];this.p=0;this.tot=0;this.ready=false;this.port.onmessage=e=>{this.b.push(e.data);this.tot+=e.data.length;if(!this.ready&&this.tot>=9600)this.ready=true}}process(i,o){var c=o[0][0];if(!c)return true;var n=c.length,w=0;if(!this.ready){for(w=0;w<n;w++)c[w]=0;return true}while(w<n){if(!this.b.length){for(;w<n;w++)c[w]=0;break}var r=this.b[0],a=r.length-this.p,t=Math.min(a,n-w);for(var j=0;j<t;j++)c[w++]=r[this.p++];if(this.p>=r.length){this.b.shift();this.p=0;this.tot-=r.length}}return true}}registerProcessor("p",P)';
+    var blob = new Blob([workletCode], {type: 'application/javascript'});
+    var blobURL = URL.createObjectURL(blob);
+    _wsCtx.audioWorklet.addModule(blobURL).then(function() {
+      URL.revokeObjectURL(blobURL);
+      console.log('[WS-Audio] AudioWorklet loaded OK');
+      _wsWorklet = new AudioWorkletNode(_wsCtx, 'p', {outputChannelCount:[1], numberOfOutputs:1});
+      _wsWorklet.connect(_wsGain);
+      _connectWS();
+    }).catch(function(e) {
+      // AudioWorklet failed — use ScriptProcessor fallback
+      URL.revokeObjectURL(blobURL);
+      console.log('[WS-Audio] AudioWorklet failed:', e.message, '— using ScriptProcessor');
+      var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
+      sp.onaudioprocess = function(ev) { _drainPCM(ev.outputBuffer.getChannelData(0)); };
+      sp.connect(_wsGain);
+      _wsWorklet = sp;  // store for cleanup
+      _connectWS();
+    });
+  } else {
+    // No AudioWorklet at all — ScriptProcessor
+    var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
+    sp.onaudioprocess = function(ev) { _drainPCM(ev.outputBuffer.getChannelData(0)); };
+    sp.connect(_wsGain);
+    _wsWorklet = sp;
+    _connectWS();
+  }
+}
+
+function stopWS() {
+  if (_wsTimer) { clearInterval(_wsTimer); _wsTimer = null; }
+  if (_ws) { try { _ws.close(); } catch(e){} _ws = null; }
+  if (_wsWorklet) { try { _wsWorklet.disconnect(); } catch(e){} _wsWorklet = null; }
+  if (_wsGain) { try { _wsGain.disconnect(); } catch(e){} _wsGain = null; }
+  if (_wsCtx) { try { _wsCtx.close(); } catch(e){} _wsCtx = null; }
+  _wsPlaying = false;
+  document.getElementById('ws-btn').innerHTML = '&#9654; Live';
+  document.getElementById('ws-btn').style.color = '#e0e0e0';
+  document.getElementById('ws-btn').style.borderColor = '#1b3a5c';
+  document.getElementById('ws-indicator').style.display = 'none';
+  document.getElementById('ws-status').textContent = '';
+  document.getElementById('ws-status').style.color = '#888';
+}
+
+function setWSVol(v) {
+  document.getElementById('ws-vol-label').textContent = v + '%';
+  if (_wsGain) _wsGain.gain.value = v / 100;
 }
 </script>
 '''
@@ -8713,10 +9523,16 @@ class RadioGateway:
         self._spk_trace = _collections_mod.deque(maxlen=12000)  # speaker thread trace
         self._trace_events = _collections_mod.deque(maxlen=500)  # key presses / mode changes
         
-        # Audio processing state
+        # Audio processing state (legacy — kept for backwards compat)
         self.noise_profile = None  # For spectral subtraction
         self.gate_envelope = 0.0  # For noise gate smoothing
         self.highpass_state = None  # For high-pass filter state
+
+        # Per-source audio processors
+        self.radio_processor = AudioProcessor("radio", config)
+        self.sdr_processor = AudioProcessor("sdr", config)
+        self._sync_radio_processor()
+        self._sync_sdr_processor()
         
         # Initialize audio mixer and sources
         self.mixer = AudioMixer(config)
@@ -8780,6 +9596,8 @@ class RadioGateway:
         self._darkice_was_running = False  # True if DarkIce was alive at startup
         self._darkice_restart_count = 0
         self._last_darkice_check = 0
+        self._darkice_stats_cache = None   # Cached stats dict
+        self._darkice_stats_time = 0       # Last stats fetch timestamp
 
         # Watchdog trace — low-fidelity long-running diagnostics (press 'u')
         # Samples every 5s into memory, flushes to disk every 60s.
@@ -8996,28 +9814,63 @@ class RadioGateway:
         except Exception:
             return pcm_data
     
+    def _sync_radio_processor(self):
+        """Sync global config flags into the radio AudioProcessor instance."""
+        p = self.radio_processor
+        p.enable_hpf = self.config.ENABLE_HIGHPASS_FILTER
+        p.hpf_cutoff = self.config.HIGHPASS_CUTOFF_FREQ
+        p.enable_lpf = self.config.ENABLE_LOWPASS_FILTER
+        p.lpf_cutoff = self.config.LOWPASS_CUTOFF_FREQ
+        p.enable_notch = self.config.ENABLE_NOTCH_FILTER
+        p.notch_freq = self.config.NOTCH_FREQ
+        p.notch_q = self.config.NOTCH_Q
+        p.enable_noise_gate = self.config.ENABLE_NOISE_GATE
+        p.gate_threshold = self.config.NOISE_GATE_THRESHOLD
+        p.gate_attack = self.config.NOISE_GATE_ATTACK
+        p.gate_release = self.config.NOISE_GATE_RELEASE
+        p.enable_noise_suppression = self.config.ENABLE_NOISE_SUPPRESSION
+        p.noise_suppression_method = self.config.NOISE_SUPPRESSION_METHOD
+        p.noise_suppression_strength = self.config.NOISE_SUPPRESSION_STRENGTH
+        p.enable_deesser = self.config.ENABLE_DEESSER
+        p.deesser_freq = self.config.DEESSER_FREQ
+        p.deesser_strength = self.config.DEESSER_STRENGTH
+
+    def _sync_sdr_processor(self):
+        """Sync SDR-specific config flags into the SDR AudioProcessor instance."""
+        p = self.sdr_processor
+        p.enable_noise_gate = self.config.SDR_PROC_ENABLE_NOISE_GATE
+        p.gate_threshold = self.config.SDR_PROC_NOISE_GATE_THRESHOLD
+        p.gate_attack = self.config.SDR_PROC_NOISE_GATE_ATTACK
+        p.gate_release = self.config.SDR_PROC_NOISE_GATE_RELEASE
+        p.enable_hpf = self.config.SDR_PROC_ENABLE_HPF
+        p.hpf_cutoff = self.config.SDR_PROC_HPF_CUTOFF
+        p.enable_lpf = self.config.SDR_PROC_ENABLE_LPF
+        p.lpf_cutoff = self.config.SDR_PROC_LPF_CUTOFF
+        p.enable_notch = self.config.SDR_PROC_ENABLE_NOTCH
+        p.notch_freq = self.config.SDR_PROC_NOTCH_FREQ
+        p.notch_q = self.config.SDR_PROC_NOTCH_Q
+        p.enable_noise_suppression = self.config.SDR_PROC_ENABLE_NS
+        p.noise_suppression_method = self.config.SDR_PROC_NS_METHOD
+        p.noise_suppression_strength = self.config.SDR_PROC_NS_STRENGTH
+        p.enable_deesser = self.config.SDR_PROC_ENABLE_DEESSER
+        p.deesser_freq = self.config.SDR_PROC_DEESSER_FREQ
+        p.deesser_strength = self.config.SDR_PROC_DEESSER_STRENGTH
+
     def process_audio_for_mumble(self, pcm_data):
-        """Apply all enabled audio processing to clean up radio audio before sending to Mumble"""
-        if not pcm_data:
-            return pcm_data
-        
-        processed = pcm_data
-        
-        # Apply high-pass filter first (removes low-frequency rumble from radio)
-        if self.config.ENABLE_HIGHPASS_FILTER:
-            processed = self.apply_highpass_filter(processed)
-        
-        # Apply noise suppression (removes constant hiss/static from radio)
-        if self.config.ENABLE_NOISE_SUPPRESSION:
-            if self.config.NOISE_SUPPRESSION_METHOD == 'spectral':
-                processed = self.apply_spectral_noise_suppression(processed)
-            # Can add other methods here (wiener, etc.)
-        
-        # Apply noise gate last (cuts residual RF noise/hiss)
-        if self.config.ENABLE_NOISE_GATE:
-            processed = self.apply_noise_gate(processed)
-        
-        return processed
+        """Apply all enabled audio processing to clean up radio audio before sending to Mumble.
+        Now delegates to the radio AudioProcessor instance.
+        """
+        # Keep legacy state in sync (old code may read self.gate_envelope etc.)
+        self._sync_radio_processor()
+        result = self.radio_processor.process(pcm_data)
+        self.gate_envelope = self.radio_processor.gate_envelope
+        self.highpass_state = self.radio_processor.highpass_state
+        return result
+
+    def process_audio_for_sdr(self, pcm_data):
+        """Apply SDR-specific audio processing chain."""
+        self._sync_sdr_processor()
+        return self.sdr_processor.process(pcm_data)
     
     def check_vad(self, pcm_data):
         """Voice Activity Detection - determines if audio should be sent to Mumble"""
@@ -10663,14 +11516,15 @@ class RadioGateway:
                 s.append(f"\n💬 MUMBLE:")
                 s.append(f"  Channel: {ch}  Users: {users}")
 
-                # Processing — compact
+                # Processing — compact, per-source
                 proc = []
                 if self.config.ENABLE_VAD: proc.append("VAD")
-                if self.config.ENABLE_NOISE_GATE: proc.append("Gate")
-                if self.config.ENABLE_HIGHPASS_FILTER: proc.append("HPF")
-                if self.config.ENABLE_AGC: proc.append("AGC")
-                if self.config.ENABLE_NOISE_SUPPRESSION: proc.append("NR")
-                if self.config.ENABLE_ECHO_CANCELLATION: proc.append("Echo")
+                radio_active = self.radio_processor.get_active_list()
+                if radio_active:
+                    proc.append(f"Radio[{','.join(radio_active)}]")
+                sdr_active = self.sdr_processor.get_active_list()
+                if sdr_active:
+                    proc.append(f"SDR[{','.join(sdr_active)}]")
                 if proc:
                     s.append(f"\n🎛️ Processing: {' | '.join(proc)}")
 
@@ -10930,7 +11784,11 @@ class RadioGateway:
                         # Feed silence to speaker so its PortAudio buffer stays primed,
                         # but skip the Mumble/remote-audio send path entirely.
                         self.audio_capture_active = False
-                        self._speaker_enqueue(b'\x00' * (self.config.AUDIO_CHUNK_SIZE * 2))
+                        _silence = b'\x00' * (self.config.AUDIO_CHUNK_SIZE * 2)
+                        self._speaker_enqueue(_silence)
+                        # Keep WebSocket clients fed with silence so they stay connected
+                        if self.web_config_server and self.web_config_server._ws_clients:
+                            self.web_config_server.push_ws_audio(_silence)
                         _tr_outcome = 'vad_gate'
                         continue
                     else:
@@ -10939,6 +11797,10 @@ class RadioGateway:
                         # audio capture has stopped and trigger restart_audio_input().
                         self.last_audio_capture_time = time.time()
                         self.audio_capture_active = True
+
+                        # Push to WebSocket clients before any VAD/PTT routing
+                        if self.web_config_server and self.web_config_server._ws_clients:
+                            self.web_config_server.push_ws_audio(data)
 
                     _tr_outcome = 'mix'  # will be updated to sent/no_mumble/etc below
 
@@ -11173,6 +12035,11 @@ class RadioGateway:
 
                     data = self.process_audio_for_mumble(data)
 
+                    # Push to WebSocket clients BEFORE VAD gate so low-latency
+                    # listeners always get continuous audio (like speaker output).
+                    if self.web_config_server and self.web_config_server._ws_clients:
+                        self.web_config_server.push_ws_audio(data)
+
                     if not self.check_vad(data):
                         # Speaker bypasses VAD — monitor even when Mumble is gated
                         self._speaker_enqueue(data)
@@ -11257,9 +12124,12 @@ class RadioGateway:
                         if self.config.VERBOSE_LOGGING:
                             print(f"\n[Stream] Send error: {stream_err}")
 
-                # Push to web audio stream listeners
-                if self.web_config_server and self.web_config_server._stream_subscribers:
-                    self.web_config_server.push_audio(data)
+                # Push to web audio stream listeners (MP3 + WebSocket PCM)
+                if self.web_config_server:
+                    if self.web_config_server._stream_subscribers:
+                        self.web_config_server.push_audio(data)
+                    if self.web_config_server._ws_clients:
+                        self.web_config_server.push_ws_audio(data)
 
             except Exception as e:
                 consecutive_errors += 1
@@ -11354,6 +12224,73 @@ class RadioGateway:
         except Exception:
             pass
         return None
+
+    def _get_darkice_stats(self):
+        """Get live DarkIce streaming statistics. Returns dict or None."""
+        pid = self._darkice_pid
+        if not pid:
+            return None
+        stats = {}
+        try:
+            # Process uptime from /proc/pid/stat (field 22 = start time in ticks)
+            with open('/proc/uptime') as f:
+                sys_uptime = float(f.read().split()[0])
+            with open(f'/proc/{pid}/stat') as f:
+                start_ticks = int(f.read().split()[21])
+            clk_tck = os.sysconf('SC_CLK_TCK')
+            stats['uptime'] = int(sys_uptime - start_ticks / clk_tck)
+        except Exception:
+            stats['uptime'] = 0
+        try:
+            # TCP connection stats via ss -ti to Broadcastify server
+            import subprocess
+            server = str(getattr(self.config, 'STREAM_SERVER', '')).strip()
+            if not server or server == 'localhost':
+                # Find remote IP from /proc/pid/net/tcp
+                with open(f'/proc/{pid}/net/tcp') as f:
+                    for line in f.readlines()[1:]:
+                        parts = line.split()
+                        if parts[3] == '01':  # ESTABLISHED
+                            remote_hex = parts[2].split(':')[0]
+                            rip = '.'.join(str(int(remote_hex[i:i+2], 16)) for i in (6, 4, 2, 0))
+                            if rip not in ('127.0.0.1', '0.0.0.0'):
+                                server = rip
+                                break
+            if server:
+                result = subprocess.run(['ss', '-ti', 'dst', server],
+                                        capture_output=True, text=True, timeout=3)
+                out = result.stdout
+                # Parse key=value pairs from ss extended info
+                import re
+                for key in ('bytes_sent', 'bytes_acked', 'bytes_received',
+                            'segs_out', 'segs_in', 'data_segs_out'):
+                    m = re.search(rf'{key}:(\d+)', out)
+                    if m:
+                        stats[key] = int(m.group(1))
+                m = re.search(r'rtt:([\d.]+)/([\d.]+)', out)
+                if m:
+                    stats['rtt'] = float(m.group(1))
+                m = re.search(r'send ([\d.]+)(\w+)', out)
+                if m:
+                    stats['send_rate'] = m.group(1) + m.group(2)
+                m = re.search(r'busy:(\d+)ms', out)
+                if m:
+                    stats['busy_ms'] = int(m.group(1))
+                # TCP connection established = connected
+                stats['connected'] = 'ESTAB' in out
+            else:
+                stats['connected'] = False
+        except Exception:
+            stats['connected'] = False
+        return stats
+
+    def _get_darkice_stats_cached(self):
+        """Return cached DarkIce stats, refreshing every 5 seconds."""
+        now = time.time()
+        if now - self._darkice_stats_time > 5:
+            self._darkice_stats_cache = self._get_darkice_stats()
+            self._darkice_stats_time = now
+        return self._darkice_stats_cache
 
     def _restart_darkice(self):
         """Restart DarkIce after it has died."""
@@ -11650,6 +12587,45 @@ class RadioGateway:
             except:
                 pass
 
+    def handle_proc_toggle(self, source, filt):
+        """Toggle a processing filter for a specific source (radio or sdr).
+        Called from the /proc_toggle API endpoint.
+        """
+        # Map source to config prefix and processor
+        if source == 'radio':
+            toggle_map = {
+                'gate':     'ENABLE_NOISE_GATE',
+                'hpf':      'ENABLE_HIGHPASS_FILTER',
+                'lpf':      'ENABLE_LOWPASS_FILTER',
+                'notch':    'ENABLE_NOTCH_FILTER',
+                'deesser':  'ENABLE_DEESSER',
+                'spectral': 'ENABLE_NOISE_SUPPRESSION',
+            }
+            key = toggle_map.get(filt)
+            if key:
+                current = getattr(self.config, key, False)
+                setattr(self.config, key, not current)
+                # For spectral, also set the method
+                if filt == 'spectral' and not current:
+                    self.config.NOISE_SUPPRESSION_METHOD = 'spectral'
+                self._sync_radio_processor()
+        elif source == 'sdr':
+            toggle_map = {
+                'gate':     'SDR_PROC_ENABLE_NOISE_GATE',
+                'hpf':      'SDR_PROC_ENABLE_HPF',
+                'lpf':      'SDR_PROC_ENABLE_LPF',
+                'notch':    'SDR_PROC_ENABLE_NOTCH',
+                'deesser':  'SDR_PROC_ENABLE_DEESSER',
+                'spectral': 'SDR_PROC_ENABLE_NS',
+            }
+            key = toggle_map.get(filt)
+            if key:
+                current = getattr(self.config, key, False)
+                setattr(self.config, key, not current)
+                if filt == 'spectral' and not current:
+                    self.config.SDR_PROC_NS_METHOD = 'spectral'
+                self._sync_sdr_processor()
+
     def handle_key(self, char):
         """Process a key command (called by keyboard loop and web UI)."""
         char = char.lower()
@@ -11701,8 +12677,10 @@ class RadioGateway:
             self.config.INPUT_VOLUME = min(3.0, self.config.INPUT_VOLUME + 0.1)
         elif char == 'n':
             self.config.ENABLE_NOISE_GATE = not self.config.ENABLE_NOISE_GATE
+            self._sync_radio_processor()
         elif char == 'f':
             self.config.ENABLE_HIGHPASS_FILTER = not self.config.ENABLE_HIGHPASS_FILTER
+            self._sync_radio_processor()
         elif char == 'a':
             if self.announce_input_source:
                 self.announce_input_muted = not self.announce_input_muted
@@ -11715,12 +12693,14 @@ class RadioGateway:
             else:
                 self.config.ENABLE_NOISE_SUPPRESSION = True
                 self.config.NOISE_SUPPRESSION_METHOD = 'spectral'
+            self._sync_radio_processor()
         elif char == 'w':
             if self.config.ENABLE_NOISE_SUPPRESSION and self.config.NOISE_SUPPRESSION_METHOD == 'wiener':
                 self.config.ENABLE_NOISE_SUPPRESSION = False
             else:
                 self.config.ENABLE_NOISE_SUPPRESSION = True
                 self.config.NOISE_SUPPRESSION_METHOD = 'wiener'
+            self._sync_radio_processor()
         elif char == 'e':
             self.config.ENABLE_ECHO_CANCELLATION = not self.config.ENABLE_ECHO_CANCELLATION
         elif char == 'p':
@@ -11824,13 +12804,9 @@ class RadioGateway:
         _ptt_m = str(getattr(self.config, 'PTT_METHOD', 'aioc')).lower()
         _ptt_tag = {'aioc': 'AIOC', 'relay': 'Relay', 'software': 'Software'}.get(_ptt_m, _ptt_m)
 
-        # Processing flags
-        proc = []
-        if self.config.ENABLE_NOISE_GATE: proc.append('Gate')
-        if self.config.ENABLE_HIGHPASS_FILTER: proc.append('HPF')
-        if self.config.ENABLE_AGC: proc.append('AGC')
-        if self.config.ENABLE_NOISE_SUPPRESSION: proc.append(self.config.NOISE_SUPPRESSION_METHOD.title())
-        if self.config.ENABLE_ECHO_CANCELLATION: proc.append('Echo')
+        # Processing flags (per-source)
+        proc = self.radio_processor.get_active_list()
+        sdr_proc = self.sdr_processor.get_active_list()
 
         # Smart announce countdowns
         sa_countdowns = []
@@ -11908,7 +12884,10 @@ class RadioGateway:
             'an_level': an_level,
             'volume': round(self.config.INPUT_VOLUME, 1),
             'processing': proc,
+            'radio_proc': proc,
+            'sdr_proc': sdr_proc,
             'smart_countdowns': sa_countdowns,
+            'smart_activity': self.smart_announce.get_activity() if self.smart_announce and hasattr(self.smart_announce, 'get_activity') else {},
             'ddns': ddns_status,
             'charger': charger_state,
             'cat': cat_state,
@@ -11926,6 +12905,15 @@ class RadioGateway:
             'ms2_state': self.mumble_server_2.state if self.mumble_server_2 else None,
             'cat_enabled': bool(self.cat_client) or getattr(self.config, 'ENABLE_CAT_CONTROL', False),
             'files': file_slots,
+            # Broadcastify / DarkIce streaming
+            'streaming_enabled': bool(getattr(self.config, 'ENABLE_STREAM_OUTPUT', False)),
+            'stream_pipe_ok': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
+            'darkice_running': self._darkice_pid is not None,
+            'darkice_pid': self._darkice_pid,
+            'darkice_restarts': self._darkice_restart_count,
+            'stream_restarts': self.stream_restart_count,
+            'stream_health': bool(getattr(self.config, 'ENABLE_STREAM_HEALTH', False)),
+            'darkice_stats': self._get_darkice_stats_cached(),
         }
 
     def status_monitor_loop(self):
