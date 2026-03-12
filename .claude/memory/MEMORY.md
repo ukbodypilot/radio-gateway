@@ -53,7 +53,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 ## Key Architecture
 - `AIOCRadioSource` — reads from AIOC ALSA device (radio RX audio)
 - `SDRSource` — reads from ALSA loopback via background reader thread
-- `PipeWireSDRSource` — reads from PipeWire virtual sink monitor via FFmpeg subprocess
+- `PipeWireSDRSource` — reads from PipeWire virtual sink monitor via `parec` subprocess
 - `RemoteAudioServer` / `RemoteAudioSource` — TCP audio link
 - `AudioMixer` — mixes SDR + AIOC with duck-out logic; returns 8-tuple
 - `audio_transmit_loop()` — feeds Mumble encoder
@@ -95,19 +95,9 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - WirePlumber grabs AIOC (hides it from PyAudio)
 - Fix: `~/.config/wireplumber/wireplumber.conf.d/99-disable-loopback.conf`
 
-## Terminal Settings Bug (fixed)
-- Keyboard listener runs as daemon thread using tty raw mode (setcbreak)
-- Daemon threads killed before their `finally` blocks run on process exit
-- Fix: save terminal settings on instance (`self._terminal_settings`), restore in `cleanup()`
-- Safety net: `start.sh` cleanup runs `stty sane` to guarantee terminal restored on any exit
-
 ## DarkIce / Broadcastify Notes
 - DarkIce 1.5 parser bug: crashes if "password" appears before first `[section]` header
-- Config template: `scripts/darkice.cfg.example`
-- udev: needs BOTH `SUBSYSTEM=="usb"` AND `SUBSYSTEM=="hidraw"` rules for AIOC
-- Dashboard: `/darkicecmd` POST endpoint (start/stop/restart). Stop sets `_darkice_was_running=False` to prevent auto-restart
-- Stats: `_get_darkice_stats()` reads `/proc/pid/stat` (uptime) + `ss -ti` (bytes_sent, rtt, send_rate), cached 5s
-- `/proc/pid/io` blocked by Yama ptrace_scope=1 — use `ss -ti` instead for throughput data
+- Dashboard: `/darkicecmd` POST (start/stop/restart), stats via `ss -ti` + `/proc/pid/stat`
 
 ## Audio Processing — Per-Source AudioProcessor (2026-03-10)
 - `AudioProcessor` class: independent filter state per source (radio, SDR)
@@ -135,33 +125,14 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Installer step 4b: `p` option for PTT relay udev assignment
 
 ## Web Configuration UI & Live Dashboard
-- `WebConfigServer` class: built-in HTTP server (Python `http.server`, no Flask dependency)
+- `WebConfigServer` class: built-in HTTP server (Python `http.server`, no Flask)
+- Pages: `/` (config editor), `/dashboard` (live status), `/sdr` (SDR control), `/radio` (CAT control)
 - Config: `ENABLE_WEB_CONFIG`, `WEB_CONFIG_PORT` (default 8080), `WEB_CONFIG_PASSWORD`
-- Reads config file to build section map, renders form grouped by `[section]` headers
-- Save preserves comments line-by-line; Save & Restart sets `gateway.restart_requested = True`
-- Basic auth (user: `admin`) when password is set; no auth when blank
-- Status bar line 2: `WEB:8080` in green
-- Sensitive keys (passwords, API keys) rendered as `type="password"` inputs
-- **SDR Control** (`/sdr`): full SDR tuning page with live audio level, channel memory (see SDR section above)
-- **Live Dashboard** (`/dashboard`): JS polls `/status` every 1s, shows all gateway state
-  - `handle_key(char)` — extracted shared key handler, used by both terminal and web `/key` endpoint
-  - `get_status_dict()` — returns runtime state as JSON (uptime, levels, mutes, smart countdowns, etc.)
-  - Audio bars for all sources: TX, RX, SP, SDR1, SDR2, SV/CL, AN (same order as console)
-  - Fixed-width CSS grid layout (220px columns) — bars and values don't shift
-  - Bar width: pct × 1.0px (max 100px), percentage shown left of bar in fixed-width span
-  - Auto-reconnect: on fetch failure shows "offline" message, polls until gateway returns, then reloads
-  - Button grid for all keyboard shortcuts (mute, PTT, playback, smart triggers, etc.)
-  - Terminal-only keys (`i`, `u`, `z`) stay in keyboard loop, not exposed to web
-  - **Audio player**: `/stream` endpoint serves MP3 via shared FFmpeg encoder
-  - Shared encoder starts with web server, silence feeder keeps it alive
-  - Sequence-number ring buffer (`_mp3_seq`) — immune to `pop(0)` index shifting
-  - Dashboard UI: play/stop button, volume slider, elapsed timer, green indicator dot
-  - ~10-15s browser latency (HTML5 `<audio>` element buffering)
-  - **Low-latency WebSocket PCM**: AudioWorklet + 200ms pre-buffer (9600 samples), ScriptProcessor fallback
-  - **Broadcastify controls**: `/darkicecmd` POST (start/stop/restart), live stats via `ss -ti` + `/proc/pid/stat`
-  - `get_status_dict()` includes: `streaming_enabled`, `darkice_running`, `darkice_stats` (uptime, bytes_sent, send_rate, rtt, connected)
-  - **Smart Announce status**: `_activity` dict tracks steps (Searching/Waiting/Speaking/Done/Error), shown in control group
-  - **Playback file status**: separate section at bottom, shows slot names + playing indicator
+- Dashboard: 1s JSON polling, audio bars, button grid, auto-reconnect, combined Playback/Smart section
+- **MP3 stream**: `/stream` endpoint, shared FFmpeg encoder, sequence-number ring buffer
+- **WebSocket PCM**: low-latency binary audio, AudioWorklet + 50ms pre-buffer, 200ms cap, TCP_NODELAY, per-client send queues
+- **Broadcastify controls**: start/stop/restart DarkIce, live stats
+- **Smart Announce status**: step-by-step progress display
 
 ## INI Config Format
 - Config files use standard INI `[section]` headers (v1.4.0)
@@ -183,105 +154,32 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 
 ## TH-9800 CAT Control
 - `RadioCATClient` class: TCP client for TH9800_CAT.py server
-- Config: `ENABLE_CAT_CONTROL`, `CAT_STARTUP_COMMANDS`, `CAT_HOST`, `CAT_PORT`, `CAT_PASSWORD`
-- `CAT_STARTUP_COMMANDS = false` → connect TCP but skip channel/volume/power setup
-- `setup_radio`: sets RTS once (no restore), runs channel/volume/power tasks, prints summary
-- `set_channel()`: never presses V/M — skips if radio is in VFO mode
-- **CRITICAL: press response unreliable** — returns OTHER VFO's channel, not pressed VFO's
-  - Fix: press dial, then step-right + step-left (net zero) to read actual channel from step response
-  - Step response `_channel_text[vfo]` is always correct
-  - `_drain_paused = True` during entire set_channel (prevents background drain race)
-- Response tracking: `_cmd_sent`, `_cmd_no_response`, `_last_no_response` — shown on web dashboard
-  - Must read from `other_vfo` for press, `vfo` for stepping
-  - `_channel_vfo` (set by DISPLAY_CHANGE 0x03) is unreliable — always ends up opposite
-  - `_drain()` must use single `_recv_line(0.1)` — loop version breaks all packet parsing
-- `_drain_paused` flag: background drain thread yields when set (used by web commands)
-- `start_background_drain()` runs AFTER `setup_radio()` (must not run during setup)
-- RTS set/toggle via TCP: `!rts`, `!rts True`, `!rts False`
-- `set_rts()` parses `'true' in resp.lower()` (response format: `CMD{rts} True`)
-- TH9800_CAT.py `bool("False")` bug fixed → string comparison now
-- **Web radio control** (`/radio`): full TH-9800 front panel replica in browser
-  - `/catstatus` returns radio state JSON, `/catcmd` handles button/command POSTs
-  - TCP/Serial connect/disconnect, RTS toggle, PTT toggle (`!ptt` command)
-  - Two-column VFO layout, signal meters, VOL/SQ sliders, all buttons
-  - `WEB_COMMANDS` dict maps button labels to binary payloads
+- **CRITICAL: press response unreliable** — step-right + step-left (net zero) to read channel
+- `_drain_paused` during set_channel and web commands (prevents background drain race)
+- `_drain()` must use single `_recv_line(0.1)` — loop version breaks all packet parsing
+- **Web radio control** (`/radio`): full front panel replica, `/catstatus` + `/catcmd` endpoints
 
 ## Smart Announcements (Modular AI Backend)
 - `SmartAnnouncementManager`: scheduled AI-powered spoken announcements
-- Config: `ENABLE_SMART_ANNOUNCE`, `SMART_ANNOUNCE_AI_BACKEND`, `SMART_ANNOUNCE_N`
-- Entry format: `interval_secs, voice, target_secs, {prompt text in braces}`
-- Time window: `SMART_ANNOUNCE_START_TIME` / `SMART_ANNOUNCE_END_TIME` (HH:MM)
-- Logs transition messages when entering/leaving time window
-- **Backends** (`SMART_ANNOUNCE_AI_BACKEND`):
-  - `google-scrape`: free. Drives real Firefox via xdotool, clicks AI Mode, scrapes Google AI Overview. Requires Firefox logged into Google on DISPLAY=:0, xdotool, xclip. Auto-launches Firefox if closed (area-based readiness check, 5s settle).
-  - `duckduckgo` (default): free, no key. DuckDuckGo web search + Ollama local LLM. Falls back to search snippets if no Ollama.
-  - `claude`: Anthropic API + web search. Key: `SMART_ANNOUNCE_API_KEY`
-  - `gemini`: Google Gemini API + Google Search. Key: `SMART_ANNOUNCE_GEMINI_API_KEY`
-- google-scrape flow: open JS console → `window.location.href=URL` → wait → paste JS to click AI Mode (link before "All" in toolbar) → Ctrl+A/C → parse AI content → Ollama or direct TTS
-- Ollama params: `SMART_ANNOUNCE_OLLAMA_MODEL`, `_TEMPERATURE`, `_TOP_P`
-- Word limit: ~2.5 words/sec × target_secs; max 60s
-- Feeds text to existing gTTS → AIOC PTT pipeline (no CAT/TCP RTS switching)
-- Keyboard: `[`=Smart#1, `]`=Smart#2, `\`=Smart#3
-- Mumble commands: `!smart` (list), `!smart N` (trigger)
-- Manual triggers (keyboard/Mumble) skip time window check
-- Waits for radio to be free (VAD/playback) up to ~8min before dropping
-- `SMART_ANNOUNCE_TOP_TEXT` / `SMART_ANNOUNCE_TAIL_TEXT` — optional spoken prefix/suffix
-- Dependencies: `xdotool`+`xclip` (google-scrape), `ddgs` (duckduckgo), `anthropic` (claude), `google-genai` (gemini), Ollama (optional)
-- Installer step 7: installs Ollama + pulls model (llama3.2:3b on PC, llama3.2:1b on Pi)
+- Backends: `google-scrape` (Firefox+xdotool), `duckduckgo` (default, +Ollama), `claude`, `gemini`
+- google-scrape: URL bar navigation (`Ctrl+L`) + `udm=50` for AI Mode (not dev console)
+- Keyboard: `[`=Smart#1, `]`=Smart#2, `\`=Smart#3; Mumble: `!smart`/`!smart N`
+- Waits for radio free (VAD/playback) up to ~8min; manual triggers skip time window
 
-## Cloudflare Tunnel
-- `CloudflareTunnel` class: launches `cloudflared tunnel --url http://localhost:PORT`
-- Config: `ENABLE_CLOUDFLARE_TUNNEL` — free quick tunnel, no account/domain needed
-- Assigns random `*.trycloudflare.com` URL each restart (URL changes every time)
-- Parses URL from cloudflared stderr, shows on status bar line 3
-- No port forwarding needed — outbound connection bypasses ISP port blocking
-- Dependency: `cloudflared` package
-
-## Email Notifications
-- `EmailNotifier` class: Gmail SMTP via `smtplib` (stdlib, no deps)
-- Config: `ENABLE_EMAIL`, `EMAIL_ADDRESS`, `EMAIL_APP_PASSWORD`, `EMAIL_RECIPIENT`, `EMAIL_ON_STARTUP`
-- Sends status email on startup (waits up to 15s for tunnel URL)
-- Includes tunnel URL (clickable), local dashboard link, Mumble server, DDNS hostname
-- Keyboard: `@` sends status email on demand
-- Requires Gmail App Password (Google Account → Security → 2-Step Verification → App passwords)
-
-## Desktop Shortcut
-- Template: `scripts/radio-gateway.desktop.template`
-- Installer step 12: detects terminal emulator, substitutes `__TERMINAL__` and `__GATEWAY_DIR__`
-- Opens terminal, cd to gateway dir, runs `start.sh`, keeps shell open on exit
-
-## Logging & Status Bar
-- `StatusBarWriter` wraps `sys.stdout` and `sys.stderr` for status bar + timestamps
-- All log output gets `[HH:MM:SS]` system time prefix (line-aware `_at_line_start` tracking)
-- `start.sh` uses `ts()` function for same `[HH:MM:SS]` format
-- Three-line status bar: Line 1 = audio indicators, Line 2 = UP timer + smart countdowns + hardware, Line 3 = DNS + Cloudflare tunnel URL
-- Uptime format: `Xd HH:MM:SS` (fixed-width, starts at `0d 00:00:00`)
-- Terminal geometry: 130x25 (narrowed from 150x25)
-- ALSA suppression: must hardcode fd 2, not `sys.stderr.fileno()` (StatusBarWriter returns fd 1)
+## Other Features
+- **Cloudflare Tunnel**: free `*.trycloudflare.com` URL, no port forwarding needed
+- **Email**: Gmail SMTP on startup/demand (`@` key), includes tunnel URL
+- **Status Bar**: 3-line display, `[HH:MM:SS]` timestamps, `StatusBarWriter` wraps stdout/stderr
+- **Desktop Shortcut**: installer step 12, template-based
 
 ## Known Bugs Fixed (details in bugs.md)
-See bugs.md for full history. Key fixes: SDR burst audio, Mumble encoder starvation,
-duck-out regression, config parser crash, DarkIce/WirePlumber issues, terminal raw mode
-not restored on exit, SDR periodic gaps, rebroadcast bugs, SV status bar, ALSA fd suppression,
-pymumble ghost reconnect cycling (see below).
-
-## pymumble Reconnect Bug (fixed 2026-03-09)
-- pymumble `reconnect=True` causes 10-second reconnect cycling on local mumble servers
-- Root cause: pymumble's `loop()` exits with socket.error on localhost connections; `reconnect=True` then creates a new connection → murmur sees duplicate username → "Disconnecting ghost"
-- Fix: set `reconnect=False` in Mumble() constructor (line ~9269)
-- Also added `autobanAttempts=0` and `timeout=300` to generated mumble-server .ini to prevent IP bans and premature timeouts
-- pymumble patches in site-packages: SSLWantWriteError retry in send_message/send_audio (may still be present)
-- This only affects local mumble-server instances; remote servers (192.168.2.126) were unaffected
+See bugs.md for full history. Key recent: audio processing silent (scipy missing + PipeWire path missing call),
+WebSocket PCM double-push/latency, pymumble ghost reconnect (`reconnect=False` fix), SDR control page init bugs.
 
 ## Deployment Notes
-- **Systemd service:** `radio-gateway.service` — auto-starts gateway, desktop shortcuts for start/stop/restart
-- Passwordless sudo for `systemctl start/stop/restart radio-gateway.service` via `/etc/sudoers.d/radio-gateway`
-- WirePlumber config must be in `~/.config/wireplumber/wireplumber.conf.d/`
-- start.sh: reads config first (`read_config` helper), sudo keepalive loop, renice approach
-- `START_TH9800_CAT`, `START_CLAUDE_CODE` config options control optional launches
+- **Systemd service:** `radio-gateway.service` — auto-starts, passwordless sudo via `/etc/sudoers.d/`
+- start.sh: reads config, sudo keepalive, renice -10, optional TH9800_CAT + Claude Code launches
 - DarkIce/FFmpeg only started if `ENABLE_STREAM_OUTPUT = true`
-- TH9800 output redirected to `/tmp/th9800_cat.log`
-- DarkIce runs FIFO RT 4; gateway runs nice -10 (SCHED_OTHER)
 
 ## User Preferences
 - CBR Opus (not VBR), commits requested explicitly, concise responses, no emojis

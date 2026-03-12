@@ -6563,6 +6563,17 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
+                elif self.path == '/sysinfo':
+                    # System status JSON endpoint
+                    data = parent._get_sysinfo()
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
                 elif self.path == '/catstatus':
                     # JSON radio CAT state endpoint
                     data = {'connected': False, 'cat_enabled': False}
@@ -8643,6 +8654,243 @@ pollTimer = setInterval(pollStatus, 1000);
 '''
         return self._wrap_html('SDR Control', body)
 
+    def _get_sysinfo(self):
+        """Gather system status: CPU, memory, disk I/O, network, temps, IPs."""
+        import os
+        info = {}
+        try:
+            # CPU usage — average across cores from /proc/stat delta
+            if not hasattr(self, '_prev_cpu'):
+                self._prev_cpu = None
+            with open('/proc/stat', 'r') as f:
+                line = f.readline()  # cpu  user nice system idle iowait irq softirq ...
+            parts = line.split()
+            cur = [int(x) for x in parts[1:8]]
+            if self._prev_cpu:
+                d = [c - p for c, p in zip(cur, self._prev_cpu)]
+                total = sum(d) or 1
+                idle = d[3] + d[4]  # idle + iowait
+                info['cpu_pct'] = round(100.0 * (total - idle) / total, 1)
+            else:
+                info['cpu_pct'] = 0.0
+            self._prev_cpu = cur
+
+            # Per-core CPU count
+            info['cpu_cores'] = os.cpu_count() or 1
+
+            # Load average
+            load1, load5, load15 = os.getloadavg()
+            info['load'] = [round(load1, 2), round(load5, 2), round(load15, 2)]
+        except Exception:
+            info['cpu_pct'] = 0.0
+            info['cpu_cores'] = 1
+            info['load'] = [0, 0, 0]
+
+        try:
+            # Memory from /proc/meminfo
+            mem = {}
+            with open('/proc/meminfo', 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    if parts[0].rstrip(':') in ('MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'):
+                        mem[parts[0].rstrip(':')] = int(parts[1])  # kB
+            total = mem.get('MemTotal', 0)
+            avail = mem.get('MemAvailable', 0)
+            used = total - avail
+            info['mem_total_mb'] = round(total / 1024)
+            info['mem_used_mb'] = round(used / 1024)
+            info['mem_pct'] = round(100.0 * used / total, 1) if total else 0
+            swap_total = mem.get('SwapTotal', 0)
+            swap_free = mem.get('SwapFree', 0)
+            info['swap_total_mb'] = round(swap_total / 1024)
+            info['swap_used_mb'] = round((swap_total - swap_free) / 1024)
+        except Exception:
+            info['mem_total_mb'] = 0
+            info['mem_used_mb'] = 0
+            info['mem_pct'] = 0
+            info['swap_total_mb'] = 0
+            info['swap_used_mb'] = 0
+
+        try:
+            # Disk I/O from /proc/diskstats delta
+            if not hasattr(self, '_prev_disk'):
+                self._prev_disk = None
+                self._prev_disk_time = 0
+            now = time.monotonic()
+            disk_r = 0
+            disk_w = 0
+            cur_disk = {}
+            import re as _re
+            with open('/proc/diskstats', 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    name = parts[2]
+                    # Only count whole disks (sda, nvme0n1, mmcblk0) not partitions
+                    if name.startswith('loop') or name.startswith('ram'):
+                        continue
+                    # Skip partitions: sdXN, nvme0n1pN, mmcblk0pN
+                    if _re.match(r'^(sd[a-z]+|nvme\d+n\d+|mmcblk\d+)$', name):
+                        # sectors read (field 5, idx 5), sectors written (field 9, idx 9)
+                        rd = int(parts[5])
+                        wr = int(parts[9])
+                        cur_disk[name] = (rd, wr)
+            if self._prev_disk and (now - self._prev_disk_time) > 0:
+                dt = now - self._prev_disk_time
+                for name in cur_disk:
+                    if name in self._prev_disk:
+                        dr = cur_disk[name][0] - self._prev_disk[name][0]
+                        dw = cur_disk[name][1] - self._prev_disk[name][1]
+                        disk_r += dr * 512  # sectors are 512 bytes
+                        disk_w += dw * 512
+                disk_r = disk_r / dt
+                disk_w = disk_w / dt
+            self._prev_disk = cur_disk
+            self._prev_disk_time = now
+            info['disk_read_bps'] = round(disk_r)
+            info['disk_write_bps'] = round(disk_w)
+        except Exception:
+            info['disk_read_bps'] = 0
+            info['disk_write_bps'] = 0
+
+        try:
+            # Disk usage for root filesystem
+            st = os.statvfs('/')
+            total_bytes = st.f_frsize * st.f_blocks
+            free_bytes = st.f_frsize * st.f_bavail
+            used_bytes = total_bytes - free_bytes
+            info['disk_total_gb'] = round(total_bytes / (1024**3), 1)
+            info['disk_used_gb'] = round(used_bytes / (1024**3), 1)
+            info['disk_pct'] = round(100.0 * used_bytes / total_bytes, 1) if total_bytes else 0
+        except Exception:
+            info['disk_total_gb'] = 0
+            info['disk_used_gb'] = 0
+            info['disk_pct'] = 0
+
+        try:
+            # Network I/O from /proc/net/dev delta
+            if not hasattr(self, '_prev_net'):
+                self._prev_net = None
+                self._prev_net_time = 0
+            now = time.monotonic()
+            cur_net = {}
+            with open('/proc/net/dev', 'r') as f:
+                for line in f:
+                    if ':' not in line:
+                        continue
+                    iface, rest = line.split(':', 1)
+                    iface = iface.strip()
+                    if iface == 'lo':
+                        continue
+                    parts = rest.split()
+                    rx_bytes = int(parts[0])
+                    tx_bytes = int(parts[8])
+                    cur_net[iface] = (rx_bytes, tx_bytes)
+            net_rx = 0
+            net_tx = 0
+            if self._prev_net and (now - self._prev_net_time) > 0:
+                dt = now - self._prev_net_time
+                for iface in cur_net:
+                    if iface in self._prev_net:
+                        net_rx += cur_net[iface][0] - self._prev_net[iface][0]
+                        net_tx += cur_net[iface][1] - self._prev_net[iface][1]
+                net_rx = net_rx / dt
+                net_tx = net_tx / dt
+            self._prev_net = cur_net
+            self._prev_net_time = now
+            info['net_rx_bps'] = round(net_rx)
+            info['net_tx_bps'] = round(net_tx)
+        except Exception:
+            info['net_rx_bps'] = 0
+            info['net_tx_bps'] = 0
+
+        try:
+            # TCP connection count
+            count = 0
+            with open('/proc/net/tcp', 'r') as f:
+                for line in f:
+                    if line.strip().startswith('sl'):
+                        continue
+                    count += 1
+            with open('/proc/net/tcp6', 'r') as f:
+                for line in f:
+                    if line.strip().startswith('sl'):
+                        continue
+                    count += 1
+            info['tcp_connections'] = count
+        except Exception:
+            info['tcp_connections'] = 0
+
+        try:
+            # Temperatures from /sys/class/thermal or /sys/class/hwmon
+            temps = []
+            # thermal zones
+            import glob as _glob
+            for tz in sorted(_glob.glob('/sys/class/thermal/thermal_zone*/temp')):
+                try:
+                    zone_dir = os.path.dirname(tz)
+                    with open(tz, 'r') as f:
+                        val = int(f.read().strip()) / 1000.0
+                    label = 'CPU'
+                    type_file = os.path.join(zone_dir, 'type')
+                    if os.path.exists(type_file):
+                        with open(type_file, 'r') as f:
+                            label = f.read().strip()
+                    if val > 0:
+                        temps.append({'label': label, 'temp': round(val, 1)})
+                except Exception:
+                    pass
+            # hwmon sensors (for GPU, NVMe, etc.)
+            for hwmon in sorted(_glob.glob('/sys/class/hwmon/hwmon*')):
+                try:
+                    name_file = os.path.join(hwmon, 'name')
+                    hw_name = ''
+                    if os.path.exists(name_file):
+                        with open(name_file, 'r') as f:
+                            hw_name = f.read().strip()
+                    for tf in sorted(_glob.glob(os.path.join(hwmon, 'temp*_input'))):
+                        with open(tf, 'r') as f:
+                            val = int(f.read().strip()) / 1000.0
+                        # Try to find a label
+                        label_file = tf.replace('_input', '_label')
+                        lbl = hw_name
+                        if os.path.exists(label_file):
+                            with open(label_file, 'r') as f:
+                                lbl = f.read().strip()
+                        if val > 0 and not any(t['label'] == lbl and t['temp'] == round(val, 1) for t in temps):
+                            temps.append({'label': lbl, 'temp': round(val, 1)})
+                except Exception:
+                    pass
+            info['temps'] = temps
+        except Exception:
+            info['temps'] = []
+
+        try:
+            # IP addresses
+            import socket
+            ips = []
+            # Get all interface addresses via /proc/net/if_inet6 and ip command
+            import subprocess
+            result = subprocess.run(['ip', '-4', '-o', 'addr', 'show'], capture_output=True, text=True, timeout=2)
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split()
+                # Format: idx iface inet addr/prefix ...
+                iface = parts[1]
+                if iface == 'lo':
+                    continue
+                addr = parts[3].split('/')[0]
+                ips.append({'iface': iface, 'addr': addr})
+            info['ips'] = ips
+
+            # Hostname
+            info['hostname'] = socket.gethostname()
+        except Exception:
+            info['ips'] = []
+            info['hostname'] = ''
+
+        return info
+
     def _generate_dashboard(self):
         """Build the live status dashboard HTML page."""
         port = int(getattr(self.config, 'WEB_CONFIG_PORT', 8080))
@@ -8651,6 +8899,8 @@ pollTimer = setInterval(pollStatus, 1000);
 <p style="margin:0 0 14px;font-size:1.1em"><a href="/">Config Editor</a> | <a href="/radio">Radio Control</a> | <a href="/sdr">SDR</a> | <a href="/logs">Logs</a></p>
 
 <div id="status">Loading...</div>
+
+<div id="sysinfo" style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:18px; font-family:monospace; font-size:1.0em; margin-top:10px;">Loading...</div>
 
 <div class="controls">
   <div class="ctrl-group">
@@ -8787,7 +9037,7 @@ pollTimer = setInterval(pollStatus, 1000);
   .ctrl-group button:active { background: #0f3460; }
   .ctrl-group button.active { background: #0f3460; border-color: #00d4ff; color: #00d4ff; }
   .ctrl-group button.muted { background: #5c1a1a; border-color: #c0392b; color: #ff6b6b; }
-  #status { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 18px; font-family: monospace; font-size: 1.15em; }
+  #status { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 18px; font-family: monospace; font-size: 1.0em; }
   .st-row { display: grid; grid-template-columns: repeat(auto-fill, 220px); gap: 8px 0; margin: 6px 0; }
   .st-item { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
   .st-label { color: #888; }
@@ -9277,6 +9527,56 @@ function stopWS() {
 function setWSVol(v) {
   if (_wsGain) _wsGain.gain.value = v / 100;
 }
+
+// --- System Status ---
+function fmtBytes(b) {
+  if (b >= 1048576) return (b/1048576).toFixed(1) + ' MB/s';
+  if (b >= 1024) return (b/1024).toFixed(1) + ' KB/s';
+  return b + ' B/s';
+}
+function sysBar(pct, color) {
+  var c = pct > 80 ? '#e74c3c' : pct > 60 ? '#f39c12' : (color || '#2ecc71');
+  var w = Math.round(Math.min(Math.max(pct, 0), 100));
+  var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
+  return '<span class="bar-pct">'+p+'%</span><span class="bar" style="width:'+w+'px;background:'+c+'"></span>';
+}
+function updateSysInfo() {
+  fetch('/sysinfo').then(function(r){return r.json()}).then(function(s) {
+    var h = '<div class="st-row">';
+    h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(s.cpu_pct)+'</div>';
+    h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val cyan">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
+    h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, '#00d4ff')+'<span class="st-label">'+s.mem_used_mb+'/'+s.mem_total_mb+'MB</span></div>';
+    if (s.swap_total_mb > 0) {
+      var swPct = Math.round(100*s.swap_used_mb/s.swap_total_mb);
+      h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, '#e056a0')+'<span class="st-label">'+s.swap_used_mb+'/'+s.swap_total_mb+'MB</span></div>';
+    }
+    h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, '#f1c40f')+'<span class="st-label">'+s.disk_used_gb+'/'+s.disk_total_gb+'GB</span></div>';
+    h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green">R:'+fmtBytes(s.disk_read_bps)+'</span> <span class="st-val yellow">W:'+fmtBytes(s.disk_write_bps)+'</span></div>';
+    h += '</div>';
+    h += '<div class="st-row">';
+    h += '<div class="st-item"><span class="st-label">Net:</span><span class="st-val green">RX:'+fmtBytes(s.net_rx_bps)+'</span> <span class="st-val cyan">TX:'+fmtBytes(s.net_tx_bps)+'</span></div>';
+    h += '<div class="st-item"><span class="st-label">TCP:</span><span class="st-val white">'+s.tcp_connections+'</span></div>';
+    if (s.temps && s.temps.length) {
+      for (var i=0; i<s.temps.length; i++) {
+        var t = s.temps[i];
+        var tc = t.temp > 80 ? 'red' : t.temp > 60 ? 'yellow' : 'green';
+        h += '<div class="st-item"><span class="st-label">'+t.label+':</span><span class="st-val '+tc+'">'+t.temp+'&deg;C</span></div>';
+      }
+    }
+    h += '</div>';
+    if (s.ips && s.ips.length) {
+      h += '<div class="st-row">';
+      if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val cyan">'+s.hostname+'</span></div>';
+      for (var i=0; i<s.ips.length; i++) {
+        h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
+      }
+      h += '</div>';
+    }
+    document.getElementById('sysinfo').innerHTML = h;
+  }).catch(function(){});
+}
+setInterval(updateSysInfo, 2000);
+updateSysInfo();
 </script>
 '''
         return self._wrap_html('Dashboard', body)
