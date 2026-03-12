@@ -8998,15 +8998,7 @@ pollTimer = setInterval(pollStatus, 1000);
     <button onclick="sendKey(',')">,  Vol-</button>
     <button onclick="sendKey('.')">. Vol+</button>
   </div>
-  <div class="ctrl-group" id="broadcastify-group">
-    <h3>Broadcastify</h3>
-    <div style="margin-bottom:8px;">
-      <span id="bc-status" style="font-size:0.95em;">...</span>
-    </div>
-    <button onclick="darkiceCmd('start')" id="btn-bc-start">Start</button>
-    <button onclick="darkiceCmd('stop')" id="btn-bc-stop">Stop</button>
-    <button onclick="darkiceCmd('restart')" id="btn-bc-restart">Restart</button>
-  </div>
+  <!-- Broadcastify moved to bottom row -->
   <div class="ctrl-group">
     <h3>SDR Processing</h3>
     <button onclick="togProc('sdr','gate')" id="btn-sp-gate">Gate</button>
@@ -9048,10 +9040,10 @@ pollTimer = setInterval(pollStatus, 1000);
           <button onclick="sendKey('-')" style="grid-column:span 2;">Stop</button>
         </div>
       </div>
-      <div style="margin-left:100px;">
+      <div style="margin-left:25px; margin-right:25px;">
         <div id="playback-status" style="font-family:monospace; font-size:0.85em;">Loading...</div>
       </div>
-      <div style="margin-left:80px;">
+      <div>
         <div style="display:flex; flex-direction:column; gap:3px; margin-bottom:6px;">
           <button onclick="sendKey('[')">Smart #1</button>
           <button onclick="sendKey(']')">Smart #2</button>
@@ -9061,12 +9053,15 @@ pollTimer = setInterval(pollStatus, 1000);
       </div>
     </div>
   </div>
-  <div class="ctrl-group" style="min-width:0;">
-    <h3>System</h3>
+  <div class="ctrl-group" style="min-width:0;" id="broadcastify-group">
+    <h3>Broadcastify</h3>
     <div style="display:flex; flex-direction:column; gap:3px;">
-      <button onclick="sendKey('@')">Send Email</button>
-      <button onclick="if(confirm('Restart gateway?'))sendKey('q')" class="btn-restart">Restart</button>
-      <button onclick="if(confirm('Exit the gateway server? This will stop all services.')){fetch('/exit',{method:'POST'}).then(()=>{document.body.innerHTML='<h1 style=&quot;color:#e0e0e0;text-align:center;margin-top:40vh&quot;>Gateway stopped.</h1>';});}" class="btn-exit">Exit Server</button>
+      <button onclick="darkiceCmd('start')" id="btn-bc-start">Start</button>
+      <button onclick="darkiceCmd('stop')" id="btn-bc-stop">Stop</button>
+      <button onclick="darkiceCmd('restart')" id="btn-bc-restart">Restart</button>
+    </div>
+    <div style="margin-top:8px;">
+      <span id="bc-status" style="font-family:monospace; font-size:0.85em;">...</span>
     </div>
   </div>
   <div class="ctrl-group" style="min-width:0;">
@@ -9075,6 +9070,14 @@ pollTimer = setInterval(pollStatus, 1000);
       <button onclick="sendKey('p')" id="btn-p">Manual PTT</button>
       <button onclick="sendKey('j')" id="btn-j">Radio Power</button>
       <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
+    </div>
+  </div>
+  <div class="ctrl-group" style="min-width:0;">
+    <h3>System</h3>
+    <div style="display:flex; flex-direction:column; gap:3px;">
+      <button onclick="sendKey('@')">Send Email</button>
+      <button onclick="if(confirm('Restart gateway?'))sendKey('q')" class="btn-restart">Restart</button>
+      <button onclick="if(confirm('Exit the gateway server? This will stop all services.')){fetch('/exit',{method:'POST'}).then(()=>{document.body.innerHTML='<h1 style=&quot;color:#e0e0e0;text-align:center;margin-top:40vh&quot;>Gateway stopped.</h1>';});}" class="btn-exit">Exit Server</button>
     </div>
   </div>
 </div>
@@ -9090,7 +9093,7 @@ pollTimer = setInterval(pollStatus, 1000);
   .ctrl-group button.active { background: #0f3460; border-color: #00d4ff; color: #00d4ff; }
   .ctrl-group button.muted { background: #5c1a1a; border-color: #c0392b; color: #ff6b6b; }
   #status { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 18px; font-family: monospace; font-size: 1.0em; }
-  .st-row { display: grid; grid-template-columns: repeat(auto-fill, 220px); gap: 8px 0; margin: 6px 0; }
+  .st-row { display: grid; grid-template-columns: repeat(auto-fill, 240px); gap: 10px 16px; margin: 8px 0; }
   .st-item { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
   .st-label { color: #888; }
   .st-val { font-weight: bold; }
@@ -9149,7 +9152,6 @@ function updateStatus() {
     if(s.ms2_state) h += '<div class="st-item"><span class="st-label">MS2:</span><span class="st-val '+(s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+'">'+(s.ms2_state==='running'?'ON':'OFF')+'</span></div>';
     if(s.cat_enabled) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
     h += '<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
-    h += '<div class="st-item"><span class="st-label">Vol:</span><span class="st-val yellow">'+s.volume+'x</span></div>';
     h += '</div>';
 
     // Timers row: uptime + smart announce countdowns
@@ -9160,7 +9162,6 @@ function updateStatus() {
     }
     if(s.ddns) h += '<div class="st-item"><span class="st-label">DNS:</span><span class="st-val green">'+s.ddns+'</span></div>';
     if(s.charger) h += '<div class="st-item"><span class="st-label">Charger:</span><span class="st-val '+(s.charger.startsWith("CHARGING")?'green':'red')+'">'+s.charger+'</span></div>';
-    if(s.cat) { h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==="idle"?'green':s.cat==="active"?'red':'white')+'">'+s.cat+'</span></div>'; }
     if(s.cat_reliability && s.cat_reliability.sent) { var r=s.cat_reliability; var missClr=r.missed>0?'red':'green'; h += '<div class="st-item"><span class="st-label">CMD:</span><span class="st-val green">'+r.sent+'</span>/<span class="st-val '+missClr+'">'+r.missed+' miss</span></div>'; }
     if(s.cat_reliability && s.cat_reliability.last_miss) { h += '<div class="st-item"><span class="st-val red" style="font-size:11px">'+s.cat_reliability.last_miss+'</span></div>'; }
     if(s.streaming_enabled) {
@@ -9321,9 +9322,21 @@ function toggleStream() {
 }
 
 function startStream() {
+  // Kill any existing audio first to prevent orphaned streams
+  if (_audio) {
+    _audio.onplaying = null;
+    _audio.onerror = null;
+    _audio.onended = null;
+    _audio.pause();
+    _audio.src = '';
+    _audio = null;
+  }
+  if (_streamTimer) { clearInterval(_streamTimer); _streamTimer = null; }
+
   var btn = document.getElementById('play-btn');
   var ind = document.getElementById('stream-indicator');
   var st = document.getElementById('stream-status');
+  _playing = true;  // Set immediately to prevent double-click restart
   btn.innerHTML = '&#9724; MP3';
   btn.style.color = '#f39c12';
   btn.style.borderColor = '#f39c12';
