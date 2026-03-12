@@ -13,7 +13,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 **Windows client:** `windows_audio_client.py` (server: send audio, client: receive audio, `m` to switch)
 
 ## SDR Input — PipeWire (preferred) or ALSA Loopback
-- **PipeWire:** `SDR_DEVICE_NAME = pw:sdr_capture` — reads from virtual sink monitor via FFmpeg
+- **PipeWire:** `SDR_DEVICE_NAME = pw:sdr_capture` — reads from virtual sink monitor via `parec` (native PulseAudio, replaced FFmpeg for lower latency)
 - `PipeWireSDRSource` class: auto-creates sink via `pw-cli` if missing at startup
 - WirePlumber persistence: `~/.config/wireplumber/wireplumber.conf.d/90-sdr-capture-sink.conf`
 - Creates `sdr_capture` and `sdr_capture2` sinks; installer deploys this config (step 12)
@@ -119,6 +119,8 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Keyboard shortcuts (n, f, y, w) still work for radio processing (backwards compat)
 - Filter chain order: HPF → LPF → Notch → De-esser → Spectral NS → Noise Gate
 - Vectorised: `scipy.signal.lfilter` with `zi` state carry, `scipy.ndimage.uniform_filter1d`
+- **CRITICAL:** Requires `scipy` — all filters silently return unmodified audio if scipy is missing (bare `except Exception` masks the ImportError)
+- `PipeWireSDRSource.get_audio()` must call `process_audio_for_sdr(raw)` — was missing until 2026-03-11 fix
 
 ## Text-to-Speech (gTTS)
 - `!speak <text>` or `!speak <voice#> <text>` — voice 1-9 via gTTS lang/tld combos

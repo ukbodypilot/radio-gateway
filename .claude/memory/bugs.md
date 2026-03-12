@@ -1,5 +1,18 @@
 # Bug History — Radio Gateway
 
+## Audio Processing Has No Audible Effect (2026-03-11)
+**Symptom:** All audio processing buttons (HPF, LPF, notch, de-esser, spectral NS, noise gate) had zero audible effect when toggled via dashboard or keyboard, for both radio and SDR sources.
+
+**Root causes (two bugs):**
+1. **`scipy` not installed** — All filter methods (`_apply_hpf`, `_apply_lpf`, `_apply_notch`, etc.) import `scipy.signal` inside `try/except Exception` blocks. With scipy missing, every filter silently caught the `ImportError` and returned unmodified audio. The broad `except Exception` masked the real error completely.
+2. **`PipeWireSDRSource.get_audio()` missing processing call** — overrides `SDRSource.get_audio()` but omitted the `process_audio_for_sdr(raw)` call. Even with scipy installed, PipeWire SDR audio would bypass all filters.
+
+**Fix:**
+1. Installed `scipy` (`pip install scipy`) and added it to `scripts/install.sh` `CORE_PKGS`.
+2. Added `raw = self.gateway.process_audio_for_sdr(raw)` in `PipeWireSDRSource.get_audio()`.
+
+**Lesson:** Silent `except Exception` on imports can hide missing dependencies for months. Consider logging a warning on first failure, or checking at startup.
+
 ## Google AI Scrape Navigation Failure (2026-03-11)
 **Symptom:** Smart Announce `google-scrape` backend always returned "no AI Overview found".
 
@@ -7,12 +20,13 @@
 
 **Fix:** Replaced dev console approach with URL bar (`Ctrl+L`) for navigation and `udm=50` Google URL parameter for direct AI Mode access. Eliminates all console JS (AI Mode click heuristic was also broken). Much simpler and more reliable.
 
-## WebSocket PCM Audio Stuttering (2026-03-11)
-**Symptom:** Low-latency WebSocket audio player had constant small gaps/stuttering.
+## WebSocket PCM Audio — Stuttering, Half-Speed, and High Latency (2026-03-11)
+**Symptom:** Low-latency WebSocket audio had three issues: (1) constant small gaps/stuttering, (2) audio playing at half speed, (3) ~2 second delay.
 
-**Root cause:** AudioWorklet and ScriptProcessor had no pre-buffering. Audio started playing immediately on first WebSocket message, so any network jitter caused buffer underruns (128-sample frames drained faster than 2400-sample WS messages arrived).
-
-**Fix:** Added 200ms pre-buffer (9600 samples at 48kHz) to both AudioWorklet and ScriptProcessor paths. Audio accumulates before playback starts, absorbing jitter.
+**Root causes & fixes:**
+1. **Stuttering:** No pre-buffering + Nagle's algorithm buffering small writes. Fix: Added 50ms pre-buffer, TCP_NODELAY, per-client send queues with dedicated sender threads.
+2. **Half-speed playback:** `push_ws_audio()` called twice per audio loop iteration — once early in mixer path (line ~11849) and again at end of common path (line ~12178). Doubled the data rate. Fix: Removed duplicate push at end; keep only early pushes in mixer and direct-AIOC paths.
+3. **High latency (~2s):** Three sources: (a) PipeWire SDR source used FFmpeg which buffers heavily by default. Fix: Replaced FFmpeg with native `parec --latency-msec=20`. (b) AIOC ALSA period was 200ms (4× chunk) with 3-blob pre-buffer (600ms). Fix: Reduced to 100ms period (2×) with 2-blob pre-buffer (200ms). (c) Client-side buffer caps too high (500ms). Fix: Reduced to 150ms.
 
 ## /status BrokenPipeError (2026-03-11)
 **Symptom:** Stack trace logged when browser disconnected during `/status` JSON response.

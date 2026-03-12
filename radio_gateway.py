@@ -805,8 +805,12 @@ class AIOCRadioSource(AudioSource):
         # The ALSA period is opened at 4×AUDIO_CHUNK_SIZE so each callback
         # delivers one 200ms blob.  get_audio() pre-buffers 3 blobs (600ms)
         # before first serve, then slices into 50ms sub-chunks (non-blocking).
+        # WARNING: Do NOT reduce blob_mult below 4 or pre-buffer below 3.
+        # AIOC USB audio has significant jitter; smaller values cause clicks,
+        # robot sounds, and volume discontinuities. Tested 2× and 1× — both
+        # produced artifacts. These values are the proven minimum for clean audio.
         self._chunk_queue = _queue_mod.Queue(maxsize=16)
-        self._blob_mult = 4  # ALSA period = 4×AUDIO_CHUNK_SIZE
+        self._blob_mult = 4  # ALSA period = 4×AUDIO_CHUNK_SIZE — DO NOT REDUCE
         self._blob_bytes = config.AUDIO_CHUNK_SIZE * self._blob_mult * config.AUDIO_CHANNELS * 2
         # Pre-compute sizes for the hot callback path and get_audio() slicer.
         self._chunk_bytes = config.AUDIO_CHUNK_SIZE * config.AUDIO_CHANNELS * 2  # 16-bit
@@ -891,8 +895,7 @@ class AIOCRadioSource(AudioSource):
                 self._sub_buffer = self._sub_buffer[-(self._blob_bytes * 5):]
 
             # Pre-buffer gate: after the sub-buffer empties, accumulate 3 blobs
-            # (600ms cushion) before serving.  This absorbs USB delivery jitter
-            # and periodic missed blob deliveries from the AIOC.
+            # (600ms cushion) before serving.  Absorbs USB delivery jitter.
             if self._prebuffering:
                 if len(self._sub_buffer) < self._blob_bytes * 3:
                     return None, False  # still accumulating
@@ -2188,7 +2191,7 @@ class PipeWireSDRSource(SDRSource):
 
     Instead of reading from an ALSA loopback device (which delivers audio in
     high-jitter 200ms blobs), this source reads from a PipeWire virtual sink's
-    monitor via FFmpeg subprocess.  PipeWire delivers a continuous, low-jitter
+    monitor via parec subprocess.  PipeWire delivers a continuous, low-jitter
     stream — no blob boundaries, no prebuffering gaps, no crossfade needed.
 
     Config: set SDR_DEVICE_NAME = pw:<sink_name> (e.g. pw:sdr_capture)
@@ -2198,13 +2201,13 @@ class PipeWireSDRSource(SDRSource):
 
     def __init__(self, config, gateway, name="SDR1", sdr_priority=1):
         super().__init__(config, gateway, name=name, sdr_priority=sdr_priority)
-        self._ffmpeg_proc = None
+        self._parec_proc = None
         self._reader_thread = None
         self._reader_running = False
         self._pw_sink_name = None  # set in setup_audio
 
     def setup_audio(self):
-        """Start FFmpeg subprocess reading from PipeWire monitor."""
+        """Start parec subprocess reading from PipeWire monitor."""
         import subprocess as _sp
 
         # Determine sink name from config
@@ -2261,23 +2264,24 @@ class PipeWireSDRSource(SDRSource):
         self._chunk_bytes = self.config.AUDIO_CHUNK_SIZE * self.sdr_channels * 2
         self._blob_bytes = self._chunk_bytes  # no blob concept, but keep for trace compat
 
-        # Start FFmpeg reading from PipeWire monitor
+        # Start parec reading from PipeWire monitor (native PulseAudio, no FFmpeg overhead)
         try:
-            self._ffmpeg_proc = _sp.Popen([
-                'ffmpeg', '-loglevel', 'error',
-                '-f', 'pulse', '-i', monitor_name,
-                '-f', 's16le', '-ar', str(self.config.AUDIO_RATE),
-                '-ac', '2',
-                'pipe:1'
+            self._parec_proc = _sp.Popen([
+                'parec',
+                '--device=' + monitor_name,
+                '--format=s16le',
+                '--rate=' + str(self.config.AUDIO_RATE),
+                '--channels=2',
+                '--latency-msec=50',
             ], stdout=_sp.PIPE, stderr=_sp.PIPE)
         except FileNotFoundError:
-            print(f"[{self.name}] ffmpeg not found — required for PipeWire SDR source")
+            print(f"[{self.name}] parec not found — required for PipeWire SDR source")
             return False
         except Exception as e:
-            print(f"[{self.name}] Failed to start FFmpeg: {e}")
+            print(f"[{self.name}] Failed to start parec: {e}")
             return False
 
-        # Reader thread: reads fixed-size chunks from FFmpeg stdout and queues them
+        # Reader thread: reads fixed-size chunks from parec stdout and queues them
         self._reader_running = True
         self._reader_thread = threading.Thread(
             target=self._pw_reader_loop, daemon=True, name=f"{self.name}-pw-reader")
@@ -2299,14 +2303,14 @@ class PipeWireSDRSource(SDRSource):
         else:
             print(f"[{self.name}] No audio received from PipeWire after 2s")
             self._reader_running = False
-            if self._ffmpeg_proc:
-                self._ffmpeg_proc.kill()
+            if self._parec_proc:
+                self._parec_proc.kill()
             return False
 
     def _pw_reader_loop(self):
-        """Read fixed-size chunks from FFmpeg stdout and queue them."""
+        """Read fixed-size chunks from parec stdout and queue them."""
         chunk_bytes = self._chunk_bytes  # 50ms stereo = 9600 bytes
-        proc = self._ffmpeg_proc
+        proc = self._parec_proc
         while self._reader_running and proc and proc.poll() is None:
             try:
                 data = proc.stdout.read(chunk_bytes)
@@ -2351,10 +2355,10 @@ class PipeWireSDRSource(SDRSource):
         except _queue_mod.Empty:
             pass
 
-        # If queue is building up (>4), drain extras to cap latency at ~200ms
+        # If queue is building up (>6), drain extras to cap latency at ~300ms
         if data is not None:
             qsz = self._chunk_queue.qsize()
-            while qsz > 4:
+            while qsz > 6:
                 try:
                     data = self._chunk_queue.get_nowait()
                     qsz -= 1
@@ -2416,19 +2420,22 @@ class PipeWireSDRSource(SDRSource):
                 arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
                 raw = arr.tobytes()
 
+        # Apply SDR audio processing (HPF, LPF, notch, de-esser, spectral NS, gate)
+        raw = self.gateway.process_audio_for_sdr(raw)
+
         return raw, False
 
     def cleanup(self):
-        """Stop FFmpeg and reader thread."""
+        """Stop parec and reader thread."""
         self._reader_running = False
         self.input_stream = None
-        if self._ffmpeg_proc:
+        if self._parec_proc:
             try:
-                self._ffmpeg_proc.kill()
-                self._ffmpeg_proc.wait(timeout=2)
+                self._parec_proc.kill()
+                self._parec_proc.wait(timeout=2)
             except Exception:
                 pass
-            self._ffmpeg_proc = None
+            self._parec_proc = None
 
     def _stop_reader(self):
         """Stop the reader and clear queue."""
@@ -2442,7 +2449,7 @@ class PipeWireSDRSource(SDRSource):
 
     def _start_reader(self):
         """Restart reader after stop."""
-        if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
+        if self._parec_proc and self._parec_proc.poll() is None:
             self._reader_running = True
             if not self._reader_thread or not self._reader_thread.is_alive():
                 self._reader_thread = threading.Thread(
@@ -2450,7 +2457,7 @@ class PipeWireSDRSource(SDRSource):
                 self._reader_thread.start()
 
     def _close_stream(self):
-        """Close the FFmpeg stream."""
+        """Close the parec stream."""
         self.cleanup()
 
     def _find_device(self):
@@ -2458,9 +2465,9 @@ class PipeWireSDRSource(SDRSource):
         return None, None
 
     def _watchdog_recover(self, max_restarts):
-        """Restart FFmpeg if it died."""
-        if self._ffmpeg_proc and self._ffmpeg_proc.poll() is not None:
-            print(f"[{self.name}] PipeWire: FFmpeg process died, restarting...")
+        """Restart parec if it died."""
+        if self._parec_proc and self._parec_proc.poll() is not None:
+            print(f"[{self.name}] PipeWire: parec process died, restarting...")
             self.cleanup()
             if self.setup_audio():
                 print(f"[{self.name}] PipeWire: recovered")
@@ -6462,7 +6469,7 @@ class WebConfigServer:
         self._last_audio_push = 0     # monotonic time of last real audio
         self.sdr_manager = None       # RTLAirbandManager instance
         # WebSocket PCM streaming (low-latency)
-        self._ws_clients = []         # list of socket objects for WebSocket PCM clients
+        self._ws_clients = []         # list of (socket, queue) tuples for WebSocket PCM clients
         self._ws_lock = threading.Lock()
 
     def start(self):
@@ -6641,8 +6648,29 @@ class WebConfigServer:
                     _client_ip = self.client_address[0]
                     print(f"\n[WS-Audio] Low-latency client connected from {_client_ip}")
                     _sock.settimeout(30)  # 30s recv timeout for keepalive
+                    _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    import queue as _q_mod
+                    _send_q = _q_mod.Queue(maxsize=6)  # ~300ms buffer at 50ms chunks
+                    _ws_entry = (_sock, _send_q)
+
+                    def _ws_sender(_s, _q):
+                        """Dedicated send thread — drains queue, never blocks audio loop."""
+                        while True:
+                            try:
+                                frame = _q.get(timeout=5)
+                                if frame is None:
+                                    break
+                                _s.sendall(frame)
+                            except (_q_mod.Empty):
+                                continue
+                            except (BrokenPipeError, ConnectionResetError, OSError):
+                                break
+
+                    _send_thread = threading.Thread(target=_ws_sender, args=(_sock, _send_q), daemon=True)
+                    _send_thread.start()
+
                     with parent._ws_lock:
-                        parent._ws_clients.append(_sock)
+                        parent._ws_clients.append(_ws_entry)
                     try:
                         # Keep connection alive — read and discard client frames
                         # (we only send, but must handle pings/close)
@@ -6685,9 +6713,10 @@ class WebConfigServer:
                             except (ConnectionResetError, BrokenPipeError, OSError):
                                 break
                     finally:
+                        _send_q.put(None)  # signal sender thread to exit
                         with parent._ws_lock:
                             try:
-                                parent._ws_clients.remove(_sock)
+                                parent._ws_clients.remove(_ws_entry)
                             except ValueError:
                                 pass
                         print(f"[WS-Audio] Disconnected {_client_ip}")
@@ -7153,8 +7182,8 @@ class WebConfigServer:
             except Exception:
                 pass
 
-    def _ws_send_binary(self, sock, data):
-        """Send a WebSocket binary frame (opcode 0x02)."""
+    def _ws_build_frame(self, data):
+        """Build a WebSocket binary frame (opcode 0x02). Returns bytes."""
         header = bytearray()
         header.append(0x82)  # FIN + binary opcode
         dlen = len(data)
@@ -7166,7 +7195,11 @@ class WebConfigServer:
         else:
             header.append(127)
             header.extend(dlen.to_bytes(8, 'big'))
-        sock.sendall(bytes(header) + data)
+        return bytes(header) + data
+
+    def _ws_send_binary(self, sock, data):
+        """Send a WebSocket binary frame directly (used for pong responses)."""
+        sock.sendall(self._ws_build_frame(data))
 
     def push_audio(self, pcm_data):
         """Push PCM audio to the shared MP3 encoder (called after VAD gate)."""
@@ -7178,19 +7211,15 @@ class WebConfigServer:
                 pass
 
     def push_ws_audio(self, pcm_data):
-        """Push raw PCM to WebSocket clients (called before VAD gate for continuous audio)."""
+        """Push raw PCM to WebSocket clients via per-client send queues (non-blocking)."""
+        # Pre-build the WebSocket binary frame once for all clients
+        frame = self._ws_build_frame(pcm_data)
         with self._ws_lock:
-            dead = []
-            for sock in self._ws_clients:
+            for sock, send_q in self._ws_clients:
                 try:
-                    self._ws_send_binary(sock, pcm_data)
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    dead.append(sock)
-            for sock in dead:
-                try:
-                    self._ws_clients.remove(sock)
-                except ValueError:
-                    pass
+                    send_q.put_nowait(frame)
+                except Exception:
+                    pass  # queue full — drop frame rather than block audio loop
 
     def _start_encoder(self):
         """Start the shared FFmpeg MP3 encoder and reader thread."""
@@ -8670,26 +8699,11 @@ pollTimer = setInterval(pollStatus, 1000);
     <button onclick="sendKey('j')" id="btn-j">Radio Power</button>
     <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
   </div>
-  <div class="ctrl-group">
-    <h3>Playback</h3>
-    <button onclick="sendKey('0')" id="btn-f0">0 StationID</button>
-    <button onclick="sendKey('1')" id="btn-f1">1</button>
-    <button onclick="sendKey('2')" id="btn-f2">2</button>
-    <button onclick="sendKey('3')" id="btn-f3">3</button>
-    <button onclick="sendKey('4')" id="btn-f4">4</button>
-    <button onclick="sendKey('5')" id="btn-f5">5</button>
-    <button onclick="sendKey('6')" id="btn-f6">6</button>
-    <button onclick="sendKey('7')" id="btn-f7">7</button>
-    <button onclick="sendKey('8')" id="btn-f8">8</button>
-    <button onclick="sendKey('9')" id="btn-f9">9</button>
-    <button onclick="sendKey('-')">Stop</button>
+  <div class="ctrl-group" style="display:none;">
+    <h3>Playback (moved)</h3>
   </div>
-  <div class="ctrl-group">
-    <h3>Smart Announce</h3>
-    <div id="smart-status" style="margin-bottom:8px; font-size:0.9em; color:#888;">Idle</div>
-    <button onclick="sendKey('[')">Smart #1</button>
-    <button onclick="sendKey(']')">Smart #2</button>
-    <button onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
+  <div class="ctrl-group" style="display:none;">
+    <h3>Smart Announce (moved)</h3>
   </div>
   <div class="ctrl-group">
     <h3>System</h3>
@@ -8708,26 +8722,58 @@ pollTimer = setInterval(pollStatus, 1000);
   </div>
   <div class="ctrl-group">
     <h3>Listen</h3>
-    <div style="display:flex; align-items:center; gap:6px; flex-wrap:nowrap;">
-      <button id="play-btn" onclick="toggleStream()">&#9654; MP3</button>
-      <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#2ecc71; box-shadow:0 0 6px #2ecc71;"></span>
-      <input id="vol-slider" type="range" min="0" max="100" value="80" style="width:50px; accent-color:#00d4ff;" oninput="setVolume(this.value)">
-      <span id="vol-label" style="color:#ccc; font-size:0.8em;">80%</span>
-      <span id="stream-status" style="color:#888; font-size:0.75em;"></span>
-      <span style="color:#0f3460; margin:0 2px;">|</span>
-      <button id="ws-btn" onclick="toggleWS()">&#9654; Live</button>
-      <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#00d4ff; box-shadow:0 0 6px #00d4ff;"></span>
-      <input id="ws-vol" type="range" min="0" max="100" value="80" style="width:50px; accent-color:#00d4ff;" oninput="setWSVol(this.value)">
-      <span id="ws-vol-label" style="color:#ccc; font-size:0.8em;">80%</span>
-      <span id="ws-status" style="color:#888; font-size:0.75em;"></span>
+    <div style="display:flex; gap:16px; flex-wrap:nowrap;">
+      <div style="width:140px;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <button id="play-btn" onclick="toggleStream()" style="width:62px; text-align:center;">&#9654; MP3</button>
+          <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:50px; accent-color:#00d4ff;" oninput="setVolume(this.value)">
+          <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#2ecc71; box-shadow:0 0 6px #2ecc71;"></span>
+        </div>
+        <div id="stream-status" style="color:#888; font-size:0.75em; margin-top:3px; min-height:1.1em;"></div>
+      </div>
+      <div style="width:140px;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <button id="ws-btn" onclick="toggleWS()" style="width:62px; text-align:center;">&#9654; PCM</button>
+          <input id="ws-vol" type="range" min="0" max="100" value="100" style="width:50px; accent-color:#00d4ff;" oninput="setWSVol(this.value)">
+          <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#00d4ff; box-shadow:0 0 6px #00d4ff;"></span>
+        </div>
+        <div id="ws-status" style="color:#888; font-size:0.75em; margin-top:3px; min-height:1.1em;"></div>
+      </div>
     </div>
   </div>
 </div>
 
 <div id="playback-section" style="margin-top:18px;">
-  <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
-    <h3 style="margin:0 0 10px; color:#00d4ff; font-size:1.1em;">Playback Files</h3>
-    <div id="playback-status" style="font-family:monospace; font-size:0.95em;">Loading...</div>
+  <div class="ctrl-group" style="min-width:280px;">
+    <h3 style="margin:0 0 10px; color:#00d4ff; font-size:1.1em;">Playback &amp; Announcements</h3>
+    <div style="display:flex; gap:18px; flex-wrap:wrap;">
+      <div>
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:3px;">
+          <button onclick="sendKey('1')" id="btn-f1">1</button>
+          <button onclick="sendKey('2')" id="btn-f2">2</button>
+          <button onclick="sendKey('3')" id="btn-f3">3</button>
+          <button onclick="sendKey('4')" id="btn-f4">4</button>
+          <button onclick="sendKey('5')" id="btn-f5">5</button>
+          <button onclick="sendKey('6')" id="btn-f6">6</button>
+          <button onclick="sendKey('7')" id="btn-f7">7</button>
+          <button onclick="sendKey('8')" id="btn-f8">8</button>
+          <button onclick="sendKey('9')" id="btn-f9">9</button>
+          <button onclick="sendKey('0')" id="btn-f0">ID</button>
+          <button onclick="sendKey('-')" style="grid-column:span 2;">Stop</button>
+        </div>
+      </div>
+      <div style="min-width:160px;">
+        <div id="playback-status" style="font-family:monospace; font-size:0.85em;">Loading...</div>
+      </div>
+      <div style="min-width:160px; margin-left:80px;">
+        <div style="display:flex; gap:3px; margin-bottom:6px; flex-wrap:wrap;">
+          <button onclick="sendKey('[')">Smart #1</button>
+          <button onclick="sendKey(']')">Smart #2</button>
+          <button onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
+        </div>
+        <div id="smart-status" style="font-family:monospace; font-size:0.85em; color:#888;">Idle</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -8754,7 +8800,8 @@ pollTimer = setInterval(pollStatus, 1000);
   .bar-pct { display: inline-block; width: 3.5em; text-align: right; color: #ccc; }
   .green { color: #2ecc71; } .red { color: #e74c3c; } .yellow { color: #f39c12; }
   .cyan { color: #00d4ff; } .white { color: #e0e0e0; }
-  .pb-slot { display: inline-block; margin: 3px 12px 3px 0; white-space: nowrap; }
+  #playback-section button { margin: 0; }
+  .pb-slot { display: block; margin: 1px 0; white-space: nowrap; }
   .pb-key { font-weight: bold; display: inline-block; width: 1.5em; }
 </style>
 
@@ -8849,7 +8896,7 @@ function updateStatus() {
     var pbDiv = document.getElementById('playback-status');
     if(pbDiv && s.files) {
       var ph = '';
-      var order = ['0','1','2','3','4','5','6','7','8','9'];
+      var order = ['1','2','3','4','5','6','7','8','9','0'];
       for(var fi=0;fi<order.length;fi++) {
         var fk = order[fi];
         var f = s.files[fk];
@@ -8975,10 +9022,10 @@ function startStream() {
   var btn = document.getElementById('play-btn');
   var ind = document.getElementById('stream-indicator');
   var st = document.getElementById('stream-status');
-  btn.innerHTML = '&#8987; Connecting...';
+  btn.innerHTML = '&#9724; MP3';
   btn.style.color = '#f39c12';
-  st.textContent = 'Buffering...';
-  st.style.color = '#f39c12';
+  btn.style.borderColor = '#f39c12';
+  st.innerHTML = '<span style="color:#f39c12">Buffering...</span>';
 
   _audio = new Audio('/stream');
   _audio.volume = document.getElementById('vol-slider').value / 100;
@@ -8986,31 +9033,29 @@ function startStream() {
   _audio.onplaying = function() {
     _playing = true;
     _streamStart = Date.now();
-    btn.innerHTML = '&#9724; Stop';
-    btn.style.color = '#e74c3c';
-    btn.style.borderColor = '#e74c3c';
+    btn.innerHTML = '&#9724; MP3';
+    btn.style.color = '#2ecc71';
+    btn.style.borderColor = '#2ecc71';
     ind.style.display = 'inline-block';
-    st.textContent = 'Streaming 0:00';
-    st.style.color = '#2ecc71';
+    st.innerHTML = '<span style="color:#2ecc71">0:00</span> <span style="color:#666">96kbps</span>';
     _streamTimer = setInterval(function() {
       var secs = Math.floor((Date.now() - _streamStart) / 1000);
       var m = Math.floor(secs / 60);
       var s = secs % 60;
-      st.textContent = 'Streaming ' + m + ':' + (s < 10 ? '0' : '') + s;
+      var t = m + ':' + (s < 10 ? '0' : '') + s;
+      st.innerHTML = '<span style="color:#2ecc71">' + t + '</span> <span style="color:#666">96kbps</span>';
     }, 1000);
   };
 
   _audio.onerror = function() {
-    st.textContent = 'Stream error — try again';
-    st.style.color = '#e74c3c';
+    st.innerHTML = '<span style="color:#e74c3c">Stream error</span>';
     stopStream();
   };
 
   _audio.onended = function() { stopStream(); };
 
   _audio.play().catch(function(e) {
-    st.textContent = 'Error: ' + e.message;
-    st.style.color = '#e74c3c';
+    st.innerHTML = '<span style="color:#e74c3c">Error: ' + e.message + '</span>';
     stopStream();
   });
 }
@@ -9027,12 +9072,10 @@ function stopStream() {
   document.getElementById('play-btn').style.color = '#e0e0e0';
   document.getElementById('play-btn').style.borderColor = '#1b3a5c';
   document.getElementById('stream-indicator').style.display = 'none';
-  document.getElementById('stream-status').textContent = '';
-  document.getElementById('stream-status').style.color = '#888';
+  document.getElementById('stream-status').innerHTML = '';
 }
 
 function setVolume(v) {
-  document.getElementById('vol-label').textContent = v + '%';
   if (_audio) _audio.volume = v / 100;
 }
 
@@ -9043,6 +9086,7 @@ var _wsGain = null;
 var _wsPlaying = false;
 var _wsTimer = null;
 var _wsStart = 0;
+var _wsBytes = 0;
 var _wsWorklet = null;
 
 function toggleWS() {
@@ -9053,21 +9097,21 @@ function startWS() {
   var btn = document.getElementById('ws-btn');
   var ind = document.getElementById('ws-indicator');
   var st = document.getElementById('ws-status');
-  btn.innerHTML = '&#8987; Connecting...';
+  btn.innerHTML = '&#9724; PCM';
   btn.style.color = '#f39c12';
-  st.textContent = 'Connecting...';
-  st.style.color = '#f39c12';
+  btn.style.borderColor = '#f39c12';
+  st.innerHTML = '<span style="color:#f39c12">Connecting...</span>';
 
   // Prevent double-click race
   if (_wsCtx) { stopWS(); return; }
 
   try {
     _wsCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
-    console.log('[WS-Audio] AudioContext created, state:', _wsCtx.state, 'sampleRate:', _wsCtx.sampleRate);
+    console.log('[WS-Audio] AudioContext created, state:', _wsCtx.state, 'requested: 48000, actual sampleRate:', _wsCtx.sampleRate);
+    if (_wsCtx.sampleRate !== 48000) console.warn('[WS-Audio] SAMPLE RATE MISMATCH — audio may play at wrong speed!');
   } catch(e) {
-    st.textContent = 'No AudioContext: ' + e.message;
-    st.style.color = '#e74c3c';
-    btn.innerHTML = '&#9654; Live';
+    st.innerHTML = '<span style="color:#e74c3c">No AudioContext</span>';
+    btn.innerHTML = '&#9654; PCM';
     btn.style.color = '#e0e0e0';
     return;
   }
@@ -9090,11 +9134,13 @@ function startWS() {
 
   function _drainPCM(output) {
     var w = 0, need = output.length;
-    // Pre-buffer 200ms (9600 samples at 48kHz) before starting playback
+    // Pre-buffer 50ms (2400 samples at 48kHz) before starting playback
     if (!_pcmReady) {
-      if (_pcmTotal < 9600) { for (w = 0; w < need; w++) output[w] = 0; return; }
+      if (_pcmTotal < 2400) { for (w = 0; w < need; w++) output[w] = 0; return; }
       _pcmReady = true;
     }
+    // Cap buffer at 200ms (9600 samples) — skip ahead if falling behind
+    while (_pcmTotal > 9600 && _pcmBuf.length > 1) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
     while (w < need) {
       if (!_pcmBuf.length) { for (; w < need; w++) output[w] = 0; break; }
       var cur = _pcmBuf[0], avail = cur.length - _pcmPos;
@@ -9113,40 +9159,66 @@ function startWS() {
       console.log('[WS-Audio] WebSocket connected');
       _wsPlaying = true;
       _wsStart = Date.now();
-      btn.innerHTML = '&#9724; Stop';
+      _wsBytes = 0;
+      btn.innerHTML = '&#9724; PCM';
       btn.style.color = '#00d4ff';
       btn.style.borderColor = '#00d4ff';
       ind.style.display = 'inline-block';
-      st.textContent = '0:00';
-      st.style.color = '#00d4ff';
+      st.innerHTML = '<span style="color:#00d4ff">0:00</span>';
       _wsTimer = setInterval(function() {
         var secs = Math.floor((Date.now() - _wsStart) / 1000);
         var m = Math.floor(secs / 60);
         var s = secs % 60;
-        st.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+        var t = m + ':' + (s < 10 ? '0' : '') + s;
+        var kb = (_wsBytes / 1024).toFixed(0);
+        var unit = 'KB';
+        if (_wsBytes >= 1048576) { kb = (_wsBytes / 1048576).toFixed(1); unit = 'MB'; }
+        var kbps = secs > 0 ? ((_wsBytes * 8 / secs / 1000).toFixed(0) + 'kbps') : '';
+        st.innerHTML = '<span style="color:#00d4ff">' + t + '</span> <span style="color:#666">' + kb + unit + (kbps ? ' ' + kbps : '') + '</span>';
       }, 1000);
     };
 
+    // Resample ratio: server sends 48kHz, AudioContext may run at different rate
+    var _srcRate = 48000;
+    var _dstRate = _wsCtx.sampleRate;
+    var _resample = (_dstRate !== _srcRate);
+    if (_resample) console.log('[WS-Audio] Resampling', _srcRate, '→', _dstRate);
+
     _ws.onmessage = function(ev) {
       if (ev.data instanceof ArrayBuffer) {
+        _wsBytes += ev.data.byteLength;
         var int16 = new Int16Array(ev.data);
         var float32 = new Float32Array(int16.length);
         for (var i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
+        // Resample if AudioContext rate differs from source
+        if (_resample) {
+          var ratio = _srcRate / _dstRate;
+          var outLen = Math.round(float32.length / ratio);
+          var resampled = new Float32Array(outLen);
+          for (var i = 0; i < outLen; i++) {
+            var srcIdx = i * ratio;
+            var idx0 = Math.floor(srcIdx);
+            var frac = srcIdx - idx0;
+            var s0 = float32[idx0] || 0;
+            var s1 = float32[Math.min(idx0 + 1, float32.length - 1)] || 0;
+            resampled[i] = s0 + frac * (s1 - s0);
+          }
+          float32 = resampled;
+        }
         if (_wsWorklet && _wsWorklet.port) {
           _wsWorklet.port.postMessage(float32);
         } else {
           _pcmBuf.push(float32);
           _pcmTotal += float32.length;
-          // Cap buffer to ~500ms to prevent buildup
-          while (_pcmBuf.length > 12) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
+          // Cap buffer to ~200ms to prevent buildup
+          while (_pcmBuf.length > 4) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
         }
       }
     };
 
     _ws.onerror = function(ev) {
       console.log('[WS-Audio] WebSocket error:', ev);
-      st.textContent = 'WS error';
-      st.style.color = '#e74c3c';
+      st.innerHTML = '<span style="color:#e74c3c">WS error</span>';
       stopWS();
     };
 
@@ -9158,7 +9230,7 @@ function startWS() {
 
   // Try AudioWorklet first (requires secure context), fall back to ScriptProcessor
   if (_wsCtx.audioWorklet) {
-    var workletCode = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[];this.p=0;this.tot=0;this.ready=false;this.port.onmessage=e=>{this.b.push(e.data);this.tot+=e.data.length;if(!this.ready&&this.tot>=9600)this.ready=true}}process(i,o){var c=o[0][0];if(!c)return true;var n=c.length,w=0;if(!this.ready){for(w=0;w<n;w++)c[w]=0;return true}while(w<n){if(!this.b.length){for(;w<n;w++)c[w]=0;break}var r=this.b[0],a=r.length-this.p,t=Math.min(a,n-w);for(var j=0;j<t;j++)c[w++]=r[this.p++];if(this.p>=r.length){this.b.shift();this.p=0;this.tot-=r.length}}return true}}registerProcessor("p",P)';
+    var workletCode = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[];this.p=0;this.tot=0;this.ready=false;this.port.onmessage=e=>{this.b.push(e.data);this.tot+=e.data.length;if(!this.ready&&this.tot>=2400)this.ready=true;if(this.tot>9600){while(this.tot>2400&&this.b.length>1){this.tot-=this.b[0].length;this.b.shift()}this.p=0}}}process(i,o){var c=o[0][0];if(!c)return true;var n=c.length,w=0;if(!this.ready){for(w=0;w<n;w++)c[w]=0;return true}while(w<n){if(!this.b.length){for(;w<n;w++)c[w]=0;break}var r=this.b[0],a=r.length-this.p,t=Math.min(a,n-w);for(var j=0;j<t;j++)c[w++]=r[this.p++];if(this.p>=r.length){this.b.shift();this.p=0;this.tot-=r.length}}return true}}registerProcessor("p",P)';
     var blob = new Blob([workletCode], {type: 'application/javascript'});
     var blobURL = URL.createObjectURL(blob);
     _wsCtx.audioWorklet.addModule(blobURL).then(function() {
@@ -9194,16 +9266,15 @@ function stopWS() {
   if (_wsGain) { try { _wsGain.disconnect(); } catch(e){} _wsGain = null; }
   if (_wsCtx) { try { _wsCtx.close(); } catch(e){} _wsCtx = null; }
   _wsPlaying = false;
-  document.getElementById('ws-btn').innerHTML = '&#9654; Live';
+  document.getElementById('ws-btn').innerHTML = '&#9654; PCM';
   document.getElementById('ws-btn').style.color = '#e0e0e0';
   document.getElementById('ws-btn').style.borderColor = '#1b3a5c';
   document.getElementById('ws-indicator').style.display = 'none';
-  document.getElementById('ws-status').textContent = '';
-  document.getElementById('ws-status').style.color = '#888';
+  document.getElementById('ws-status').innerHTML = '';
+  _wsBytes = 0;
 }
 
 function setWSVol(v) {
-  document.getElementById('ws-vol-label').textContent = v + '%';
   if (_wsGain) _wsGain.gain.value = v / 100;
 }
 </script>
@@ -12124,12 +12195,12 @@ class RadioGateway:
                         if self.config.VERBOSE_LOGGING:
                             print(f"\n[Stream] Send error: {stream_err}")
 
-                # Push to web audio stream listeners (MP3 + WebSocket PCM)
+                # Push to web audio stream listeners (MP3 only — WebSocket PCM
+                # is already pushed earlier in the mixer path (line ~11849) and
+                # direct-AIOC path (line ~12087) to avoid double-pushing.)
                 if self.web_config_server:
                     if self.web_config_server._stream_subscribers:
                         self.web_config_server.push_audio(data)
-                    if self.web_config_server._ws_clients:
-                        self.web_config_server.push_ws_audio(data)
 
             except Exception as e:
                 consecutive_errors += 1

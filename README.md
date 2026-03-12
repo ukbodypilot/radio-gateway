@@ -319,12 +319,18 @@ Google TTS (gTTS) integration — Mumble users send a text message to trigger sp
 - Default voice set via `TTS_DEFAULT_VOICE` (1-9)
 
 ### Audio Processing
+Per-source processing chains — Radio and SDR sources have independent filter instances with separate state and toggle controls. Requires `scipy` (installed automatically by the installer).
+
 - **VAD**: Voice Activity Detection with configurable threshold (enabled by default)
-- **Noise Gate**: Removes background noise
-- **AGC**: Automatic Gain Control for consistent levels
+- **Noise Gate**: Removes background noise below threshold
 - **HPF**: High-pass filter (removes low-frequency rumble)
-- **Spectral/Wiener Filter**: Advanced noise suppression
+- **LPF**: Low-pass filter (removes high-frequency hiss)
+- **Notch Filter**: Narrow-band rejection at configurable frequency and Q
+- **De-esser**: Reduces sibilance at configurable frequency
+- **Spectral Noise Suppression**: FFT-based noise floor subtraction
 - **Echo Cancellation**: Reduces feedback
+
+Dashboard: separate "Radio Processing" and "SDR Processing" button groups toggle each filter independently per source.
 
 ### Streaming
 - **Darkice Integration**: Stream to Icecast server
@@ -712,7 +718,7 @@ bash scripts/install.sh
 The installer handles:
 - System packages (Python, PortAudio, FFmpeg, HIDAPI, etc.)
 - ALSA loopback module (`snd-aloop`) pinned to `hw:4`, `hw:5`, `hw:6`
-- Python packages (`hid`, `numpy`, `pyaudio`, `soundfile`, `resampy`, `psutil`, `gtts`, `pyserial`, `pymumble-py3`)
+- Python packages (`hid`, `numpy`, `scipy`, `pyaudio`, `soundfile`, `resampy`, `psutil`, `gtts`, `pyserial`, `pymumble-py3`)
 - UDEV rules for AIOC USB audio + HID (PTT control)
 - Audio group membership and realtime scheduling limits
 - Darkice + WirePlumber configuration (if applicable)
@@ -2210,6 +2216,14 @@ class MySource(AudioSource):
 **Google AI scrape fix** — Fixed navigation failure caused by Firefox dev console (`Ctrl+Shift+K`) being intercepted by dashboard keyboard handler. Now uses URL bar (`Ctrl+L`) for navigation and `udm=50` URL parameter for direct AI Mode access — eliminates fragile JS click heuristics.
 
 **WebSocket audio pre-buffer** — Fixed stuttering in low-latency WebSocket PCM player by adding 200ms pre-buffer (9600 samples). Both AudioWorklet and ScriptProcessor paths now accumulate audio before playback starts, absorbing network jitter.
+
+**Audio processing fix** — All audio processing filters (HPF, LPF, notch, de-esser, spectral NS, noise gate) were silently non-functional. Two bugs: (1) `scipy` was not installed — all filters import `scipy.signal` inside `try/except Exception` which masked the `ImportError`, returning unmodified audio. Added `scipy` to installer. (2) `PipeWireSDRSource.get_audio()` was missing the `process_audio_for_sdr()` call — SDR audio bypassed the entire filter chain even with scipy present.
+
+**WebSocket PCM audio fixes** — Fixed three issues: (1) stuttering from missing pre-buffer and Nagle's algorithm — added 50ms pre-buffer, TCP_NODELAY, per-client send queues with dedicated sender threads. (2) Half-speed playback from `push_ws_audio()` being called twice per audio loop iteration. (3) ~2s latency from FFmpeg buffering in PipeWire SDR source — replaced with native `parec --latency-msec=50`.
+
+**PipeWire SDR: FFmpeg → parec** — Replaced FFmpeg subprocess with native `parec` for reading PipeWire virtual sink monitors. Lower latency (~50ms vs ~2s), simpler process, no format negotiation overhead.
+
+**Dashboard UI improvements** — Combined Playback and Smart Announce sections. Phone-keypad layout for playback buttons. MP3 and PCM stream controls with fixed-width buttons, volume sliders defaulting to 100%, status lines showing timer/bitrate/bytes. Consistent button styling across all sections.
 
 **Audio bar scaling fix** — Dashboard audio level bars changed from 1.5x to 1x multiplier so bar width matches percentage value.
 
