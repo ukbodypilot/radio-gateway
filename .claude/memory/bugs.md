@@ -1,5 +1,28 @@
 # Bug History — Radio Gateway
 
+## CAT Serial Not Cleaned Up on Restart — Orphaned Processes (2026-03-12)
+**Symptom:** After each gateway restart, orphaned `start.sh`, `cloudflared`, `ffmpeg` processes accumulated. After several restarts, 13+ orphaned start.sh, 10+ cloudflared, 15+ ffmpeg lingering.
+
+**Root causes (three issues):**
+1. **`KillMode=process`** in `radio-gateway.service` — systemd only sent SIGTERM to the main PID (start.sh), not its children. Cloudflared, ffmpeg, TH9800_CAT all survived as orphans.
+2. **`RadioCATClient.close()` not graceful** — slammed socket shut without setting `_stop` flag, sending `!exit`, or waiting for drain thread. Left TH9800_CAT server with stale client state.
+3. **TH9800_CAT.py no SIGTERM handler** — headless mode used `while True: await asyncio.sleep(10)` which didn't run the serial cleanup `finally` block on SIGTERM.
+
+**Fix:**
+1. Changed to `KillMode=control-group` — kills entire cgroup (all children) on stop/restart.
+2. `close()` now: sets `_stop=True`, sends `!exit\n`, `shutdown(SHUT_RDWR)`, waits 150ms for drain thread.
+3. TH9800_CAT.py: registered SIGTERM/SIGINT handlers, replaced sleep loop with `asyncio.Event.wait()`, cleanup sets DTR low and closes serial+TCP.
+
+## CAT Serial Shows Disconnected on Startup (2026-03-12)
+**Symptom:** Radio control web page showed serial "Disconnected" after gateway restart, even though TH9800_CAT had serial connected (channels changeable via buttons).
+
+**Root cause:** `_serial_connected` initialized to `False` and only set `True` by the web UI's SERIAL_CONNECT button handler. Gateway startup never queried serial state. Additionally, `SERIAL_CONNECT` handler rejected "already connected" response (`'already' not in resp` check).
+
+**Fix:**
+1. On CAT TCP connect, gateway sends `!serial status` — if disconnected, auto-sends `!serial connect`.
+2. If serial is connected (fresh or already), refreshes display via VFO dial press+release and reads RTS state.
+3. Web UI SERIAL_CONNECT: "already connected" now treated as success (`_serial_connected = True`), but skips display refresh (already populated).
+
 ## Audio Processing Has No Audible Effect (2026-03-11)
 **Symptom:** All audio processing buttons (HPF, LPF, notch, de-esser, spectral NS, noise gate) had zero audible effect when toggled via dashboard or keyboard, for both radio and SDR sources.
 
