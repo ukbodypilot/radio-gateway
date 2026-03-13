@@ -7530,6 +7530,7 @@ class WebConfigServer:
 
     def _save_config(self, new_values):
         """Write updated values to config file, preserving comments and structure."""
+        print(f"  [Config] Saving {len(new_values)} keys")
         config_path = self.config.config_file
         if not os.path.exists(config_path):
             return
@@ -7746,7 +7747,7 @@ fetch('/logdata?after=0')
 </div>
 
 <!-- Two-column VFO display -->
-<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:14px; margin-bottom:14px;">
 
   <!-- LEFT VFO -->
   <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
@@ -8228,7 +8229,7 @@ updateRadio();
 </div>
 
 <!-- Main controls grid -->
-<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:14px; margin-bottom:14px;">
 
   <!-- Frequency -->
   <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
@@ -8345,7 +8346,7 @@ updateRadio();
 </div>
 
 <!-- Audio Processing -->
-<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:14px; margin-bottom:14px;">
   <div style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:14px;">
     <h3 style="color:#00d4ff; margin:0 0 10px; font-size:0.95em;">Audio Filters</h3>
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
@@ -9021,7 +9022,7 @@ pollTimer = setInterval(pollStatus, 1000);
   </div>
   </div>
 
-<div id="playback-section" style="margin-top:18px; display:flex; gap:14px; align-items:flex-start;">
+<div id="playback-section" style="margin-top:18px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
   <div class="ctrl-group" style="min-width:0; display:inline-block;">
     <h3 style="margin:0 0 10px; color:#00d4ff; font-size:1.1em;">Playback &amp; Announcements</h3>
     <div style="display:flex; gap:18px; flex-wrap:nowrap;">
@@ -9703,6 +9704,12 @@ updateSysInfo();
             '</div>'
             + ''.join(form_parts) +
             '</form>'
+            '<script>'
+            'var _dirty=false;'
+            'document.querySelector("form").addEventListener("input",function(){_dirty=true;});'
+            'document.querySelector("form").addEventListener("submit",function(){_dirty=false;});'
+            'window.addEventListener("beforeunload",function(e){if(_dirty){e.preventDefault();e.returnValue="";}});'
+            '</script>'
         )
         return self._wrap_html('Config', body)
 
