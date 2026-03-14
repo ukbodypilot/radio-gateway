@@ -1120,6 +1120,20 @@ else
 fi
 echo
 
+# ── Start the gateway service ─────────────────────────────────
+echo "Starting radio-gateway service..."
+if sudo systemctl start radio-gateway.service 2>/dev/null; then
+    sleep 2
+    if systemctl is-active --quiet radio-gateway.service; then
+        echo "  ✓ radio-gateway is running"
+    else
+        echo "  ⚠ radio-gateway started but may have exited — check: journalctl -u radio-gateway -n 50"
+    fi
+else
+    echo "  ⚠ Could not start radio-gateway — check: journalctl -u radio-gateway -n 50"
+fi
+echo
+
 # ── Summary ──────────────────────────────────────────────────
 echo "============================================================"
 echo "Installation complete!"
