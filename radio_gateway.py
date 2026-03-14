@@ -6827,36 +6827,347 @@ class WebConfigServer:
     # Keys that store hex integers
     _HEX_KEYS = {'AIOC_VID', 'AIOC_PID'}
 
-    # Section display names
-    _SECTION_NAMES = {
-        'startup': 'Startup Script',
-        'mumble': 'Mumble Server',
-        'radio': 'Radio Interface (AIOC)',
-        'audio': 'Audio Format & Buffering',
-        'levels': 'Audio Levels',
-        'ptt': 'PTT (Push-to-Talk)',
-        'vad': 'Voice Activity Detection',
-        'vox': 'VOX',
-        'processing': 'Audio Processing',
-        'sdr1': 'SDR Receiver 1',
-        'sdr2': 'SDR Receiver 2',
-        'switching': 'Signal Detection & Switching',
-        'remote': 'Remote Audio Link',
-        'announce': 'Announcement Input',
-        'playback': 'File Playback',
-        'tts': 'Text-to-Speech',
-        'speaker': 'Speaker Output',
-        'streaming': 'Broadcastify Streaming',
-        'echolink': 'EchoLink',
-        'relay': 'Relay Control',
-        'smart': 'Smart Announcements',
-        'ddns': 'Dynamic DNS',
-        'web': 'Web Configuration',
-        'cat': 'TH-9800 CAT Control',
-        'mumble-server-1': 'Mumble Server 1',
-        'mumble-server-2': 'Mumble Server 2',
-        'advanced': 'Advanced / Diagnostics',
+    # Hint text for parameters — shows units, ranges, and format info
+    _FIELD_HINTS = {
+        # Mumble
+        'MUMBLE_SERVER': 'IP address or hostname',
+        'MUMBLE_PORT': 'port (1–65535)',
+        'MUMBLE_CHANNEL': 'blank = root channel',
+        'MUMBLE_BITRATE': 'bps (typical: 32000–128000)',
+        'MUMBLE_JITTER_BUFFER': 'ms',
+        'MUMBLE_LOOP_RATE': 'seconds',
+        # Radio
+        'AIOC_VID': 'hex USB vendor ID',
+        'AIOC_PID': 'hex USB product ID',
+        'AIOC_INPUT_DEVICE': '-1 = auto-detect',
+        'AIOC_OUTPUT_DEVICE': '-1 = auto-detect',
+        # Audio
+        'AUDIO_RATE': 'Hz (samples/sec)',
+        'AUDIO_CHUNK_SIZE': 'samples (rate ÷ 20 = 50ms)',
+        'MAX_MUMBLE_BUFFER_SECONDS': 'seconds',
+        # Levels
+        'INPUT_VOLUME': 'multiplier (0.1–3.0, 1.0 = normal)',
+        'OUTPUT_VOLUME': 'multiplier (1.0 = normal)',
+        # PTT
+        'PTT_RELAY_DEVICE': 'device path',
+        'PTT_RELAY_BAUD': 'bps',
+        'PTT_RELEASE_DELAY': 'seconds',
+        'PTT_ACTIVATION_DELAY': 'seconds',
+        'PTT_TTS_DELAY': 'seconds (silence before TTS)',
+        'PTT_ANNOUNCEMENT_DELAY': 'seconds (silence after PTT key-up)',
+        # VAD
+        'VAD_THRESHOLD': 'dBFS (−60 to 0, lower = more sensitive)',
+        'VAD_ATTACK': 'seconds',
+        'VAD_RELEASE': 'seconds',
+        'VAD_MIN_DURATION': 'seconds',
+        # VOX
+        'VOX_THRESHOLD': 'dBFS (−60 to 0, lower = more sensitive)',
+        'VOX_ATTACK_TIME': 'seconds',
+        'VOX_RELEASE_TIME': 'seconds',
+        # Processing
+        'NOISE_GATE_THRESHOLD': 'dBFS (−60 to 0)',
+        'NOISE_GATE_ATTACK': 'seconds',
+        'NOISE_GATE_RELEASE': 'seconds',
+        'HIGHPASS_CUTOFF_FREQ': 'Hz',
+        'LOWPASS_CUTOFF_FREQ': 'Hz',
+        'NOTCH_FREQ': 'Hz',
+        'NOTCH_Q': 'quality factor (higher = narrower)',
+        # SDR Processing
+        'SDR_PROC_NOISE_GATE_THRESHOLD': 'dBFS (−60 to 0)',
+        'SDR_PROC_NOISE_GATE_ATTACK': 'seconds',
+        'SDR_PROC_NOISE_GATE_RELEASE': 'seconds',
+        'SDR_PROC_HPF_CUTOFF': 'Hz',
+        'SDR_PROC_LPF_CUTOFF': 'Hz',
+        'SDR_PROC_NOTCH_FREQ': 'Hz',
+        'SDR_PROC_NOTCH_Q': 'quality factor (higher = narrower)',
+        # SDR 1
+        'SDR_DEVICE_NAME': 'PipeWire sink or ALSA device (e.g. hw:6,1)',
+        'SDR_MIX_RATIO': 'multiplier (when ducking disabled)',
+        'SDR_DISPLAY_GAIN': 'multiplier (display sensitivity)',
+        'SDR_AUDIO_BOOST': 'multiplier (1.0 = normal, 2.0 = 2× louder)',
+        'SDR_BUFFER_MULTIPLIER': '× normal buffer (~50ms per unit)',
+        'SDR_PRIORITY': '1 = higher, 2 = lower',
+        'SDR_WATCHDOG_TIMEOUT': 'seconds',
+        'SDR_WATCHDOG_MAX_RESTARTS': 'attempts',
+        'SDR_INTERNAL_AUTOSTART_CHANNEL': 'slot number (−1 = use last)',
+        # SDR 2
+        'SDR2_DEVICE_NAME': 'PipeWire sink or ALSA device',
+        'SDR2_MIX_RATIO': 'multiplier',
+        'SDR2_DISPLAY_GAIN': 'multiplier',
+        'SDR2_AUDIO_BOOST': 'multiplier',
+        'SDR2_BUFFER_MULTIPLIER': '× normal buffer',
+        'SDR2_PRIORITY': '1 = higher, 2 = lower',
+        'SDR2_WATCHDOG_TIMEOUT': 'seconds',
+        'SDR2_WATCHDOG_MAX_RESTARTS': 'attempts',
+        # Switching
+        'SIGNAL_ATTACK_TIME': 'seconds (signal needed before switch)',
+        'SIGNAL_RELEASE_TIME': 'seconds (silence needed before revert)',
+        'SWITCH_PADDING_TIME': 'seconds (silence at transitions)',
+        'SDR_DUCK_COOLDOWN': 'seconds (hold after unduck)',
+        'SDR_SIGNAL_THRESHOLD': 'dBFS (lower = more sensitive)',
+        'SDR_REBROADCAST_PTT_HOLD': 'seconds',
+        # Remote
+        'REMOTE_AUDIO_HOST': 'IP address or hostname',
+        'REMOTE_AUDIO_PORT': 'port (1–65535)',
+        'REMOTE_AUDIO_PRIORITY': '0 = ducks all, 1 = high, 2 = low',
+        'REMOTE_AUDIO_DISPLAY_GAIN': 'multiplier',
+        'REMOTE_AUDIO_AUDIO_BOOST': 'multiplier',
+        'REMOTE_AUDIO_RECONNECT_INTERVAL': 'seconds',
+        # Announce
+        'ANNOUNCE_INPUT_PORT': 'port (1–65535)',
+        'ANNOUNCE_INPUT_HOST': 'IP address (blank = all interfaces)',
+        'ANNOUNCE_INPUT_THRESHOLD': 'dBFS (below = silence)',
+        'ANNOUNCE_INPUT_VOLUME': 'multiplier',
+        # Playback
+        'PLAYBACK_DIRECTORY': 'directory path',
+        'PLAYBACK_ANNOUNCEMENT_FILE': 'file path (blank = disabled)',
+        'PLAYBACK_ANNOUNCEMENT_INTERVAL': 'seconds (0 = disabled)',
+        'PLAYBACK_VOLUME': 'multiplier (1.0 = normal)',
+        'CW_WPM': 'words per minute',
+        'CW_FREQUENCY': 'Hz (tone frequency)',
+        'CW_VOLUME': 'multiplier',
+        # TTS
+        'TTS_VOLUME': 'multiplier (1.0 = normal)',
+        'TTS_SPEED': 'ratio (1.0 = normal, 1.3 = 30% faster)',
+        # Speaker
+        'SPEAKER_OUTPUT_DEVICE': 'device name (blank = system default)',
+        'SPEAKER_VOLUME': 'multiplier',
+        # Streaming
+        'STREAM_SERVER': 'hostname or IP',
+        'STREAM_PORT': 'port (1–65535)',
+        'STREAM_BITRATE': 'kbps',
+        'STREAM_MOUNT': 'mount point path',
+        'STREAM_RESTART_INTERVAL': 'seconds',
+        'STREAM_RESTART_IDLE_TIME': 'seconds',
+        # Echolink
+        'ECHOLINK_RX_PIPE': 'named pipe path',
+        'ECHOLINK_TX_PIPE': 'named pipe path',
+        # Relay
+        'RELAY_RADIO_DEVICE': 'device path',
+        'RELAY_RADIO_BAUD': 'bps',
+        'CHARGER_RELAY_GPIO': 'BCM pin number (0–27)',
+        'RELAY_CHARGER_DEVICE': 'device path',
+        'RELAY_CHARGER_BAUD': 'bps',
+        'RELAY_CHARGER_ON_TIME': 'HH:MM (24-hour)',
+        'RELAY_CHARGER_OFF_TIME': 'HH:MM (24-hour)',
+        # Smart
+        'SMART_ANNOUNCE_OLLAMA_MODEL': 'model name (blank = auto-detect)',
+        'SMART_ANNOUNCE_OLLAMA_TEMPERATURE': '0.0–1.0 (0 = focused, 1 = creative)',
+        'SMART_ANNOUNCE_OLLAMA_TOP_P': '0.0–1.0 (nucleus sampling)',
+        'SMART_ANNOUNCE_OLLAMA_NUM_CTX': 'tokens (context window)',
+        'SMART_ANNOUNCE_OLLAMA_NUM_THREAD': 'CPU threads (0 = all cores)',
+        'SMART_ANNOUNCE_START_TIME': 'HH:MM (blank = no restriction)',
+        'SMART_ANNOUNCE_END_TIME': 'HH:MM (blank = no restriction)',
+        # CAT
+        'CAT_HOST': 'IP address',
+        'CAT_PORT': 'port (1–65535)',
+        'CAT_LEFT_CHANNEL': 'channel number (−1 = don\'t change)',
+        'CAT_RIGHT_CHANNEL': 'channel number (−1 = don\'t change)',
+        'CAT_LEFT_VOLUME': '0–100 (−1 = don\'t change)',
+        'CAT_RIGHT_VOLUME': '0–100 (−1 = don\'t change)',
+        # Web
+        'WEB_CONFIG_PORT': 'port (1–65535)',
+        'WEB_CONFIG_PASSWORD': 'blank = no auth (user: admin)',
+        'GATEWAY_NAME': 'shown at top of dashboard (blank = none)',
+        'WEB_MIC_VOLUME': 'multiplier',
+        # Email
+        'EMAIL_ADDRESS': 'Gmail address (sender)',
+        'EMAIL_APP_PASSWORD': 'Gmail app password',
+        'EMAIL_RECIPIENT': 'blank = same as sender',
+        # DDNS
+        'DDNS_HOSTNAME': 'dynamic hostname',
+        'DDNS_UPDATE_INTERVAL': 'seconds',
+        'DDNS_UPDATE_URL': 'update endpoint URL',
+        # Mumble servers
+        'MUMBLE_SERVER_1_PORT': 'port (1–65535)',
+        'MUMBLE_SERVER_1_MAX_USERS': 'users',
+        'MUMBLE_SERVER_1_MAX_BANDWIDTH': 'bps',
+        'MUMBLE_SERVER_2_PORT': 'port (1–65535)',
+        'MUMBLE_SERVER_2_MAX_USERS': 'users',
+        'MUMBLE_SERVER_2_MAX_BANDWIDTH': 'bps',
+        # Advanced
+        'LOG_BUFFER_LINES': 'lines (web log viewer)',
+        'LOG_FILE_DAYS': 'days (log retention)',
+        'STATUS_UPDATE_INTERVAL': 'seconds',
+        'NETWORK_TIMEOUT': 'seconds',
     }
+
+    # Keys with a fixed set of valid values — rendered as dropdowns
+    _SELECT_OPTIONS = {
+        'PTT_METHOD': ['aioc', 'relay', 'software'],
+        'REMOTE_AUDIO_ROLE': ['disabled', 'server', 'client'],
+        'RELAY_CHARGER_CONTROL': ['gpio', 'serial'],
+        'SMART_ANNOUNCE_AI_BACKEND': ['google-scrape', 'duckduckgo', 'claude', 'gemini'],
+        'WEB_CONFIG_HTTPS': ['false', 'self-signed', 'letsencrypt'],
+        'WEB_THEME': ['blue', 'red', 'green', 'purple', 'amber', 'teal', 'pink'],
+        'STREAM_FORMAT': ['mp3'],
+        'CAT_LEFT_POWER': ['', 'L', 'M', 'H'],
+        'CAT_RIGHT_POWER': ['', 'L', 'M', 'H'],
+        'TTS_DEFAULT_VOICE': [
+            ('1', '1 — US'), ('2', '2 — British'), ('3', '3 — Australian'),
+            ('4', '4 — Indian'), ('5', '5 — South African'), ('6', '6 — Canadian'),
+            ('7', '7 — Irish'), ('8', '8 — French'), ('9', '9 — German'),
+        ],
+    }
+
+    # Section display names
+    # Canonical config layout — this is the single source of truth for
+    # which settings exist, what section they belong to, and their order.
+    # Both the web config UI and the config file writer use this.
+    _CONFIG_LAYOUT = [
+        ('mumble', 'Mumble Server', [
+            'MUMBLE_SERVER', 'MUMBLE_PORT', 'MUMBLE_USERNAME', 'MUMBLE_PASSWORD',
+            'MUMBLE_CHANNEL', 'MUMBLE_BITRATE', 'MUMBLE_VBR',
+            'MUMBLE_JITTER_BUFFER', 'MUMBLE_LOOP_RATE', 'MUMBLE_STEREO',
+            'MUMBLE_RECONNECT', 'MUMBLE_DEBUG',
+        ]),
+        ('radio', 'Radio Interface (AIOC)', [
+            'AIOC_VID', 'AIOC_PID', 'AIOC_INPUT_DEVICE', 'AIOC_OUTPUT_DEVICE',
+            'AIOC_PTT_CHANNEL',
+        ]),
+        ('audio', 'Audio Format & Buffering', [
+            'AUDIO_RATE', 'AUDIO_CHUNK_SIZE', 'AUDIO_CHANNELS', 'AUDIO_BITS',
+            'MAX_MUMBLE_BUFFER_SECONDS',
+        ]),
+        ('levels', 'Audio Levels', [
+            'INPUT_VOLUME', 'OUTPUT_VOLUME',
+        ]),
+        ('ptt', 'PTT (Push-to-Talk)', [
+            'PTT_METHOD', 'PTT_RELAY_DEVICE', 'PTT_RELAY_BAUD',
+            'PTT_RELEASE_DELAY', 'PTT_ACTIVATION_DELAY',
+            'PTT_TTS_DELAY', 'PTT_ANNOUNCEMENT_DELAY',
+        ]),
+        ('vad', 'Voice Activity Detection', [
+            'ENABLE_VAD', 'VAD_THRESHOLD', 'VAD_ATTACK', 'VAD_RELEASE',
+            'VAD_MIN_DURATION',
+        ]),
+        ('vox', 'VOX', [
+            'ENABLE_VOX', 'VOX_THRESHOLD', 'VOX_ATTACK_TIME', 'VOX_RELEASE_TIME',
+        ]),
+        ('processing', 'Audio Processing', [
+            'ENABLE_AGC', 'ENABLE_NOISE_GATE', 'NOISE_GATE_THRESHOLD',
+            'NOISE_GATE_ATTACK', 'NOISE_GATE_RELEASE',
+            'ENABLE_HIGHPASS_FILTER', 'HIGHPASS_CUTOFF_FREQ',
+            'ENABLE_LOWPASS_FILTER', 'LOWPASS_CUTOFF_FREQ',
+            'ENABLE_NOTCH_FILTER', 'NOTCH_FREQ', 'NOTCH_Q',
+            'ENABLE_ECHO_CANCELLATION',
+        ]),
+        ('sdr_processing', 'SDR Audio Processing', [
+            'SDR_PROC_ENABLE_NOISE_GATE', 'SDR_PROC_NOISE_GATE_THRESHOLD',
+            'SDR_PROC_NOISE_GATE_ATTACK', 'SDR_PROC_NOISE_GATE_RELEASE',
+            'SDR_PROC_ENABLE_HPF', 'SDR_PROC_HPF_CUTOFF',
+            'SDR_PROC_ENABLE_LPF', 'SDR_PROC_LPF_CUTOFF',
+            'SDR_PROC_ENABLE_NOTCH', 'SDR_PROC_NOTCH_FREQ', 'SDR_PROC_NOTCH_Q',
+        ]),
+        ('sdr1', 'SDR Receiver 1', [
+            'ENABLE_SDR', 'SDR_DEVICE_NAME', 'SDR_DUCK', 'SDR_MIX_RATIO',
+            'SDR_DISPLAY_GAIN', 'SDR_AUDIO_BOOST', 'SDR_BUFFER_MULTIPLIER',
+            'SDR_PRIORITY', 'SDR_WATCHDOG_TIMEOUT', 'SDR_WATCHDOG_MAX_RESTARTS',
+            'SDR_WATCHDOG_MODPROBE', 'SDR_INTERNAL_AUTOSTART',
+            'SDR_INTERNAL_AUTOSTART_CHANNEL',
+        ]),
+        ('sdr2', 'SDR Receiver 2', [
+            'ENABLE_SDR2', 'SDR2_DEVICE_NAME', 'SDR2_DUCK', 'SDR2_MIX_RATIO',
+            'SDR2_DISPLAY_GAIN', 'SDR2_AUDIO_BOOST', 'SDR2_BUFFER_MULTIPLIER',
+            'SDR2_PRIORITY', 'SDR2_WATCHDOG_TIMEOUT', 'SDR2_WATCHDOG_MAX_RESTARTS',
+            'SDR2_WATCHDOG_MODPROBE',
+        ]),
+        ('switching', 'Signal Detection & Switching', [
+            'SIGNAL_ATTACK_TIME', 'SIGNAL_RELEASE_TIME', 'SWITCH_PADDING_TIME',
+            'SDR_DUCK_COOLDOWN', 'SDR_SIGNAL_THRESHOLD', 'SDR_REBROADCAST_PTT_HOLD',
+        ]),
+        ('remote', 'Remote Audio Link', [
+            'REMOTE_AUDIO_ROLE', 'REMOTE_AUDIO_HOST', 'REMOTE_AUDIO_PORT',
+            'REMOTE_AUDIO_DUCK', 'REMOTE_AUDIO_PRIORITY',
+            'REMOTE_AUDIO_DISPLAY_GAIN', 'REMOTE_AUDIO_AUDIO_BOOST',
+            'REMOTE_AUDIO_RECONNECT_INTERVAL',
+        ]),
+        ('announce', 'Announcement Input', [
+            'ENABLE_ANNOUNCE_INPUT', 'ANNOUNCE_INPUT_PORT', 'ANNOUNCE_INPUT_HOST',
+            'ANNOUNCE_INPUT_THRESHOLD', 'ANNOUNCE_INPUT_VOLUME',
+        ]),
+        ('playback', 'File Playback', [
+            'ENABLE_PLAYBACK', 'PLAYBACK_DIRECTORY',
+            'PLAYBACK_ANNOUNCEMENT_FILE', 'PLAYBACK_ANNOUNCEMENT_INTERVAL',
+            'PLAYBACK_VOLUME', 'ENABLE_SOUNDBOARD',
+            'CW_WPM', 'CW_FREQUENCY', 'CW_VOLUME',
+        ]),
+        ('tts', 'Text-to-Speech', [
+            'ENABLE_TTS', 'ENABLE_TEXT_COMMANDS', 'TTS_VOLUME', 'TTS_SPEED',
+            'TTS_DEFAULT_VOICE',
+        ]),
+        ('speaker', 'Speaker Output', [
+            'ENABLE_SPEAKER_OUTPUT', 'SPEAKER_OUTPUT_DEVICE', 'SPEAKER_VOLUME',
+            'SPEAKER_START_MUTED',
+        ]),
+        ('streaming', 'Broadcastify Streaming', [
+            'ENABLE_STREAM_OUTPUT', 'STREAM_SERVER', 'STREAM_PORT',
+            'STREAM_PASSWORD', 'STREAM_MOUNT', 'STREAM_NAME',
+            'STREAM_DESCRIPTION', 'STREAM_BITRATE', 'STREAM_FORMAT',
+            'ENABLE_STREAM_HEALTH', 'STREAM_RESTART_INTERVAL',
+            'STREAM_RESTART_IDLE_TIME',
+        ]),
+        ('echolink', 'EchoLink', [
+            'ENABLE_ECHOLINK', 'ECHOLINK_RX_PIPE', 'ECHOLINK_TX_PIPE',
+            'ECHOLINK_TO_MUMBLE', 'ECHOLINK_TO_RADIO',
+            'RADIO_TO_ECHOLINK', 'MUMBLE_TO_ECHOLINK',
+        ]),
+        ('relay', 'Relay Control', [
+            'ENABLE_RELAY_RADIO', 'RELAY_RADIO_DEVICE', 'RELAY_RADIO_BAUD',
+            'ENABLE_RELAY_CHARGER', 'RELAY_CHARGER_CONTROL', 'CHARGER_RELAY_GPIO',
+            'RELAY_CHARGER_DEVICE', 'RELAY_CHARGER_BAUD',
+            'RELAY_CHARGER_ON_TIME', 'RELAY_CHARGER_OFF_TIME',
+        ]),
+        ('smart', 'Smart Announcements', [
+            'ENABLE_SMART_ANNOUNCE', 'SMART_ANNOUNCE_AI_BACKEND',
+            'SMART_ANNOUNCE_OLLAMA_MODEL', 'SMART_ANNOUNCE_OLLAMA_TEMPERATURE',
+            'SMART_ANNOUNCE_OLLAMA_TOP_P', 'SMART_ANNOUNCE_OLLAMA_NUM_CTX',
+            'SMART_ANNOUNCE_OLLAMA_NUM_THREAD',
+            'SMART_ANNOUNCE_API_KEY', 'SMART_ANNOUNCE_GEMINI_API_KEY',
+            'SMART_ANNOUNCE_TOP_TEXT', 'SMART_ANNOUNCE_TAIL_TEXT',
+            'SMART_ANNOUNCE_START_TIME', 'SMART_ANNOUNCE_END_TIME',
+        ]),
+        ('cat', 'TH-9800 CAT Control', [
+            'ENABLE_CAT_CONTROL', 'CAT_STARTUP_COMMANDS',
+            'CAT_HOST', 'CAT_PORT', 'CAT_PASSWORD',
+            'CAT_LEFT_CHANNEL', 'CAT_RIGHT_CHANNEL',
+            'CAT_LEFT_VOLUME', 'CAT_RIGHT_VOLUME',
+            'CAT_LEFT_POWER', 'CAT_RIGHT_POWER',
+        ]),
+        ('web', 'Web Configuration', [
+            'ENABLE_WEB_CONFIG', 'WEB_CONFIG_PORT', 'WEB_CONFIG_PASSWORD',
+            'WEB_CONFIG_HTTPS', 'GATEWAY_NAME', 'WEB_THEME',
+            'ENABLE_WEB_MIC', 'WEB_MIC_VOLUME',
+            'ENABLE_CLOUDFLARE_TUNNEL',
+        ]),
+        ('email', 'Email Notifications', [
+            'ENABLE_EMAIL', 'EMAIL_ADDRESS', 'EMAIL_APP_PASSWORD',
+            'EMAIL_RECIPIENT', 'EMAIL_ON_STARTUP',
+        ]),
+        ('ddns', 'Dynamic DNS', [
+            'ENABLE_DDNS', 'DDNS_USERNAME', 'DDNS_PASSWORD', 'DDNS_HOSTNAME',
+            'DDNS_UPDATE_INTERVAL', 'DDNS_UPDATE_URL',
+        ]),
+        ('mumble-server-1', 'Mumble Server 1', [
+            'ENABLE_MUMBLE_SERVER_1', 'MUMBLE_SERVER_1_PORT',
+            'MUMBLE_SERVER_1_PASSWORD', 'MUMBLE_SERVER_1_MAX_USERS',
+            'MUMBLE_SERVER_1_MAX_BANDWIDTH', 'MUMBLE_SERVER_1_WELCOME',
+            'MUMBLE_SERVER_1_REGISTER_NAME', 'MUMBLE_SERVER_1_ALLOW_HTML',
+            'MUMBLE_SERVER_1_OPUS_THRESHOLD', 'MUMBLE_SERVER_1_AUTOSTART',
+        ]),
+        ('mumble-server-2', 'Mumble Server 2', [
+            'ENABLE_MUMBLE_SERVER_2', 'MUMBLE_SERVER_2_PORT',
+            'MUMBLE_SERVER_2_PASSWORD', 'MUMBLE_SERVER_2_MAX_USERS',
+            'MUMBLE_SERVER_2_MAX_BANDWIDTH', 'MUMBLE_SERVER_2_WELCOME',
+            'MUMBLE_SERVER_2_REGISTER_NAME', 'MUMBLE_SERVER_2_ALLOW_HTML',
+            'MUMBLE_SERVER_2_OPUS_THRESHOLD', 'MUMBLE_SERVER_2_AUTOSTART',
+        ]),
+        ('advanced', 'Advanced / Diagnostics', [
+            'HEADLESS_MODE', 'LOG_BUFFER_LINES', 'LOG_FILE_DAYS',
+            'VERBOSE_LOGGING', 'STATUS_UPDATE_INTERVAL',
+            'NETWORK_TIMEOUT', 'TCP_NODELAY', 'BUFFER_MANAGEMENT_VERBOSE',
+        ]),
+    ]
 
     def __init__(self, config, gateway=None):
         self.config = config
@@ -7772,11 +8083,9 @@ class WebConfigServer:
 
                 # Checkboxes: unchecked boxes are absent from form data.
                 # We need to detect boolean keys and set them to 'false' if missing.
-                section_map = parent._build_section_map()
                 for key, default_val in parent._defaults.items():
                     if isinstance(default_val, bool) and key not in values:
-                        if key in section_map or hasattr(parent.config, key):
-                            values[key] = 'false'
+                        values[key] = 'false'
 
                 parent._save_config(values)
                 if action == 'restart' and parent.gateway:
@@ -8138,44 +8447,34 @@ class WebConfigServer:
         return section_map
 
     def _save_config(self, new_values):
-        """Write updated values to config file, preserving comments and structure."""
+        """Write ALL parameters to config file using _CONFIG_LAYOUT as the master structure.
+
+        The gateway controls what's in the file — every known parameter is written,
+        organized by the canonical section ordering."""
         print(f"  [Config] Saving {len(new_values)} keys")
         config_path = self.config.config_file
-        if not os.path.exists(config_path):
-            return
 
         lines = []
-        written_keys = set()
-
-        with open(config_path, 'r') as f:
-            raw_lines = f.readlines()
-
-        for raw_line in raw_lines:
-            stripped = raw_line.strip()
-            # Check if this is a key=value line (not comment, not section, not blank)
-            if stripped and not stripped.startswith('#') and not stripped.startswith('[') and '=' in stripped:
-                key = stripped.split('=', 1)[0].strip()
+        for section, display_name, keys in self._CONFIG_LAYOUT:
+            lines.append(f'\n[{section}]\n\n')
+            for key in keys:
+                # Use submitted value if present, else current config value, else default
                 if key in new_values:
-                    new_val = new_values[key]
-                    # Format the value
-                    if key in self._HEX_KEYS:
-                        try:
-                            new_val = hex(int(new_val))
-                        except (ValueError, TypeError):
-                            pass
-                    # Preserve inline comment if any (but not for brace-containing values)
-                    old_after_eq = stripped.split('=', 1)[1]
-                    inline_comment = ''
-                    if '#' in old_after_eq and '{' not in old_after_eq:
-                        val_part = old_after_eq.split('#')[0].strip()
-                        comment_part = old_after_eq[old_after_eq.index('#'):]
-                        inline_comment = '  ' + comment_part
-                    lines.append(f"{key} = {new_val}{inline_comment}\n")
-                    written_keys.add(key)
+                    val = new_values[key]
+                elif hasattr(self.config, key):
+                    val = getattr(self.config, key)
                 else:
-                    lines.append(raw_line)
-            else:
-                lines.append(raw_line)
+                    val = self._defaults.get(key, '')
+                # Format hex keys
+                if key in self._HEX_KEYS:
+                    try:
+                        val = hex(int(val))
+                    except (ValueError, TypeError):
+                        pass
+                # Format booleans consistently
+                if isinstance(val, bool):
+                    val = str(val).lower()
+                lines.append(f'{key} = {val}\n')
 
         # Write atomically via temp file
         tmp_path = config_path + '.tmp'
@@ -8214,12 +8513,12 @@ class WebConfigServer:
   .fields {{ padding: 8px 14px 14px; }}
   .field {{ display: flex; align-items: center; margin: 4px 0; gap: 8px; }}
   .field label {{ min-width: 320px; font-size: 0.85em; color: #b0b0b0; }}
-  .field input[type="text"], .field input[type="number"], .field input[type="password"] {{
+  .field input[type="text"], .field input[type="number"], .field input[type="password"], .field select {{
     flex: 1; background: var(--t-btn); border: 1px solid var(--t-btn-border); color: #e0e0e0;
     padding: 5px 8px; border-radius: 3px; font-family: monospace; font-size: 0.85em;
     max-width: 500px; }}
   .field input[type="checkbox"] {{ width: 18px; height: 18px; accent-color: var(--t-checkbox); }}
-  .field .default {{ font-size: 0.75em; color: #666; margin-left: 8px; }}
+  .field .default {{ font-size: 0.75em; color: #ffffff; margin-left: 8px; }}
   .buttons {{ position: sticky; top: 0; background: var(--t-bg); padding: 10px 0;
              z-index: 10; border-bottom: 1px solid var(--t-border); margin-bottom: 10px;
              display: flex; gap: 10px; }}
@@ -10465,45 +10764,22 @@ updateSysInfo();
         return self._wrap_html('Dashboard', body)
 
     def _generate_html(self):
-        """Build the full HTML page with form inputs grouped by section."""
-        section_map = self._build_section_map()
+        """Build the full HTML page with form inputs grouped by section.
 
-        # Build ordered list of (section, [(key, current_value, default_value)])
-        sections = {}  # section -> [(key, cur_val, default_val)]
-        section_order = []
+        Uses _CONFIG_LAYOUT as the single source of truth for sections and key order."""
 
-        # Walk config file to get key order and sections
-        config_path = self.config.config_file
-        current_section = 'default'
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith('[') and ']' in line:
-                        current_section = line[1:line.index(']')].strip()
-                        if current_section not in sections:
-                            sections[current_section] = []
-                            section_order.append(current_section)
-                    elif '=' in line and not line.startswith('#'):
-                        key = line.split('=', 1)[0].strip()
-                        cur_val = getattr(self.config, key, '')
-                        default_val = self._defaults.get(key, None)
-                        if current_section not in sections:
-                            sections[current_section] = []
-                            section_order.append(current_section)
-                        sections[current_section].append((key, cur_val, default_val))
-
-        # Build form HTML
+        # Build form HTML from canonical layout
         form_parts = []
-        for section in section_order:
-            display_name = self._SECTION_NAMES.get(section, section)
+        for idx, (section, display_name, keys) in enumerate(self._CONFIG_LAYOUT):
             fields_html = []
-            for key, cur_val, default_val in sections[section]:
+            for key in keys:
+                cur_val = getattr(self.config, key, '')
+                default_val = self._defaults.get(key, None)
                 field = self._render_field(key, cur_val, default_val)
                 fields_html.append(field)
 
             # Default open for first 3 sections, collapsed for rest
-            open_attr = ' open' if section_order.index(section) < 3 else ''
+            open_attr = ' open' if idx < 3 else ''
             form_parts.append(
                 f'<details{open_attr}><summary>{display_name}</summary>'
                 f'<div class="fields">{"".join(fields_html)}</div></details>')
@@ -10536,6 +10812,7 @@ updateSysInfo();
 
         is_bool = isinstance(default_val, bool) if default_val is not None else isinstance(cur_val, bool)
         is_sensitive = key in self._SENSITIVE_KEYS
+        select_opts = self._SELECT_OPTIONS.get(key)
 
         if is_bool:
             checked = ' checked' if cur_val else ''
@@ -10543,6 +10820,22 @@ updateSysInfo();
             inp = (f'<input type="hidden" name="{key}" value="false">'
                    f'<input type="checkbox" name="{key}" value="true"{checked}>')
             default_str = str(default_val).lower() if default_val is not None else ''
+        elif select_opts is not None:
+            # Dropdown for fixed-value parameters
+            cur_str = str(cur_val).lower().strip() if cur_val is not None else ''
+            # Handle int values (e.g. TTS_DEFAULT_VOICE)
+            if isinstance(cur_val, int):
+                cur_str = str(cur_val)
+            options = []
+            for opt in select_opts:
+                if isinstance(opt, tuple):
+                    val, label = opt
+                else:
+                    val = label = str(opt)
+                selected = ' selected' if str(val) == cur_str else ''
+                options.append(f'<option value="{html_mod.escape(val)}"{selected}>{html_mod.escape(label)}</option>')
+            inp = f'<select name="{key}">{"".join(options)}</select>'
+            default_str = str(default_val) if default_val is not None else ''
         elif is_sensitive:
             val = html_mod.escape(str(cur_val)) if cur_val else ''
             inp = f'<input type="password" name="{key}" value="{val}" autocomplete="off">'
@@ -10561,10 +10854,18 @@ updateSysInfo();
             inp = f'<input type="text" name="{key}" value="{val}">'
             default_str = html_mod.escape(str(default_val)) if default_val is not None else ''
 
-        default_hint = f'<span class="default">default: {default_str}</span>' if default_str else ''
+        # Build hint: field-specific hint + default value
+        hint_parts = []
+        field_hint = self._FIELD_HINTS.get(key)
+        if field_hint:
+            hint_parts.append(field_hint)
+        if default_str:
+            hint_parts.append(f'default: {default_str}')
+        hint_text = ' | '.join(hint_parts)
+        hint_html = f'<span class="default">{hint_text}</span>' if hint_text else ''
 
         return (f'<div class="field">'
-                f'<label for="{key}">{key}</label>{inp}{default_hint}'
+                f'<label for="{key}">{key}</label>{inp}{hint_html}'
                 f'</div>')
 
 
