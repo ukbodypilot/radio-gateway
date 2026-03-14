@@ -59,13 +59,14 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `WebConfigServer` class: built-in HTTP server (Python `http.server`, no Flask)
 - Pages: `/` (config editor), `/dashboard` (live status), `/sdr` (SDR control), `/radio` (CAT control), `/logs` (live log viewer)
 - Config: `ENABLE_WEB_CONFIG`, `WEB_CONFIG_PORT` (default 8080), `WEB_CONFIG_PASSWORD`
-- Dashboard layout (top to bottom): Listen box, Status (audio bars first, then info, timers), System Status, Controls (Mute, Radio/SDR Processing, Volume/SDR, Playback, Smart Announce, Broadcastify, PTT & Relay, System)
+- Dashboard layout (top to bottom): Listen box, Status (audio bars first, then info, timers), System Status, Controls (Mute, Radio/SDR Processing, Audio, SDR), then bottom row (Playback, Smart Announce, Broadcastify, PTT & Relay, Text to Speech, System)
 - **Listen box**: MP3 stream + WebSocket PCM with volume sliders, at top of dashboard
-- **Smart Announce box**: separate box with 3 buttons + status (moved from Playback section)
+- **Text to Speech box**: text entry, 9-voice selector (gTTS), send button + status line. Auto-switches RTS to Radio Controlled for TX, restores after. `/tts` POST endpoint runs `speak_text()` in background thread.
+- **Smart Announce box**: separate box with 3 buttons + status
 - **Wake Lock**: Screen Wake Lock API acquired during PCM playback to prevent device sleep
-- **Status labels**: fixed-width `.st-label` (5.5em, right-aligned, 16px margin) for alignment
+- **System Status box**: `/sysinfo` endpoint (2s poll), CPU/load/RAM/swap/disk/net/TCP/temps/IPs
 - **Logs page**: Audio Trace + Watchdog Trace toggle buttons (`/tracecmd`, `/tracestatus` endpoints)
-- **Soundboard**: auto-fills empty playback slots 1-9 with random Mixkit sound effects (429 curated pool), refresh button
+- **Soundboard**: auto-fills empty playback slots 1-9 with random Mixkit sound effects (~750 curated pool), refresh button
 - **Responsive layouts**: all pages use `repeat(auto-fit, minmax())` grids for narrow screens
 
 ## TH-9800 CAT Control
@@ -78,8 +79,9 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **Graceful close (2026-03-12):** `close()` sets `_stop=True`, sends `!exit`, `shutdown(SHUT_RDWR)`, waits for drain thread
 - **Auto serial connect (2026-03-12):** On startup, queries `!serial status` — if disconnected, sends `!serial connect`. Refreshes display (VFO dial press) either way.
 
-## Auto RTS for Playback & Announcements (2026-03-13)
+## Auto RTS for Playback, TTS & Announcements (2026-03-13)
 - **Playback (keys 1-9, 0):** Auto-sets RTS to Radio Controlled before playing, restores after
+- **TTS (web dashboard):** Same RTS auto-switch in `speak_text()` before queueing file
 - **Smart Announce:** Same RTS auto-switch in `_run_announcement()`
 - **CRITICAL:** Must pause drain thread around ALL `set_rts()` calls — RTS change triggers display packets that drain thread misattributes to wrong VFO
 - Display refresh (VFO dial press+release both sides) after RTS restore, also with drain paused
@@ -91,9 +93,11 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - start.sh: reads config, sudo keepalive, renice -10, optional TH9800_CAT + Claude Code launches
 - Gateway restart via `q` key uses `os.execv` (replaces process in-place, same PID)
 
-## Audio Processing — Per-Source AudioProcessor (2026-03-10)
+## Audio Processing — Per-Source AudioProcessor (2026-03-10, updated 2026-03-13)
 - `AudioProcessor` class: independent filter state per source (radio, SDR)
-- Filter chain order: HPF → LPF → Notch → De-esser → Spectral NS → Noise Gate
+- Filter chain order: HPF → LPF → Notch → Noise Gate
+- **Removed 2026-03-13:** Spectral NS (bad quality, robotic artifacts) and De-esser (ineffective). Echo cancellation also removed.
+- HPF defaults to ON for AIOC radio audio (`ENABLE_HIGHPASS_FILTER = true` in config)
 - **CRITICAL:** Requires `scipy` — all filters silently return unmodified audio if scipy is missing
 
 ## PTT Methods
@@ -123,6 +127,7 @@ WebSocket PCM double-push/latency, CAT serial orphans, ScriptProcessor buffer si
 - CBR Opus (not VBR), commits requested explicitly, concise responses, no emojis
 - **gateway_config.txt is NOT committed** — repo is PUBLIC; config is in .gitignore
 - Fixed-width status bar is important
+- Config file overrides code defaults — changing defaults in code has no effect if config has the old value
 
 ## Machine Setup — user-optiplex3020 (Arch Linux, 2026-03-04)
 - Cloned to `/home/user/Downloads/radio-gateway`
