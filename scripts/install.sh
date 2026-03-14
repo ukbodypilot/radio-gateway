@@ -714,23 +714,96 @@ if [ "$DISTRO" = "arch" ]; then
         echo "      yay -S libsdrplay soapysdr soapysdrplay3-git rtlsdr-airband-git"
     fi
 else
-    # Debian/Ubuntu — SoapySDR is in apt, others need manual install
+    # Debian/Ubuntu — SoapySDR is in apt, others built/downloaded automatically
     echo "  Installing SoapySDR from apt..."
     sudo apt-get install -y soapysdr-tools libsoapysdr-dev 2>/dev/null \
         && echo "  ✓ SoapySDR installed" \
         || echo "  ⚠ Could not install SoapySDR — install manually"
 
+    # ── rtl_airband: build from source if not already installed ──
     if command -v rtl_airband &>/dev/null; then
         echo "  ✓ rtl_airband already installed"
         SDR_INSTALLED=true
     else
-        echo "  ⚠ rtl_airband not available in apt — build from source:"
-        echo "    https://github.com/charlie-foxtrot/RTLSDR-Airband"
+        echo "  Building rtl_airband from source..."
+
+        # Install build dependencies
+        sudo apt-get install -y build-essential cmake pkg-config \
+            libmp3lame-dev libshout3-dev 'libconfig++-dev' \
+            libfftw3-dev librtlsdr-dev libpulse-dev libsoapysdr-dev 2>/dev/null
+
+        # Raspberry Pi GPU support (optional, non-fatal if missing)
+        if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7l" ]; then
+            sudo apt-get install -y libraspberrypi-dev 2>/dev/null || true
+        fi
+
+        RTLAIRBAND_BUILD_DIR=$(mktemp -d)
+        if git clone --depth 1 https://github.com/charlie-foxtrot/RTLSDR-Airband.git "$RTLAIRBAND_BUILD_DIR/RTLSDR-Airband" 2>/dev/null; then
+            cd "$RTLAIRBAND_BUILD_DIR/RTLSDR-Airband"
+            mkdir -p build && cd build
+
+            # Determine cmake platform flag for Pi
+            RTLAIRBAND_CMAKE_FLAGS="-DSOAPYSDR=ON -DPULSEAUDIO=ON -DNFM=ON"
+            if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7l" ]; then
+                RTLAIRBAND_CMAKE_FLAGS="$RTLAIRBAND_CMAKE_FLAGS -DPLATFORM=rpiv2"
+            fi
+
+            if cmake $RTLAIRBAND_CMAKE_FLAGS ../ 2>/dev/null && make -j"$(nproc)" 2>/dev/null; then
+                sudo make install 2>/dev/null
+                if command -v rtl_airband &>/dev/null; then
+                    echo "  ✓ rtl_airband built and installed"
+                    SDR_INSTALLED=true
+                else
+                    echo "  ⚠ rtl_airband build succeeded but binary not found in PATH"
+                fi
+            else
+                echo "  ⚠ rtl_airband build failed — install manually from:"
+                echo "    https://github.com/charlie-foxtrot/RTLSDR-Airband"
+            fi
+            cd "$GATEWAY_DIR"
+        else
+            echo "  ⚠ Could not clone RTLSDR-Airband repo — check network connection"
+        fi
+        rm -rf "$RTLAIRBAND_BUILD_DIR"
     fi
 
-    if ! command -v sdrplay_apiService &>/dev/null; then
-        echo "  ⚠ SDRplay API not installed — download from https://www.sdrplay.com/downloads/"
-        echo "    Install the .run file, then: sudo systemctl enable sdrplay.service"
+    # ── SDRplay API: download and install if not present ──
+    if command -v sdrplay_apiService &>/dev/null; then
+        echo "  ✓ SDRplay API already installed"
+    else
+        echo "  Installing SDRplay API..."
+        SDRPLAY_RUN="SDRplay_RSP_API-Linux-3.15.2.run"
+        SDRPLAY_URL="https://www.sdrplay.com/software/$SDRPLAY_RUN"
+        SDRPLAY_TMP=$(mktemp -d)
+
+        if curl -fSL -o "$SDRPLAY_TMP/$SDRPLAY_RUN" "$SDRPLAY_URL" 2>/dev/null \
+           || wget -q -O "$SDRPLAY_TMP/$SDRPLAY_RUN" "$SDRPLAY_URL" 2>/dev/null; then
+            chmod +x "$SDRPLAY_TMP/$SDRPLAY_RUN"
+            # The .run installer is interactive — feed it 'yes' + enter to accept license
+            if echo -e "y\ny" | sudo "$SDRPLAY_TMP/$SDRPLAY_RUN" --noexec --target "$SDRPLAY_TMP/extracted" 2>/dev/null; then
+                # Run the inner install script non-interactively
+                if [ -f "$SDRPLAY_TMP/extracted/install.sh" ]; then
+                    cd "$SDRPLAY_TMP/extracted"
+                    echo -e "y\ny" | sudo bash install.sh 2>/dev/null
+                    cd "$GATEWAY_DIR"
+                fi
+            else
+                # Fallback: try running directly (some versions don't support --noexec)
+                echo -e "y\ny" | sudo "$SDRPLAY_TMP/$SDRPLAY_RUN" 2>/dev/null || true
+            fi
+
+            if command -v sdrplay_apiService &>/dev/null; then
+                echo "  ✓ SDRplay API installed"
+                sudo systemctl enable sdrplay.service 2>/dev/null || true
+            else
+                echo "  ⚠ SDRplay API install may have failed — verify with: command -v sdrplay_apiService"
+                echo "    Manual download: https://www.sdrplay.com/downloads/"
+            fi
+        else
+            echo "  ⚠ Could not download SDRplay API — install manually from:"
+            echo "    https://www.sdrplay.com/downloads/"
+        fi
+        rm -rf "$SDRPLAY_TMP"
     fi
 fi
 
