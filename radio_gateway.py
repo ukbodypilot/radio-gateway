@@ -7442,12 +7442,7 @@ class WebConfigServer:
                         else:
                             import threading
                             def _do_tts():
-                                print(f"[WebTTS] Speaking: {text[:80]}...")
-                                try:
-                                    result = parent.gateway.speak_text(text, voice=voice)
-                                    print(f"[WebTTS] Result: {result}")
-                                except Exception as e:
-                                    print(f"[WebTTS] Error: {e}")
+                                parent.gateway.speak_text(text, voice=voice)
                             threading.Thread(target=_do_tts, daemon=True, name="WebTTS").start()
                             ok = True
                     except Exception as e:
@@ -9810,6 +9805,25 @@ pollTimer = setInterval(pollStatus, 1000);
     </div>
     <div id="smart-status" style="font-family:monospace; font-size:0.85em; color:#888;">Idle</div>
   </div>
+  <div class="ctrl-group bottom-btns" style="min-width:0;" id="broadcastify-group">
+    <h3>Broadcastify</h3>
+    <div style="display:flex; flex-direction:column; gap:3px;">
+      <button onclick="darkiceCmd('start')" id="btn-bc-start">Start</button>
+      <button onclick="darkiceCmd('stop')" id="btn-bc-stop">Stop</button>
+      <button onclick="darkiceCmd('restart')" id="btn-bc-restart">Restart</button>
+    </div>
+    <div style="margin-top:8px;">
+      <span id="bc-status" style="font-family:monospace; font-size:0.85em;">...</span>
+    </div>
+  </div>
+  <div class="ctrl-group bottom-btns" style="min-width:0;">
+    <h3>PTT &amp; Relay</h3>
+    <div style="display:flex; flex-direction:column; gap:3px;">
+      <button onclick="sendKey('p')" id="btn-p">Manual PTT</button>
+      <button onclick="sendKey('j')" id="btn-j">Radio Power</button>
+      <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
+    </div>
+  </div>
   <div class="ctrl-group" style="min-width:280px; width:280px;">
     <h3>Text to Speech</h3>
     <div style="display:flex; flex-direction:column; gap:3px;">
@@ -9830,25 +9844,6 @@ pollTimer = setInterval(pollStatus, 1000);
       </div>
     </div>
     <div id="tts-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
-  </div>
-  <div class="ctrl-group bottom-btns" style="min-width:0;" id="broadcastify-group">
-    <h3>Broadcastify</h3>
-    <div style="display:flex; flex-direction:column; gap:3px;">
-      <button onclick="darkiceCmd('start')" id="btn-bc-start">Start</button>
-      <button onclick="darkiceCmd('stop')" id="btn-bc-stop">Stop</button>
-      <button onclick="darkiceCmd('restart')" id="btn-bc-restart">Restart</button>
-    </div>
-    <div style="margin-top:8px;">
-      <span id="bc-status" style="font-family:monospace; font-size:0.85em;">...</span>
-    </div>
-  </div>
-  <div class="ctrl-group bottom-btns" style="min-width:0;">
-    <h3>PTT &amp; Relay</h3>
-    <div style="display:flex; flex-direction:column; gap:3px;">
-      <button onclick="sendKey('p')" id="btn-p">Manual PTT</button>
-      <button onclick="sendKey('j')" id="btn-j">Radio Power</button>
-      <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
-    </div>
   </div>
   <div class="ctrl-group bottom-btns" style="min-width:0;">
     <h3>System</h3>
