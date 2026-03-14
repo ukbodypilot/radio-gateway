@@ -9672,7 +9672,7 @@ pollTimer = setInterval(pollStatus, 1000);
 <div id="sysinfo" style="background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:18px; font-family:monospace; font-size:1.0em; margin-top:10px;">Loading...</div>
 
 <div class="controls">
-  <div class="ctrl-group">
+  <div class="ctrl-group" id="mute-group">
     <h3>Mute Controls</h3>
     <button onclick="sendKey('t')" id="btn-t">TX</button>
     <button onclick="sendKey('r')" id="btn-r">RX</button>
@@ -9683,28 +9683,28 @@ pollTimer = setInterval(pollStatus, 1000);
     <button onclick="sendKey('a')" id="btn-a">Announce</button>
     <button onclick="sendKey('o')" id="btn-o">Speaker</button>
   </div>
-  <div class="ctrl-group">
+  <div class="ctrl-group" id="radio-proc-group">
     <h3>Radio Processing</h3>
     <button onclick="togProc('radio','gate')" id="btn-rp-gate">Gate</button>
     <button onclick="togProc('radio','hpf')" id="btn-rp-hpf">HPF</button>
     <button onclick="togProc('radio','lpf')" id="btn-rp-lpf">LPF</button>
     <button onclick="togProc('radio','notch')" id="btn-rp-notch">Notch</button>
   </div>
-  <div class="ctrl-group">
+  <div class="ctrl-group" id="audio-group">
     <h3>Audio</h3>
     <button onclick="sendKey('v')" id="btn-v">VAD Toggle</button>
     <button onclick="sendKey(',')">,  Vol-</button>
     <button onclick="sendKey('.')">. Vol+</button>
   </div>
   <!-- Broadcastify moved to bottom row -->
-  <div class="ctrl-group">
+  <div class="ctrl-group" id="sdr-proc-group">
     <h3>SDR Processing</h3>
     <button onclick="togProc('sdr','gate')" id="btn-sp-gate">Gate</button>
     <button onclick="togProc('sdr','hpf')" id="btn-sp-hpf">HPF</button>
     <button onclick="togProc('sdr','lpf')" id="btn-sp-lpf">LPF</button>
     <button onclick="togProc('sdr','notch')" id="btn-sp-notch">Notch</button>
   </div>
-  <div class="ctrl-group">
+  <div class="ctrl-group" id="sdr-ctrl-group">
     <h3>SDR</h3>
     <button onclick="sendKey('d')" id="btn-d">Duck Toggle</button>
     <button onclick="sendKey('b')" id="btn-b">Rebroadcast</button>
@@ -9718,7 +9718,7 @@ pollTimer = setInterval(pollStatus, 1000);
   </div>
 
 <div id="playback-section" style="margin-top:18px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
-  <div class="ctrl-group" style="min-width:0; display:inline-block;">
+  <div class="ctrl-group" style="min-width:0; display:inline-block;" id="playback-group">
     <h3 style="margin:0 0 10px; color:#00d4ff; font-size:1.1em;">Playback</h3>
     <div style="display:flex; gap:18px; flex-wrap:nowrap;">
       <div>
@@ -9742,7 +9742,7 @@ pollTimer = setInterval(pollStatus, 1000);
       </div>
     </div>
   </div>
-  <div class="ctrl-group bottom-btns" style="min-width:0;">
+  <div class="ctrl-group bottom-btns" style="min-width:0;" id="smart-announce-group">
     <h3>Smart Announce</h3>
     <div style="display:flex; flex-direction:column; gap:3px; margin-bottom:6px;">
       <button onclick="sendKey('[')">Smart #1</button>
@@ -9762,7 +9762,7 @@ pollTimer = setInterval(pollStatus, 1000);
       <span id="bc-status" style="font-family:monospace; font-size:0.85em;">...</span>
     </div>
   </div>
-  <div class="ctrl-group bottom-btns" style="min-width:0;">
+  <div class="ctrl-group bottom-btns" style="min-width:0;" id="ptt-relay-group">
     <h3>PTT &amp; Relay</h3>
     <div style="display:flex; flex-direction:column; gap:3px;">
       <button onclick="sendKey('p')" id="btn-p">Manual PTT</button>
@@ -9770,7 +9770,7 @@ pollTimer = setInterval(pollStatus, 1000);
       <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
     </div>
   </div>
-  <div class="ctrl-group" style="min-width:280px; width:280px;">
+  <div class="ctrl-group" style="min-width:280px; width:280px;" id="tts-group">
     <h3>Text to Speech</h3>
     <div style="display:flex; flex-direction:column; gap:3px;">
       <textarea id="tts-text" rows="3" style="width:100%; box-sizing:border-box; background:#0d1b2a; color:#e0e0e0; border:1px solid #1b3a5c; border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter text to speak..."></textarea>
@@ -9903,13 +9903,13 @@ function updateStatus() {
     if(s.announce_muted) mutes.push('Announce');
     if(s.speaker_muted && s.speaker_enabled) mutes.push('Speaker');
     h += '<div class="st-item"><span class="st-label">Muted:</span><span class="st-val '+(mutes.length?'red':'green')+'">'+(mutes.length?mutes.join(', '):'None')+'</span></div>';
-    if(s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
-    if(s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
+    if(s.sdr1_enabled && s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
+    if(s.sdr1_enabled && s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
     h += '<div class="st-item"><span class="st-label">Manual PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
     if(s.ms1_state) h += '<div class="st-item"><span class="st-label">MS1:</span><span class="st-val '+(s.ms1_state==='running'?'green':s.ms1_state==='error'?'red':'white')+'">'+(s.ms1_state==='running'?'ON':'OFF')+'</span></div>';
     if(s.ms2_state) h += '<div class="st-item"><span class="st-label">MS2:</span><span class="st-val '+(s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+'">'+(s.ms2_state==='running'?'ON':'OFF')+'</span></div>';
     if(s.cat_enabled) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
-    h += '<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
+    if(s.relay_radio_enabled) h += '<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
     h += '</div>';
 
     // Timers row: uptime + smart announce countdowns
@@ -10012,6 +10012,24 @@ function updateStatus() {
         }
       }
     }
+    // Hide/show sections based on enabled state
+    function showIf(id, cond) { var e=document.getElementById(id); if(e) e.style.display=cond?'':'none'; }
+    var hasSDR = s.sdr1_enabled || s.sdr2_enabled;
+    showIf('sdr-proc-group', hasSDR);
+    showIf('sdr-ctrl-group', hasSDR);
+    showIf('playback-group', s.playback_enabled);
+    showIf('smart-announce-group', s.smart_announce_enabled);
+    showIf('tts-group', s.tts_enabled);
+    // Mute buttons: hide ones for disabled features
+    showIf('btn-s', s.sdr1_enabled);
+    showIf('btn-x', s.sdr2_enabled);
+    showIf('btn-c', s.remote_enabled);
+    showIf('btn-a', s.announce_enabled);
+    showIf('btn-o', s.speaker_enabled);
+    // Relay buttons: hide when not configured
+    showIf('btn-j', s.relay_radio_enabled);
+    showIf('btn-h', s.relay_charger_enabled);
+
     // Broadcastify buttons & status text
     var bcGrp = document.getElementById('broadcastify-group');
     if(bcGrp) {
@@ -14125,6 +14143,9 @@ class RadioGateway:
             'ms2_state': self.mumble_server_2.state if self.mumble_server_2 else None,
             'cat_enabled': bool(self.cat_client) or getattr(self.config, 'ENABLE_CAT_CONTROL', False),
             'files': file_slots,
+            'playback_enabled': bool(self.playback_source),
+            'tts_enabled': bool(getattr(self, 'tts_engine', None)),
+            'smart_announce_enabled': bool(self.smart_announce),
             # Broadcastify / DarkIce streaming
             'streaming_enabled': bool(getattr(self.config, 'ENABLE_STREAM_OUTPUT', False)),
             'stream_pipe_ok': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
