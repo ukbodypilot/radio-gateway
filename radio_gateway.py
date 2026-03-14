@@ -7423,6 +7423,41 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(b'{"ok":true}')
                     return
+                elif self.path == '/tts':
+                    # Text-to-speech endpoint
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    ok = False
+                    error = None
+                    try:
+                        data = json_mod.loads(body)
+                        text = data.get('text', '').strip()
+                        voice = data.get('voice', None)
+                        if not text:
+                            error = 'no text provided'
+                        elif not parent.gateway:
+                            error = 'gateway not ready'
+                        elif not parent.gateway.tts_engine:
+                            error = 'TTS not available'
+                        else:
+                            import threading
+                            def _do_tts():
+                                print(f"[WebTTS] Speaking: {text[:80]}...")
+                                try:
+                                    result = parent.gateway.speak_text(text, voice=voice)
+                                    print(f"[WebTTS] Result: {result}")
+                                except Exception as e:
+                                    print(f"[WebTTS] Error: {e}")
+                            threading.Thread(target=_do_tts, daemon=True, name="WebTTS").start()
+                            ok = True
+                    except Exception as e:
+                        error = str(e)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    resp = '{"ok":true}' if ok else '{"ok":false,"error":' + json_mod.dumps(error) + '}'
+                    self.wfile.write(resp.encode())
+                    return
                 elif self.path == '/proc_toggle':
                     # Per-source audio processing toggle endpoint
                     length = int(self.headers.get('Content-Length', 0))
@@ -9775,6 +9810,27 @@ pollTimer = setInterval(pollStatus, 1000);
     </div>
     <div id="smart-status" style="font-family:monospace; font-size:0.85em; color:#888;">Idle</div>
   </div>
+  <div class="ctrl-group" style="min-width:280px; width:280px;">
+    <h3>Text to Speech</h3>
+    <div style="display:flex; flex-direction:column; gap:3px;">
+      <textarea id="tts-text" rows="3" style="width:100%; box-sizing:border-box; background:#0d1b2a; color:#e0e0e0; border:1px solid #1b3a5c; border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter text to speak..."></textarea>
+      <div style="display:flex; gap:3px; align-items:center;">
+        <select id="tts-voice" style="flex:1; background:#0d1b2a; color:#e0e0e0; border:1px solid #1b3a5c; border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em;">
+          <option value="1">US English</option>
+          <option value="2">British</option>
+          <option value="3">Australian</option>
+          <option value="4">Indian</option>
+          <option value="5">South African</option>
+          <option value="6">Canadian</option>
+          <option value="7">Irish</option>
+          <option value="8">French</option>
+          <option value="9">German</option>
+        </select>
+        <button onclick="sendTTS()" id="btn-tts-send" style="flex:1;">Send</button>
+      </div>
+    </div>
+    <div id="tts-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+  </div>
   <div class="ctrl-group bottom-btns" style="min-width:0;" id="broadcastify-group">
     <h3>Broadcastify</h3>
     <div style="display:flex; flex-direction:column; gap:3px;">
@@ -9844,6 +9900,26 @@ function togProc(source, filter) {
 }
 function darkiceCmd(cmd) {
   fetch('/darkicecmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+}
+function sendTTS() {
+  var text = document.getElementById('tts-text').value.trim();
+  if (!text) return;
+  var voice = document.getElementById('tts-voice').value;
+  var btn = document.getElementById('btn-tts-send');
+  var st = document.getElementById('tts-status');
+  btn.disabled = true;
+  st.textContent = 'Generating...';
+  st.style.color = '#f1c40f';
+  fetch('/tts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:text, voice:parseInt(voice)})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok) { st.textContent = 'Sent — playing'; st.style.color = '#2ecc71'; }
+      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      btn.disabled = false;
+      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 5000);
+    })
+    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+  if(document.activeElement) document.activeElement.blur();
 }
 function refreshSounds() {
   fetch('/refreshsounds', {method:'POST'}).then(function(r){return r.json()}).then(function(d){
@@ -12520,11 +12596,25 @@ class RadioGateway:
             if self.config.VERBOSE_LOGGING:
                 print(f"[TTS] Queueing for playback...")
             
+            # Auto-switch RTS to Radio Controlled for TX (same as playback keys)
+            _cat = getattr(self, 'cat_client', None)
+            if _cat and not getattr(self, '_playback_rts_saved', None):
+                self._playback_rts_saved = _cat.get_rts()
+                if self._playback_rts_saved is None or self._playback_rts_saved is True:
+                    _cat._pause_drain()
+                    try:
+                        _cat.set_rts(False)  # Radio Controlled
+                        import time as _time
+                        _time.sleep(0.3)
+                        _cat._drain(0.5)
+                    finally:
+                        _cat._drain_paused = False
+
             # Queue for playback (will go to radio TX)
             if self.playback_source:
                 if self.config.VERBOSE_LOGGING:
                     print(f"[TTS] Playback source exists, queueing file...")
-                
+
                 # Temporarily boost playback volume for TTS
                 # Volume will be reset to 1.0 when file finishes playing
                 original_volume = self.playback_source.volume
@@ -12532,9 +12622,9 @@ class RadioGateway:
                 if self.config.VERBOSE_LOGGING:
                     print(f"[TTS] Boosting volume from {original_volume}x to {self.config.TTS_VOLUME}x for TTS playback")
                     print(f"[TTS] Volume will auto-reset to 1.0x when TTS finishes")
-                
+
                 result = self.playback_source.queue_file(temp_path)
-                
+
                 if self.config.VERBOSE_LOGGING:
                     print(f"[TTS] Queue result: {result}")
                 if not result:
