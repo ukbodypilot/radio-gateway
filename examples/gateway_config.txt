@@ -481,7 +481,7 @@ SMART_ANNOUNCE_3 = 1800, 2, 40, {Global news headlines from bbc.com}
 # If WEB_CONFIG_PASSWORD is set, HTTP Basic Auth is required (user: admin).
 # HTTPS uses a self-signed certificate (auto-generated on first run).
 
-ENABLE_WEB_CONFIG = false
+ENABLE_WEB_CONFIG = true
 WEB_CONFIG_PORT = 8080
 WEB_CONFIG_PASSWORD =
 WEB_CONFIG_HTTPS = false           # false, self-signed, or letsencrypt (uses DDNS_HOSTNAME)

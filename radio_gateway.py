@@ -328,7 +328,7 @@ class Config:
             'CAT_RIGHT_POWER': '',      # L/M/H or blank = don't change
             # Dynamic DNS (No-IP compatible)
             # Web Configuration UI
-            'ENABLE_WEB_CONFIG': False,
+            'ENABLE_WEB_CONFIG': True,
             'WEB_CONFIG_PORT': 8080,
             'WEB_CONFIG_PASSWORD': '',    # Basic auth password (user: admin), blank = no auth
             'WEB_CONFIG_HTTPS': False,    # false, self-signed, or letsencrypt
