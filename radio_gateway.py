@@ -9169,7 +9169,10 @@ function setIcon(id, on) {
   if (el) el.className = on ? 'icon-on' : 'icon-off';
 }
 
+var _radioBusy = false;
 function updateRadio() {
+  if (_radioBusy) return;
+  _radioBusy = true;
   fetch('/catstatus').then(function(r){return r.json()}).then(function(d) {
     if (!d.connected) {
       document.getElementById('cat-offline').style.display = 'block';
@@ -9241,7 +9244,7 @@ function updateRadio() {
       if (rv && d.volume.right >= 0 && !rv.matches(':active')) { rv.value=d.volume.right; if(rvt) rvt.textContent=d.volume.right; }
     }
 
-  }).catch(function(){});
+  }).catch(function(){}).finally(function(){ _radioBusy=false; });
 }
 
 setInterval(updateRadio, 1000);
@@ -9700,7 +9703,10 @@ function deleteChannel() {
     });
 }
 
+var _sdrBusy = false;
 function pollStatus() {
+  if (_sdrBusy) return;
+  _sdrBusy = true;
   fetch('/sdrstatus')
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -9741,7 +9747,7 @@ function pollStatus() {
         document.getElementById('sdr-apply-status').style.color = '#ff4444';
       }
     })
-    .catch(function() {});
+    .catch(function() {}).finally(function(){ _sdrBusy=false; });
 }
 
 // Initial poll and start timer
@@ -10225,7 +10231,10 @@ function bar(pct, cls) {
   return '<span class="bar-pct">'+p+'%</span><span class="bar '+cls+'" style="width:'+w+'px"></span>';
 }
 
+var _statusBusy = false;
 function updateStatus() {
+  if (_statusBusy) return;
+  _statusBusy = true;
   fetch('/status').then(r=>r.json()).then(function(s) {
     // Audio levels — same order as console: TX RX SP SDR1 SDR2 SV/CL AN
     var h = '<div class="st-row audio-row">';
@@ -10409,7 +10418,7 @@ function updateStatus() {
       if(lv && !lv.matches(':active')) { lv.value=s.cat_vol.left; if(lvt) lvt.textContent=s.cat_vol.left; }
       if(rv && !rv.matches(':active')) { rv.value=s.cat_vol.right; if(rvt) rvt.textContent=s.cat_vol.right; }
     }
-  }).catch(function(){ _lost=true; document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>'; });
+  }).catch(function(){ _lost=true; document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>'; }).finally(function(){ _statusBusy=false; });
 }
 
 var _lost = false;
@@ -10722,7 +10731,10 @@ function sysBar(pct, color) {
   var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
   return '<span class="bar-pct">'+p+'%</span><span class="bar" style="width:'+w+'px;background:'+c+'"></span>';
 }
+var _sysinfoBusy = false;
 function updateSysInfo() {
+  if (_sysinfoBusy) return;
+  _sysinfoBusy = true;
   fetch('/sysinfo').then(function(r){return r.json()}).then(function(s) {
     var h = '<div class="st-row">';
     h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(s.cpu_pct)+'</div>';
@@ -10755,7 +10767,7 @@ function updateSysInfo() {
       h += '</div>';
     }
     document.getElementById('sysinfo').innerHTML = h;
-  }).catch(function(){});
+  }).catch(function(){}).finally(function(){ _sysinfoBusy=false; });
 }
 setInterval(updateSysInfo, 2000);
 updateSysInfo();
