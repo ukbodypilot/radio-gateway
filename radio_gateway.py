@@ -9583,7 +9583,8 @@ class WebConfigServer:
   <div>
     <a href="/" class="rb rb-sm" style="text-decoration:none;">Config</a>
     <a href="/" class="rb rb-sm" style="text-decoration:none;">Dashboard</a>
-    <a href="/radio" class="rb rb-sm" style="text-decoration:none;">Radio</a>
+    <a href="/radio" class="rb rb-sm" style="text-decoration:none;">TH-9800</a>
+    <a href="/d75" class="rb rb-sm" style="text-decoration:none;">D75</a>
     <a href="/sdr" class="rb rb-sm" style="text-decoration:none;">SDR</a>
   </div>
 </div>
@@ -9706,8 +9707,8 @@ fetch('/logdata?after=0')
     def _generate_radio_page(self):
         """Build the TH-9800 radio control HTML page."""
         body = '''
-<h1 style="font-size:1.8em">TH-9800 Radio Control</h1>
-<p><a href="/">Dashboard</a> | <a href="/config">Config Editor</a> | <a href="/sdr">SDR</a> | <a href="/logs">Logs</a></p>
+<h1 style="font-size:1.8em">TH-9800 Control</h1>
+<p><a href="/">Dashboard</a> | <a href="/d75">TH-D75</a> | <a href="/sdr">SDR</a> | <a href="/config">Config</a> | <a href="/logs">Logs</a></p>
 
 <div id="cat-offline" style="display:none; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px;">
   <span id="cat-offline-msg" style="color:#e74c3c; font-weight:bold;">CAT not connected</span>
@@ -10297,7 +10298,7 @@ setInterval(updateRadio, 1000);
 updateRadio();
 </script>
 '''
-        return self._wrap_html('Radio Control', body)
+        return self._wrap_html('TH-9800 Control', body)
 
     def _generate_d75_page(self):
         """Build the D75 radio control HTML page."""
@@ -10605,7 +10606,7 @@ updateD75();
         """Build the SDR control HTML page."""
         body = '''
 <h1 style="font-size:1.8em">SDR Control</h1>
-<p><a href="/">Dashboard</a> | <a href="/radio">Radio</a> | <a href="/config">Config</a> | <a href="/logs">Logs</a></p>
+<p><a href="/">Dashboard</a> | <a href="/radio">TH-9800</a> | <a href="/d75">D75</a> | <a href="/config">Config</a> | <a href="/logs">Logs</a></p>
 
 <!-- Status bar -->
 <div id="sdr-status-bar" style="display:flex; align-items:center; gap:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 16px; margin-bottom:14px;">
@@ -11349,7 +11350,7 @@ pollTimer = setInterval(pollStatus, 1000);
         _name_html = '<span style="color:#e0e0e0">' + gw_name + '</span> &mdash; ' if gw_name else ''
         body = '<h1 style="font-size:1.8em; margin:0 0 10px">' + _name_html + 'Radio Gateway Dashboard</h1>'
         body += '''
-<p style="margin:0 0 10px;font-size:1.1em"><a href="/config">Config Editor</a> | <a href="/radio">Radio Control</a> | <a href="/d75">D75</a> | <a href="/sdr">SDR</a> | <a href="/logs">Logs</a></p>
+<p style="margin:0 0 10px;font-size:1.1em"><a href="/config">Config Editor</a> | <a href="/radio">TH-9800</a> | <a href="/d75">TH-D75</a> | <a href="/sdr">SDR</a> | <a href="/logs">Logs</a></p>
 
 <div class="ctrl-group" id="listen-top" style="margin-bottom:10px;">
   <h3>Controls</h3>
