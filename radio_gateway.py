@@ -5401,6 +5401,16 @@ class D75CATClient:
         self._power = {}          # {0: 'H', 1: 'L'}
         self._signal = {}         # {0: 0, 1: 0}
         self._freq_info = {}      # {0: {...}, 1: {...}} — tone/offset/shift data
+        self._memory_mode = {}    # {0: 0, 1: 0} — 0=VFO, 1=Mem, 2=Call, 3=DV
+        self._channel = {}        # {0: '', 1: ''} — memory channel number
+        self._active_band = 0
+        self._dual_band = 0
+        self._bluetooth = False
+        self._backlight = 0
+        self._transmitting = False
+        self._tnc = [0, 0]
+        self._beacon_type = 0
+        self._gps_data = None
         self._model = ''
         self._serial_number = ''
         self._firmware = ''
@@ -5533,6 +5543,14 @@ class D75CATClient:
             self._serial_number = data.get('serial_number', '')
             self._firmware = data.get('fw_version', '')
             self._af_gain = data.get('af_gain', -1)
+            self._active_band = data.get('active_band', 0)
+            self._dual_band = data.get('dual_band', 0)
+            self._bluetooth = data.get('bluetooth', False)
+            self._backlight = data.get('backlight', 0)
+            self._transmitting = data.get('transmitting', False)
+            self._tnc = data.get('tnc', [0, 0])
+            self._beacon_type = data.get('beacon_type', 0)
+            self._gps_data = data.get('gps_data')
             for band in [0, 1]:
                 key = f'band_{band}'
                 if key in data:
@@ -5543,6 +5561,8 @@ class D75CATClient:
                     self._power[band] = b.get('power', 0)
                     self._signal[band] = b.get('s_meter', 0)
                     self._freq_info[band] = b.get('freq_info')
+                    self._memory_mode[band] = b.get('memory_mode', 0)
+                    self._channel[band] = b.get('channel', '')
         except (json_mod.JSONDecodeError, Exception):
             pass
 
@@ -5571,12 +5591,24 @@ class D75CATClient:
 
     def get_radio_state(self):
         """Return state dict for web dashboard."""
+        mm_names = {0: 'VFO', 1: 'Memory', 2: 'Call', 3: 'DV'}
+        tnc_names = {0: 'Off', 1: 'APRS', 2: 'KISS'}
+        beacon_names = {0: 'Manual', 1: 'PTT', 2: 'Auto', 3: 'SmartBeacon'}
         return {
             'connected': self._connected,
             'serial_connected': self._serial_connected,
             'model': self._model,
             'serial_number': self._serial_number,
             'firmware': self._firmware,
+            'active_band': self._active_band,
+            'dual_band': self._dual_band,
+            'bluetooth': self._bluetooth,
+            'transmitting': self._transmitting,
+            'backlight': self._backlight,
+            'tnc': tnc_names.get(self._tnc[0] if self._tnc else 0, '?'),
+            'tnc_band': self._tnc[1] if len(self._tnc) > 1 else 0,
+            'beacon_type': beacon_names.get(self._beacon_type, '?'),
+            'gps_data': self._gps_data,
             'band_0': {
                 'frequency': self._frequency.get(0, ''),
                 'mode': self._mode.get(0, ''),
@@ -5584,6 +5616,8 @@ class D75CATClient:
                 'power': self._power.get(0, ''),
                 'signal': self._signal.get(0, 0),
                 'freq_info': self._freq_info.get(0),
+                'memory_mode': mm_names.get(self._memory_mode.get(0, 0), '?'),
+                'channel': self._channel.get(0, ''),
             },
             'band_1': {
                 'frequency': self._frequency.get(1, ''),
@@ -5592,6 +5626,8 @@ class D75CATClient:
                 'power': self._power.get(1, ''),
                 'signal': self._signal.get(1, 0),
                 'freq_info': self._freq_info.get(1),
+                'memory_mode': mm_names.get(self._memory_mode.get(1, 0), '?'),
+                'channel': self._channel.get(1, ''),
             },
         }
 
@@ -10422,8 +10458,41 @@ updateRadio();
   <span id="d75-audio-row"><span style="color:#333;">|</span>
   <span class="d75-label">Audio:</span> <span id="d75-audio-status" class="d75-val">—</span></span>
   <span style="flex:1;"></span>
+  <span id="d75-tx-badge" style="display:none; background:#c0392b; color:#fff; padding:2px 8px; border-radius:3px; font-weight:bold;">TX</span>
+  <span style="flex:1;"></span>
   <button id="d75-btstart-btn" class="rb rb-sm" onclick="d75cmd('btstart')" style="display:none;">BT Start</button>
   <button class="rb rb-sm" onclick="d75cmd('ptt')" id="d75-ptt-btn">PTT</button>
+</div>
+
+<!-- Radio Controls Row -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+  <span class="d75-label">Band:</span>
+  <select id="d75-active-band" class="d75-select" onchange="d75cmd('band',this.value)">
+    <option value="0">A</option><option value="1">B</option>
+  </select>
+  <span class="d75-label">Dual:</span>
+  <select id="d75-dual" class="d75-select" onchange="d75cmd('dual',this.value)">
+    <option value="0">Single</option><option value="1">Dual</option>
+  </select>
+  <span style="color:#333;">|</span>
+  <button class="rb rb-sm" onclick="d75cmd('up')">Up</button>
+  <button class="rb rb-sm" onclick="d75cmd('down')">Down</button>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">BT:</span> <span id="d75-bt-state" class="d75-val">—</span>
+  <span class="d75-label">Battery:</span> <span id="d75-battery" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">TNC:</span> <span id="d75-tnc" class="d75-val">—</span>
+  <span class="d75-label">Beacon:</span> <span id="d75-beacon" class="d75-val">—</span>
+</div>
+
+<!-- GPS Row -->
+<div id="d75-gps-row" style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+  <span style="color:var(--t-accent); font-weight:bold;">GPS</span>
+  <span class="d75-label">Lat:</span> <span id="d75-gps-lat" class="d75-val">—</span>
+  <span class="d75-label">Lon:</span> <span id="d75-gps-lon" class="d75-val">—</span>
+  <span class="d75-label">Alt:</span> <span id="d75-gps-alt" class="d75-val">—</span>
+  <span class="d75-label">Speed:</span> <span id="d75-gps-spd" class="d75-val">—</span>
+  <span class="d75-label">Sats:</span> <span id="d75-gps-sat" class="d75-val">—</span>
 </div>
 
 <!-- Volume control (full width) -->
@@ -10452,6 +10521,17 @@ updateRadio();
         <span id="d75-a-power" style="color:#f39c12; font-size:0.85em;">—</span>
       </div>
       <div id="d75-a-freq" class="d75-freq">———.———</div>
+    </div>
+
+    <!-- VFO/Memory mode + Channel -->
+    <div class="d75-row">
+      <select id="d75-a-vfomode" class="d75-select" onchange="d75cmd('vfomode','0 '+this.value)">
+        <option value="vfo">VFO</option><option value="mem">Memory</option><option value="call">Call</option><option value="dv">DV</option>
+      </select>
+      <span class="d75-label">CH:</span>
+      <input id="d75-a-ch" class="d75-input" style="width:60px;" placeholder="001"
+        onkeydown="if(event.key==='Enter')d75cmd('channel','0 '+this.value)">
+      <button class="rb rb-sm" onclick="d75cmd('channel','0 '+document.getElementById('d75-a-ch').value)">Go</button>
     </div>
 
     <!-- S-Meter -->
@@ -10532,6 +10612,17 @@ updateRadio();
         <span id="d75-b-power" style="color:#f39c12; font-size:0.85em;">—</span>
       </div>
       <div id="d75-b-freq" class="d75-freq">———.———</div>
+    </div>
+
+    <!-- VFO/Memory mode + Channel -->
+    <div class="d75-row">
+      <select id="d75-b-vfomode" class="d75-select" onchange="d75cmd('vfomode','1 '+this.value)">
+        <option value="vfo">VFO</option><option value="mem">Memory</option><option value="call">Call</option><option value="dv">DV</option>
+      </select>
+      <span class="d75-label">CH:</span>
+      <input id="d75-b-ch" class="d75-input" style="width:60px;" placeholder="001"
+        onkeydown="if(event.key==='Enter')d75cmd('channel','1 '+this.value)">
+      <button class="rb rb-sm" onclick="d75cmd('channel','1 '+document.getElementById('d75-b-ch').value)">Go</button>
     </div>
 
     <!-- S-Meter -->
@@ -10743,6 +10834,25 @@ function updateD75() {
       }
     }
 
+    // Radio-wide state
+    document.getElementById('d75-tx-badge').style.display = d.transmitting ? '' : 'none';
+    var abSel = document.getElementById('d75-active-band');
+    if (abSel !== document.activeElement) abSel.value = d.active_band || 0;
+    var dlSel = document.getElementById('d75-dual');
+    if (dlSel !== document.activeElement) dlSel.value = d.dual_band || 0;
+    document.getElementById('d75-bt-state').textContent = d.bluetooth ? 'On' : 'Off';
+    document.getElementById('d75-bt-state').style.color = d.bluetooth ? '#2ecc71' : '#888';
+    document.getElementById('d75-tnc').textContent = d.tnc || 'Off';
+    document.getElementById('d75-beacon').textContent = d.beacon_type || 'Manual';
+
+    // GPS
+    var gps = d.gps_data || {};
+    document.getElementById('d75-gps-lat').textContent = gps.lat ? (gps.lat + ' ' + (gps.lat_dir||'')) : '—';
+    document.getElementById('d75-gps-lon').textContent = gps.lon ? (gps.lon + ' ' + (gps.lon_dir||'')) : '—';
+    document.getElementById('d75-gps-alt').textContent = gps.alt || '—';
+    document.getElementById('d75-gps-spd').textContent = gps.speed || '—';
+    document.getElementById('d75-gps-sat').textContent = gps.sat_num || '—';
+
     // Volume (only update if not being dragged)
     var volSlider = document.getElementById('d75-vol');
     if (d.af_gain >= 0 && !volSlider.matches(':active')) {
@@ -10766,6 +10876,10 @@ function updateD75() {
     var asq = document.getElementById('d75-a-sq');
     if (!asq.matches(':active')) { asq.value = a.squelch || 0; document.getElementById('d75-a-sq-val').textContent = a.squelch || 0; }
     if (a.freq_info) _updateToneUI(0, a.freq_info);
+    var avfm = document.getElementById('d75-a-vfomode');
+    if (avfm !== document.activeElement) avfm.value = (a.memory_mode||'VFO').toLowerCase().replace('memory','mem');
+    var ach = document.getElementById('d75-a-ch');
+    if (ach !== document.activeElement && a.channel) ach.value = a.channel;
 
     // Band B
     var b = d.band_1 || {};
@@ -10782,6 +10896,10 @@ function updateD75() {
     var bsq = document.getElementById('d75-b-sq');
     if (!bsq.matches(':active')) { bsq.value = b.squelch || 0; document.getElementById('d75-b-sq-val').textContent = b.squelch || 0; }
     if (b.freq_info) _updateToneUI(1, b.freq_info);
+    var bvfm = document.getElementById('d75-b-vfomode');
+    if (bvfm !== document.activeElement) bvfm.value = (b.memory_mode||'VFO').toLowerCase().replace('memory','mem');
+    var bch = document.getElementById('d75-b-ch');
+    if (bch !== document.activeElement && b.channel) bch.value = b.channel;
 
   }).catch(function(e){ console.error('D75 status error:', e); })
     .finally(function(){ _d75Busy = false; });
