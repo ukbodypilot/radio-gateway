@@ -5387,6 +5387,7 @@ class D75CATClient:
         self._model = ''
         self._serial_number = ''
         self._firmware = ''
+        self._af_gain = -1
 
     def connect(self):
         """Connect to D75 CAT TCP server and authenticate."""
@@ -5492,6 +5493,7 @@ class D75CATClient:
             self._model = data.get('model_id', '')
             self._serial_number = data.get('serial_number', '')
             self._firmware = data.get('fw_version', '')
+            self._af_gain = data.get('af_gain', -1)
             for band in [0, 1]:
                 key = f'band_{band}'
                 if key in data:
@@ -8299,6 +8301,40 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
+                elif self.path == '/d75':
+                    # D75 radio control page
+                    html = parent._generate_d75_page()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(html.encode('utf-8'))
+                elif self.path == '/d75status':
+                    # D75 CAT state endpoint
+                    data = {'connected': False, 'd75_enabled': False}
+                    if parent.gateway:
+                        data['d75_enabled'] = getattr(parent.gateway.config, 'ENABLE_D75', False)
+                        if parent.gateway.d75_cat:
+                            data = parent.gateway.d75_cat.get_radio_state()
+                            data['d75_enabled'] = True
+                        # Include audio status
+                        if parent.gateway.d75_audio_source:
+                            data['audio_connected'] = parent.gateway.d75_audio_source.server_connected
+                            data['audio_level'] = parent.gateway.d75_audio_source.audio_level
+                        else:
+                            data['audio_connected'] = False
+                        # Include volume from last status poll
+                        if parent.gateway.d75_cat:
+                            cat = parent.gateway.d75_cat
+                            # af_gain is in the full status response
+                            data['af_gain'] = getattr(cat, '_af_gain', -1)
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
                 elif self.path == '/radio':
                     # Radio control page
                     html = parent._generate_radio_page()
@@ -8734,6 +8770,45 @@ class WebConfigServer:
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
                     self.wfile.write(b'{"ok":true}')
+                    return
+                elif self.path == '/d75cmd':
+                    # D75 CAT command endpoint
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    result = {'ok': False}
+                    try:
+                        data = json_mod.loads(body)
+                        cmd = data.get('cmd', '')
+                        args = data.get('args', '')
+                        gw = parent.gateway
+                        if gw and gw.d75_cat:
+                            if cmd == 'cat':
+                                resp = gw.d75_cat._send_cmd(f"!cat {args}")
+                                result = {'ok': True, 'response': resp or ''}
+                            elif cmd == 'btstart':
+                                resp = gw.d75_cat._send_cmd("!btstart")
+                                result = {'ok': True, 'response': resp or ''}
+                            elif cmd == 'ptt':
+                                resp = gw.d75_cat._send_cmd("!ptt on" if not getattr(gw, '_d75_ptt', False) else "!ptt off")
+                                gw._d75_ptt = not getattr(gw, '_d75_ptt', False)
+                                result = {'ok': True, 'response': resp or ''}
+                            elif cmd == 'vol':
+                                resp = gw.d75_cat._send_cmd(f"!vol {args}")
+                                result = {'ok': True, 'response': resp or ''}
+                            else:
+                                resp = gw.d75_cat._send_cmd(f"!{cmd} {args}".strip())
+                                result = {'ok': True, 'response': resp or ''}
+                        else:
+                            result = {'ok': False, 'error': 'D75 not connected'}
+                    except Exception as e:
+                        result = {'ok': False, 'error': str(e)}
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(result).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
                     return
                 elif self.path == '/catcmd':
                     # CAT radio command endpoint
@@ -10224,6 +10299,308 @@ updateRadio();
 '''
         return self._wrap_html('Radio Control', body)
 
+    def _generate_d75_page(self):
+        """Build the D75 radio control HTML page."""
+        modes = {0: 'FM', 1: 'DV', 2: 'AM', 3: 'LSB', 4: 'USB', 5: 'CW', 6: 'NFM', 7: 'DR', 8: 'WFM', 9: 'R-CW'}
+        powers = {0: 'XL', 1: 'Low', 2: 'Med', 3: 'High'}
+        body = '''
+<h1 style="font-size:1.8em">TH-D75 Control</h1>
+<p><a href="/">Dashboard</a> | <a href="/radio">TH-9800</a> | <a href="/sdr">SDR</a> | <a href="/config">Config</a> | <a href="/logs">Logs</a></p>
+
+<style>
+.rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
+  color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; min-width:44px; }
+.rb:hover { background:var(--t-btn-hover); border-color:var(--t-accent); }
+.rb:active { background:var(--t-border); }
+.rb-sm { font-size:0.8em; padding:5px 10px; }
+.rb-active { background:var(--t-accent) !important; color:#fff !important; border-color:var(--t-accent) !important; }
+.d75-band { background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; }
+.d75-freq { color:#2ecc71; font-size:2.2em; text-align:center; letter-spacing:2px; margin:8px 0; font-family:monospace; }
+.d75-label { color:#888; font-size:0.85em; }
+.d75-val { color:#e0e0e0; font-family:monospace; }
+.d75-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.d75-meter { flex:1; background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:3px; height:18px; position:relative; overflow:hidden; }
+.d75-meter-fill { height:100%; transition:width 0.3s; }
+.d75-meter-text { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.75em; color:#fff; font-weight:bold; }
+.d75-input { background:var(--t-btn); border:1px solid var(--t-btn-border); color:#2ecc71; padding:6px 10px;
+  border-radius:4px; font-family:monospace; font-size:1.1em; width:140px; text-align:center; }
+.d75-select { background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; padding:5px 8px;
+  border-radius:3px; font-family:monospace; font-size:0.9em; }
+</style>
+
+<div id="d75-offline" style="display:none; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px;">
+  <span style="color:#e74c3c; font-weight:bold;">D75 not connected</span>
+  <span style="color:#888; font-size:0.85em; margin-left:10px;">Check ENABLE_D75 in config and D75_CAT.py server</span>
+</div>
+
+<div id="d75-panel" style="display:none;">
+
+<!-- Status bar -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+  <span class="d75-label">Model:</span> <span id="d75-model" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">S/N:</span> <span id="d75-sn" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">FW:</span> <span id="d75-fw" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">Audio:</span> <span id="d75-audio-status" class="d75-val">—</span>
+  <span style="flex:1;"></span>
+  <button class="rb rb-sm" onclick="d75cmd('btstart')">BT Start</button>
+  <button class="rb rb-sm" onclick="d75cmd('ptt')" id="d75-ptt-btn">PTT</button>
+</div>
+
+<!-- Volume control (full width) -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+  <div class="d75-row">
+    <span class="d75-label" style="min-width:50px;">Volume</span>
+    <input id="d75-vol" type="range" min="0" max="255" value="68" style="flex:1; accent-color:var(--t-accent);"
+      oninput="d75VolDebounce(this.value)">
+    <span id="d75-vol-val" class="d75-val" style="min-width:3em;">068</span>
+  </div>
+</div>
+
+<!-- Two-column band display -->
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(350px, 1fr)); gap:14px; margin-bottom:14px;">
+
+  <!-- BAND A -->
+  <div class="d75-band" id="d75-band-a">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">Band A</span>
+      <span id="d75-a-mode" style="color:#f39c12; font-weight:bold;">FM</span>
+    </div>
+
+    <!-- Frequency display -->
+    <div style="background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px; margin-bottom:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span id="d75-a-power" style="color:#f39c12; font-size:0.85em;">—</span>
+      </div>
+      <div id="d75-a-freq" class="d75-freq">———.———</div>
+    </div>
+
+    <!-- S-Meter -->
+    <div class="d75-row">
+      <span class="d75-label">S:</span>
+      <div class="d75-meter">
+        <div id="d75-a-sig-bar" class="d75-meter-fill" style="background:#2ecc71; width:0%;"></div>
+        <span id="d75-a-sig-text" class="d75-meter-text">S0</span>
+      </div>
+    </div>
+
+    <!-- Squelch -->
+    <div class="d75-row">
+      <span class="d75-label" style="min-width:30px;">SQ</span>
+      <input id="d75-a-sq" type="range" min="0" max="5" value="2" style="flex:1; accent-color:#f39c12;"
+        oninput="d75sq(0,this.value)">
+      <span id="d75-a-sq-val" class="d75-val" style="min-width:2em;">2</span>
+    </div>
+
+    <!-- Frequency input -->
+    <div class="d75-row" style="margin-top:8px;">
+      <span class="d75-label">Freq:</span>
+      <input id="d75-a-freq-input" class="d75-input" placeholder="145.500" onkeydown="if(event.key==='Enter')d75setFreq(0,this.value)">
+      <span class="d75-label">MHz</span>
+      <button class="rb rb-sm" onclick="d75setFreq(0,document.getElementById('d75-a-freq-input').value)">Set</button>
+    </div>
+
+    <!-- Mode & Power -->
+    <div class="d75-row" style="margin-top:6px;">
+      <span class="d75-label">Mode:</span>
+      <select id="d75-a-mode-sel" class="d75-select" onchange="d75setMode(0,this.value)">
+        ''' + ''.join(f'<option value="{k}">{v}</option>' for k, v in modes.items()) + '''
+      </select>
+      <span class="d75-label" style="margin-left:10px;">Power:</span>
+      <select id="d75-a-pwr-sel" class="d75-select" onchange="d75setPower(0,this.value)">
+        ''' + ''.join(f'<option value="{k}">{v}</option>' for k, v in powers.items()) + '''
+      </select>
+    </div>
+  </div>
+
+  <!-- BAND B -->
+  <div class="d75-band" id="d75-band-b">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">Band B</span>
+      <span id="d75-b-mode" style="color:#f39c12; font-weight:bold;">FM</span>
+    </div>
+
+    <!-- Frequency display -->
+    <div style="background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px; margin-bottom:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span id="d75-b-power" style="color:#f39c12; font-size:0.85em;">—</span>
+      </div>
+      <div id="d75-b-freq" class="d75-freq">———.———</div>
+    </div>
+
+    <!-- S-Meter -->
+    <div class="d75-row">
+      <span class="d75-label">S:</span>
+      <div class="d75-meter">
+        <div id="d75-b-sig-bar" class="d75-meter-fill" style="background:#2ecc71; width:0%;"></div>
+        <span id="d75-b-sig-text" class="d75-meter-text">S0</span>
+      </div>
+    </div>
+
+    <!-- Squelch -->
+    <div class="d75-row">
+      <span class="d75-label" style="min-width:30px;">SQ</span>
+      <input id="d75-b-sq" type="range" min="0" max="5" value="2" style="flex:1; accent-color:#f39c12;"
+        oninput="d75sq(1,this.value)">
+      <span id="d75-b-sq-val" class="d75-val" style="min-width:2em;">2</span>
+    </div>
+
+    <!-- Frequency input -->
+    <div class="d75-row" style="margin-top:8px;">
+      <span class="d75-label">Freq:</span>
+      <input id="d75-b-freq-input" class="d75-input" placeholder="446.000" onkeydown="if(event.key==='Enter')d75setFreq(1,this.value)">
+      <span class="d75-label">MHz</span>
+      <button class="rb rb-sm" onclick="d75setFreq(1,document.getElementById('d75-b-freq-input').value)">Set</button>
+    </div>
+
+    <!-- Mode & Power -->
+    <div class="d75-row" style="margin-top:6px;">
+      <span class="d75-label">Mode:</span>
+      <select id="d75-b-mode-sel" class="d75-select" onchange="d75setMode(1,this.value)">
+        ''' + ''.join(f'<option value="{k}">{v}</option>' for k, v in modes.items()) + '''
+      </select>
+      <span class="d75-label" style="margin-left:10px;">Power:</span>
+      <select id="d75-b-pwr-sel" class="d75-select" onchange="d75setPower(1,this.value)">
+        ''' + ''.join(f'<option value="{k}">{v}</option>' for k, v in powers.items()) + '''
+      </select>
+    </div>
+  </div>
+
+</div><!-- end grid -->
+
+</div><!-- end d75-panel -->
+
+<script>
+var _modes = ''' + json_mod.dumps(modes) + ''';
+var _powers = ''' + json_mod.dumps(powers) + ''';
+var _d75Busy = false;
+var _volTimer = null;
+
+function fmtFreq(f) {
+  if (!f) return '———.———';
+  var s = String(f);
+  // If raw number like "445.975", format to 3 decimal places
+  var n = parseFloat(s);
+  if (isNaN(n)) return s;
+  return n.toFixed(3);
+}
+
+function d75cmd(cmd, args) {
+  var body = {cmd: cmd};
+  if (args) body.args = args;
+  fetch('/d75cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(function(r){return r.json()}).then(function(d) {
+      if (d.error) console.error('D75 cmd error:', d.error);
+    }).catch(function(e){ console.error('D75 fetch error:', e); });
+}
+
+function d75setFreq(band, freq) {
+  if (!freq) return;
+  // Convert MHz to D75 format (10-digit Hz padded)
+  var hz = Math.round(parseFloat(freq) * 1000000);
+  var padded = ('0000000000' + hz).slice(-10);
+  d75cmd('cat', 'FQ ' + band + ',' + padded);
+}
+
+function d75sq(band, val) {
+  document.getElementById('d75-' + (band?'b':'a') + '-sq-val').textContent = val;
+  d75cmd('cat', 'SQ ' + band + ',' + val);
+}
+
+function d75setMode(band, mode) {
+  d75cmd('cat', 'MD ' + band + ',' + mode);
+}
+
+function d75setPower(band, pwr) {
+  d75cmd('cat', 'PC ' + band + ',' + pwr);
+}
+
+function d75VolDebounce(val) {
+  document.getElementById('d75-vol-val').textContent = ('000' + val).slice(-3);
+  clearTimeout(_volTimer);
+  _volTimer = setTimeout(function() {
+    d75cmd('cat', 'AG ' + ('000' + val).slice(-3));
+  }, 150);
+}
+
+function updateD75() {
+  if (_d75Busy) return;
+  _d75Busy = true;
+  fetch('/d75status').then(function(r){return r.json()}).then(function(d) {
+    if (!d.connected && !d.d75_enabled) {
+      document.getElementById('d75-offline').style.display = 'block';
+      document.getElementById('d75-panel').style.display = 'none';
+      _d75Busy = false;
+      return;
+    }
+    document.getElementById('d75-offline').style.display = d.connected ? 'none' : 'block';
+    document.getElementById('d75-panel').style.display = 'block';
+
+    // Info bar
+    document.getElementById('d75-model').textContent = d.model || '—';
+    document.getElementById('d75-sn').textContent = d.serial_number || '—';
+    document.getElementById('d75-fw').textContent = d.firmware || '—';
+
+    // Audio status
+    var audioEl = document.getElementById('d75-audio-status');
+    if (d.audio_connected) {
+      audioEl.textContent = 'Connected';
+      audioEl.style.color = '#2ecc71';
+    } else {
+      audioEl.textContent = 'Disconnected';
+      audioEl.style.color = '#e74c3c';
+    }
+
+    // Volume (only update if not being dragged)
+    var volSlider = document.getElementById('d75-vol');
+    if (d.af_gain >= 0 && !volSlider.matches(':active')) {
+      volSlider.value = d.af_gain;
+      document.getElementById('d75-vol-val').textContent = ('000' + d.af_gain).slice(-3);
+    }
+
+    // Band A
+    var a = d.band_0 || {};
+    document.getElementById('d75-a-freq').textContent = fmtFreq(a.frequency);
+    document.getElementById('d75-a-mode').textContent = _modes[a.mode] || '?';
+    document.getElementById('d75-a-power').textContent = _powers[a.power] || '';
+    var aSig = a.signal || 0;
+    document.getElementById('d75-a-sig-bar').style.width = (aSig / 5 * 100) + '%';
+    document.getElementById('d75-a-sig-text').textContent = 'S' + aSig;
+    // Update selects (only if not focused)
+    var ams = document.getElementById('d75-a-mode-sel');
+    if (ams !== document.activeElement) ams.value = a.mode || 0;
+    var aps = document.getElementById('d75-a-pwr-sel');
+    if (aps !== document.activeElement) aps.value = a.power || 0;
+    var asq = document.getElementById('d75-a-sq');
+    if (!asq.matches(':active')) { asq.value = a.squelch || 0; document.getElementById('d75-a-sq-val').textContent = a.squelch || 0; }
+
+    // Band B
+    var b = d.band_1 || {};
+    document.getElementById('d75-b-freq').textContent = fmtFreq(b.frequency);
+    document.getElementById('d75-b-mode').textContent = _modes[b.mode] || '?';
+    document.getElementById('d75-b-power').textContent = _powers[b.power] || '';
+    var bSig = b.signal || 0;
+    document.getElementById('d75-b-sig-bar').style.width = (bSig / 5 * 100) + '%';
+    document.getElementById('d75-b-sig-text').textContent = 'S' + bSig;
+    var bms = document.getElementById('d75-b-mode-sel');
+    if (bms !== document.activeElement) bms.value = b.mode || 0;
+    var bps = document.getElementById('d75-b-pwr-sel');
+    if (bps !== document.activeElement) bps.value = b.power || 0;
+    var bsq = document.getElementById('d75-b-sq');
+    if (!bsq.matches(':active')) { bsq.value = b.squelch || 0; document.getElementById('d75-b-sq-val').textContent = b.squelch || 0; }
+
+  }).catch(function(e){ console.error('D75 status error:', e); })
+    .finally(function(){ _d75Busy = false; });
+}
+
+setInterval(updateD75, 1000);
+updateD75();
+</script>
+'''
+        return self._wrap_html('D75 Control', body)
+
     def _generate_sdr_page(self):
         """Build the SDR control HTML page."""
         body = '''
@@ -10972,7 +11349,7 @@ pollTimer = setInterval(pollStatus, 1000);
         _name_html = '<span style="color:#e0e0e0">' + gw_name + '</span> &mdash; ' if gw_name else ''
         body = '<h1 style="font-size:1.8em; margin:0 0 10px">' + _name_html + 'Radio Gateway Dashboard</h1>'
         body += '''
-<p style="margin:0 0 10px;font-size:1.1em"><a href="/config">Config Editor</a> | <a href="/radio">Radio Control</a> | <a href="/sdr">SDR</a> | <a href="/logs">Logs</a></p>
+<p style="margin:0 0 10px;font-size:1.1em"><a href="/config">Config Editor</a> | <a href="/radio">Radio Control</a> | <a href="/d75">D75</a> | <a href="/sdr">SDR</a> | <a href="/logs">Logs</a></p>
 
 <div class="ctrl-group" id="listen-top" style="margin-bottom:10px;">
   <h3>Controls</h3>
