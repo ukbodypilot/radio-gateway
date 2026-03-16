@@ -55,7 +55,10 @@ if [ "$DISTRO" = "arch" ]; then
         ffmpeg \
         git \
         xdotool \
-        xclip
+        xclip \
+        xorg-server-xvfb \
+        xorg-xdpyinfo \
+        x11vnc
 else
     sudo apt-get update -qq
     sudo apt-get install -y \
@@ -69,7 +72,10 @@ else
         ffmpeg \
         git \
         xdotool \
-        xclip
+        xclip \
+        xvfb \
+        x11-utils \
+        x11vnc
 fi
 
 echo "  ✓ System packages installed"
@@ -170,7 +176,7 @@ set -e
 
 # Core packages (excluding pymumble — handled separately due to PyPI name variants)
 # Only install packages that are missing — avoids slow pip index checks on re-run
-CORE_PKGS="hid numpy scipy pyaudio soundfile resampy psutil gtts pyserial anthropic google-genai ddgs"
+CORE_PKGS="hid numpy scipy pyaudio soundfile resampy psutil gtts edge-tts pyserial anthropic google-genai ddgs"
 MISSING_PKGS=""
 for pkg in $CORE_PKGS; do
     # Map pip names to Python import names where they differ
@@ -178,6 +184,7 @@ for pkg in $CORE_PKGS; do
         pyaudio)     imp="pyaudio" ;;
         soundfile)   imp="soundfile" ;;
         gtts)        imp="gtts" ;;
+        edge-tts)    imp="edge_tts" ;;
         pyserial)    imp="serial" ;;
         google-genai)       imp="google.genai" ;;
         ddgs)               imp="ddgs" ;;

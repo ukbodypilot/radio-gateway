@@ -318,9 +318,11 @@ CW_VOLUME = 1.0       # CW-specific volume (PLAYBACK_VOLUME also applies)
 # Text-to-speech and text commands
 #
 # Mumble chat commands: !speak, !cw, !play, !status, !help
-# Requires: pip3 install gtts --break-system-packages
+# Engine: edge (Microsoft Neural, natural) or gtts (Google Translate, robotic)
+# Requires: pip3 install edge-tts gtts --break-system-packages
 
 ENABLE_TTS = true
+TTS_ENGINE = edge
 ENABLE_TEXT_COMMANDS = true
 TTS_VOLUME = 1.0          # Volume boost (1.0=normal, 2.0=double)
 TTS_SPEED = 1.3           # Speech speed (1.0=normal, 1.3=faster, max 3.0, requires ffmpeg)
@@ -415,27 +417,28 @@ RELAY_CHARGER_OFF_TIME = 06:00
 #                Then: ollama pull llama3.2:3b (or llama3.2:1b on Raspberry Pi)
 #   google-scrape — Free. Drives real Firefox via xdotool, scrapes Google AI Overview.
 #                   Requires: xdotool, xclip, Firefox running on DISPLAY=:0
+#   claude-scrape — Free. Drives Firefox on a virtual display (Xvfb :99) to query
+#                   claude.ai. Does not interfere with desktop. Response condensed
+#                   via Ollama. First run: VNC to port 5999, log into claude.ai.
+#                   Requires: Xvfb, x11vnc, xdotool, xclip, Firefox, logged into claude.ai
 #   claude     — Anthropic Claude API with web search. Requires API key + credits.
 #   gemini     — Google Gemini API with Google Search. Requires API key.
 #
 # Mumble command: !smart <N> to trigger manually, !smart to list all
 # Manual triggers (keyboard/Mumble) ignore the time window restriction.
 #
-# Entry format:
-#   SMART_ANNOUNCE_N = interval_secs, voice, target_secs, {prompt text}
-#
-# Parameters:
-#   interval_secs  — how often to announce (seconds, e.g. 3600 = hourly)
-#   voice          — gTTS voice number (1=US, 2=British, 3=Australian, etc)
-#   target_secs    — target speech length in seconds (max 60)
-#   {prompt text}  — instructions for the AI (anything inside braces)
+# Each slot has 4 parameters (configure via web UI or edit below):
+#   SMART_ANNOUNCE_N_PROMPT       — search/prompt text (blank = disabled)
+#   SMART_ANNOUNCE_N_INTERVAL     — how often to announce (seconds, e.g. 3600 = hourly)
+#   SMART_ANNOUNCE_N_VOICE        — gTTS voice (1=US, 2=British, 3=Australian, etc)
+#   SMART_ANNOUNCE_N_TARGET_SECS  — target speech length in seconds (max 60)
 
 ENABLE_SMART_ANNOUNCE = true
 
-# AI Backend — choose: duckduckgo (free), google-scrape (free), claude, or gemini
+# AI Backend — choose: duckduckgo (free), google-scrape (free), claude-scrape (free), claude, or gemini
 SMART_ANNOUNCE_AI_BACKEND = google-scrape
 
-# Ollama model for duckduckgo/google-scrape backends (blank = auto-detect first available)
+# Ollama model for duckduckgo/google-scrape/claude-scrape backends (blank = auto-detect first available)
 # Recommended: llama3.1:8b (PC w/ GPU), llama3.2:3b (PC CPU-only), llama3.2:1b (Pi)
 SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:1b
 
@@ -469,10 +472,23 @@ SMART_ANNOUNCE_END_TIME = 22:00
 SMART_ANNOUNCE_TOP_TEXT =
 SMART_ANNOUNCE_TAIL_TEXT =
 
-# Example announcements (uncomment and customize):
-SMART_ANNOUNCE_1 = 3600, 1, 15, {weather update los angeles usa including temperature and conditions}
-SMART_ANNOUNCE_2 = 7200, 3, 15, {is donald trump still alive, how long will this last}
-SMART_ANNOUNCE_3 = 1800, 2, 40, {Global news headlines from bbc.com}
+# Announcement Slot 1
+SMART_ANNOUNCE_1_PROMPT = weather update los angeles usa including temperature and conditions
+SMART_ANNOUNCE_1_INTERVAL = 3600
+SMART_ANNOUNCE_1_VOICE = 1
+SMART_ANNOUNCE_1_TARGET_SECS = 15
+
+# Announcement Slot 2
+SMART_ANNOUNCE_2_PROMPT =
+SMART_ANNOUNCE_2_INTERVAL = 3600
+SMART_ANNOUNCE_2_VOICE = 1
+SMART_ANNOUNCE_2_TARGET_SECS = 15
+
+# Announcement Slot 3
+SMART_ANNOUNCE_3_PROMPT =
+SMART_ANNOUNCE_3_INTERVAL = 3600
+SMART_ANNOUNCE_3_VOICE = 1
+SMART_ANNOUNCE_3_TARGET_SECS = 15
 
 
 [web]

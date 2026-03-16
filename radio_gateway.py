@@ -211,6 +211,7 @@ class Config:
             # Text-to-Speech and Text Commands (Phase 4)
             'ENABLE_TTS': True,
             'ENABLE_TEXT_COMMANDS': True,
+            'TTS_ENGINE': 'edge',  # gtts (Google, robotic) or edge (Microsoft Neural, natural)
             'TTS_VOLUME': 1.0,  # Volume multiplier for TTS audio (1.0 = normal, 2.0 = double, 3.0 = triple)
             'TTS_SPEED': 1.3,   # Speech speed (1.0 = normal, 1.3 = 30% faster, 0.8 = slower, requires ffmpeg)
             'TTS_DEFAULT_VOICE': 1, # Default voice (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
@@ -304,7 +305,7 @@ class Config:
             'RELAY_CHARGER_OFF_TIME': '06:00',
             # Smart Announcements (AI-powered)
             'ENABLE_SMART_ANNOUNCE': True,
-            'SMART_ANNOUNCE_AI_BACKEND': 'google-scrape',  # google-scrape, duckduckgo, claude, or gemini
+            'SMART_ANNOUNCE_AI_BACKEND': 'google-scrape',  # google-scrape, claude-scrape, duckduckgo, claude, or gemini
             'SMART_ANNOUNCE_OLLAMA_MODEL': 'llama3.2:1b',  # Ollama model (blank = auto-detect)
             'SMART_ANNOUNCE_OLLAMA_TEMPERATURE': 0.5,  # 0.0=focused, 1.0=creative
             'SMART_ANNOUNCE_OLLAMA_TOP_P': 0.5,        # nucleus sampling (0.0-1.0)
@@ -316,6 +317,19 @@ class Config:
             'SMART_ANNOUNCE_TAIL_TEXT': '',          # Text spoken after announcement (empty = none)
             'SMART_ANNOUNCE_START_TIME': '08:00',   # HH:MM — empty = no restriction
             'SMART_ANNOUNCE_END_TIME': '22:00',     # HH:MM — empty = no restriction
+            # Smart Announcement Slots (1-3, match dashboard buttons)
+            'SMART_ANNOUNCE_1_PROMPT': '',           # prompt/search text
+            'SMART_ANNOUNCE_1_INTERVAL': 3600,       # seconds between announcements
+            'SMART_ANNOUNCE_1_VOICE': 1,             # TTS voice (1-9)
+            'SMART_ANNOUNCE_1_TARGET_SECS': 15,      # max speech length in seconds
+            'SMART_ANNOUNCE_2_PROMPT': '',
+            'SMART_ANNOUNCE_2_INTERVAL': 3600,
+            'SMART_ANNOUNCE_2_VOICE': 1,
+            'SMART_ANNOUNCE_2_TARGET_SECS': 15,
+            'SMART_ANNOUNCE_3_PROMPT': '',
+            'SMART_ANNOUNCE_3_INTERVAL': 3600,
+            'SMART_ANNOUNCE_3_VOICE': 1,
+            'SMART_ANNOUNCE_3_TARGET_SECS': 15,
             # TH-9800 CAT Control
             'ENABLE_CAT_CONTROL': False,
             'CAT_STARTUP_COMMANDS': True,
@@ -4607,11 +4621,18 @@ class RadioCATClient:
     def start_background_drain(self):
         """Start background thread that continuously reads radio packets for live state updates."""
         def _drain_loop():
+            _was_paused = False
             while self._sock and not self._stop:
                 if self._drain_paused:
                     self._drain_active = False
+                    _was_paused = True
                     time.sleep(0.05)
                     continue
+                # After resuming from pause (e.g. RTS switch), reset the radio
+                # activity timestamp so software PTT doesn't think radio is offline
+                if _was_paused and self._last_radio_rx > 0:
+                    self._last_radio_rx = time.monotonic()
+                    _was_paused = False
                 try:
                     self._drain_active = True
                     self._drain(0.5)
@@ -5426,18 +5447,39 @@ class SmartAnnouncementManager:
         self._parse_entries()
 
     def _parse_entries(self):
-        """Find all SMART_ANNOUNCE_N entries in config."""
+        """Find all SMART_ANNOUNCE_N entries in config.
+        Supports two formats:
+        - New: individual keys (SMART_ANNOUNCE_N_PROMPT, _INTERVAL, _VOICE, _TARGET_SECS)
+        - Old: packed string (SMART_ANNOUNCE_N = interval, voice, target_secs, {prompt})
+        """
         for i in range(1, 20):
-            key = f'SMART_ANNOUNCE_{i}'
-            raw = getattr(self.config, key, None)
-            if raw is None:
-                continue
             try:
+                # Try new individual-key format first
+                prompt_key = f'SMART_ANNOUNCE_{i}_PROMPT'
+                prompt = str(getattr(self.config, prompt_key, '') or '').strip()
+                if prompt:
+                    interval = int(getattr(self.config, f'SMART_ANNOUNCE_{i}_INTERVAL', 3600))
+                    voice = int(getattr(self.config, f'SMART_ANNOUNCE_{i}_VOICE', 1))
+                    target_secs = min(int(getattr(self.config, f'SMART_ANNOUNCE_{i}_TARGET_SECS', 15)), 60)
+                    self._entries.append({
+                        'id': i,
+                        'interval': interval,
+                        'voice': voice,
+                        'target_secs': target_secs,
+                        'prompt': prompt,
+                        'last_run': 0,
+                    })
+                    continue
+                # Fallback: old packed format
+                key = f'SMART_ANNOUNCE_{i}'
+                raw = getattr(self.config, key, None)
+                if raw is None:
+                    continue
                 entry = self._parse_entry(i, str(raw))
                 if entry:
                     self._entries.append(entry)
             except Exception as e:
-                print(f"  [SmartAnnounce] Error parsing {key}: {e}")
+                print(f"  [SmartAnnounce] Error parsing entry {i}: {e}")
 
     def _parse_entry(self, entry_id, raw):
         """Parse: interval, voice, target_seconds, {prompt text here}"""
@@ -5579,6 +5621,92 @@ class SmartAnnouncementManager:
         self._client = True  # marker that backend is ready
         return True
 
+    def _init_claude_scrape(self):
+        """Initialize Claude AI scrape backend.
+        Runs Firefox on a virtual display (Xvfb :99) so scraping doesn't
+        interfere with the user's desktop. The user's VNC (:0, port 5900)
+        and xrdp (port 3389) are not affected.
+        First-time setup: log into claude.ai on the virtual display by running:
+          DISPLAY=:99 x11vnc -display :99 -nopw -rfbport 5999 &
+        then VNC to port 5999, log into claude.ai in the Firefox there, then close.
+        Requires: xdotool, xclip, Xvfb, Firefox."""
+        import shutil, subprocess
+        missing = []
+        for tool in ('xdotool', 'xclip', 'Xvfb', 'firefox'):
+            if not shutil.which(tool):
+                missing.append(tool)
+        if missing:
+            print(f"  [SmartAnnounce] claude-scrape requires: {', '.join(missing)}")
+            return False
+
+        # Start Xvfb on :99 if not already running
+        self._scrape_display = ':99'
+        try:
+            # Check if :99 is already in use
+            result = subprocess.run(['xdpyinfo', '-display', self._scrape_display],
+                                    capture_output=True, timeout=3)
+            if result.returncode != 0:
+                # Start Xvfb on :99 with a reasonable resolution
+                print(f"  [SmartAnnounce] Starting Xvfb on {self._scrape_display}...")
+                subprocess.Popen(['Xvfb', self._scrape_display, '-screen', '0', '1920x1080x24'],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(1)
+                # Verify it started
+                result = subprocess.run(['xdpyinfo', '-display', self._scrape_display],
+                                        capture_output=True, timeout=3)
+                if result.returncode != 0:
+                    print(f"  [SmartAnnounce] Failed to start Xvfb on {self._scrape_display}")
+                    return False
+                print(f"  [SmartAnnounce] Xvfb running on {self._scrape_display}")
+            else:
+                print(f"  [SmartAnnounce] Xvfb already running on {self._scrape_display}")
+
+            # Start x11vnc on port 5999 for the virtual display (troubleshooting/login)
+            vnc_port = '5999'
+            vnc_check = subprocess.run(['ss', '-tlnp'], capture_output=True, text=True, timeout=3)
+            if f':{vnc_port}' not in vnc_check.stdout:
+                subprocess.Popen(['x11vnc', '-display', self._scrape_display,
+                                  '-nopw', '-shared', '-forever', '-rfbport', vnc_port],
+                                 env={**os.environ, 'DISPLAY': self._scrape_display},
+                                 stdout=open('/tmp/x11vnc_99.log', 'w'),
+                                 stderr=subprocess.STDOUT)
+                time.sleep(1)
+                print(f"  [SmartAnnounce] VNC for virtual display on port {vnc_port}")
+            else:
+                print(f"  [SmartAnnounce] VNC already listening on port {vnc_port}")
+            print(f"  [SmartAnnounce] To log into claude.ai: VNC to port {vnc_port}")
+        except Exception as e:
+            print(f"  [SmartAnnounce] Xvfb error: {e}")
+            return False
+
+        # Launch Firefox on the virtual display with a separate profile
+        scrape_env = {**os.environ, 'DISPLAY': self._scrape_display}
+        try:
+            result = subprocess.run(['xdotool', 'search', '--name', 'Mozilla Firefox'],
+                                    capture_output=True, text=True, timeout=5, env=scrape_env)
+            windows = [w.strip() for w in result.stdout.strip().split('\n') if w.strip()]
+            if windows:
+                print(f"  [SmartAnnounce] Firefox already running on {self._scrape_display}")
+            else:
+                print(f"  [SmartAnnounce] Launching Firefox on {self._scrape_display}...")
+                subprocess.Popen(['firefox', '--no-remote', '-P', 'claude-scrape',
+                                  'https://claude.ai'],
+                                 env=scrape_env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(5)
+                print(f"  [SmartAnnounce] Firefox launched on {self._scrape_display}")
+                print(f"  [SmartAnnounce] NOTE: If first run, log into claude.ai via:")
+                print(f"    DISPLAY={self._scrape_display} x11vnc -display {self._scrape_display} -nopw -rfbport 5999 &")
+                print(f"    Then VNC to port 5999, log in, and close the VNC viewer.")
+        except Exception as e:
+            print(f"  [SmartAnnounce] Firefox launch error: {e}")
+
+        self._init_ollama()
+        if not self._ollama_available:
+            print("  [SmartAnnounce] Ollama not available — Claude response will be truncated to target length")
+        self._client = True
+        return True
+
     def start(self):
         """Start the background timer thread."""
         if not self._entries:
@@ -5588,6 +5716,8 @@ class SmartAnnouncementManager:
                 ok = self._init_duckduckgo()
             elif self._backend == 'google-scrape':
                 ok = self._init_google_scrape()
+            elif self._backend == 'claude-scrape':
+                ok = self._init_claude_scrape()
             elif self._backend == 'gemini':
                 ok = self._init_gemini()
             else:
@@ -5732,6 +5862,8 @@ class SmartAnnouncementManager:
                 text = self._call_duckduckgo(entry, system_prompt, max_words)
             elif self._backend == 'google-scrape':
                 text = self._call_google_scrape(entry, system_prompt, max_words)
+            elif self._backend == 'claude-scrape':
+                text = self._call_claude_scrape(entry, system_prompt, max_words)
             elif self._backend == 'gemini':
                 text = self._call_gemini(entry, system_prompt, max_words)
             else:
@@ -5740,10 +5872,7 @@ class SmartAnnouncementManager:
                 self._set_activity(eid, 'No results')
                 return
 
-            # Truncate if over word limit (safety net)
-            words = text.split()
-            if len(words) > max_words + 10:
-                text = ' '.join(words[:max_words])
+            # No truncation — let the LLM/backend control length naturally
 
             # Add optional top/tail text with pauses
             top_text = str(getattr(self.config, 'SMART_ANNOUNCE_TOP_TEXT', '') or '').strip()
@@ -5753,7 +5882,8 @@ class SmartAnnouncementManager:
             if tail_text:
                 text = f"{text} ... {tail_text}"
 
-            print(f"[SmartAnnounce] #{entry['id']}: ── SENDING TO gTTS ({len(text.split())} words, voice {entry['voice']}) ──")
+            self._set_activity(eid, f'Generating TTS ({len(text.split())}w)')
+            print(f"[SmartAnnounce] #{entry['id']}: ── SENDING TO TTS ({len(text.split())} words, voice {entry['voice']}) ──")
             print(f"  {text}")
 
             # Wait for radio to be free before transmitting
@@ -5772,18 +5902,17 @@ class SmartAnnouncementManager:
                 print(f"[SmartAnnounce] #{entry['id']}: Radio busy too long, dropping announcement")
                 return
 
-            # Playback triggers AIOC PTT automatically via the audio loop
-            # (set_ptt_state writes HID GPIO to key the radio).
-            # Auto-set RTS to Radio Controlled for TX, restore after.
-            # RTS relay must route mic wiring through front panel for AIOC PTT.
-            # No CAT commands while Radio Controlled (serial disconnected from USB).
+            # RTS switching only needed for AIOC PTT — the relay must route mic
+            # wiring through front panel. Software PTT uses !ptt via serial which
+            # requires USB Controlled (serial connected), so RTS must NOT be changed.
+            _ptt_method = str(getattr(self.gateway.config, 'PTT_METHOD', 'aioc')).lower()
             _rts_saved = None
             _cat = getattr(self.gateway, 'cat_client', None)
-            print(f"[SmartAnnounce] #{eid}: CAT client: {_cat}, RTS: {_cat.get_rts() if _cat else 'N/A'}")
-            if _cat:
+            if _ptt_method != 'software' and _cat:
                 _rts_saved = _cat.get_rts()
                 if _rts_saved is None or _rts_saved is True:
                     try:
+                        self._set_activity(eid, 'Switching RTS')
                         _cat._pause_drain()
                         try:
                             _cat.set_rts(False)  # Radio Controlled
@@ -5794,10 +5923,13 @@ class SmartAnnouncementManager:
                         print(f"[SmartAnnounce] #{eid}: RTS changed to Radio Controlled (was {'USB' if _rts_saved else 'unknown'})")
                     except Exception as _re:
                         print(f"[SmartAnnounce] #{eid}: RTS set failed: {_re}")
-                else:
-                    print(f"[SmartAnnounce] #{eid}: RTS already Radio Controlled, no change needed")
 
             self._set_activity(eid, f'Speaking ({len(text.split())}w)')
+            # Reset radio activity timestamp before PTT — the scrape + Ollama
+            # process takes 60-120s during which no drain reads happen, making
+            # _last_radio_rx stale. Without this, software PTT refuses to key.
+            if self.gateway.cat_client and self.gateway.cat_client._last_radio_rx > 0:
+                self.gateway.cat_client._last_radio_rx = time.monotonic()
             self.gateway.speak_text(text, voice=entry['voice'])
 
             # Wait for playback to finish before restoring RTS
@@ -5806,11 +5938,12 @@ class SmartAnnouncementManager:
                     break
                 time.sleep(0.1)
 
-            if _cat and _rts_saved is not None and _rts_saved is not False:
+            if _ptt_method != 'software' and _cat and _rts_saved is not None and _rts_saved is not False:
                 try:
+                    self._set_activity(eid, 'Restoring RTS')
                     _cat.set_rts(_rts_saved)
                     print(f"[SmartAnnounce] #{eid}: RTS restored to {'USB' if _rts_saved else 'Radio'} Controlled")
-                    # Refresh display after RTS change to prevent VFO display corruption
+                    # Refresh display after RTS change
                     time.sleep(0.3)
                     _cat._pause_drain()
                     try:
@@ -6190,14 +6323,299 @@ class SmartAnnouncementManager:
         # Send pre-cleaned text through Ollama for natural spoken summary
         return self._ollama_compose(entry, system_prompt, max_words, pre_cleaned)
 
+    def _scrape_claude_ai(self, prompt_text, eid=None):
+        """Drive Firefox via xdotool to claude.ai, enter prompt, and copy response.
+        The prompt itself contains length/format instructions so the response
+        is used directly by gTTS with no post-processing.
+        Returns the response text or None."""
+        import subprocess
+        _disp = getattr(self, '_scrape_display', ':0')
+        display_env = {**os.environ, 'DISPLAY': _disp}
+
+        def xdo(*args, timeout=5):
+            return subprocess.run(['xdotool'] + list(args),
+                                  capture_output=True, text=True, timeout=timeout, env=display_env)
+
+        def xclip_get():
+            r = subprocess.run(['xclip', '-selection', 'clipboard', '-o'],
+                               capture_output=True, text=True, timeout=5, env=display_env)
+            return r.stdout if r.returncode == 0 else ''
+
+        def xclip_set(text):
+            subprocess.run(['xclip', '-selection', 'clipboard'],
+                           input=text.encode(), env=display_env, timeout=3)
+
+        def _find_firefox_window():
+            """Return (wid, area) of the largest Firefox window, or (None, 0)."""
+            r = xdo('search', '--name', 'Mozilla Firefox')
+            if r.returncode != 0 or not r.stdout.strip():
+                return None, 0
+            wids = [w.strip() for w in r.stdout.strip().split('\n') if w.strip()]
+            best_wid, best_area = None, 0
+            for wid in wids:
+                try:
+                    geo = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', wid],
+                                         capture_output=True, text=True, timeout=3, env=display_env)
+                    w = h = 0
+                    for line in geo.stdout.strip().split('\n'):
+                        if line.startswith('WIDTH='): w = int(line.split('=')[1])
+                        if line.startswith('HEIGHT='): h = int(line.split('=')[1])
+                    area = w * h
+                    if area > best_area:
+                        best_area = area
+                        best_wid = wid
+                except Exception:
+                    continue
+            return best_wid, best_area
+
+        best_wid, best_area = _find_firefox_window()
+
+        if not best_wid or best_area < 10000:
+            launched = False
+            if best_wid is None:
+                print(f"[SmartAnnounce] claude-scrape: Firefox not running, launching on {_disp}...")
+                try:
+                    subprocess.Popen(['firefox', '--no-remote', '-P', 'claude-scrape'],
+                                     env=display_env,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    launched = True
+                except Exception as e:
+                    print(f"[SmartAnnounce] claude-scrape: failed to launch Firefox: {e}")
+                    return None
+            else:
+                print(f"[SmartAnnounce] claude-scrape: Firefox window too small, waiting...")
+                launched = True
+            if launched:
+                for _wait in range(30):
+                    time.sleep(1)
+                    best_wid, best_area = _find_firefox_window()
+                    if best_wid and best_area >= 10000:
+                        print(f"[SmartAnnounce] claude-scrape: Firefox ready after {_wait + 1}s")
+                        time.sleep(5)
+                        best_wid, best_area = _find_firefox_window()
+                        break
+                else:
+                    print(f"[SmartAnnounce] claude-scrape: Firefox not ready within 30s")
+                    return None
+
+        # Save currently active window to restore later
+        active_result = xdo('getactivewindow')
+        prev_wid = active_result.stdout.strip() if active_result.returncode == 0 else None
+
+        try:
+            # Activate Firefox
+            xdo('windowactivate', '--sync', best_wid)
+            time.sleep(0.2)
+
+            # Navigate to claude.ai via URL bar
+            print(f"[SmartAnnounce] claude-scrape: navigating to claude.ai...")
+            xdo('key', 'ctrl+l')
+            time.sleep(0.3)
+            xdo('key', 'ctrl+a')
+            time.sleep(0.1)
+            xclip_set('https://claude.ai/new')
+            xdo('key', 'ctrl+v')
+            time.sleep(0.1)
+            xdo('key', 'Return')
+            # Wait for page to load — claude.ai is a JS SPA, needs extra time
+            print(f"[SmartAnnounce] claude-scrape: waiting for page load...")
+            time.sleep(5)
+
+            # Re-find and re-activate Firefox
+            best_wid2, _ = _find_firefox_window()
+            if not best_wid2:
+                best_wid2 = best_wid
+            xdo('windowactivate', '--sync', best_wid2)
+            time.sleep(0.5)
+
+            # The chat input on claude.ai/new is auto-focused on page load.
+            # Don't click anything — clicks risk hitting UI elements and stealing focus.
+            # Just paste directly and submit.
+            if eid: self._set_activity(eid, 'Entering prompt')
+            print(f"[SmartAnnounce] claude-scrape: entering prompt ({len(prompt_text)} chars)...")
+            xclip_set(prompt_text)
+            time.sleep(0.2)
+            xdo('key', 'ctrl+v')
+            time.sleep(1.0)
+
+            # Submit with Enter
+            xdo('key', 'Return')
+            if eid: self._set_activity(eid, 'Waiting for Claude')
+            print(f"[SmartAnnounce] claude-scrape: submitted, waiting for Claude response...")
+
+            # Wait for Claude to respond, then copy page text via Ctrl+A/Ctrl+C.
+            # Click the response area (60% right, 50% down) to focus the page body
+            # so Ctrl+A selects page content, not URL bar or chat input.
+            time.sleep(25)  # initial wait for Claude to generate response
+
+            prev_text = ''
+            stable_count = 0
+            page_text = ''
+
+            for attempt in range(6):  # 6 polls × ~5s = ~30s max
+                best_wid3, _ = _find_firefox_window()
+                _wid = best_wid3 or best_wid2
+                if _wid:
+                    xdo('windowactivate', '--sync', _wid)
+                time.sleep(0.3)
+
+                # Focus the page body by middle-clicking (button 2) in the
+                # response area. Middle-click doesn't follow links in Firefox,
+                # avoiding the problem of accidentally opening new tabs.
+                try:
+                    _geo = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', _wid],
+                                         capture_output=True, text=True, timeout=3, env=display_env)
+                    _ww = _wh = 0
+                    for _gl in _geo.stdout.strip().split('\n'):
+                        if _gl.startswith('WIDTH='): _ww = int(_gl.split('=')[1])
+                        if _gl.startswith('HEIGHT='): _wh = int(_gl.split('=')[1])
+                    if _ww and _wh:
+                        _cx, _cy = str(int(_ww * 0.6)), str(int(_wh * 0.5))
+                        xdo('mousemove', '--window', _wid, _cx, _cy)
+                        time.sleep(0.05)
+                        xdo('click', '2')  # middle-click — focuses without following links
+                        time.sleep(0.2)
+                except Exception:
+                    pass
+                xclip_set('')
+                xdo('key', 'ctrl+a')
+                time.sleep(0.3)
+                xdo('key', 'ctrl+c')
+                time.sleep(0.5)
+
+                page_text = xclip_get()
+                if eid: self._set_activity(eid, f'Reading response ({attempt+1}/6)')
+                print(f"[SmartAnnounce] claude-scrape: poll {attempt+1}/6, clipboard: {len(page_text)} chars")
+
+                if page_text and len(page_text) > 100:
+                    if page_text == prev_text:
+                        stable_count += 1
+                        if stable_count >= 1:
+                            print(f"[SmartAnnounce] claude-scrape: page text stable")
+                            break
+                    else:
+                        stable_count = 0
+                    prev_text = page_text
+
+                time.sleep(5)
+
+            if not page_text and prev_text:
+                page_text = prev_text
+
+            if not page_text or len(page_text) < 50:
+                print(f"[SmartAnnounce] claude-scrape: no page text captured ({len(page_text) if page_text else 0} chars)")
+                return None
+
+            # Extract Claude's response from the page text.
+            # The page contains nav, prompt, Claude's response, and footer.
+            # Find the prompt, then take everything after it until footer markers.
+            lines = page_text.split('\n')
+            print(f"[SmartAnnounce] claude-scrape: captured {len(page_text)} chars, {len(lines)} lines")
+
+            # Find the user's prompt
+            prompt_snippet = prompt_text[:40].strip()
+            content_start = -1
+            for i, line in enumerate(lines):
+                if prompt_snippet in line:
+                    content_start = i + 1
+                    break
+            if content_start == -1:
+                short = ' '.join(prompt_text.split()[:4])
+                for i, line in enumerate(lines):
+                    if short in line:
+                        content_start = i + 1
+                        break
+
+            if content_start == -1:
+                print(f"[SmartAnnounce] claude-scrape: could not find prompt in page")
+                print(f"[SmartAnnounce] claude-scrape: FULL: {page_text[:500]}")
+                return None
+
+            # Collect response lines until footer
+            response_lines = []
+            for line in lines[content_start:]:
+                lt = line.strip()
+                if not lt:
+                    continue
+                if 'Claude can make mistakes' in lt or \
+                   'Please double-check' in lt or \
+                   lt in ('Copy', 'Retry', 'Edit', 'Start a new chat'):
+                    break
+                if 'Anthropic' in lt and len(lt) < 50:
+                    break
+                if len(lt) <= 2:
+                    continue
+                response_lines.append(lt)
+
+            # Find the start of Claude's actual prose response.
+            # Tool results (weather widgets, search cards) appear as short
+            # structured lines (temperatures, day names, percentages) before
+            # Claude's natural language response. The prose response typically
+            # starts with a sentence — look for the first line that starts
+            # with a capital letter and contains a verb-like pattern (has
+            # spaces and is longer than a label).
+            prose_start = 0
+            for j, rl in enumerate(response_lines):
+                # A prose sentence: starts with letter, has multiple words,
+                # and is reasonably long (not just "78°" or "Monday")
+                words = rl.split()
+                if len(words) >= 5 and len(rl) > 30:
+                    prose_start = j
+                    break
+
+            if prose_start > 0:
+                print(f"[SmartAnnounce] claude-scrape: skipping {prose_start} widget/tool lines")
+                response_lines = response_lines[prose_start:]
+
+            response_text = ' '.join(response_lines).strip()
+            print(f"[SmartAnnounce] claude-scrape: extracted {len(response_text)} chars from {len(response_lines)} lines")
+            if response_text:
+                print(f"[SmartAnnounce] claude-scrape: preview: {response_text[:200]}")
+            return response_text if response_text else None
+
+        finally:
+            if prev_wid:
+                try:
+                    xdo('windowactivate', prev_wid)
+                except Exception:
+                    pass
+
+    def _call_claude_scrape(self, entry, system_prompt, max_words):
+        """Scrape Claude AI via Firefox, then rewrite via Ollama for length control."""
+        prompt_text = entry['prompt']
+        eid = entry['id']
+        print(f"\n[SmartAnnounce] #{eid}: claude-scrape prompt: {prompt_text[:80]}...")
+
+        self._set_activity(eid, 'Opening Claude.ai')
+        response = self._scrape_claude_ai(prompt_text, eid)
+        if not response:
+            print(f"[SmartAnnounce] #{eid}: no response from Claude")
+            return None
+
+        verbose = getattr(self.config, 'VERBOSE_LOGGING', False)
+        if verbose:
+            print(f"[SmartAnnounce] #{eid}: ── CLAUDE RESPONSE ({len(response)} chars) ──")
+            print(f"  {response[:500]}")
+
+        # Rewrite via Ollama for length control, or return raw if Ollama unavailable
+        if self._ollama_available:
+            self._set_activity(eid, f'Condensing ({self._ollama_model})')
+            return self._ollama_compose(entry, system_prompt, max_words, response)
+        # Truncate to max_words as a basic fallback
+        words = response.split()
+        if len(words) > max_words:
+            response = ' '.join(words[:max_words])
+        return response
+
     def _ollama_compose(self, entry, system_prompt, max_words, search_context):
         """Use local Ollama to compose natural speech from search results."""
         import urllib.request, json
         prompt = (
             f"{system_prompt}\n\n"
             f"Web search results:\n{search_context}\n\n"
-            f"Based on the above, compose a summary in not more than "
-            f"{max_words} words. No intro, no date or time, just the content."
+            f"Based on the above, compose a complete summary in exactly {max_words} words or fewer. "
+            f"You MUST finish your final sentence — never stop mid-sentence. "
+            f"No intro, no date or time, just the content."
         )
         verbose = getattr(self.config, 'VERBOSE_LOGGING', False)
         print(f"[SmartAnnounce] #{entry['id']}: Sending to LLM ({self._ollama_model})...")
@@ -6858,15 +7276,17 @@ class WebConfigServer:
     """
 
     # Keys whose values should be masked in the UI
-    _SENSITIVE_KEYS = {
-        'STREAM_PASSWORD', 'MUMBLE_PASSWORD', 'CAT_PASSWORD', 'DDNS_PASSWORD',
-        'SMART_ANNOUNCE_API_KEY', 'SMART_ANNOUNCE_GEMINI_API_KEY',
-        'WEB_CONFIG_PASSWORD', 'MUMBLE_SERVER_1_PASSWORD', 'MUMBLE_SERVER_2_PASSWORD',
-        'EMAIL_APP_PASSWORD',
-    }
+    _SENSITIVE_KEYS = set()  # Show all values in plain text
 
     # Keys that store hex integers
     _HEX_KEYS = {'AIOC_VID', 'AIOC_PID'}
+
+    # Keys that get a visual separator line above them in the config UI
+    _GROUP_SEPARATOR_KEYS = {
+        'SMART_ANNOUNCE_1_PROMPT',
+        'SMART_ANNOUNCE_2_PROMPT',
+        'SMART_ANNOUNCE_3_PROMPT',
+    }
 
     # Hint text for parameters — shows units, ranges, and format info
     _FIELD_HINTS = {
@@ -6999,6 +7419,15 @@ class WebConfigServer:
         'SMART_ANNOUNCE_OLLAMA_NUM_THREAD': 'CPU threads (0 = all cores)',
         'SMART_ANNOUNCE_START_TIME': 'HH:MM (blank = no restriction)',
         'SMART_ANNOUNCE_END_TIME': 'HH:MM (blank = no restriction)',
+        'SMART_ANNOUNCE_1_PROMPT': 'search/prompt text (blank = disabled)',
+        'SMART_ANNOUNCE_1_INTERVAL': 'seconds between announcements',
+        'SMART_ANNOUNCE_1_TARGET_SECS': 'max speech length (seconds, max 60)',
+        'SMART_ANNOUNCE_2_PROMPT': 'search/prompt text (blank = disabled)',
+        'SMART_ANNOUNCE_2_INTERVAL': 'seconds between announcements',
+        'SMART_ANNOUNCE_2_TARGET_SECS': 'max speech length (seconds, max 60)',
+        'SMART_ANNOUNCE_3_PROMPT': 'search/prompt text (blank = disabled)',
+        'SMART_ANNOUNCE_3_INTERVAL': 'seconds between announcements',
+        'SMART_ANNOUNCE_3_TARGET_SECS': 'max speech length (seconds, max 60)',
         # CAT
         'CAT_HOST': 'IP address',
         'CAT_PORT': 'port (1–65535)',
@@ -7038,13 +7467,29 @@ class WebConfigServer:
         'PTT_METHOD': ['aioc', 'relay', 'software'],
         'REMOTE_AUDIO_ROLE': ['disabled', 'server', 'client'],
         'RELAY_CHARGER_CONTROL': ['gpio', 'serial'],
-        'SMART_ANNOUNCE_AI_BACKEND': ['google-scrape', 'duckduckgo', 'claude', 'gemini'],
+        'TTS_ENGINE': [('edge', 'edge — Microsoft Neural (natural)'), ('gtts', 'gtts — Google Translate (robotic)')],
+        'SMART_ANNOUNCE_AI_BACKEND': ['google-scrape', 'claude-scrape', 'duckduckgo', 'claude', 'gemini'],
         'WEB_CONFIG_HTTPS': ['false', 'self-signed', 'letsencrypt'],
         'WEB_THEME': ['blue', 'red', 'green', 'purple', 'amber', 'teal', 'pink'],
         'STREAM_FORMAT': ['mp3'],
         'CAT_LEFT_POWER': ['', 'L', 'M', 'H'],
         'CAT_RIGHT_POWER': ['', 'L', 'M', 'H'],
         'TTS_DEFAULT_VOICE': [
+            ('1', '1 — US'), ('2', '2 — British'), ('3', '3 — Australian'),
+            ('4', '4 — Indian'), ('5', '5 — South African'), ('6', '6 — Canadian'),
+            ('7', '7 — Irish'), ('8', '8 — French'), ('9', '9 — German'),
+        ],
+        'SMART_ANNOUNCE_1_VOICE': [
+            ('1', '1 — US'), ('2', '2 — British'), ('3', '3 — Australian'),
+            ('4', '4 — Indian'), ('5', '5 — South African'), ('6', '6 — Canadian'),
+            ('7', '7 — Irish'), ('8', '8 — French'), ('9', '9 — German'),
+        ],
+        'SMART_ANNOUNCE_2_VOICE': [
+            ('1', '1 — US'), ('2', '2 — British'), ('3', '3 — Australian'),
+            ('4', '4 — Indian'), ('5', '5 — South African'), ('6', '6 — Canadian'),
+            ('7', '7 — Irish'), ('8', '8 — French'), ('9', '9 — German'),
+        ],
+        'SMART_ANNOUNCE_3_VOICE': [
             ('1', '1 — US'), ('2', '2 — British'), ('3', '3 — Australian'),
             ('4', '4 — Indian'), ('5', '5 — South African'), ('6', '6 — Canadian'),
             ('7', '7 — Irish'), ('8', '8 — French'), ('9', '9 — German'),
@@ -7134,7 +7579,7 @@ class WebConfigServer:
             'CW_WPM', 'CW_FREQUENCY', 'CW_VOLUME',
         ]),
         ('tts', 'Text-to-Speech', [
-            'ENABLE_TTS', 'ENABLE_TEXT_COMMANDS', 'TTS_VOLUME', 'TTS_SPEED',
+            'ENABLE_TTS', 'TTS_ENGINE', 'ENABLE_TEXT_COMMANDS', 'TTS_VOLUME', 'TTS_SPEED',
             'TTS_DEFAULT_VOICE',
         ]),
         ('speaker', 'Speaker Output', [
@@ -7167,6 +7612,12 @@ class WebConfigServer:
             'SMART_ANNOUNCE_API_KEY', 'SMART_ANNOUNCE_GEMINI_API_KEY',
             'SMART_ANNOUNCE_TOP_TEXT', 'SMART_ANNOUNCE_TAIL_TEXT',
             'SMART_ANNOUNCE_START_TIME', 'SMART_ANNOUNCE_END_TIME',
+            'SMART_ANNOUNCE_1_PROMPT', 'SMART_ANNOUNCE_1_INTERVAL',
+            'SMART_ANNOUNCE_1_VOICE', 'SMART_ANNOUNCE_1_TARGET_SECS',
+            'SMART_ANNOUNCE_2_PROMPT', 'SMART_ANNOUNCE_2_INTERVAL',
+            'SMART_ANNOUNCE_2_VOICE', 'SMART_ANNOUNCE_2_TARGET_SECS',
+            'SMART_ANNOUNCE_3_PROMPT', 'SMART_ANNOUNCE_3_INTERVAL',
+            'SMART_ANNOUNCE_3_VOICE', 'SMART_ANNOUNCE_3_TARGET_SECS',
         ]),
         ('cat', 'TH-9800 CAT Control', [
             'ENABLE_CAT_CONTROL', 'CAT_STARTUP_COMMANDS',
@@ -8155,6 +8606,7 @@ class WebConfigServer:
         class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             daemon_threads = True
             allow_reuse_address = True
+            request_queue_size = 32  # default 5 is too low for concurrent dashboard clients
 
         try:
             self._server = ThreadedServer(('0.0.0.0', port), Handler)
@@ -10295,7 +10747,8 @@ var _statusBusy = false;
 function updateStatus() {
   if (_statusBusy) return;
   _statusBusy = true;
-  fetch('/status').then(r=>r.json()).then(function(s) {
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/status', {signal:_ac.signal}).then(r=>r.json()).then(function(s) {
     // Audio levels — same order as console: TX RX SP SDR1 SDR2 SV/CL AN
     var h = '<div class="st-row audio-row">';
     h += '<div class="st-item"><span class="st-label">TX:</span>'+bar(s.radio_tx,'bar-tx')+'</div>';
@@ -10805,7 +11258,8 @@ var _sysinfoBusy = false;
 function updateSysInfo() {
   if (_sysinfoBusy) return;
   _sysinfoBusy = true;
-  fetch('/sysinfo').then(function(r){return r.json()}).then(function(s) {
+  var _ac2 = new AbortController(); setTimeout(function(){_ac2.abort();}, 5000);
+  fetch('/sysinfo', {signal:_ac2.signal}).then(function(r){return r.json()}).then(function(s) {
     var h = '<div class="st-row">';
     h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(s.cpu_pct)+'</div>';
     h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val cyan">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
@@ -10946,7 +11400,9 @@ updateSysInfo();
         hint_text = ' | '.join(hint_parts)
         hint_html = f'<span class="default">{hint_text}</span>' if hint_text else ''
 
-        return (f'<div class="field">'
+        # Add visual separator before the first key of each smart announce slot
+        sep = ' style="margin-top:18px; border-top:1px solid var(--t-border); padding-top:12px"' if key in self._GROUP_SEPARATOR_KEYS else ''
+        return (f'<div class="field"{sep}>'
                 f'<label for="{key}">{key}</label>{inp}{hint_html}'
                 f'</div>')
 
@@ -11714,12 +12170,6 @@ class RadioGateway:
         # !ptt is a toggle — only send when state actually changes
         if state_on == self._software_ptt_on:
             return
-        # Check if radio is actually responding (last packet within 5 seconds)
-        if state_on and self.cat_client._last_radio_rx > 0:
-            radio_silence = time.monotonic() - self.cat_client._last_radio_rx
-            if radio_silence > 5.0:
-                self.notify(f"PTT failed: radio not responding ({radio_silence:.0f}s since last data)")
-                return
         try:
             self.cat_client._pause_drain()
             try:
@@ -12204,16 +12654,23 @@ class RadioGateway:
             
             # Initialize text-to-speech if enabled
             self.tts_engine = None
+            self._tts_backend = str(getattr(self.config, 'TTS_ENGINE', 'edge')).lower().strip()
             if self.config.ENABLE_TTS:
                 try:
                     print("Initializing text-to-speech...")
-                    from gtts import gTTS
-                    self.tts_engine = gTTS  # Store class reference
-                    print("✓ Text-to-speech (gTTS) initialized")
+                    if self._tts_backend == 'edge':
+                        import edge_tts
+                        self.tts_engine = edge_tts
+                        print("✓ Text-to-speech (Edge TTS / Microsoft Neural) initialized")
+                    else:
+                        from gtts import gTTS
+                        self.tts_engine = gTTS
+                        print("✓ Text-to-speech (gTTS / Google) initialized")
                     print("  Use !speak <text> in Mumble to generate TTS")
                 except ImportError:
-                    print("⚠ gTTS not installed")
-                    print("  Install with: pip3 install gtts --break-system-packages")
+                    pkg = 'edge-tts' if self._tts_backend == 'edge' else 'gtts'
+                    print(f"⚠ {pkg} not installed")
+                    print(f"  Install with: pip3 install {pkg} --break-system-packages")
                     self.tts_engine = None
                 except Exception as tts_err:
                     print(f"⚠ Warning: Could not initialize TTS: {tts_err}")
@@ -12869,6 +13326,7 @@ class RadioGateway:
             return False
     
     # gTTS voice map: number → (lang, tld, description)
+    # gTTS voices (Google Translate, robotic but reliable)
     TTS_VOICES = {
         1: ('en', 'com',    'US English'),
         2: ('en', 'co.uk',  'British English'),
@@ -12879,6 +13337,19 @@ class RadioGateway:
         7: ('en', 'ie',     'Irish English'),
         8: ('fr', 'fr',     'French'),
         9: ('de', 'de',     'German'),
+    }
+
+    # Edge TTS voices (Microsoft Neural, natural sounding)
+    EDGE_TTS_VOICES = {
+        1: ('en-US-AndrewNeural',    'US English (Andrew)'),
+        2: ('en-GB-RyanNeural',      'British English (Ryan)'),
+        3: ('en-AU-WilliamMultilingualNeural', 'Australian English (William)'),
+        4: ('en-IN-PrabhatNeural',   'Indian English (Prabhat)'),
+        5: ('en-US-GuyNeural',       'US English (Guy)'),
+        6: ('en-CA-LiamNeural',      'Canadian English (Liam)'),
+        7: ('en-IE-ConnorNeural',    'Irish English (Connor)'),
+        8: ('en-US-AvaNeural',       'US English (Ava)'),
+        9: ('en-US-EmmaNeural',      'US English (Emma)'),
     }
 
     def speak_text(self, text, voice=None):
@@ -12893,45 +13364,65 @@ class RadioGateway:
             bool: True if successful, False otherwise
         """
         if not self.tts_engine:
-            self.notify("TTS not available (gTTS not installed)")
+            self.notify("TTS not available (install edge-tts or gtts)")
             return False
 
         if not self.playback_source:
             self.notify("TTS failed: playback source not available")
             return False
-        
+
         try:
             import tempfile
             import os
-            
+
             if self.config.VERBOSE_LOGGING:
                 print(f"\n[TTS] Generating speech: {text[:50]}...")
-            
+
             # Create temporary file
             temp_file = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
             temp_path = temp_file.name
             temp_file.close()
-            
-            # Generate TTS audio using gTTS
+
             voice_num = voice or int(getattr(self.config, 'TTS_DEFAULT_VOICE', 1))
-            lang, tld, voice_desc = self.TTS_VOICES.get(voice_num, self.TTS_VOICES[1])
-            if self.config.VERBOSE_LOGGING:
-                print(f"[TTS] Calling gTTS (voice {voice_num}: {voice_desc})...")
-            try:
-                tts = self.tts_engine(text, lang=lang, tld=tld, slow=False)
+
+            if self._tts_backend == 'edge':
+                # Edge TTS — Microsoft Neural voices (natural sounding)
+                edge_voice, voice_desc = self.EDGE_TTS_VOICES.get(voice_num, self.EDGE_TTS_VOICES[1])
                 if self.config.VERBOSE_LOGGING:
-                    print(f"[TTS] Saving to {temp_path}...")
-                tts.save(temp_path)
-                if self.config.VERBOSE_LOGGING:
-                    print(f"[TTS] ✓ Audio file saved")
-            except Exception as tts_error:
-                print(f"[TTS] ✗ gTTS generation failed: {tts_error}")
-                print(f"[TTS] Check internet connection (gTTS requires internet)")
+                    print(f"[TTS] Calling Edge TTS (voice {voice_num}: {voice_desc})...")
                 try:
-                    os.unlink(temp_path)
-                except Exception:
-                    pass
-                return False
+                    import asyncio
+                    communicate = self.tts_engine.Communicate(text, edge_voice)
+                    asyncio.run(communicate.save(temp_path))
+                    if self.config.VERBOSE_LOGGING:
+                        print(f"[TTS] ✓ Audio file saved")
+                except Exception as tts_error:
+                    print(f"[TTS] ✗ Edge TTS generation failed: {tts_error}")
+                    try:
+                        os.unlink(temp_path)
+                    except Exception:
+                        pass
+                    return False
+            else:
+                # gTTS — Google Translate voices (robotic but reliable)
+                lang, tld, voice_desc = self.TTS_VOICES.get(voice_num, self.TTS_VOICES[1])
+                if self.config.VERBOSE_LOGGING:
+                    print(f"[TTS] Calling gTTS (voice {voice_num}: {voice_desc})...")
+                try:
+                    tts = self.tts_engine(text, lang=lang, tld=tld, slow=False)
+                    if self.config.VERBOSE_LOGGING:
+                        print(f"[TTS] Saving to {temp_path}...")
+                    tts.save(temp_path)
+                    if self.config.VERBOSE_LOGGING:
+                        print(f"[TTS] ✓ Audio file saved")
+                except Exception as tts_error:
+                    print(f"[TTS] ✗ gTTS generation failed: {tts_error}")
+                    print(f"[TTS] Check internet connection (gTTS requires internet)")
+                    try:
+                        os.unlink(temp_path)
+                    except Exception:
+                        pass
+                    return False
 
             # Apply speed adjustment if configured
             tts_speed = float(getattr(self.config, 'TTS_SPEED', 1.0))

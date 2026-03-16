@@ -132,8 +132,24 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 
 ## Smart Announcements (Modular AI Backend)
 - `SmartAnnouncementManager`: scheduled AI-powered spoken announcements
-- Backends: `google-scrape` (Firefox+xdotool), `duckduckgo` (default, +Ollama), `claude`, `gemini`
+- Backends: `google-scrape`, `claude-scrape`, `duckduckgo` (default), `claude` (API), `gemini`
 - Keyboard: `[`=Smart#1, `]`=Smart#2, `\`=Smart#3; Mumble: `!smart`/`!smart N`
+- Config: 3 slots with individual keys (`SMART_ANNOUNCE_N_PROMPT`, `_INTERVAL`, `_VOICE`, `_TARGET_SECS`)
+
+## Claude-Scrape Backend (2026-03-15)
+- Runs Firefox on **Xvfb virtual display `:99`** — does NOT touch the user's desktop `:0`
+- VNC access to virtual display: port **5999** (for login/troubleshooting)
+- Firefox uses separate profile `claude-scrape` (`--no-remote -P claude-scrape`)
+- **First-time setup:** VNC to port 5999, log into claude.ai in the Firefox window
+- Flow: navigate claude.ai/new → paste prompt → wait → Ctrl+A/Ctrl+C → extract → Ollama rewrite
+- Ollama condenses Claude's verbose response to target word count
+- RTS switching skipped for software PTT mode (serial must stay USB Controlled)
+
+## Edge TTS (2026-03-15)
+- `TTS_ENGINE = edge` — Microsoft Neural voices, much more natural than gTTS
+- Config dropdown: edge (default) or gtts
+- 9 voices mapped to same numbers as gTTS (Andrew, Ryan, William, etc.)
+- Requires `edge-tts` pip package (added to installer)
 
 ## Other Features
 - **Cloudflare Tunnel**: persists across gateway restarts, `*.trycloudflare.com` URL cached in `/tmp/cloudflare_tunnel_url`
@@ -162,3 +178,9 @@ WebSocket PCM double-push/latency, CAT serial orphans, ScriptProcessor buffer si
 - sudo password: `user`
 - Relay USB port: `2-1.3` → `/dev/relay_radio` (CH340 "USB Serial")
 - FTDI CAT cable: `2-1.1` → `/dev/ttyUSB1` (FT232R)
+
+## Display Setup
+- `:0` — User desktop (XFCE4), VNC port 5900, xrdp port 3389
+- `:99` — Xvfb virtual display (1920x1080) for claude-scrape, VNC port 5999
+- Firefox `claude-scrape` profile runs on `:99` — logged into claude.ai
+- **Do NOT touch `:0` VNC/xrdp config** — user relies on them for remote access
