@@ -195,7 +195,11 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Graceful shutdown: watchdog cancelled, audio/serial disconnect with 3s timeouts
 - start.sh: targeted pkill `radio_gateway.py` (not broad `radio_gateway`)
 - Gateway D75CATClient: auto-reconnect + btstart trigger on TCP reconnect
-- D75 systemd service: Restart=always, RestartSec=10
+- D75 systemd service: Restart=always, RestartSec=10, enabled on boot
+- Diagnostic status panel: 3-step checklist (service/TCP/serial) with Start Service, Reconnect, BT Start buttons
+- BT Stop: graceful disconnect (serial→audio→rfcomm→HCI), pauses watchdog to prevent auto-reconnect
+- BT Start resumes watchdog after intentional stop
+- Single/dual band display: single mode greys out inactive band, dual mode shows red MAIN badge on active band
 
 ## Known Bugs Fixed (details in bugs.md)
 See bugs.md for full history. Key recent: DISPLAY_TEXT VFO misattribution (2026-03-13),

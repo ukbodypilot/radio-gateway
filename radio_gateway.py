@@ -9260,6 +9260,16 @@ class WebConfigServer:
                             elif cmd == 'btstart':
                                 resp = gw.d75_cat.send_command("!btstart")
                                 result = {'ok': True, 'response': resp or ''}
+                            elif cmd == 'btstop':
+                                # btstop takes several seconds — use longer recv timeout
+                                gw.d75_cat._poll_paused = True
+                                time.sleep(0.3)
+                                with gw.d75_cat._sock_lock:
+                                    gw.d75_cat._buf = b''
+                                    gw.d75_cat._sock.sendall(b"!btstop\n")
+                                    resp = gw.d75_cat._recv_line(timeout=15.0)
+                                gw.d75_cat._poll_paused = False
+                                result = {'ok': True, 'response': resp or ''}
                             elif cmd == 'ptt':
                                 resp = gw.d75_cat.send_command("!ptt on" if not getattr(gw, '_d75_ptt', False) else "!ptt off")
                                 gw._d75_ptt = not getattr(gw, '_d75_ptt', False)
@@ -10903,6 +10913,7 @@ updateRadio();
   <span style="flex:1;"></span>
   <span id="d75-feedback" style="font-family:monospace; font-size:0.85em; min-width:120px;"></span>
   <button id="d75-btstart-btn" class="rb rb-sm" onclick="d75cmd('btstart')" style="display:none;">BT Start</button>
+  <button id="d75-btstop-btn" class="rb rb-sm" onclick="d75cmd('btstop')" style="display:none;">BT Stop</button>
   <button class="rb rb-sm" onclick="d75cmd('ptt')" id="d75-ptt-btn">PTT</button>
 </div>
 
@@ -10967,7 +10978,10 @@ updateRadio();
   <!-- BAND A -->
   <div class="d75-band" id="d75-band-a">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-      <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">Band A</span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">Band A</span>
+        <span id="d75-a-main" style="display:none; background:#c0392b; color:#fff; padding:1px 7px; border-radius:3px; font-size:0.8em; font-weight:bold;">MAIN</span>
+      </span>
       <span id="d75-a-mode" style="color:#f39c12; font-weight:bold;">FM</span>
     </div>
 
@@ -11060,7 +11074,10 @@ updateRadio();
   <!-- BAND B -->
   <div class="d75-band" id="d75-band-b">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-      <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">Band B</span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">Band B</span>
+        <span id="d75-b-main" style="display:none; background:#c0392b; color:#fff; padding:1px 7px; border-radius:3px; font-size:0.8em; font-weight:bold;">MAIN</span>
+      </span>
       <span id="d75-b-mode" style="color:#f39c12; font-weight:bold;">FM</span>
     </div>
 
@@ -11474,7 +11491,8 @@ function updateD75() {
     document.getElementById('d75-mode').textContent = isBT ? 'Bluetooth' : 'USB';
     document.getElementById('d75-mode').style.color = d.serial_connected ? '#2ecc71' : '#e74c3c';
     document.getElementById('d75-audio-row').style.display = isBT ? '' : 'none';
-    document.getElementById('d75-btstart-btn').style.display = (isBT && d.tcp_connected) ? '' : 'none';
+    document.getElementById('d75-btstart-btn').style.display = (isBT && d.tcp_connected && !d.serial_connected) ? '' : 'none';
+    document.getElementById('d75-btstop-btn').style.display = (isBT && d.tcp_connected && d.serial_connected) ? '' : 'none';
 
     // Audio status (bluetooth only)
     if (isBT) {
@@ -11503,6 +11521,24 @@ function updateD75() {
       abSel.value = d.active_band || 0;
       var dlSel = document.getElementById('d75-dual');
       dlSel.value = d.dual_band || 0;
+    }
+    // Single/dual band display: DL 0=Dual, DL 1=Single
+    var isDual = (d.dual_band === 0);
+    var bandA = document.getElementById('d75-band-a');
+    var bandB = document.getElementById('d75-band-b');
+    if (isDual) {
+      // Dual mode: show both bands, MAIN badge on active band
+      bandA.style.opacity = ''; bandA.style.pointerEvents = '';
+      bandB.style.opacity = ''; bandB.style.pointerEvents = '';
+      document.getElementById('d75-a-main').style.display = (ab === 0) ? '' : 'none';
+      document.getElementById('d75-b-main').style.display = (ab === 1) ? '' : 'none';
+    } else {
+      // Single mode: grey out inactive band
+      var activeIsA = (ab === 0);
+      bandA.style.opacity = activeIsA ? '' : '0.3'; bandA.style.pointerEvents = activeIsA ? '' : 'none';
+      bandB.style.opacity = activeIsA ? '0.3' : ''; bandB.style.pointerEvents = activeIsA ? 'none' : '';
+      document.getElementById('d75-a-main').style.display = 'none';
+      document.getElementById('d75-b-main').style.display = 'none';
     }
     // Always re-render channel list buttons based on current band/dual state
     if (_d75Channels.length) _d75RenderMemList();
