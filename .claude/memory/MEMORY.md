@@ -93,7 +93,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **Service:** `th9800-cat.service` — headless CAT server, started/stopped by start.sh based on `ENABLE_CAT_CONTROL`
 - `TimeoutStopSec=15` to allow graceful serial cleanup
 - start.sh: reads config, sudo keepalive, renice -10, manages th9800-cat.service + Claude Code launches
-- start.sh uses `ENABLE_CAT_CONTROL` (not old `START_TH9800_CAT`) to decide whether to start CAT service
+- start.sh reads `ENABLE_TH9800` from config to decide whether to start CAT service (fixed 2026-03-16, was reading wrong key `ENABLE_CAT_CONTROL`)
 - Gateway restart via `q` key uses `os.execv` (replaces process in-place, same PID)
 - **CRITICAL:** Always restart gateway via start.sh, never `python3 radio_gateway.py` directly (ALSA loopback, AIOC reset, etc. are needed)
 
