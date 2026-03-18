@@ -365,6 +365,18 @@ class Config:
             'D75_AUDIO_DISPLAY_GAIN': 1.0,     # Display level sensitivity
             'D75_AUDIO_BOOST': 1.0,            # Volume multiplier
             'D75_RECONNECT_INTERVAL': 5.0,     # Seconds between reconnect attempts
+            # D75 audio processing (same structure as radio/SDR processing)
+            'D75_PROC_ENABLE_NOISE_GATE': False,
+            'D75_PROC_NOISE_GATE_THRESHOLD': -40,
+            'D75_PROC_NOISE_GATE_ATTACK': 0.01,
+            'D75_PROC_NOISE_GATE_RELEASE': 0.1,
+            'D75_PROC_ENABLE_HPF': True,
+            'D75_PROC_HPF_CUTOFF': 300,
+            'D75_PROC_ENABLE_LPF': False,
+            'D75_PROC_LPF_CUTOFF': 3000,
+            'D75_PROC_ENABLE_NOTCH': False,
+            'D75_PROC_NOTCH_FREQ': 1000,
+            'D75_PROC_NOTCH_Q': 30.0,
             # Dynamic DNS (No-IP compatible)
             # Web Configuration UI
             'ENABLE_WEB_CONFIG': True,
@@ -3103,6 +3115,7 @@ class D75AudioSource(AudioSource):
         self.duck = getattr(config, 'D75_AUDIO_DUCK', True)
         self.enabled = True
         self.muted = False
+        self.audio_boost = float(getattr(config, 'D75_AUDIO_BOOST', 1.0))
 
         self.audio_level = 0
         self.server_connected = False
@@ -3273,10 +3286,13 @@ class D75AudioSource(AudioSource):
             else:
                 self.audio_level = int(self.audio_level * 0.7 + display_level * 0.3)
 
-            audio_boost = float(getattr(self.config, 'D75_AUDIO_BOOST', 1.0))
-            if audio_boost != 1.0:
-                arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
+            if self.audio_boost != 1.0:
+                arr = np.clip(farr * self.audio_boost, -32768, 32767).astype(np.int16)
                 raw = arr.tobytes()
+
+        # Apply D75 audio processing chain (HPF → LPF → Notch → Noise Gate)
+        if hasattr(self.gateway, 'd75_processor'):
+            raw = self.gateway.process_audio_for_d75(raw)
 
         return raw, False
 
@@ -7946,6 +7962,14 @@ class WebConfigServer:
         'SDR_PROC_LPF_CUTOFF': 'Hz',
         'SDR_PROC_NOTCH_FREQ': 'Hz',
         'SDR_PROC_NOTCH_Q': 'quality factor (higher = narrower)',
+        # D75 Processing
+        'D75_PROC_NOISE_GATE_THRESHOLD': 'dBFS (−60 to 0)',
+        'D75_PROC_NOISE_GATE_ATTACK': 'seconds',
+        'D75_PROC_NOISE_GATE_RELEASE': 'seconds',
+        'D75_PROC_HPF_CUTOFF': 'Hz',
+        'D75_PROC_LPF_CUTOFF': 'Hz',
+        'D75_PROC_NOTCH_FREQ': 'Hz',
+        'D75_PROC_NOTCH_Q': 'quality factor (higher = narrower)',
         # SDR 1
         'SDR_DEVICE_NAME': 'PipeWire sink or ALSA device (e.g. hw:6,1)',
         'SDR_MIX_RATIO': 'multiplier (when ducking disabled)',
@@ -8251,6 +8275,11 @@ class WebConfigServer:
             'ENABLE_D75', 'D75_CONNECTION', 'D75_HOST', 'D75_PORT', 'D75_AUDIO_PORT',
             'D75_PASSWORD', 'D75_AUDIO_DUCK', 'D75_AUDIO_PRIORITY',
             'D75_AUDIO_DISPLAY_GAIN', 'D75_AUDIO_BOOST', 'D75_RECONNECT_INTERVAL',
+            'D75_PROC_ENABLE_HPF', 'D75_PROC_HPF_CUTOFF',
+            'D75_PROC_ENABLE_LPF', 'D75_PROC_LPF_CUTOFF',
+            'D75_PROC_ENABLE_NOTCH', 'D75_PROC_NOTCH_FREQ', 'D75_PROC_NOTCH_Q',
+            'D75_PROC_ENABLE_NOISE_GATE', 'D75_PROC_NOISE_GATE_THRESHOLD',
+            'D75_PROC_NOISE_GATE_ATTACK', 'D75_PROC_NOISE_GATE_RELEASE',
         ]),
         ('web', 'Web Configuration', [
             'ENABLE_WEB_CONFIG', 'WEB_CONFIG_PORT', 'WEB_CONFIG_PASSWORD',
@@ -8505,6 +8534,7 @@ class WebConfigServer:
                         if parent.gateway.d75_audio_source:
                             data['audio_connected'] = parent.gateway.d75_audio_source.server_connected
                             data['audio_level'] = parent.gateway.d75_audio_source.audio_level
+                            data['audio_boost'] = int(parent.gateway.d75_audio_source.audio_boost * 100)
                         else:
                             data['audio_connected'] = False
                     try:
@@ -8961,8 +8991,15 @@ class WebConfigServer:
                         print(f"[Stream] Disconnected {_client_ip} ({_kb}KB sent)")
                         parent._unsubscribe_stream(ev)
                     return
-                elif self.path == '/dashboard' or self.path == '/':
-                    # Live status dashboard (default page)
+                elif self.path == '/':
+                    # Persistent shell page with PCM player + iframe
+                    html = parent._generate_shell_page()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(html.encode('utf-8'))
+                elif self.path == '/dashboard':
+                    # Live status dashboard (loaded in iframe)
                     html = parent._generate_dashboard()
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -9282,8 +9319,15 @@ class WebConfigServer:
                                 gw._d75_ptt = not getattr(gw, '_d75_ptt', False)
                                 result = {'ok': True, 'response': resp or ''}
                             elif cmd == 'vol':
-                                resp = gw.d75_cat.send_command(f"!vol {args}")
-                                result = {'ok': True, 'response': resp or ''}
+                                # Set gateway-side audio boost (percentage: 0-500)
+                                try:
+                                    pct = int(args)
+                                    pct = max(0, min(500, pct))
+                                    if gw.d75_audio_source:
+                                        gw.d75_audio_source.audio_boost = pct / 100.0
+                                    result = {'ok': True, 'response': f'boost={pct}%'}
+                                except (ValueError, TypeError):
+                                    result = {'ok': False, 'error': 'usage: vol 0-500 (percentage)'}
                             else:
                                 resp = gw.d75_cat.send_command(f"!{cmd} {args}".strip())
                                 result = {'ok': True, 'response': resp or ''}
@@ -10066,6 +10110,305 @@ class WebConfigServer:
         if getattr(self.config, 'ENABLE_D75', False):
             html += '    <a href="/d75" class="rb rb-sm" style="text-decoration:none;">D75</a>\n'
         return html
+
+    def _generate_shell_page(self):
+        """Build the persistent shell page with PCM player + nav + iframe."""
+        t = self._get_theme()
+        gw_name = str(getattr(self.config, 'GATEWAY_NAME', '') or '').strip()
+        _title_prefix = f'{gw_name} - ' if gw_name else ''
+        nav = self._radio_nav_links()
+        return f'''<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_title_prefix}Radio Gateway</title>
+<style>
+  :root {{
+    --t-bg: {t['bg']}; --t-panel: {t['panel']}; --t-border: {t['border']};
+    --t-accent: {t['accent']}; --t-btn: {t['btn']}; --t-btn-border: {t['btn_border']};
+    --t-btn-hover: {t['btn_hover']}; --t-btn-active: {t['btn_active_bg']};
+    --t-checkbox: {t['checkbox']};
+  }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+         background: var(--t-bg); color: #e0e0e0; display: flex; flex-direction: column; height: 100vh; }}
+  #shell-bar {{
+    background: var(--t-panel); border-bottom: 1px solid var(--t-border);
+    padding: 6px 14px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    flex-shrink: 0; min-height: 40px; z-index: 100;
+  }}
+  #shell-bar a {{ color: var(--t-accent); text-decoration: none; font-size: 0.9em; }}
+  #shell-bar a:hover {{ text-decoration: underline; }}
+  #shell-bar a.active {{ font-weight: bold; border-bottom: 2px solid var(--t-accent); }}
+  .shell-nav {{ display: flex; gap: 10px; align-items: center; }}
+  .shell-pcm {{ display: flex; gap: 6px; align-items: center; margin-left: auto; }}
+  .shell-pcm button {{
+    background: var(--t-btn); border: 1px solid var(--t-btn-border); color: #e0e0e0;
+    border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 0.85em;
+  }}
+  .shell-pcm button:hover {{ background: var(--t-btn-hover); }}
+  #shell-frame {{ flex: 1; border: none; width: 100%; }}
+  #shell-status {{ color: #888; font-size: 0.75em; white-space: nowrap; }}
+</style>
+</head><body>
+<div id="shell-bar">
+  <div class="shell-nav">
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a>
+    {(' | <a href="/radio" target="content" onclick="setActive(this)">Radio</a>' if nav else '')}
+    {(' | <a href="/d75" target="content" onclick="setActive(this)">TH-D75</a>' if getattr(self.config, 'ENABLE_D75', False) else '')}
+    | <a href="/sdr" target="content" onclick="setActive(this)">SDR</a>
+    | <a href="/config" target="content" onclick="setActive(this)">Config</a>
+    | <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
+  </div>
+  <div class="shell-pcm">
+    <button id="play-btn" onclick="toggleStream()" style="min-width:62px; text-align:center;">&#9654; MP3</button>
+    <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:50px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
+    <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
+    <span id="stream-status" style="font-size:0.75em;"></span>
+    <span style="color:var(--t-border);">|</span>
+    <button id="ws-btn" onclick="toggleWS()" style="min-width:62px; text-align:center;">&#9654; PCM</button>
+    <input id="ws-vol" type="range" min="0" max="100" value="100" style="width:50px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
+    <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
+    <span id="ws-status" style="font-size:0.75em;"></span>
+    <span style="color:var(--t-border);">|</span>
+    <button onclick="shellCmd('@')">Email</button>
+    <button onclick="if(confirm('Restart gateway?'))shellCmd('q')" style="color:#f39c12;">Restart</button>
+    <button onclick="if(confirm('Exit the gateway server?'))fetch('/exit',{{method:'POST'}}).then(()=>{{document.body.innerHTML='<h1 style=color:#e0e0e0;text-align:center;margin-top:40vh>Stopped.</h1>';}})" style="color:#e74c3c;">Exit</button>
+  </div>
+</div>
+<iframe id="shell-frame" name="content" src="/dashboard"></iframe>
+<script>
+var _T = {{accent:'{t['accent']}',btnBorder:'{t['btn_border']}'}};
+
+function setActive(el) {{
+  document.querySelectorAll('.shell-nav a').forEach(function(a){{ a.classList.remove('active'); }});
+  el.classList.add('active');
+}}
+function shellCmd(key) {{
+  fetch('/key', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{key:key}})}});
+}}
+
+// --- MP3 stream player ---
+var _audio = null;
+var _playing = false;
+var _streamTimer = null;
+var _streamStart = 0;
+function toggleStream() {{
+  if (_playing) {{ stopStream(); }} else {{ startStream(); }}
+}}
+function startStream() {{
+  var btn = document.getElementById('play-btn');
+  var ind = document.getElementById('stream-indicator');
+  var st = document.getElementById('stream-status');
+  _audio = new Audio('/stream');
+  _audio.volume = document.getElementById('vol-slider').value / 100;
+  _audio.play().then(function() {{
+    _playing = true;
+    _streamStart = Date.now();
+    btn.innerHTML = '&#9724; MP3'; btn.style.color = _T.accent; btn.style.borderColor = _T.accent;
+    ind.style.display = 'inline-block';
+    _streamTimer = setInterval(function() {{
+      var s = Math.floor((Date.now() - _streamStart) / 1000);
+      st.innerHTML = '<span style="color:' + _T.accent + '">' + Math.floor(s/60) + ':' + (s%60<10?'0':'') + s%60 + '</span>';
+    }}, 1000);
+  }}).catch(function() {{
+    st.innerHTML = '<span style="color:#e74c3c">Failed</span>';
+  }});
+  _audio.onerror = function() {{ stopStream(); }};
+}}
+function stopStream() {{
+  if (_streamTimer) {{ clearInterval(_streamTimer); _streamTimer = null; }}
+  if (_audio) {{ try {{ _audio.pause(); _audio.src = ''; }} catch(e){{}} _audio = null; }}
+  _playing = false;
+  document.getElementById('play-btn').innerHTML = '&#9654; MP3';
+  document.getElementById('play-btn').style.color = '#e0e0e0';
+  document.getElementById('play-btn').style.borderColor = _T.btnBorder;
+  document.getElementById('stream-indicator').style.display = 'none';
+  document.getElementById('stream-status').innerHTML = '';
+}}
+function setVolume(v) {{
+  if (_audio) _audio.volume = v / 100;
+}}
+
+// Highlight nav on iframe load
+document.getElementById('shell-frame').addEventListener('load', function() {{
+  try {{
+    var path = this.contentWindow.location.pathname;
+    document.querySelectorAll('.shell-nav a').forEach(function(a) {{
+      a.classList.toggle('active', a.getAttribute('href') === path);
+    }});
+  }} catch(e) {{}}
+}});
+
+// --- Low-latency WebSocket PCM player ---
+var _ws = null;
+var _wsCtx = null;
+var _wsGain = null;
+var _wsPlaying = false;
+var _wsTimer = null;
+var _wsStart = 0;
+var _wsBytes = 0;
+var _wsWorklet = null;
+var _wakeLock = null;
+
+function toggleWS() {{
+  if (_wsPlaying) {{ stopWS(); }} else {{ startWS(); }}
+}}
+
+function startWS() {{
+  var btn = document.getElementById('ws-btn');
+  var ind = document.getElementById('ws-indicator');
+  var st = document.getElementById('ws-status');
+  btn.innerHTML = '&#9724; PCM';
+  btn.style.color = '#f39c12';
+  btn.style.borderColor = '#f39c12';
+  st.innerHTML = '<span style="color:#f39c12">Connecting...</span>';
+
+  if (_wsCtx) {{ stopWS(); return; }}
+
+  try {{
+    _wsCtx = new (window.AudioContext || window.webkitAudioContext)({{sampleRate: 48000}});
+  }} catch(e) {{
+    st.innerHTML = '<span style="color:#e74c3c">No AudioContext</span>';
+    btn.innerHTML = '&#9654; PCM'; btn.style.color = '#e0e0e0';
+    return;
+  }}
+  if (_wsCtx.state === 'suspended') {{ _wsCtx.resume(); }}
+
+  _wsGain = _wsCtx.createGain();
+  _wsGain.gain.value = document.getElementById('ws-vol').value / 100;
+  _wsGain.connect(_wsCtx.destination);
+
+  var _pcmBuf = [];
+  var _pcmPos = 0;
+  var _pcmTotal = 0;
+  var _pcmReady = false;
+
+  function _drainPCM(output) {{
+    var w = 0, need = output.length;
+    if (!_pcmReady) {{
+      if (_pcmTotal < 2400) {{ for (w = 0; w < need; w++) output[w] = 0; return; }}
+      _pcmReady = true;
+    }}
+    while (_pcmTotal > 9600 && _pcmBuf.length > 1) {{ _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }}
+    while (w < need) {{
+      if (!_pcmBuf.length) {{ for (; w < need; w++) output[w] = 0; break; }}
+      var cur = _pcmBuf[0], avail = cur.length - _pcmPos;
+      var take = Math.min(avail, need - w);
+      for (var j = 0; j < take; j++) output[w++] = cur[_pcmPos++];
+      if (_pcmPos >= cur.length) {{ _pcmTotal -= cur.length; _pcmBuf.shift(); _pcmPos = 0; }}
+    }}
+  }}
+
+  function _connectWS() {{
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    _ws = new WebSocket(proto + '//' + location.host + '/ws_audio');
+    _ws.binaryType = 'arraybuffer';
+    _ws.onopen = function() {{
+      _wsPlaying = true;
+      _wsStart = Date.now();
+      _wsBytes = 0;
+      if (navigator.wakeLock) {{ navigator.wakeLock.request('screen').then(function(wl) {{ _wakeLock = wl; }}).catch(function(){{}}); }}
+      btn.innerHTML = '&#9724; PCM';
+      btn.style.color = _T.accent;
+      btn.style.borderColor = _T.accent;
+      ind.style.display = 'inline-block';
+      st.innerHTML = '<span style="color:' + _T.accent + '">0:00</span>';
+      _wsTimer = setInterval(function() {{
+        var secs = Math.floor((Date.now() - _wsStart) / 1000);
+        var m = Math.floor(secs / 60);
+        var s = secs % 60;
+        var t = m + ':' + (s < 10 ? '0' : '') + s;
+        var kb = (_wsBytes / 1024).toFixed(0);
+        var unit = 'KB';
+        if (_wsBytes >= 1048576) {{ kb = (_wsBytes / 1048576).toFixed(1); unit = 'MB'; }}
+        st.innerHTML = '<span style="color:' + _T.accent + '">' + t + '</span> <span style="color:#666">' + kb + unit + '</span>';
+      }}, 1000);
+    }};
+
+    var _srcRate = 48000;
+    var _dstRate = _wsCtx.sampleRate;
+    var _resample = (_dstRate !== _srcRate);
+
+    _ws.onmessage = function(ev) {{
+      if (ev.data instanceof ArrayBuffer) {{
+        _wsBytes += ev.data.byteLength;
+        var int16 = new Int16Array(ev.data);
+        var float32 = new Float32Array(int16.length);
+        for (var i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
+        if (_resample) {{
+          var ratio = _srcRate / _dstRate;
+          var outLen = Math.round(float32.length / ratio);
+          var resampled = new Float32Array(outLen);
+          for (var i = 0; i < outLen; i++) {{
+            var srcIdx = i * ratio;
+            var idx0 = Math.floor(srcIdx);
+            var frac = srcIdx - idx0;
+            var s0 = float32[idx0] || 0;
+            var s1 = float32[Math.min(idx0 + 1, float32.length - 1)] || 0;
+            resampled[i] = s0 + frac * (s1 - s0);
+          }}
+          float32 = resampled;
+        }}
+        if (_wsWorklet && _wsWorklet.port) {{
+          _wsWorklet.port.postMessage(float32);
+        }} else {{
+          _pcmBuf.push(float32);
+          _pcmTotal += float32.length;
+          while (_pcmBuf.length > 4) {{ _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }}
+        }}
+      }}
+    }};
+    _ws.onerror = function() {{ stopWS(); }};
+    _ws.onclose = function() {{ if (_wsPlaying) stopWS(); }};
+  }}
+
+  if (_wsCtx.audioWorklet) {{
+    var workletCode = 'class P extends AudioWorkletProcessor{{constructor(){{super();this.b=[];this.p=0;this.tot=0;this.ready=false;this.port.onmessage=e=>{{this.b.push(e.data);this.tot+=e.data.length;if(!this.ready&&this.tot>=2400)this.ready=true;if(this.tot>9600){{while(this.tot>2400&&this.b.length>1){{this.tot-=this.b[0].length;this.b.shift()}}this.p=0}}}}}}process(i,o){{var c=o[0][0];if(!c)return true;var n=c.length,w=0;if(!this.ready){{for(w=0;w<n;w++)c[w]=0;return true}}while(w<n){{if(!this.b.length){{for(;w<n;w++)c[w]=0;break}}var r=this.b[0],a=r.length-this.p,t=Math.min(a,n-w);for(var j=0;j<t;j++)c[w++]=r[this.p++];if(this.p>=r.length){{this.b.shift();this.p=0;this.tot-=r.length}}}}return true}}}}registerProcessor("p",P)';
+    var blob = new Blob([workletCode], {{type: 'application/javascript'}});
+    var blobURL = URL.createObjectURL(blob);
+    _wsCtx.audioWorklet.addModule(blobURL).then(function() {{
+      URL.revokeObjectURL(blobURL);
+      _wsWorklet = new AudioWorkletNode(_wsCtx, 'p', {{outputChannelCount:[1], numberOfOutputs:1}});
+      _wsWorklet.connect(_wsGain);
+      _connectWS();
+    }}).catch(function(e) {{
+      URL.revokeObjectURL(blobURL);
+      var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
+      sp.onaudioprocess = function(ev) {{ _drainPCM(ev.outputBuffer.getChannelData(0)); }};
+      sp.connect(_wsGain);
+      _wsWorklet = sp;
+      _connectWS();
+    }});
+  }} else {{
+    var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
+    sp.onaudioprocess = function(ev) {{ _drainPCM(ev.outputBuffer.getChannelData(0)); }};
+    sp.connect(_wsGain);
+    _wsWorklet = sp;
+    _connectWS();
+  }}
+}}
+
+function stopWS() {{
+  if (_wsTimer) {{ clearInterval(_wsTimer); _wsTimer = null; }}
+  if (_ws) {{ try {{ _ws.close(); }} catch(e){{}} _ws = null; }}
+  if (_wsWorklet) {{ try {{ _wsWorklet.disconnect(); }} catch(e){{}} _wsWorklet = null; }}
+  if (_wsGain) {{ try {{ _wsGain.disconnect(); }} catch(e){{}} _wsGain = null; }}
+  if (_wsCtx) {{ try {{ _wsCtx.close(); }} catch(e){{}} _wsCtx = null; }}
+  _wsPlaying = false;
+  if (_wakeLock) {{ try {{ _wakeLock.release(); }} catch(e){{}} _wakeLock = null; }}
+  document.getElementById('ws-btn').innerHTML = '&#9654; PCM';
+  document.getElementById('ws-btn').style.color = '#e0e0e0';
+  document.getElementById('ws-btn').style.borderColor = _T.btnBorder;
+  document.getElementById('ws-indicator').style.display = 'none';
+  document.getElementById('ws-status').innerHTML = '';
+}}
+
+function setWSVol(v) {{
+  if (_wsGain) _wsGain.gain.value = v / 100;
+}}
+</script>
+</body></html>'''
 
     def _wrap_html(self, title, body):
         """Wrap body content in the standard HTML shell."""
@@ -10973,9 +11316,9 @@ updateRadio();
 <div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
   <div class="d75-row">
     <span class="d75-label" style="min-width:50px;">Volume</span>
-    <input id="d75-vol" type="range" min="0" max="255" value="68" style="flex:1; accent-color:var(--t-accent);"
+    <input id="d75-vol" type="range" min="0" max="500" value="100" step="10" style="flex:1; accent-color:var(--t-accent);"
       oninput="d75VolDebounce(this.value)">
-    <span id="d75-vol-val" class="d75-val" style="min-width:3em;">068</span>
+    <span id="d75-vol-val" class="d75-val" style="min-width:3.5em;">100%</span>
   </div>
 </div>
 
@@ -11438,12 +11781,12 @@ function d75GoChannel(band, ch) {
 }
 
 function d75VolDebounce(val) {
-  _volEditUntil = Date.now() + 2000;
-  document.getElementById('d75-vol-val').textContent = ('000' + val).slice(-3);
+  _volEditUntil = Date.now() + 3000;
+  document.getElementById('d75-vol-val').textContent = val + '%';
   clearTimeout(_volTimer);
   _volTimer = setTimeout(function() {
-    _volEditUntil = Date.now() + 2000;
-    d75cmd('cat', 'AG ' + ('000' + val).slice(-3));
+    _volEditUntil = Date.now() + 3000;
+    d75cmd('vol', val);
   }, 150);
 }
 
@@ -11574,11 +11917,11 @@ function updateD75() {
     document.getElementById('d75-gps-spd').textContent = gps.speed || '—';
     document.getElementById('d75-gps-sat').textContent = gps.sat_num || '—';
 
-    // Volume (skip update while user is adjusting)
+    // Volume boost (skip update while user is adjusting)
     var volSlider = document.getElementById('d75-vol');
-    if (d.af_gain >= 0 && Date.now() > _volEditUntil) {
-      volSlider.value = d.af_gain;
-      document.getElementById('d75-vol-val').textContent = ('000' + d.af_gain).slice(-3);
+    if (d.audio_boost !== undefined && Date.now() > _volEditUntil) {
+      volSlider.value = d.audio_boost;
+      document.getElementById('d75-vol-val').textContent = d.audio_boost + '%';
     }
 
     // Band A
@@ -12384,33 +12727,6 @@ pollTimer = setInterval(pollStatus, 1000);
         body += '''
 ''' + f'<p style="margin:0 0 10px;font-size:1.1em"><a href="/config">Config Editor</a> | {self._radio_nav_links()} | <a href="/sdr">SDR</a> | <a href="/recordings">Recordings</a> | <a href="/logs">Logs</a></p>' + '''
 
-<div class="ctrl-group" id="listen-top" style="margin-bottom:10px;">
-  <h3>Controls</h3>
-  <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
-    <div style="width:140px;">
-      <div style="display:flex; align-items:center; gap:4px;">
-        <button id="play-btn" onclick="toggleStream()" style="width:62px; text-align:center;">&#9654; MP3</button>
-        <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:50px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
-        <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#2ecc71; box-shadow:0 0 6px #2ecc71;"></span>
-      </div>
-      <div id="stream-status" style="color:#888; font-size:0.75em; margin-top:3px; min-height:1.1em;"></div>
-    </div>
-    <div style="width:140px;">
-      <div style="display:flex; align-items:center; gap:4px;">
-        <button id="ws-btn" onclick="toggleWS()" style="width:62px; text-align:center;">&#9654; PCM</button>
-        <input id="ws-vol" type="range" min="0" max="100" value="100" style="width:50px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
-        <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
-      </div>
-      <div id="ws-status" style="color:#888; font-size:0.75em; margin-top:3px; min-height:1.1em;"></div>
-    </div>
-    <div style="display:flex; gap:3px; margin-left:auto;">
-      <button onclick="sendKey('@')">Send Email</button>
-      <button onclick="if(confirm('Restart gateway?'))sendKey('q')" class="btn-restart">Restart</button>
-      <button onclick="if(confirm('Exit the gateway server? This will stop all services.')){fetch('/exit',{method:'POST'}).then(()=>{document.body.innerHTML='<h1 style=&quot;color:#e0e0e0;text-align:center;margin-top:40vh&quot;>Gateway stopped.</h1>';});}" class="btn-exit">Exit Server</button>
-    </div>
-  </div>
-</div>
-
 <div id="status">Loading...</div>
 <div id="toast-container" style="position:fixed;top:10px;right:10px;z-index:9999;max-width:400px;"></div>
 
@@ -12648,8 +12964,9 @@ var _statusBusy = false;
 function updateStatus() {
   if (_statusBusy) return;
   _statusBusy = true;
-  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 10000);
   fetch('/status', {signal:_ac.signal}).then(r=>r.json()).then(function(s) {
+    _lostCount = 0;
     // Audio levels — same order as console: TX RX SP SDR1 SDR2 SV/CL AN
     var h = '<div class="st-row audio-row">';
     h += '<div class="st-item"><span class="st-label">TX:</span>'+bar(s.radio_tx,'bar-tx')+'</div>';
@@ -12847,13 +13164,14 @@ function updateStatus() {
         }
       }
     }
-  }).catch(function(){ _lost=true; document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>'; }).finally(function(){ _statusBusy=false; });
+  }).catch(function(){ _lostCount++; if(_lostCount>=5){_lost=true; document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>';} }).finally(function(){ _statusBusy=false; });
 }
 
 var _lost = false;
+var _lostCount = 0;
 setInterval(function() {
   if(_lost) {
-    fetch('/status').then(function(r){ if(r.ok){ _lost=false; window.location.reload(); } }).catch(function(){});
+    fetch('/status').then(function(r){ if(r.ok){ _lost=false; _lostCount=0; window.location.reload(); } }).catch(function(){});
   } else {
     updateStatus();
   }
@@ -13622,6 +13940,8 @@ setInterval(loadFiles, 10000);
         """Build the full HTML page with form inputs grouped by section.
 
         Uses _CONFIG_LAYOUT as the single source of truth for sections and key order."""
+        # Reload config from file to pick up any external edits
+        self.config.load_config()
 
         # Build form HTML from canonical layout
         form_parts = []
@@ -13966,8 +14286,10 @@ class RadioGateway:
         # Per-source audio processors
         self.radio_processor = AudioProcessor("radio", config)
         self.sdr_processor = AudioProcessor("sdr", config)
+        self.d75_processor = AudioProcessor("d75", config)
         self._sync_radio_processor()
         self._sync_sdr_processor()
+        self._sync_d75_processor()
         
         # Initialize audio mixer and sources
         self.mixer = AudioMixer(config)
@@ -14270,6 +14592,26 @@ class RadioGateway:
         p.enable_notch = self.config.SDR_PROC_ENABLE_NOTCH
         p.notch_freq = self.config.SDR_PROC_NOTCH_FREQ
         p.notch_q = self.config.SDR_PROC_NOTCH_Q
+
+    def _sync_d75_processor(self):
+        """Sync D75-specific config flags into the D75 AudioProcessor instance."""
+        p = self.d75_processor
+        p.enable_noise_gate = self.config.D75_PROC_ENABLE_NOISE_GATE
+        p.gate_threshold = self.config.D75_PROC_NOISE_GATE_THRESHOLD
+        p.gate_attack = self.config.D75_PROC_NOISE_GATE_ATTACK
+        p.gate_release = self.config.D75_PROC_NOISE_GATE_RELEASE
+        p.enable_hpf = self.config.D75_PROC_ENABLE_HPF
+        p.hpf_cutoff = self.config.D75_PROC_HPF_CUTOFF
+        p.enable_lpf = self.config.D75_PROC_ENABLE_LPF
+        p.lpf_cutoff = self.config.D75_PROC_LPF_CUTOFF
+        p.enable_notch = self.config.D75_PROC_ENABLE_NOTCH
+        p.notch_freq = self.config.D75_PROC_NOTCH_FREQ
+        p.notch_q = self.config.D75_PROC_NOTCH_Q
+
+    def process_audio_for_d75(self, pcm_data):
+        """Apply D75-specific audio processing chain."""
+        self._sync_d75_processor()
+        return self.d75_processor.process(pcm_data)
 
     def process_audio_for_mumble(self, pcm_data):
         """Apply all enabled audio processing to clean up radio audio before sending to Mumble.
@@ -16694,7 +17036,11 @@ class RadioGateway:
                             _tr_outcome = 'ptt_err'
                         continue
 
-                    # No PTT required (radio RX / SDR) — falls through to Mumble send
+                    # No PTT required (radio RX / SDR) — apply VAD then fall through to Mumble send
+                    if data and not self.check_vad(data):
+                        self._speaker_enqueue(data)
+                        _tr_outcome = 'vad_gate'
+                        continue
 
                 elif self.input_stream and not self.restarting_stream:
                     # Fallback: direct AIOC read only (no mixer / no SDR)
