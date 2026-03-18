@@ -54,6 +54,21 @@ First attempted fix used `cat_client.set_rts(True)` to key PTT. This put the ser
 2. If serial is connected (fresh or already), refreshes display via VFO dial press+release and reads RTS state.
 3. Web UI SERIAL_CONNECT: "already connected" now treated as success (`_serial_connected = True`), but skips display refresh (already populated).
 
+## Cloudflare Tunnel Dies on Gateway Restart — Email Sent With No URL (2026-03-18)
+**Symptom:** On gateway restart, email sent with no Cloudflare link. Log shows `[Tunnel] cloudflared exited (code 1)` immediately at startup.
+
+**Root cause:** cloudflared was started with `stderr=subprocess.PIPE`. When the gateway was killed with `pkill -9`, the pipe read-end closed. cloudflared received SIGPIPE on its next stderr write and exited. There was then a race: pgrep found no cloudflared (just died), launched a new one, but the old one was still releasing port 20241 (cloudflared metrics port). New cloudflared failed to bind 20241 → code 1 → email waited 60s → sent without URL.
+
+**Fix:**
+1. cloudflared now launched with `stdout=log_f, stderr=log_f` (writes to `/tmp/cloudflared_output.log`) + `start_new_session=True`. No pipes → no SIGPIPE → cloudflared survives gateway restarts. pgrep always finds it on restart → adoption path → email uses URL immediately.
+2. On fresh launch, `/tmp/cloudflare_tunnel_url` is cleared so the email waits for the new URL instead of sending with a stale cached URL.
+3. `_run_thread()` retries up to 3 times (5s delay) if cloudflared exits code 1 immediately — safety net for port-conflict race conditions.
+4. `_tail_log()` reads from the log file instead of from a pipe (compatible with detached process).
+5. Adoption now also scans the log file for URL if URL_FILE is missing.
+6. Email now includes a detailed gateway + system status dump (`_build_status_dump()`) below the links.
+
+**Lesson:** Never use `subprocess.PIPE` for long-lived child processes that should outlive the parent. Use log files + `start_new_session=True` for true process independence.
+
 ## Email URL Corruption — `%3Cbr%3E` in Cloudflare Links (2026-03-12)
 **Symptom:** Cloudflare tunnel links in emails didn't work. URLs ended with `%3Cbr%3E`.
 

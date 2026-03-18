@@ -5896,6 +5896,10 @@ class EmailNotifier:
         lines.append("")
         lines.append("-- Radio Gateway")
 
+        # Detailed status dump
+        lines.append("")
+        lines += self._build_status_dump()
+
         hostname = ''
         try:
             import socket
@@ -5905,6 +5909,146 @@ class EmailNotifier:
 
         subject = f"Gateway Online{' — ' + hostname if hostname else ''}"
         self.send(subject, '\n'.join(lines))
+
+    def _build_status_dump(self):
+        """Build a list of lines with a detailed gateway and system status dump."""
+        lines = []
+        lines.append("--- Gateway Status ---")
+
+        if self.gateway:
+            try:
+                s = self.gateway.get_status_dict()
+
+                lines.append(f"Uptime:        {s.get('uptime', '?')}")
+
+                # Mumble servers
+                ms1 = s.get('ms1_state', None)
+                ms2 = s.get('ms2_state', None)
+                if ms1 is not None:
+                    lines.append(f"Mumble 1:      {ms1}")
+                if ms2 is not None:
+                    lines.append(f"Mumble 2:      {ms2}")
+                mumble_client = 'connected' if s.get('mumble') else 'disconnected'
+                lines.append(f"Mumble client: {mumble_client}")
+
+                # CAT serial
+                cat = s.get('cat', '')
+                if cat:
+                    rel = s.get('cat_reliability', {})
+                    sent = rel.get('sent', 0)
+                    missed = rel.get('missed', 0)
+                    cat_line = f"CAT serial:    {cat}"
+                    if sent:
+                        cat_line += f"  ({sent} cmd, {missed} missed)"
+                    lines.append(cat_line)
+
+                # PTT
+                ptt_m = s.get('ptt_method', '?')
+                ptt_a = ' [ACTIVE]' if s.get('ptt_active') else ''
+                lines.append(f"PTT:           {ptt_m}{ptt_a}")
+
+                # Mute/audio states
+                mutes = []
+                if s.get('tx_muted'):
+                    mutes.append('TX muted')
+                if s.get('rx_muted'):
+                    mutes.append('RX muted')
+                if s.get('sdr1_muted'):
+                    mutes.append('SDR1 muted')
+                if s.get('sdr2_muted'):
+                    mutes.append('SDR2 muted')
+                lines.append(f"Mutes:         {', '.join(mutes) if mutes else 'none'}")
+
+                # Streaming
+                if s.get('streaming_enabled'):
+                    stream_ok = s.get('stream_pipe_ok', False)
+                    lines.append(f"Broadcastify:  {'live' if stream_ok else 'pipe disconnected'}")
+
+                # DDNS
+                ddns = s.get('ddns', '')
+                if ddns:
+                    lines.append(f"DDNS:          {ddns}")
+
+                # Charger
+                charger = s.get('charger', '')
+                if charger:
+                    lines.append(f"Charger:       {charger}")
+
+            except Exception as e:
+                lines.append(f"(status error: {e})")
+        else:
+            lines.append("(gateway not available)")
+
+        # System stats
+        lines.append("")
+        lines.append("--- System ---")
+
+        try:
+            with open('/proc/loadavg', 'r') as f:
+                parts = f.read().split()
+            lines.append(f"Load (1/5/15): {parts[0]} / {parts[1]} / {parts[2]}")
+        except Exception:
+            pass
+
+        try:
+            mem = {}
+            with open('/proc/meminfo', 'r') as f:
+                for line in f:
+                    p = line.split()
+                    k = p[0].rstrip(':')
+                    if k in ('MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'):
+                        mem[k] = int(p[1])
+            total = mem.get('MemTotal', 0)
+            avail = mem.get('MemAvailable', 0)
+            used_mb = (total - avail) // 1024
+            total_mb = total // 1024
+            pct = round(100.0 * (total - avail) / total) if total else 0
+            lines.append(f"RAM:           {used_mb} MB / {total_mb} MB ({pct}%)")
+            swap_total = mem.get('SwapTotal', 0)
+            swap_free = mem.get('SwapFree', 0)
+            if swap_total:
+                swap_used = (swap_total - swap_free) // 1024
+                lines.append(f"Swap:          {swap_used} MB / {swap_total // 1024} MB")
+        except Exception:
+            pass
+
+        try:
+            import shutil as _shutil
+            total, used, free = _shutil.disk_usage('/')
+            gb = 1024 ** 3
+            pct = round(100.0 * used / total) if total else 0
+            lines.append(f"Disk (/):      {used // gb} GB / {total // gb} GB ({pct}%)")
+        except Exception:
+            pass
+
+        try:
+            import glob as _glob
+            zones = sorted(_glob.glob('/sys/class/thermal/thermal_zone*/temp'))
+            temps = []
+            for zp in zones:
+                try:
+                    with open(zp, 'r') as f:
+                        t = int(f.read().strip()) / 1000
+                    if t > 0:
+                        temps.append(f"{t:.0f}°C")
+                except Exception:
+                    pass
+            if temps:
+                lines.append(f"Temps:         {', '.join(temps)}")
+        except Exception:
+            pass
+
+        try:
+            import socket as _socket
+            s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+            lines.append(f"LAN IP:        {lan_ip}")
+        except Exception:
+            pass
+
+        return lines
 
     def send_startup_delayed(self):
         """Wait for tunnel URL (up to 60s) then send startup email."""
@@ -5925,14 +6069,17 @@ class CloudflareTunnel:
     """Cloudflare quick tunnel — free public HTTPS access with no port forwarding.
 
     Launches `cloudflared tunnel --url http://localhost:PORT` as a subprocess.
-    Parses the assigned *.trycloudflare.com URL from stderr.
+    Output is redirected to a log file (not a pipe) so cloudflared survives
+    gateway restarts without dying from SIGPIPE when the parent is killed.
+    start_new_session=True fully detaches cloudflared from the gateway's process
+    group, so it is never killed when the gateway is restarted.
 
-    The tunnel process is kept alive across gateway restarts so the URL stays
-    stable. On start(), if an existing cloudflared is already running for the
-    same port, we adopt it and read the cached URL from /tmp/cloudflare_tunnel_url.
+    On start(), if an existing cloudflared is already running we adopt it and
+    read the cached URL from URL_FILE or the log file.
     """
 
     URL_FILE = '/tmp/cloudflare_tunnel_url'
+    LOG_FILE = '/tmp/cloudflared_output.log'
 
     def __init__(self, config):
         self.config = config
@@ -5954,25 +6101,52 @@ class CloudflareTunnel:
             if result.returncode == 0 and result.stdout.strip():
                 # Existing cloudflared found — adopt it
                 self._adopted = True
+                # Try URL file first, then scan log file
                 try:
                     with open(self.URL_FILE, 'r') as f:
-                        self._url = f.read().strip()
+                        self._url = f.read().strip() or None
                 except FileNotFoundError:
                     pass
+                if not self._url:
+                    self._url = self._scan_log_for_url()
+                    if self._url:
+                        try:
+                            with open(self.URL_FILE, 'w') as f:
+                                f.write(self._url)
+                        except Exception:
+                            pass
                 if self._url:
                     print(f"  [Tunnel] Reusing existing cloudflared (URL: {self._url})")
                 else:
                     print(f"  [Tunnel] Reusing existing cloudflared (URL not yet cached)")
+                    # Tail log/URL file in background until URL appears
+                    self._thread = threading.Thread(target=self._tail_log, daemon=True,
+                                                    name="cf-tunnel")
+                    self._thread.start()
                 return
         except Exception:
             pass
 
-        # No existing process — launch a new one
+        # No existing process — launch a new one.
+        # Clear stale URL so send_startup_delayed waits for the fresh URL.
+        self._url = None
         try:
-            self._process = subprocess.Popen(
-                ['cloudflared', 'tunnel', '--url', f'http://localhost:{port}'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            os.unlink(self.URL_FILE)
+        except Exception:
+            pass
+
+        self._do_launch(port)
+
+    def _do_launch(self, port):
+        """Launch cloudflared, redirecting output to LOG_FILE so it survives restarts."""
+        import subprocess
+        try:
+            with open(self.LOG_FILE, 'w') as log_f:
+                self._process = subprocess.Popen(
+                    ['cloudflared', 'tunnel', '--url', f'http://localhost:{port}'],
+                    stdout=log_f, stderr=log_f,
+                    start_new_session=True  # detach from gateway session/group
+                )
         except FileNotFoundError:
             print("  [Tunnel] cloudflared not found — install with: sudo pacman -S cloudflared")
             return
@@ -5980,11 +6154,12 @@ class CloudflareTunnel:
             print(f"  [Tunnel] Failed to start: {e}")
             return
 
-        # Read stderr in background to capture the URL
-        self._thread = threading.Thread(target=self._read_output, daemon=True,
-                                        name="cf-tunnel")
-        self._thread.start()
         print(f"  [Tunnel] Starting Cloudflare tunnel for port {port}...")
+
+        # Background thread: detect immediate failures and retry, then tail log for URL
+        self._thread = threading.Thread(target=self._run_thread, args=(port,),
+                                        daemon=True, name="cf-tunnel")
+        self._thread.start()
 
     def stop(self):
         # Don't kill cloudflared — leave it running so the URL survives gateway restarts
@@ -5993,8 +6168,7 @@ class CloudflareTunnel:
     def get_url(self):
         if self._url:
             return self._url
-        # Fallback: re-check URL file (handles adopted cloudflared where URL
-        # arrived after adoption, or was flushed to disk by _read_output thread)
+        # Fallback: re-check URL file (updated by _tail_log thread)
         try:
             with open(self.URL_FILE, 'r') as f:
                 url = f.read().strip()
@@ -6004,25 +6178,105 @@ class CloudflareTunnel:
             pass
         return self._url
 
-    def _read_output(self):
-        """Parse cloudflared stderr to find the assigned URL."""
+    def _scan_log_for_url(self):
+        """Scan the full log file for a tunnel URL (used during adoption)."""
         import re
         try:
-            for line in self._process.stderr:
-                line = line.decode('utf-8', errors='replace').strip()
-                # Look for the trycloudflare.com URL
-                match = re.search(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)', line)
-                if match:
-                    self._url = match.group(1)
-                    # Cache URL so restarts can read it
-                    try:
-                        with open(self.URL_FILE, 'w') as f:
-                            f.write(self._url)
-                    except Exception:
-                        pass
-                    print(f"  [Tunnel] Public URL: {self._url}")
-                if self._process.poll() is not None:
-                    break
+            with open(self.LOG_FILE, 'r') as f:
+                content = f.read()
+            m = re.search(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)', content)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+        return None
+
+    def _run_thread(self, port):
+        """Retry cloudflared if it exits immediately (code 1 port conflict), then tail log."""
+        import subprocess
+        for attempt in range(1, 4):
+            time.sleep(1)
+            if self._process.poll() is None:
+                break  # Running fine — proceed to log tailing
+
+            exit_code = self._process.returncode
+            if exit_code != 0 and attempt < 3:
+                print(f"  [Tunnel] cloudflared exited immediately (code {exit_code}), "
+                      f"retrying in 5s... (attempt {attempt})")
+                time.sleep(5)
+
+                # Check if another cloudflared appeared (previous one finally released port)
+                try:
+                    result = subprocess.run(['pgrep', '-x', 'cloudflared'],
+                                            capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0 and result.stdout.strip():
+                        self._adopted = True
+                        try:
+                            with open(self.URL_FILE, 'r') as f:
+                                self._url = f.read().strip() or None
+                        except FileNotFoundError:
+                            pass
+                        if not self._url:
+                            self._url = self._scan_log_for_url()
+                        if self._url:
+                            print(f"  [Tunnel] Found existing cloudflared (URL: {self._url})")
+                            return
+                        print(f"  [Tunnel] Found existing cloudflared (URL not yet cached)")
+                        break  # Fall through to tail log
+                except Exception:
+                    pass
+
+                # Relaunch
+                try:
+                    with open(self.LOG_FILE, 'w') as log_f:
+                        self._process = subprocess.Popen(
+                            ['cloudflared', 'tunnel', '--url', f'http://localhost:{port}'],
+                            stdout=log_f, stderr=log_f,
+                            start_new_session=True
+                        )
+                    print(f"  [Tunnel] Retry {attempt}: Starting cloudflared...")
+                except Exception as e:
+                    print(f"  [Tunnel] Retry {attempt} failed: {e}")
+                    return
+            else:
+                if exit_code != 0:
+                    print(f"\n[Tunnel] cloudflared failed after {attempt} attempt(s) "
+                          f"(code {exit_code})")
+                return
+
+        self._tail_log()
+
+    def _tail_log(self):
+        """Read cloudflared log file and capture tunnel URL as it appears."""
+        import re
+        try:
+            with open(self.LOG_FILE, 'r') as f:
+                while True:
+                    line = f.readline()
+                    if not line:
+                        # Also poll URL_FILE as fallback (handles old-style adopted processes)
+                        try:
+                            with open(self.URL_FILE, 'r') as uf:
+                                url = uf.read().strip()
+                            if url and url != self._url:
+                                self._url = url
+                                print(f"  [Tunnel] Public URL: {self._url}")
+                                return
+                        except FileNotFoundError:
+                            pass
+                        if self._process and self._process.poll() is not None:
+                            break
+                        time.sleep(0.2)
+                        continue
+                    m = re.search(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)', line)
+                    if m:
+                        self._url = m.group(1)
+                        try:
+                            with open(self.URL_FILE, 'w') as f:
+                                f.write(self._url)
+                        except Exception:
+                            pass
+                        print(f"  [Tunnel] Public URL: {self._url}")
         except Exception:
             pass
         if self._process and self._process.poll() is not None and self._process.returncode != 0:
@@ -9716,21 +9970,15 @@ class WebConfigServer:
                     msg = parent._wrap_html('Restarting...',
                         '<h2>Configuration saved</h2>'
                         '<p>Gateway is restarting... this page will reload in 5 seconds.</p>'
-                        f'<script>setTimeout(function(){{window.location="http://"+window.location.hostname+":"+window.location.port+"/"}},5000)</script>')
+                        f'<script>setTimeout(function(){{window.top.location="http://"+window.location.hostname+":"+window.location.port+"/"}},5000)</script>')
                     self.wfile.write(msg.encode('utf-8'))
                     # Signal restart via main loop
                     parent.gateway.restart_requested = True
                     parent.gateway.running = False
                 else:
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_response(303)
+                    self.send_header('Location', '/config?saved=1')
                     self.end_headers()
-                    msg = parent._wrap_html('Saved',
-                        '<h2>Configuration saved</h2>'
-                        '<p>Settings saved to gateway_config.txt.</p>'
-                        '<p>Restart the gateway for changes to take effect.</p>'
-                        '<p><a href="/">Back to config</a></p>')
-                    self.wfile.write(msg.encode('utf-8'))
 
         class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             daemon_threads = True
@@ -12377,6 +12625,7 @@ function buildChannelGrid(channels) {
     btn.onclick = (function(slot, data) {
       return function() {
         if (data) {
+          loadSettingsToUI(data);
           recallChannel(slot);
         } else {
           document.getElementById('ch-slot').value = slot;
@@ -13972,7 +14221,7 @@ setInterval(loadFiles, 10000);
 
         body = (
             '<h1>Radio Gateway Configuration</h1>'
-            '<form method="POST" action="/">'
+            '<form method="POST" action="/config">'
             '<div class="buttons">'
             '<button type="submit" name="_action" value="save" class="btn-save">Save</button>'
             '<button type="submit" name="_action" value="restart" class="btn-restart"'
