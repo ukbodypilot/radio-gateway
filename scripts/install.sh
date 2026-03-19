@@ -53,6 +53,7 @@ if [ "$DISTRO" = "arch" ]; then
         hidapi \
         libsndfile \
         ffmpeg \
+        opus \
         git \
         xdotool \
         xclip \
@@ -70,6 +71,8 @@ else
         libhidapi-dev \
         libsndfile1 \
         ffmpeg \
+        libopus0 \
+        libopus-dev \
         git \
         xdotool \
         xclip \
@@ -176,7 +179,7 @@ set -e
 
 # Core packages (excluding pymumble — handled separately due to PyPI name variants)
 # Only install packages that are missing — avoids slow pip index checks on re-run
-CORE_PKGS="hid numpy scipy pyaudio soundfile resampy psutil gtts edge-tts pyserial anthropic google-genai ddgs"
+CORE_PKGS="hid numpy scipy pyaudio soundfile resampy psutil gtts edge-tts pyserial anthropic google-genai ddgs opuslib"
 MISSING_PKGS=""
 for pkg in $CORE_PKGS; do
     # Map pip names to Python import names where they differ
@@ -188,6 +191,7 @@ for pkg in $CORE_PKGS; do
         pyserial)    imp="serial" ;;
         google-genai)       imp="google.genai" ;;
         ddgs)               imp="ddgs" ;;
+        opuslib)            imp="opuslib" ;;
         *)                  imp="$pkg" ;;
     esac
     if ! python3 -c "import $imp" 2>/dev/null; then
@@ -242,6 +246,45 @@ if [ -n "$PROTO_VER" ]; then
     else
         echo "  ✓ protobuf $PROTO_VER OK (compatible with pymumble)"
     fi
+fi
+echo
+
+# ── 3b. KV4P HT Python driver ────────────────────────────────
+echo "       Installing KV4P HT Python driver..."
+KV4P_DIR="$HOME/kv4p-ht-python"
+if [ -d "$KV4P_DIR" ]; then
+    echo "  ✓ kv4p-ht-python already exists at $KV4P_DIR"
+    # Pull latest
+    (cd "$KV4P_DIR" && git pull --ff-only 2>/dev/null) \
+        && echo "  ✓ Updated to latest" \
+        || echo "  ⚠ Could not update — using existing version"
+else
+    if git clone https://github.com/ukbodypilot/kv4p-ht-python.git "$KV4P_DIR" 2>/dev/null; then
+        echo "  ✓ Cloned kv4p-ht-python to $KV4P_DIR"
+    else
+        echo "  ⚠ Could not clone kv4p-ht-python — KV4P radio support will not work"
+        echo "    Clone manually: git clone https://github.com/ukbodypilot/kv4p-ht-python.git $KV4P_DIR"
+    fi
+fi
+
+# Install in editable mode so gateway can import it
+if [ -d "$KV4P_DIR" ]; then
+    set +e
+    _pip -e "$KV4P_DIR" 2>/dev/null \
+        && echo "  ✓ kv4p-ht-python installed (editable)" \
+        || echo "  ⚠ Could not pip install kv4p-ht-python — gateway will use sys.path fallback"
+    set -e
+fi
+
+# UDEV rule for CP2102 (KV4P HT USB-serial chip) — stable /dev/kv4p symlink
+KV4P_UDEV='SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="kv4p", MODE="0666"'
+if [ ! -f /etc/udev/rules.d/99-kv4p.rules ]; then
+    echo "$KV4P_UDEV" | sudo tee /etc/udev/rules.d/99-kv4p.rules > /dev/null
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger --subsystem-match=tty
+    echo "  ✓ UDEV rule installed — KV4P HT will appear as /dev/kv4p"
+else
+    echo "  ✓ KV4P UDEV rule already exists"
 fi
 echo
 
@@ -1158,8 +1201,9 @@ echo "       password  = YOUR_STREAM_PASSWORD"
 echo "       mountPoint = YOUR_STREAM_KEY"
 echo "       device    = hw:<card>,1,0  (check: aplay -l | grep Loopback)"
 echo
-echo "  3. Connect your AIOC USB device"
+echo "  3. Connect your AIOC USB device and/or KV4P HT"
 echo "     (unplug and replug after install so udev rules take effect)"
+echo "     KV4P HT will appear as /dev/kv4p (set KV4P_PORT = /dev/kv4p)"
 echo
 echo "  4. Log out and back in so audio group membership takes effect"
 echo "     (needed for darkice realtime scheduling without sudo)"
