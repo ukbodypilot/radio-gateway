@@ -3620,9 +3620,10 @@ class KV4PAudioSource(AudioSource):
         self.muted = False
         self.audio_boost = float(getattr(config, 'KV4P_AUDIO_BOOST', 1.0))
 
-        self._chunk_queue = collections.deque(maxlen=32)
+        self._chunk_queue = collections.deque(maxlen=6)
         self._sub_buffer = b''
         self._chunk_bytes = 2400  # 48kHz 16-bit mono, 25ms
+        self._max_sub_buffer = self._chunk_bytes * 4  # Drop stale data beyond this
         self._decoder = None
         self._encoder = None
         self._dc_remover = None    # DCOffsetRemover instance
@@ -3698,6 +3699,10 @@ class KV4PAudioSource(AudioSource):
         while self._chunk_queue:
             self._sub_buffer += self._chunk_queue.popleft()
 
+        # Drop stale audio to prevent latency buildup
+        if len(self._sub_buffer) > self._max_sub_buffer:
+            self._sub_buffer = self._sub_buffer[-self._max_sub_buffer:]
+
         if len(self._sub_buffer) < self._chunk_bytes:
             # Decay level display
             self.audio_level = self.audio_level * 0.9
@@ -3709,21 +3714,11 @@ class KV4PAudioSource(AudioSource):
         # Mute check
         if self.muted or (getattr(self.gateway, 'tx_muted', False) and getattr(self.gateway, 'rx_muted', False)):
             self.audio_level = self.audio_level * 0.7
-            if self._vol_ramp and self._was_active:
-                self._vol_ramp.stop()
-                self._was_active = False
             return None, False
 
         # DC offset removal (matches ESP32 firmware pipeline)
         if self._dc_remover:
             pcm_data = self._dc_remover.process(pcm_data)
-
-        # Volume ramp (prevents click/pop when audio starts)
-        if self._vol_ramp:
-            if not self._was_active:
-                self._vol_ramp.start()
-                self._was_active = True
-            pcm_data = self._vol_ramp.process(pcm_data)
 
         # Level metering
         try:
