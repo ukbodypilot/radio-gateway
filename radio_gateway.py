@@ -13810,6 +13810,7 @@ function deleteChannel() {
 }
 
 var _sdrBusy = false;
+var _sdrPollErrorActive = false;
 function pollStatus() {
   if (_sdrBusy) return;
   _sdrBusy = true;
@@ -13865,10 +13866,15 @@ function pollStatus() {
       }
       // Channel grid
       buildChannelGrid(d.channels);
-      // Error display
+      // Error display — track poll-set errors so they clear when status recovers
+      var statusEl = document.getElementById('sdr-apply-status');
       if (d.error) {
-        document.getElementById('sdr-apply-status').textContent = d.error;
-        document.getElementById('sdr-apply-status').style.color = '#ff4444';
+        statusEl.textContent = d.error;
+        statusEl.style.color = '#ff4444';
+        _sdrPollErrorActive = true;
+      } else if (_sdrPollErrorActive) {
+        statusEl.textContent = '';
+        _sdrPollErrorActive = false;
       }
     })
     .catch(function() {}).finally(function(){ _sdrBusy=false; });
