@@ -179,7 +179,6 @@ class Config:
             'MUMBLE_RECONNECT': True,
             'MUMBLE_DEBUG': False,
             'NETWORK_TIMEOUT': 10,
-            'TCP_NODELAY': True,
             'HEADLESS_MODE': True,          # No console status bar, log to file + web UI
             'LOG_BUFFER_LINES': 2000,      # Lines kept in memory for web /logs viewer
             'LOG_FILE_DAYS': 7,            # Days to keep rolling log files

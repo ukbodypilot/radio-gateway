@@ -4497,7 +4497,11 @@ def generate_cw_pcm(text, wpm=15, freq=700, sample_rate=48000):
         for ci, ch in enumerate(word):
             if ci:
                 chunks.append(char_sil)
-            for ei, el in enumerate(_MORSE_TABLE.get(ch, '')):
+            pattern = _MORSE_TABLE.get(ch, '')
+            if not pattern:
+                print(f"[CW] Warning: skipping unknown character {ch!r}")
+                continue
+            for ei, el in enumerate(pattern):
                 if ei:
                     chunks.append(dit_sil)
                 chunks.append(dit_tone if el == '.' else dah_tone)

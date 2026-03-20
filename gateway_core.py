@@ -286,9 +286,11 @@ class EmailNotifier:
             import sys as _sys
             writer = _sys.stdout
             if hasattr(writer, 'get_log_lines'):
+                import re as _re
+                _ansi_re = _re.compile(r'\x1b\[[0-9;]*m')
                 log_lines = writer.get_log_lines(after_seq=0, limit=200)
                 for _seq, text in log_lines:
-                    lines.append(text)
+                    lines.append(_ansi_re.sub('', text))
             else:
                 lines.append("(log not available)")
         except Exception as e:

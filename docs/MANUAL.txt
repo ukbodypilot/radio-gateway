@@ -1085,7 +1085,6 @@ PERFORMANCE TIPS
 For Low Latency:
   - Use smaller AUDIO_CHUNK_SIZE (1200-2400)
   - Reduce PTT_RELEASE_DELAY
-  - Set TCP_NODELAY = true
   - Disable unnecessary audio processing
 
 For Stability:

@@ -497,7 +497,7 @@ class WebConfigServer:
         ('advanced', 'Advanced / Diagnostics', [
             'HEADLESS_MODE', 'LOG_BUFFER_LINES', 'LOG_FILE_DAYS',
             'VERBOSE_LOGGING', 'STATUS_UPDATE_INTERVAL',
-            'NETWORK_TIMEOUT', 'TCP_NODELAY', 'BUFFER_MANAGEMENT_VERBOSE',
+            'NETWORK_TIMEOUT', 'BUFFER_MANAGEMENT_VERBOSE',
         ]),
     ]
 
@@ -5972,6 +5972,7 @@ function updateStatus() {
     if(smSt && s.smart_activity) {
       var parts = [];
       for(var sk in s.smart_activity) {
+        if(sk === '0') continue; // id=0 is the manual web AI text trigger — don't show in activity
         var sv = s.smart_activity[sk];
         var sClr = sv==='Done'?'green':sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped')?'red':'yellow';
         parts.push('<span class="'+sClr+'">#'+sk+': '+sv+'</span>');
