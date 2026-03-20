@@ -59,6 +59,7 @@ cleanup() {
         kill $SUDO_KEEPALIVE_PID 2>/dev/null
     fi
     rm -f /tmp/darkice_audio 2>/dev/null
+    rm -f /tmp/gateway.lock 2>/dev/null
     try_sudo modprobe -r snd-aloop 2>/dev/null
     # Restore terminal from raw mode (gateway sets cbreak for keyboard controls)
     stty sane 2>/dev/null
@@ -99,6 +100,7 @@ sleep 1
 
 # Kill gateway process only (not D75_CAT or other Python services)
 pkill -9 -f "radio_gateway.py" 2>/dev/null && ts "  Killed existing gateway"
+rm -f /tmp/gateway.lock 2>/dev/null
 
 # Stop leftover mumble-server instances from prior gateway runs so they don't
 # linger on stale ports (the gateway will start fresh ones with current config)

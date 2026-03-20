@@ -559,30 +559,57 @@ class Config:
         elif getattr(self, 'ENABLE_CAT_CONTROL', False) and not getattr(self, 'ENABLE_TH9800', False):
             self.ENABLE_TH9800 = True
 
-# ============================================================================
-# AUDIO SOURCE SYSTEM - Multi-Source Support
-
 from gateway_core import RadioGateway
 
+_GATEWAY_LOCK = '/tmp/gateway.lock'
+
+def _acquire_lock():
+    """Write PID lockfile. Exit if another instance is already running."""
+    if os.path.exists(_GATEWAY_LOCK):
+        try:
+            old_pid = int(open(_GATEWAY_LOCK).read().strip())
+            os.kill(old_pid, 0)  # signal 0: just checks process exists
+            print(f"ERROR: Gateway already running (PID {old_pid}).")
+            print("       Stop the existing instance first, or run start.sh.")
+            sys.exit(1)
+        except (ValueError, OSError):
+            pass  # stale lock — overwrite
+    try:
+        with open(_GATEWAY_LOCK, 'w') as f:
+            f.write(str(os.getpid()))
+    except Exception as e:
+        print(f"Warning: Could not write lockfile {_GATEWAY_LOCK}: {e}")
+
+def _release_lock():
+    """Remove lockfile if it belongs to this process."""
+    try:
+        if open(_GATEWAY_LOCK).read().strip() == str(os.getpid()):
+            os.unlink(_GATEWAY_LOCK)
+    except Exception:
+        pass
+
 def main():
+    _acquire_lock()
+
     # Find config file
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_file = os.path.join(script_dir, "gateway_config.txt")
-    
+
     # Load configuration
     config = Config(config_file)
-    
+
     # Create and run gateway
     gateway = RadioGateway(config)
-    
+
     # Handle signals for clean shutdown
     def signal_handler(sig, frame):
         gateway.running = False
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     gateway.run()
+    _release_lock()
 
     if gateway.restart_requested:
         print("\nRestarting gateway via start.sh...")
