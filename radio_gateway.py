@@ -7454,11 +7454,16 @@ class SmartAnnouncementManager:
 
             # No truncation — let the LLM/backend control length naturally
 
-            # Add optional top/tail text with pauses (per-slot, falls back to global)
-            top_text = str(getattr(self.config, f'SMART_ANNOUNCE_{eid}_TOP_TEXT', '') or '').strip()
+            # Add optional top/tail text with pauses
+            # Priority: entry dict override → per-slot config → global config
+            top_text = str(entry.get('top_text', '') or '').strip()
+            if not top_text:
+                top_text = str(getattr(self.config, f'SMART_ANNOUNCE_{eid}_TOP_TEXT', '') or '').strip()
             if not top_text:
                 top_text = str(getattr(self.config, 'SMART_ANNOUNCE_TOP_TEXT', '') or '').strip()
-            tail_text = str(getattr(self.config, f'SMART_ANNOUNCE_{eid}_TAIL_TEXT', '') or '').strip()
+            tail_text = str(entry.get('tail_text', '') or '').strip()
+            if not tail_text:
+                tail_text = str(getattr(self.config, f'SMART_ANNOUNCE_{eid}_TAIL_TEXT', '') or '').strip()
             if not tail_text:
                 tail_text = str(getattr(self.config, 'SMART_ANNOUNCE_TAIL_TEXT', '') or '').strip()
             if top_text:
@@ -10215,6 +10220,50 @@ class WebConfigServer:
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
                     self.wfile.write(b'{"ok":true}')
+                    return
+                elif self.path == '/aitext':
+                    # Text-to-AI announcement endpoint
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    ok = False
+                    error = None
+                    try:
+                        data = json_mod.loads(body)
+                        prompt = data.get('text', '').strip()
+                        target_secs = int(data.get('target_secs', 30))
+                        voice = int(data.get('voice', 1))
+                        top_text = data.get('top_text', 'QST').strip()
+                        tail_text = data.get('tail_text', 'Callsign').strip()
+                        if not prompt:
+                            error = 'no text provided'
+                        elif not parent.gateway:
+                            error = 'gateway not ready'
+                        elif not parent.gateway.smart_announce:
+                            error = 'smart announce not available'
+                        else:
+                            sa = parent.gateway.smart_announce
+                            # Build a synthetic entry for ad-hoc prompt
+                            entry = {
+                                'id': 0,
+                                'prompt': prompt,
+                                'voice': voice,
+                                'target_secs': min(max(target_secs, 5), 120),
+                                'interval': 0,
+                                'mode': 'manual',
+                                'top_text': top_text,
+                                'tail_text': tail_text,
+                            }
+                            import threading as _thr
+                            _thr.Thread(target=sa._run_announcement, args=(entry, True),
+                                        daemon=True, name="WebAIText").start()
+                            ok = True
+                    except Exception as e:
+                        error = str(e)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    resp = '{"ok":true}' if ok else '{"ok":false,"error":' + json_mod.dumps(error) + '}'
+                    self.wfile.write(resp.encode())
                     return
                 elif self.path == '/cw':
                     # CW (Morse code) endpoint
@@ -14447,6 +14496,36 @@ pollTimer = setInterval(pollStatus, 1000);
       <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
     </div>
   </div>
+  <div class="ctrl-group" style="min-width:300px; width:300px;" id="aitext-group">
+    <h3>Text to AI</h3>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <textarea id="ai-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter prompt for AI to research and speak..."></textarea>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Top text</label>
+        <input id="ai-top" type="text" value="QST" style="flex:1; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Tail</label>
+        <input id="ai-tail" type="text" value="Callsign" style="flex:1; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+      </div>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Secs</label>
+        <input id="ai-secs" type="number" value="30" min="5" max="120" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Voice</label>
+        <select id="ai-voice" style="flex:1; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+          <option value="1">US English</option>
+          <option value="2">British</option>
+          <option value="3">Australian</option>
+          <option value="4">Indian</option>
+          <option value="5">South African</option>
+          <option value="6">Canadian</option>
+          <option value="7">Irish</option>
+          <option value="8">French</option>
+          <option value="9">German</option>
+        </select>
+        <button onclick="sendAIText()" id="btn-ai-send" style="white-space:nowrap;">Send</button>
+      </div>
+    </div>
+    <div id="ai-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+  </div>
   <div class="ctrl-group" style="min-width:220px; width:220px;" id="cw-group">
     <h3>Text to CW</h3>
     <div style="display:flex; flex-direction:column; gap:3px;">
@@ -14523,6 +14602,32 @@ function togProc(source, filter) {
 }
 function darkiceCmd(cmd) {
   fetch('/darkicecmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+}
+function sendAIText() {
+  var text = document.getElementById('ai-text').value.trim();
+  if (!text) return;
+  var btn = document.getElementById('btn-ai-send');
+  var st = document.getElementById('ai-status');
+  btn.disabled = true;
+  st.textContent = 'Submitted — processing...';
+  st.style.color = '#f1c40f';
+  var payload = {
+    text: text,
+    target_secs: parseInt(document.getElementById('ai-secs').value) || 30,
+    voice: parseInt(document.getElementById('ai-voice').value) || 1,
+    top_text: document.getElementById('ai-top').value.trim(),
+    tail_text: document.getElementById('ai-tail').value.trim(),
+  };
+  fetch('/aitext', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok) { st.textContent = 'Running — check Smart Announce status'; st.style.color = '#2ecc71'; }
+      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      btn.disabled = false;
+      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 15000);
+    })
+    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+  if(document.activeElement) document.activeElement.blur();
 }
 function sendCW() {
   var text = document.getElementById('cw-text').value.trim();
