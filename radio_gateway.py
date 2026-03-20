@@ -180,7 +180,7 @@ class Config:
             'MUMBLE_DEBUG': False,
             'NETWORK_TIMEOUT': 10,
             'TCP_NODELAY': True,
-            'HEADLESS_MODE': False,         # No console status bar, log to file + web UI
+            'HEADLESS_MODE': True,          # No console status bar, log to file + web UI
             'LOG_BUFFER_LINES': 2000,      # Lines kept in memory for web /logs viewer
             'LOG_FILE_DAYS': 7,            # Days to keep rolling log files
             'VERBOSE_LOGGING': False,
@@ -6550,6 +6550,21 @@ class EmailNotifier:
         lines.append("")
         lines += self._build_status_dump()
 
+        # Log dump
+        lines.append("")
+        lines.append("--- Recent Log ---")
+        try:
+            import sys as _sys
+            writer = _sys.stdout
+            if hasattr(writer, 'get_log_lines'):
+                log_lines = writer.get_log_lines(after_seq=0, limit=200)
+                for _seq, text in log_lines:
+                    lines.append(text)
+            else:
+                lines.append("(log not available)")
+        except Exception as e:
+            lines.append(f"(log error: {e})")
+
         hostname = ''
         try:
             import socket
@@ -6569,6 +6584,10 @@ class EmailNotifier:
             try:
                 s = self.gateway.get_status_dict()
 
+                gw_name = getattr(self.gateway.config, 'GATEWAY_NAME', '') or ''
+                if gw_name:
+                    lines.append(f"Name:          {gw_name}")
+                lines.append(f"Version:       {__version__}")
                 lines.append(f"Uptime:        {s.get('uptime', '?')}")
 
                 # Mumble servers
@@ -6597,17 +6616,60 @@ class EmailNotifier:
                 ptt_a = ' [ACTIVE]' if s.get('ptt_active') else ''
                 lines.append(f"PTT:           {ptt_m}{ptt_a}")
 
+                # VAD
+                vad_state = 'ON' if s.get('vad_enabled') else 'off'
+                lines.append(f"VAD:           {vad_state}")
+
                 # Mute/audio states
                 mutes = []
                 if s.get('tx_muted'):
-                    mutes.append('TX muted')
+                    mutes.append('TX')
                 if s.get('rx_muted'):
-                    mutes.append('RX muted')
+                    mutes.append('RX')
+                if s.get('d75_muted'):
+                    mutes.append('D75')
+                if s.get('kv4p_muted'):
+                    mutes.append('KV4P')
                 if s.get('sdr1_muted'):
-                    mutes.append('SDR1 muted')
+                    mutes.append('SDR1')
                 if s.get('sdr2_muted'):
-                    mutes.append('SDR2 muted')
+                    mutes.append('SDR2')
+                if s.get('remote_muted'):
+                    mutes.append('Remote')
+                if s.get('announce_muted'):
+                    mutes.append('Announce')
+                if s.get('speaker_muted'):
+                    mutes.append('Speaker')
                 lines.append(f"Mutes:         {', '.join(mutes) if mutes else 'none'}")
+
+                # KV4P
+                if s.get('kv4p_enabled'):
+                    kv4p_conn = 'connected' if s.get('kv4p_connected') else 'enabled'
+                    kv4p_freq = getattr(self.gateway.config, 'KV4P_FREQ', '') if self.gateway else ''
+                    kv4p_ctcss = getattr(self.gateway.config, 'KV4P_CTCSS_TX', 0) if self.gateway else 0
+                    kv4p_line = f"KV4P:          {kv4p_conn}"
+                    if kv4p_freq:
+                        kv4p_line += f"  {kv4p_freq} MHz"
+                    if kv4p_ctcss and str(kv4p_ctcss) != '0':
+                        kv4p_line += f"  CTCSS:{kv4p_ctcss}"
+                    lines.append(kv4p_line)
+
+                # D75
+                if s.get('d75_enabled'):
+                    d75_conn = 'connected' if s.get('d75_connected') else 'enabled'
+                    d75_mode = s.get('d75_mode', '')
+                    d75_line = f"D75:           {d75_conn}"
+                    if d75_mode:
+                        d75_line += f"  ({d75_mode})"
+                    lines.append(d75_line)
+
+                # SDR
+                if s.get('sdr1_enabled'):
+                    sdr_name = getattr(self.gateway.config, 'SDR_DEVICE_NAME', '') if self.gateway else ''
+                    sdr_line = f"SDR1:          enabled"
+                    if sdr_name:
+                        sdr_line += f"  ({sdr_name})"
+                    lines.append(sdr_line)
 
                 # Streaming
                 if s.get('streaming_enabled'):
