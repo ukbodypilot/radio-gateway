@@ -193,6 +193,15 @@ When ANY connection closed, it reset `loggedin = False` for all connections.
 **Root cause:** `pop(0)` shifted list indices but `pos` was absolute sequence number.
 **Fix:** Sequence-number ring buffer (`_mp3_seq`) immune to index shifting.
 
+## Save & Restart Leaves External Components in Restart Loops (2026-03-20)
+**Symptom:** After pressing "Save & Restart" in web config, external components (AIOC, ALSA loopback, Darkice/FFmpeg, CAT service) end up in restart loops or bad state. Works fine when restarting via desktop icon.
+
+**Root cause:** Web UI restart used `os.execv(sys.executable, [sys.executable] + sys.argv)` — a bare Python process replacement. This skips all 11 start.sh setup steps: no ALSA loopback reset (`modprobe -r snd-aloop`), no AIOC USB reset, no Mumble restart, no CAT service management, no CPU governor. New Python process tries to reopen ALSA/AIOC in stale state → watchdogs fire → restart loops.
+
+**Fix:** Web UI restart now runs `start.sh` as a detached subprocess (`start_new_session=True`, stdout/stderr → `/tmp/gateway_startup.log`) then exits. start.sh kills the old process via `pkill -9 -f radio_gateway.py` and does the full reset sequence.
+
+**Lesson:** Any restart path that bypasses start.sh will be broken. The `q` key still uses `os.execv` (in-process restart) — fine for config-only changes but will also break if hardware state is disrupted.
+
 ## Save & Restart UnboundLocalError (2026-03-08)
 **Symptom:** `UnboundLocalError: cannot access local variable 'port'` on Save & Restart from web UI.
 **Fix:** Use `window.location.port` in JavaScript instead of Python-side `port` variable.

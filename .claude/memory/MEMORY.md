@@ -99,6 +99,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - start.sh: reads config, sudo keepalive, renice -10, manages th9800-cat.service + Claude Code launches
 - start.sh uses `ENABLE_CAT_CONTROL` (not old `START_TH9800_CAT`) to decide whether to start CAT service
 - Gateway restart via `q` key uses `os.execv` (replaces process in-place, same PID)
+- **Save & Restart** in web config now launches `start.sh` via detached subprocess (`start_new_session=True`) then exits. Previously used `os.execv` which skipped ALSA/AIOC/USB resets and left external components in restart loops.
 - **CRITICAL:** Always restart gateway via start.sh, never `python3 radio_gateway.py` directly (ALSA loopback, AIOC reset, etc. are needed)
 
 ## Web UI Toast Notifications (2026-03-14)
@@ -162,6 +163,11 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **SDR Rebroadcast**: `b` key, routes SDR audio to radio TX
 - **Status Bar**: 3-line display, `[HH:MM:SS]` timestamps, `StatusBarWriter` wraps stdout/stderr
 - **Config page**: unsaved changes warning via `beforeunload` event
+
+## Web Config UI Changes (2026-03-20)
+- **KV4P CTCSS config dropdowns:** `KV4P_CTCSS_TX` and `KV4P_CTCSS_RX` added to `_SELECT_OPTIONS` — dropdown with all 38 DRA818 tones (None + 67.0–250.3 Hz), values stored as integer codes 0–38
+- **D75 + KV4P mute buttons:** added `btn-w` (D75) and `btn-y` (KV4P) to Mute Controls group in dashboard; keyboard shortcut `y` = KV4P mute (`w` was already D75); KV4P added to mutes summary list and console help text
+- **Config sections collapsed by default:** all `<details>` sections start collapsed (removed `idx < 3` open-by-default logic)
 
 ## KV4P HT Radio (added 2026-03-19)
 - `KV4PAudioSource` class: CP2102 USB-serial (10c4:ea60), kv4p-ht-python package, Opus codec

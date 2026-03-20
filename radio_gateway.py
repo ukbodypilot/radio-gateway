@@ -3815,7 +3815,7 @@ class KV4PAudioSource(AudioSource):
             self._trace_returned_data = False
             self._trace_sub_buf_after = len(self._sub_buffer)
             self._trace_pcm_rms = 0.0
-            self.audio_level = self.audio_level * 0.9
+            self.audio_level = int(self.audio_level * 0.9)
             return None, False
 
         in_samples = np.frombuffer(self._sub_buffer, dtype=np.int16).astype(np.float32)
@@ -3847,7 +3847,7 @@ class KV4PAudioSource(AudioSource):
 
         # Mute check
         if self.muted or (getattr(self.gateway, 'tx_muted', False) and getattr(self.gateway, 'rx_muted', False)):
-            self.audio_level = self.audio_level * 0.7
+            self.audio_level = int(self.audio_level * 0.7)
             return None, False
 
         # DC offset removal (matches ESP32 firmware pipeline)
@@ -3868,9 +3868,9 @@ class KV4PAudioSource(AudioSource):
             display_gain = float(getattr(self.config, 'KV4P_AUDIO_DISPLAY_GAIN', 1.0))
             level = min(100, level * display_gain)
             if level > self.audio_level:
-                self.audio_level = level
+                self.audio_level = int(level)
             else:
-                self.audio_level = self.audio_level * 0.7 + level * 0.3
+                self.audio_level = int(self.audio_level * 0.7 + level * 0.3)
         except Exception:
             pass
 
@@ -8899,8 +8899,8 @@ class WebConfigServer:
         'KV4P_FREQ': 'MHz',
         'KV4P_TX_FREQ': 'MHz (0 = same as RX)',
         'KV4P_SQUELCH': '0-8',
-        'KV4P_CTCSS_TX': 'tone code (0 = none)',
-        'KV4P_CTCSS_RX': 'tone code (0 = none)',
+        'KV4P_CTCSS_TX': 'TX CTCSS tone',
+        'KV4P_CTCSS_RX': 'RX CTCSS tone',
         'KV4P_BANDWIDTH': '0 = narrow, 1 = wide',
         'KV4P_RECONNECT_INTERVAL': 'seconds',
         'KV4P_PROC_NOISE_GATE_THRESHOLD': 'dBFS (-60 to 0)',
@@ -9053,6 +9053,18 @@ class WebConfigServer:
         'STREAM_FORMAT': ['mp3'],
         'CAT_LEFT_POWER': ['', 'L', 'M', 'H'],
         'CAT_RIGHT_POWER': ['', 'L', 'M', 'H'],
+        'KV4P_CTCSS_TX': [('0', 'None')] + [(str(i+1), f'{t} Hz') for i, t in enumerate([
+            '67.0','71.9','74.4','77.0','79.7','82.5','85.4','88.5',
+            '91.5','94.8','97.4','100.0','103.5','107.2','110.9','114.8','118.8','123.0',
+            '127.3','131.8','136.5','141.3','146.2','151.4','156.7','162.2','167.9',
+            '173.8','179.9','186.2','192.8','203.5','210.7','218.1','225.7','233.6','241.8','250.3',
+        ])],
+        'KV4P_CTCSS_RX': [('0', 'None')] + [(str(i+1), f'{t} Hz') for i, t in enumerate([
+            '67.0','71.9','74.4','77.0','79.7','82.5','85.4','88.5',
+            '91.5','94.8','97.4','100.0','103.5','107.2','110.9','114.8','118.8','123.0',
+            '127.3','131.8','136.5','141.3','146.2','151.4','156.7','162.2','167.9',
+            '173.8','179.9','186.2','192.8','203.5','210.7','218.1','225.7','233.6','241.8','250.3',
+        ])],
         'TTS_DEFAULT_VOICE': [
             ('1', '1 — US'), ('2', '2 — British'), ('3', '3 — Australian'),
             ('4', '4 — Indian'), ('5', '5 — South African'), ('6', '6 — Canadian'),
@@ -13180,7 +13192,6 @@ updateD75();
             "173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"]
         body = '''
 <h1 style="font-size:1.8em">KV4P HT Control</h1>
-<p><a href="/">Dashboard</a> | ''' + self._radio_nav_links() + ''' | <a href="/sdr">SDR</a> | <a href="/config">Config</a> | <a href="/logs">Logs</a></p>
 
 <style>
 .rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
@@ -14233,6 +14244,8 @@ pollTimer = setInterval(pollStatus, 1000);
     <button onclick="sendKey('c')" id="btn-c">Remote</button>
     <button onclick="sendKey('a')" id="btn-a">Announce</button>
     <button onclick="sendKey('o')" id="btn-o">Speaker</button>
+    <button onclick="sendKey('w')" id="btn-w">D75</button>
+    <button onclick="sendKey('y')" id="btn-y">KV4P</button>
   </div>
   <div class="ctrl-group" id="radio-proc-group">
     <h3>Radio Processing</h3>
@@ -14471,6 +14484,7 @@ function updateStatus() {
     if(s.announce_muted) mutes.push('Announce');
     if(s.speaker_muted && s.speaker_enabled) mutes.push('Speaker');
     if(s.d75_muted) mutes.push('D75');
+    if(s.kv4p_muted) mutes.push('KV4P');
     h += '<div class="st-item"><span class="st-label">Muted:</span><span class="st-val '+(mutes.length?'red':'green')+'">'+(mutes.length?mutes.join(', '):'None')+'</span></div>';
     if(s.sdr1_enabled && s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
     if(s.sdr1_enabled && s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
@@ -14542,6 +14556,8 @@ function updateStatus() {
     setBtn('btn-c', s.remote_muted, 'muted');
     setBtn('btn-a', s.announce_muted, 'muted');
     setBtn('btn-o', s.speaker_muted, 'muted');
+    setBtn('btn-w', s.d75_muted, 'muted');
+    setBtn('btn-y', s.kv4p_muted, 'muted');
     setBtn('btn-v', s.vad_enabled, 'active');
     setBtn('btn-p', s.manual_ptt, 'active');
     setBtn('btn-d', s.sdr1_duck, 'active');
@@ -15428,8 +15444,7 @@ setInterval(loadFiles, 10000);
                 field = self._render_field(key, cur_val, default_val)
                 fields_html.append(field)
 
-            # Default open for first 3 sections, collapsed for rest
-            open_attr = ' open' if idx < 3 else ''
+            open_attr = ''
             form_parts.append(
                 f'<details{open_attr}><summary>{display_name}</summary>'
                 f'<div class="fields">{"".join(fields_html)}</div></details>')
@@ -19358,6 +19373,11 @@ class RadioGateway:
                 self.d75_muted = not self.d75_muted
                 self.d75_audio_source.muted = self.d75_muted
                 self._trace_events.append((time.monotonic(), 'd75_mute', 'on' if self.d75_muted else 'off'))
+        elif char == 'y':
+            if self.kv4p_audio_source:
+                self.kv4p_muted = not self.kv4p_muted
+                self.kv4p_audio_source.muted = self.kv4p_muted
+                self._trace_events.append((time.monotonic(), 'kv4p_mute', 'on' if self.kv4p_muted else 'off'))
         elif char == 'l':
             if self.cat_client:
                 def _send_cat_config():
@@ -20127,7 +20147,7 @@ class RadioGateway:
 
         print("Press Ctrl+C to exit")
         print("Keyboard Controls:")
-        print("  Mute:  't'=TX  'r'=RX  'm'=Global  's'=SDR1  'x'=SDR2  'c'=Remote  'a'=Announce  'o'=Speaker")
+        print("  Mute:  't'=TX  'r'=RX  'm'=Global  's'=SDR1  'x'=SDR2  'c'=Remote  'a'=Announce  'o'=Speaker  'w'=D75  'y'=KV4P")
         print("  Audio: 'v'=VAD toggle  ','=Vol-  '.'=Vol+")
         print("  Proc:  'n'=Gate  'f'=HPF  'g'=AGC")
         print("  SDR:   'd'=SDR1 Duck toggle  'b'=SDR Rebroadcast toggle")
@@ -21336,8 +21356,15 @@ def main():
     gateway.run()
 
     if gateway.restart_requested:
-        print("\nRestarting gateway...")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        print("\nRestarting gateway via start.sh...")
+        start_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'start.sh')
+        import subprocess as _sp
+        _sp.Popen(
+            ['bash', start_sh],
+            stdout=open('/tmp/gateway_startup.log', 'w'),
+            stderr=_sp.STDOUT,
+            start_new_session=True,
+        )
 
 if __name__ == "__main__":
     main()
