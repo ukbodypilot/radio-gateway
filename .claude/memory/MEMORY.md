@@ -194,6 +194,30 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - `_kvset(id, val)` helper skips update if element is currently focused
 - `_ctrlEditUntil` timer remains as secondary guard (30s on focus for dropdowns)
 
+## Stable Checkpoint
+- Git tag `v-stable-pre-refactor` = last known-good state before major refactor
+- To restore: `git checkout v-stable-pre-refactor -- radio_gateway.py`
+
+## Planned Refactor (2026-03-20) — work on main, no branch
+**Order of work:**
+1. **Split into files** — mechanical only, no behaviour change
+   - `radio_gateway.py` — main() + config + startup (~200 lines)
+   - `gateway_core.py` — RadioGateway class, audio loops, PTT
+   - `audio_sources.py` — AIOC, SDR, KV4P, D75, Remote, Announce
+   - `ptt.py` — PTT controller classes
+   - `web_server.py` — WebConfigServer + HTTP handlers
+   - `web_dashboard.py` — dashboard HTML/JS strings
+   - `smart_announce.py` — SmartAnnouncementManager
+   - `cat_client.py` — RadioCATClient, D75CATClient
+2. **Lockfile fix** — `/tmp/gateway.lock` PID file in start.sh + gateway
+3. **Minor fixes** — ANSI in email, CW unknown chars, SA id=0 in UI, TCP_NODELAY dead key
+4. **PTT refactor** — per-radio PTT controller objects, per-source TX radio config
+   - `TH9800PTT`, `D75PTT`, `KV4PPTT` classes each with `key()`/`unkey()`
+   - Per-source TX radio: `PLAYBACK_TX_RADIO`, `TTS_TX_RADIO`, `SMART_ANNOUNCE_TX_RADIO`, `CW_TX_RADIO`, `MUMBLE_TX_RADIO`
+   - Remove global `TX_RADIO` and `PTT_METHOD` routing from `set_ptt_state()`
+   - TH9800PTT owns RTS state — no other code touches it
+   - PTT state tracked per-radio, not shared `ptt_active` flag
+
 ## Known Bugs Fixed (details in bugs.md)
 See bugs.md for full history. Key recent: DISPLAY_TEXT VFO misattribution (2026-03-13),
 RTS change corrupts display (2026-03-13), audio processing silent (scipy missing),
