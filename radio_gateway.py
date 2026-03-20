@@ -10216,6 +10216,50 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(b'{"ok":true}')
                     return
+                elif self.path == '/cw':
+                    # CW (Morse code) endpoint
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    ok = False
+                    error = None
+                    try:
+                        data = json_mod.loads(body)
+                        text = data.get('text', '').strip()
+                        if not text:
+                            error = 'no text provided'
+                        elif not parent.gateway:
+                            error = 'gateway not ready'
+                        elif not parent.gateway.playback_source:
+                            error = 'playback not available'
+                        else:
+                            gw = parent.gateway
+                            import threading
+                            def _do_cw():
+                                pcm = generate_cw_pcm(text, gw.config.CW_WPM,
+                                                      gw.config.CW_FREQUENCY, 48000)
+                                if gw.config.CW_VOLUME != 1.0:
+                                    import numpy as _np
+                                    pcm = _np.clip(pcm.astype(_np.float32) * gw.config.CW_VOLUME,
+                                                   -32768, 32767).astype(_np.int16)
+                                import wave as _wave, tempfile as _tmp
+                                tf = _tmp.NamedTemporaryFile(suffix='.wav', delete=False, prefix='cw_')
+                                tf.close()
+                                with _wave.open(tf.name, 'wb') as wf:
+                                    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(48000)
+                                    wf.writeframes(pcm.tobytes())
+                                if not gw.playback_source.queue_file(tf.name):
+                                    import os as _os
+                                    _os.unlink(tf.name)
+                            threading.Thread(target=_do_cw, daemon=True, name="WebCW").start()
+                            ok = True
+                    except Exception as e:
+                        error = str(e)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    resp = '{"ok":true}' if ok else '{"ok":false,"error":' + json_mod.dumps(error) + '}'
+                    self.wfile.write(resp.encode())
+                    return
                 elif self.path == '/tts':
                     # Text-to-speech endpoint
                     length = int(self.headers.get('Content-Length', 0))
@@ -14403,6 +14447,14 @@ pollTimer = setInterval(pollStatus, 1000);
       <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
     </div>
   </div>
+  <div class="ctrl-group" style="min-width:220px; width:220px;" id="cw-group">
+    <h3>Text to CW</h3>
+    <div style="display:flex; flex-direction:column; gap:3px;">
+      <textarea id="cw-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter text for CW..."></textarea>
+      <button onclick="sendCW()" id="btn-cw-send" style="width:100%;">Send CW</button>
+    </div>
+    <div id="cw-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+  </div>
   <div class="ctrl-group" style="min-width:280px; width:280px;" id="tts-group">
     <h3>Text to Speech</h3>
     <div style="display:flex; flex-direction:column; gap:3px;">
@@ -14471,6 +14523,25 @@ function togProc(source, filter) {
 }
 function darkiceCmd(cmd) {
   fetch('/darkicecmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+}
+function sendCW() {
+  var text = document.getElementById('cw-text').value.trim();
+  if (!text) return;
+  var btn = document.getElementById('btn-cw-send');
+  var st = document.getElementById('cw-status');
+  btn.disabled = true;
+  st.textContent = 'Sending...';
+  st.style.color = '#f1c40f';
+  fetch('/cw', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:text})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok) { st.textContent = 'Sent — playing'; st.style.color = '#2ecc71'; }
+      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      btn.disabled = false;
+      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 5000);
+    })
+    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+  if(document.activeElement) document.activeElement.blur();
 }
 function sendTTS() {
   var text = document.getElementById('tts-text').value.trim();
