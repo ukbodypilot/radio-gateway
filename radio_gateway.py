@@ -451,6 +451,9 @@ class Config:
             'MUMBLE_SERVER_2_ALLOW_HTML': True,
             'MUMBLE_SERVER_2_OPUS_THRESHOLD': 0,
             'MUMBLE_SERVER_2_AUTOSTART': False,
+            # ADS-B aircraft tracking (RTL-SDR via dump1090-fa + FlightRadar24)
+            'ENABLE_ADSB': False,
+            'ADSB_PORT': 30080,          # dump1090-fa HTTP port (30080 avoids conflict with gateway on 8080)
             # Automation Engine
             'ENABLE_AUTOMATION': False,
             'AUTOMATION_SCHEME_FILE': 'automation_scheme.txt',

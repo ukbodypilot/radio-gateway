@@ -125,6 +125,8 @@ class WebConfigServer:
         'KV4P_PROC_LPF_CUTOFF': 'Hz',
         'KV4P_PROC_NOTCH_FREQ': 'Hz',
         'KV4P_PROC_NOTCH_Q': 'quality factor (higher = narrower)',
+        # ADS-B
+        'ADSB_PORT': 'port dump1090-fa web server listens on (default 30080, avoids conflict with gateway on 8080)',
         # SDR 1
         'SDR_DEVICE_NAME': 'PipeWire sink or ALSA device (e.g. hw:6,1)',
         'SDR_MIX_RATIO': 'multiplier (when ducking disabled)',
@@ -310,15 +312,12 @@ class WebConfigServer:
     # which settings exist, what section they belong to, and their order.
     # Both the web config UI and the config file writer use this.
     _CONFIG_LAYOUT = [
-        ('mumble', 'Mumble Server', [
-            'MUMBLE_SERVER', 'MUMBLE_PORT', 'MUMBLE_USERNAME', 'MUMBLE_PASSWORD',
-            'MUMBLE_CHANNEL', 'MUMBLE_BITRATE', 'MUMBLE_VBR',
-            'MUMBLE_JITTER_BUFFER', 'MUMBLE_LOOP_RATE', 'MUMBLE_STEREO',
-            'MUMBLE_RECONNECT', 'MUMBLE_DEBUG',
+        ('adsb', 'ADS-B Aircraft Tracking', [
+            'ENABLE_ADSB', 'ADSB_PORT',
         ]),
-        ('radio', 'Radio Interface (AIOC)', [
-            'AIOC_VID', 'AIOC_PID', 'AIOC_INPUT_DEVICE', 'AIOC_OUTPUT_DEVICE',
-            'AIOC_PTT_CHANNEL',
+        ('announce', 'Announcement Input', [
+            'ENABLE_ANNOUNCE_INPUT', 'ANNOUNCE_INPUT_PORT', 'ANNOUNCE_INPUT_HOST',
+            'ANNOUNCE_INPUT_THRESHOLD', 'ANNOUNCE_INPUT_VOLUME',
         ]),
         ('audio', 'Audio Format & Buffering', [
             'AUDIO_RATE', 'AUDIO_CHUNK_SIZE', 'AUDIO_CHANNELS', 'AUDIO_BITS',
@@ -327,18 +326,6 @@ class WebConfigServer:
         ('levels', 'Audio Levels', [
             'INPUT_VOLUME', 'OUTPUT_VOLUME',
         ]),
-        ('ptt', 'PTT (Push-to-Talk)', [
-            'TX_RADIO', 'PTT_METHOD', 'PTT_RELAY_DEVICE', 'PTT_RELAY_BAUD',
-            'PTT_RELEASE_DELAY', 'PTT_ACTIVATION_DELAY',
-            'PTT_TTS_DELAY', 'PTT_ANNOUNCEMENT_DELAY',
-        ]),
-        ('vad', 'Voice Activity Detection', [
-            'ENABLE_VAD', 'VAD_THRESHOLD', 'VAD_ATTACK', 'VAD_RELEASE',
-            'VAD_MIN_DURATION',
-        ]),
-        ('vox', 'VOX', [
-            'ENABLE_VOX', 'VOX_THRESHOLD', 'VOX_ATTACK_TIME', 'VOX_RELEASE_TIME',
-        ]),
         ('processing', 'Audio Processing', [
             'ENABLE_AGC', 'ENABLE_NOISE_GATE', 'NOISE_GATE_THRESHOLD',
             'NOISE_GATE_ATTACK', 'NOISE_GATE_RELEASE',
@@ -346,6 +333,91 @@ class WebConfigServer:
             'ENABLE_LOWPASS_FILTER', 'LOWPASS_CUTOFF_FREQ',
             'ENABLE_NOTCH_FILTER', 'NOTCH_FREQ', 'NOTCH_Q',
             'ENABLE_ECHO_CANCELLATION',
+        ]),
+        ('automation', 'Automation Engine', [
+            'ENABLE_AUTOMATION', 'AUTOMATION_SCHEME_FILE',
+            'AUTOMATION_REPEATER_FILE', 'AUTOMATION_REPEATER_LAT', 'AUTOMATION_REPEATER_LON',
+            'AUTOMATION_RECORDINGS_DIR',
+            'AUTOMATION_START_TIME', 'AUTOMATION_END_TIME',
+            'AUTOMATION_MAX_TASK_DURATION',
+        ]),
+        ('streaming', 'Broadcastify Streaming', [
+            'ENABLE_STREAM_OUTPUT', 'STREAM_SERVER', 'STREAM_PORT',
+            'STREAM_PASSWORD', 'STREAM_MOUNT', 'STREAM_NAME',
+            'STREAM_DESCRIPTION', 'STREAM_BITRATE', 'STREAM_FORMAT',
+            'ENABLE_STREAM_HEALTH', 'STREAM_RESTART_INTERVAL',
+            'STREAM_RESTART_IDLE_TIME',
+        ]),
+        ('ddns', 'Dynamic DNS', [
+            'ENABLE_DDNS', 'DDNS_USERNAME', 'DDNS_PASSWORD', 'DDNS_HOSTNAME',
+            'DDNS_UPDATE_INTERVAL', 'DDNS_UPDATE_URL',
+        ]),
+        ('echolink', 'EchoLink', [
+            'ENABLE_ECHOLINK', 'ECHOLINK_RX_PIPE', 'ECHOLINK_TX_PIPE',
+            'ECHOLINK_TO_MUMBLE', 'ECHOLINK_TO_RADIO',
+            'RADIO_TO_ECHOLINK', 'MUMBLE_TO_ECHOLINK',
+        ]),
+        ('email', 'Email Notifications', [
+            'ENABLE_EMAIL', 'EMAIL_ADDRESS', 'EMAIL_APP_PASSWORD',
+            'EMAIL_RECIPIENT', 'EMAIL_ON_STARTUP',
+        ]),
+        ('playback', 'File Playback', [
+            'ENABLE_PLAYBACK', 'PLAYBACK_DIRECTORY',
+            'PLAYBACK_ANNOUNCEMENT_FILE', 'PLAYBACK_ANNOUNCEMENT_INTERVAL',
+            'PLAYBACK_VOLUME', 'ENABLE_SOUNDBOARD',
+        ]),
+        ('kv4p', 'KV4P HT Radio', [
+            'ENABLE_KV4P', 'KV4P_PORT', 'KV4P_FREQ', 'KV4P_TX_FREQ',
+            'KV4P_SQUELCH', 'KV4P_CTCSS_TX', 'KV4P_CTCSS_RX', 'KV4P_BANDWIDTH',
+            'KV4P_HIGH_POWER', 'KV4P_SMETER',
+            'KV4P_AUDIO_DUCK', 'KV4P_AUDIO_PRIORITY',
+            'KV4P_AUDIO_DISPLAY_GAIN', 'KV4P_AUDIO_BOOST', 'KV4P_RECONNECT_INTERVAL',
+            'KV4P_PROC_ENABLE_HPF', 'KV4P_PROC_HPF_CUTOFF',
+            'KV4P_PROC_ENABLE_LPF', 'KV4P_PROC_LPF_CUTOFF',
+            'KV4P_PROC_ENABLE_NOTCH', 'KV4P_PROC_NOTCH_FREQ', 'KV4P_PROC_NOTCH_Q',
+            'KV4P_PROC_ENABLE_NOISE_GATE', 'KV4P_PROC_NOISE_GATE_THRESHOLD',
+            'KV4P_PROC_NOISE_GATE_ATTACK', 'KV4P_PROC_NOISE_GATE_RELEASE',
+        ]),
+        ('mumble', 'Mumble Server', [
+            'MUMBLE_SERVER', 'MUMBLE_PORT', 'MUMBLE_USERNAME', 'MUMBLE_PASSWORD',
+            'MUMBLE_CHANNEL', 'MUMBLE_BITRATE', 'MUMBLE_VBR',
+            'MUMBLE_JITTER_BUFFER', 'MUMBLE_LOOP_RATE', 'MUMBLE_STEREO',
+            'MUMBLE_RECONNECT', 'MUMBLE_DEBUG',
+        ]),
+        ('mumble-server-1', 'Mumble Server 1', [
+            'ENABLE_MUMBLE_SERVER_1', 'MUMBLE_SERVER_1_PORT',
+            'MUMBLE_SERVER_1_PASSWORD', 'MUMBLE_SERVER_1_MAX_USERS',
+            'MUMBLE_SERVER_1_MAX_BANDWIDTH', 'MUMBLE_SERVER_1_WELCOME',
+            'MUMBLE_SERVER_1_REGISTER_NAME', 'MUMBLE_SERVER_1_ALLOW_HTML',
+            'MUMBLE_SERVER_1_OPUS_THRESHOLD', 'MUMBLE_SERVER_1_AUTOSTART',
+        ]),
+        ('mumble-server-2', 'Mumble Server 2', [
+            'ENABLE_MUMBLE_SERVER_2', 'MUMBLE_SERVER_2_PORT',
+            'MUMBLE_SERVER_2_PASSWORD', 'MUMBLE_SERVER_2_MAX_USERS',
+            'MUMBLE_SERVER_2_MAX_BANDWIDTH', 'MUMBLE_SERVER_2_WELCOME',
+            'MUMBLE_SERVER_2_REGISTER_NAME', 'MUMBLE_SERVER_2_ALLOW_HTML',
+            'MUMBLE_SERVER_2_OPUS_THRESHOLD', 'MUMBLE_SERVER_2_AUTOSTART',
+        ]),
+        ('ptt', 'PTT (Push-to-Talk)', [
+            'TX_RADIO', 'PTT_METHOD', 'PTT_RELAY_DEVICE', 'PTT_RELAY_BAUD',
+            'PTT_RELEASE_DELAY', 'PTT_ACTIVATION_DELAY',
+            'PTT_TTS_DELAY', 'PTT_ANNOUNCEMENT_DELAY',
+        ]),
+        ('radio', 'Radio Interface (AIOC)', [
+            'AIOC_VID', 'AIOC_PID', 'AIOC_INPUT_DEVICE', 'AIOC_OUTPUT_DEVICE',
+            'AIOC_PTT_CHANNEL',
+        ]),
+        ('relay', 'Relay Control', [
+            'ENABLE_RELAY_RADIO', 'RELAY_RADIO_DEVICE', 'RELAY_RADIO_BAUD',
+            'ENABLE_RELAY_CHARGER', 'RELAY_CHARGER_CONTROL', 'CHARGER_RELAY_GPIO',
+            'RELAY_CHARGER_DEVICE', 'RELAY_CHARGER_BAUD',
+            'RELAY_CHARGER_ON_TIME', 'RELAY_CHARGER_OFF_TIME',
+        ]),
+        ('remote', 'Remote Audio Link', [
+            'REMOTE_AUDIO_ROLE', 'REMOTE_AUDIO_HOST', 'REMOTE_AUDIO_PORT',
+            'REMOTE_AUDIO_DUCK', 'REMOTE_AUDIO_PRIORITY',
+            'REMOTE_AUDIO_DISPLAY_GAIN', 'REMOTE_AUDIO_AUDIO_BOOST',
+            'REMOTE_AUDIO_RECONNECT_INTERVAL',
         ]),
         ('sdr_processing', 'SDR Audio Processing', [
             'SDR_PROC_ENABLE_NOISE_GATE', 'SDR_PROC_NOISE_GATE_THRESHOLD',
@@ -371,50 +443,6 @@ class WebConfigServer:
             'SIGNAL_ATTACK_TIME', 'SIGNAL_RELEASE_TIME', 'SWITCH_PADDING_TIME',
             'SDR_DUCK_COOLDOWN', 'SDR_SIGNAL_THRESHOLD', 'SDR_REBROADCAST_PTT_HOLD',
         ]),
-        ('remote', 'Remote Audio Link', [
-            'REMOTE_AUDIO_ROLE', 'REMOTE_AUDIO_HOST', 'REMOTE_AUDIO_PORT',
-            'REMOTE_AUDIO_DUCK', 'REMOTE_AUDIO_PRIORITY',
-            'REMOTE_AUDIO_DISPLAY_GAIN', 'REMOTE_AUDIO_AUDIO_BOOST',
-            'REMOTE_AUDIO_RECONNECT_INTERVAL',
-        ]),
-        ('announce', 'Announcement Input', [
-            'ENABLE_ANNOUNCE_INPUT', 'ANNOUNCE_INPUT_PORT', 'ANNOUNCE_INPUT_HOST',
-            'ANNOUNCE_INPUT_THRESHOLD', 'ANNOUNCE_INPUT_VOLUME',
-        ]),
-        ('playback', 'File Playback', [
-            'ENABLE_PLAYBACK', 'PLAYBACK_DIRECTORY',
-            'PLAYBACK_ANNOUNCEMENT_FILE', 'PLAYBACK_ANNOUNCEMENT_INTERVAL',
-            'PLAYBACK_VOLUME', 'ENABLE_SOUNDBOARD',
-        ]),
-        ('cw', 'Text to CW', [
-            'CW_WPM', 'CW_FREQUENCY', 'CW_VOLUME',
-        ]),
-        ('tts', 'Text-to-Speech', [
-            'ENABLE_TTS', 'TTS_ENGINE', 'ENABLE_TEXT_COMMANDS', 'TTS_VOLUME', 'TTS_SPEED',
-            'TTS_DEFAULT_VOICE',
-        ]),
-        ('speaker', 'Speaker Output', [
-            'ENABLE_SPEAKER_OUTPUT', 'SPEAKER_OUTPUT_DEVICE', 'SPEAKER_VOLUME',
-            'SPEAKER_START_MUTED',
-        ]),
-        ('streaming', 'Broadcastify Streaming', [
-            'ENABLE_STREAM_OUTPUT', 'STREAM_SERVER', 'STREAM_PORT',
-            'STREAM_PASSWORD', 'STREAM_MOUNT', 'STREAM_NAME',
-            'STREAM_DESCRIPTION', 'STREAM_BITRATE', 'STREAM_FORMAT',
-            'ENABLE_STREAM_HEALTH', 'STREAM_RESTART_INTERVAL',
-            'STREAM_RESTART_IDLE_TIME',
-        ]),
-        ('echolink', 'EchoLink', [
-            'ENABLE_ECHOLINK', 'ECHOLINK_RX_PIPE', 'ECHOLINK_TX_PIPE',
-            'ECHOLINK_TO_MUMBLE', 'ECHOLINK_TO_RADIO',
-            'RADIO_TO_ECHOLINK', 'MUMBLE_TO_ECHOLINK',
-        ]),
-        ('relay', 'Relay Control', [
-            'ENABLE_RELAY_RADIO', 'RELAY_RADIO_DEVICE', 'RELAY_RADIO_BAUD',
-            'ENABLE_RELAY_CHARGER', 'RELAY_CHARGER_CONTROL', 'CHARGER_RELAY_GPIO',
-            'RELAY_CHARGER_DEVICE', 'RELAY_CHARGER_BAUD',
-            'RELAY_CHARGER_ON_TIME', 'RELAY_CHARGER_OFF_TIME',
-        ]),
         ('smart', 'Smart Announcements', [
             'ENABLE_SMART_ANNOUNCE', 'SMART_ANNOUNCE_AI_BACKEND',
             'SMART_ANNOUNCE_OLLAMA_MODEL', 'SMART_ANNOUNCE_OLLAMA_TEMPERATURE',
@@ -433,6 +461,17 @@ class WebConfigServer:
             'SMART_ANNOUNCE_3_VOICE', 'SMART_ANNOUNCE_3_TARGET_SECS',
             'SMART_ANNOUNCE_3_MODE', 'SMART_ANNOUNCE_3_TOP_TEXT', 'SMART_ANNOUNCE_3_TAIL_TEXT',
         ]),
+        ('speaker', 'Speaker Output', [
+            'ENABLE_SPEAKER_OUTPUT', 'SPEAKER_OUTPUT_DEVICE', 'SPEAKER_VOLUME',
+            'SPEAKER_START_MUTED',
+        ]),
+        ('cw', 'Text to CW', [
+            'CW_WPM', 'CW_FREQUENCY', 'CW_VOLUME',
+        ]),
+        ('tts', 'Text-to-Speech', [
+            'ENABLE_TTS', 'TTS_ENGINE', 'ENABLE_TEXT_COMMANDS', 'TTS_VOLUME', 'TTS_SPEED',
+            'TTS_DEFAULT_VOICE',
+        ]),
         ('cat', 'TH-9800 CAT Control', [
             'ENABLE_TH9800', 'CAT_STARTUP_COMMANDS',
             'CAT_HOST', 'CAT_PORT', 'CAT_PASSWORD',
@@ -450,52 +489,18 @@ class WebConfigServer:
             'D75_PROC_ENABLE_NOISE_GATE', 'D75_PROC_NOISE_GATE_THRESHOLD',
             'D75_PROC_NOISE_GATE_ATTACK', 'D75_PROC_NOISE_GATE_RELEASE',
         ]),
-        ('kv4p', 'KV4P HT Radio', [
-            'ENABLE_KV4P', 'KV4P_PORT', 'KV4P_FREQ', 'KV4P_TX_FREQ',
-            'KV4P_SQUELCH', 'KV4P_CTCSS_TX', 'KV4P_CTCSS_RX', 'KV4P_BANDWIDTH',
-            'KV4P_HIGH_POWER', 'KV4P_SMETER',
-            'KV4P_AUDIO_DUCK', 'KV4P_AUDIO_PRIORITY',
-            'KV4P_AUDIO_DISPLAY_GAIN', 'KV4P_AUDIO_BOOST', 'KV4P_RECONNECT_INTERVAL',
-            'KV4P_PROC_ENABLE_HPF', 'KV4P_PROC_HPF_CUTOFF',
-            'KV4P_PROC_ENABLE_LPF', 'KV4P_PROC_LPF_CUTOFF',
-            'KV4P_PROC_ENABLE_NOTCH', 'KV4P_PROC_NOTCH_FREQ', 'KV4P_PROC_NOTCH_Q',
-            'KV4P_PROC_ENABLE_NOISE_GATE', 'KV4P_PROC_NOISE_GATE_THRESHOLD',
-            'KV4P_PROC_NOISE_GATE_ATTACK', 'KV4P_PROC_NOISE_GATE_RELEASE',
+        ('vad', 'Voice Activity Detection', [
+            'ENABLE_VAD', 'VAD_THRESHOLD', 'VAD_ATTACK', 'VAD_RELEASE',
+            'VAD_MIN_DURATION',
+        ]),
+        ('vox', 'VOX', [
+            'ENABLE_VOX', 'VOX_THRESHOLD', 'VOX_ATTACK_TIME', 'VOX_RELEASE_TIME',
         ]),
         ('web', 'Web Configuration', [
             'ENABLE_WEB_CONFIG', 'WEB_CONFIG_PORT', 'WEB_CONFIG_PASSWORD',
             'WEB_CONFIG_HTTPS', 'GATEWAY_NAME', 'WEB_THEME',
             'ENABLE_WEB_MIC', 'WEB_MIC_VOLUME',
             'ENABLE_CLOUDFLARE_TUNNEL',
-        ]),
-        ('email', 'Email Notifications', [
-            'ENABLE_EMAIL', 'EMAIL_ADDRESS', 'EMAIL_APP_PASSWORD',
-            'EMAIL_RECIPIENT', 'EMAIL_ON_STARTUP',
-        ]),
-        ('ddns', 'Dynamic DNS', [
-            'ENABLE_DDNS', 'DDNS_USERNAME', 'DDNS_PASSWORD', 'DDNS_HOSTNAME',
-            'DDNS_UPDATE_INTERVAL', 'DDNS_UPDATE_URL',
-        ]),
-        ('mumble-server-1', 'Mumble Server 1', [
-            'ENABLE_MUMBLE_SERVER_1', 'MUMBLE_SERVER_1_PORT',
-            'MUMBLE_SERVER_1_PASSWORD', 'MUMBLE_SERVER_1_MAX_USERS',
-            'MUMBLE_SERVER_1_MAX_BANDWIDTH', 'MUMBLE_SERVER_1_WELCOME',
-            'MUMBLE_SERVER_1_REGISTER_NAME', 'MUMBLE_SERVER_1_ALLOW_HTML',
-            'MUMBLE_SERVER_1_OPUS_THRESHOLD', 'MUMBLE_SERVER_1_AUTOSTART',
-        ]),
-        ('mumble-server-2', 'Mumble Server 2', [
-            'ENABLE_MUMBLE_SERVER_2', 'MUMBLE_SERVER_2_PORT',
-            'MUMBLE_SERVER_2_PASSWORD', 'MUMBLE_SERVER_2_MAX_USERS',
-            'MUMBLE_SERVER_2_MAX_BANDWIDTH', 'MUMBLE_SERVER_2_WELCOME',
-            'MUMBLE_SERVER_2_REGISTER_NAME', 'MUMBLE_SERVER_2_ALLOW_HTML',
-            'MUMBLE_SERVER_2_OPUS_THRESHOLD', 'MUMBLE_SERVER_2_AUTOSTART',
-        ]),
-        ('automation', 'Automation Engine', [
-            'ENABLE_AUTOMATION', 'AUTOMATION_SCHEME_FILE',
-            'AUTOMATION_REPEATER_FILE', 'AUTOMATION_REPEATER_LAT', 'AUTOMATION_REPEATER_LON',
-            'AUTOMATION_RECORDINGS_DIR',
-            'AUTOMATION_START_TIME', 'AUTOMATION_END_TIME',
-            'AUTOMATION_MAX_TASK_DURATION',
         ]),
         ('advanced', 'Advanced / Diagnostics', [
             'HEADLESS_MODE', 'LOG_BUFFER_LINES', 'LOG_FILE_DAYS',
@@ -904,6 +909,50 @@ class WebConfigServer:
                         data = parent.gateway.automation_engine.get_status()
                     else:
                         data = {'enabled': False}
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
+                elif self.path == '/adsbstatus':
+                    # ADS-B component status and live aircraft data
+                    import json as json_mod
+                    data = {'enabled': False, 'dump1090': False, 'web': False, 'fr24feed': False,
+                            'aircraft': 0, 'messages': 0, 'messages_rate': 0.0}
+                    data['enabled'] = bool(getattr(parent.config, 'ENABLE_ADSB', False)) if parent.config else False
+                    if data['enabled']:
+                        # Service liveness checks
+                        for _svc, _key in [('dump1090-fa', 'dump1090'), ('dump1090-fa-web', 'web'), ('fr24feed', 'fr24feed')]:
+                            try:
+                                _r = subprocess.run(['systemctl', 'is-active', _svc],
+                                                    capture_output=True, text=True, timeout=2)
+                                data[_key] = (_r.stdout.strip() == 'active')
+                            except Exception:
+                                data[_key] = False
+                        # Live aircraft data from dump1090 JSON output
+                        try:
+                            import json as _jm
+                            with open('/run/dump1090-fa/aircraft.json') as _af:
+                                _ac = _jm.load(_af)
+                            _now = _ac.get('now', 0)
+                            data['aircraft'] = sum(1 for a in _ac.get('aircraft', []) if a.get('seen', 999) < 60)
+                            _msgs = _ac.get('messages', 0)
+                            # Compute message rate using previous sample
+                            _prev = getattr(parent, '_adsb_prev_msgs', None)
+                            _prev_t = getattr(parent, '_adsb_prev_t', 0)
+                            import time as _time_mod
+                            _now_t = _time_mod.monotonic()
+                            if _prev is not None and _now_t > _prev_t:
+                                _dt = _now_t - _prev_t
+                                data['messages_rate'] = round((_msgs - _prev) / _dt, 1)
+                            data['messages'] = _msgs
+                            parent._adsb_prev_msgs = _msgs
+                            parent._adsb_prev_t = _now_t
+                        except Exception:
+                            pass
                     try:
                         self.send_response(200)
                         self.send_header('Content-Type', 'application/json')
@@ -1350,6 +1399,66 @@ class WebConfigServer:
                                 self.wfile.write(chunk)
                     except BrokenPipeError:
                         pass
+                elif self.path == '/aircraft':
+                    # ADS-B aircraft map page (wraps dump1090-fa in iframe)
+                    html = parent._generate_aircraft_page()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(html.encode('utf-8'))
+                elif self.path == '/adsb' or self.path.startswith('/adsb/'):
+                    # Reverse proxy to dump1090-fa web interface
+                    import urllib.request as _ureq
+                    import urllib.error as _uerr
+                    _adsb_port = int(getattr(parent.config, 'ADSB_PORT', 30080)) if parent.config else 30080
+                    # Strip /adsb prefix — /adsb → /, /adsb/foo → /foo
+                    _proxy_path = self.path[5:] or '/'
+                    _target = f'http://127.0.0.1:{_adsb_port}{_proxy_path}'
+                    try:
+                        _req = _ureq.Request(_target)
+                        # Forward useful request headers
+                        for _h in ('Accept', 'Accept-Language', 'If-Modified-Since', 'If-None-Match', 'Accept-Encoding'):
+                            _v = self.headers.get(_h)
+                            if _v:
+                                _req.add_header(_h, _v)
+                        with _ureq.urlopen(_req, timeout=10) as _resp:
+                            _body = _resp.read()
+                            _ctype = _resp.headers.get('Content-Type', 'application/octet-stream')
+                            _etag = _resp.headers.get('ETag', '')
+                            _lmod = _resp.headers.get('Last-Modified', '')
+                            self.send_response(200)
+                            self.send_header('Content-Type', _ctype)
+                            self.send_header('Content-Length', str(len(_body)))
+                            if _etag:
+                                self.send_header('ETag', _etag)
+                            if _lmod:
+                                self.send_header('Last-Modified', _lmod)
+                            self.end_headers()
+                            self.wfile.write(_body)
+                    except _uerr.HTTPError as _e:
+                        try:
+                            self.send_response(_e.code)
+                            self.end_headers()
+                        except BrokenPipeError:
+                            pass
+                    except Exception:
+                        _adsb_err = (
+                            f'<html><head><meta charset="utf-8"></head><body style="background:#1a1a1a;color:#e0e0e0;'
+                            f'font-family:-apple-system,sans-serif;text-align:center;padding-top:80px">'
+                            f'<h2 style="color:#e74c3c">ADS-B Unavailable</h2>'
+                            f'<p style="margin-top:12px">dump1090-fa is not running on port {_adsb_port}</p>'
+                            f'<p style="margin-top:8px;color:#888">Start it with:</p>'
+                            f'<code style="display:block;margin-top:8px;color:#2ecc71">sudo systemctl start dump1090-fa</code>'
+                            f'</body></html>'
+                        ).encode('utf-8')
+                        try:
+                            self.send_response(503)
+                            self.send_header('Content-Type', 'text/html; charset=utf-8')
+                            self.send_header('Content-Length', str(len(_adsb_err)))
+                            self.end_headers()
+                            self.wfile.write(_adsb_err)
+                        except BrokenPipeError:
+                            pass
                 elif self.path == '/config':
                     # Config editor
                     html = parent._generate_html()
@@ -2075,6 +2184,22 @@ class WebConfigServer:
                     except BrokenPipeError:
                         pass
                     return
+                elif self.path == '/reboothost':
+                    import subprocess as _sp
+                    result = {'ok': False}
+                    try:
+                        _sp.Popen(['sudo', 'reboot'])
+                        result = {'ok': True}
+                    except Exception as _e:
+                        result = {'ok': False, 'error': str(_e)}
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(result).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
+                    return
                 elif self.path == '/refreshsounds':
                     # Re-randomize soundboard slots
                     result = {'ok': False, 'count': 0}
@@ -2628,9 +2753,11 @@ class WebConfigServer:
         has_radio = getattr(self.config, 'ENABLE_CAT_CONTROL', False) or getattr(self.config, 'ENABLE_TH9800', False)
         has_d75 = getattr(self.config, 'ENABLE_D75', False)
         has_kv4p = getattr(self.config, 'ENABLE_KV4P', False)
+        has_adsb = getattr(self.config, 'ENABLE_ADSB', False)
         _radio_link = '<a href="/radio" target="content" onclick="setActive(this)">TH-9800</a>' if has_radio else '<a class="nav-disabled">TH-9800</a>'
         _d75_link = '<a href="/d75" target="content" onclick="setActive(this)">TH-D75</a>' if has_d75 else '<a class="nav-disabled">TH-D75</a>'
         _kv4p_link = '<a href="/kv4p" target="content" onclick="setActive(this)">KV4P</a>' if has_kv4p else '<a class="nav-disabled">KV4P</a>'
+        _adsb_link = '<a href="/aircraft" target="content" onclick="setActive(this)">ADS-B</a>' if has_adsb else ''
         return f'''<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
@@ -2680,7 +2807,7 @@ class WebConfigServer:
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a><a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}<a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
   </div>
   <div class="shell-pcm">
     <button id="play-btn" onclick="toggleStream()" style="min-width:62px; text-align:center;">&#9654; MP3</button>
@@ -2999,6 +3126,7 @@ function setWSVol(v) {{
   <button class="rb rb-sm" onclick="clearLog()">Clear</button>
   <button class="rb rb-sm" id="btn-trace" onclick="toggleTrace('audio')">Audio Trace</button>
   <button class="rb rb-sm" id="btn-watchdog" onclick="toggleTrace('watchdog')">Watchdog Trace</button>
+  <button class="rb rb-sm" id="btn-reboot" onclick="rebootHost()" style="background:#7f0000; border-color:#c0392b; color:#ffcccc; margin-left:auto;">Reboot Host</button>
   <span id="log-status" style="color:#888; font-size:0.8em;"></span>
 </div>
 <div id="log-box" style="background:#0a0a0a; border:1px solid var(--t-btn-border); border-radius:4px; padding:8px; height:calc(100vh - 160px); overflow-y:auto; font-family:'Courier New',monospace; font-size:0.82em; line-height:1.5; white-space:pre-wrap; word-break:break-all; color:#c0c0c0;">
@@ -3081,6 +3209,29 @@ function pollLogs() {
     .catch(function() {
       document.getElementById('log-status').textContent = 'offline';
       setTimeout(pollLogs, 3000);
+    });
+}
+
+function rebootHost() {
+  if (!confirm('Reboot the host machine?')) return;
+  var btn = document.getElementById('btn-reboot');
+  btn.disabled = true;
+  btn.textContent = 'Rebooting…';
+  fetch('/reboothost', {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        btn.textContent = 'Rebooting…';
+        document.getElementById('log-status').textContent = 'Host reboot initiated';
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Reboot Host';
+        alert('Reboot failed: ' + (d.error || 'unknown error'));
+      }
+    })
+    .catch(function() {
+      btn.textContent = 'Rebooting…';
+      document.getElementById('log-status').textContent = 'Host reboot initiated';
     });
 }
 
@@ -4752,6 +4903,39 @@ kvPoll();
 '''
         return self._wrap_html('KV4P Control', body)
 
+    def _generate_aircraft_page(self):
+        """Build the ADS-B aircraft map page — a full-height iframe proxying dump1090-fa."""
+        t = self._get_theme()
+        adsb_port = int(getattr(self.config, 'ADSB_PORT', 30080))
+        return f'''<!DOCTYPE html>
+<html style="height:100%;margin:0;padding:0"><head>
+<meta charset="utf-8">
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  html, body {{ height: 100%; overflow: hidden; background: {t['bg']}; }}
+  #adsb-frame {{ width: 100%; height: 100%; border: none; display: block; }}
+  #adsb-error {{
+    display: none; height: 100%; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px; color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: {t['bg']};
+  }}
+  #adsb-error h2 {{ color: #e74c3c; }}
+  #adsb-error code {{ color: {t['accent']}; }}
+</style>
+</head><body>
+<div id="adsb-error">
+  <h2>ADS-B Unavailable</h2>
+  <p>dump1090-fa is not running on port {adsb_port}</p>
+  <p style="color:#888">Start it with:</p>
+  <code>sudo systemctl start dump1090-fa</code>
+</div>
+<iframe id="adsb-frame" src="/adsb/"
+  onload="document.getElementById('adsb-error').style.display='none';this.style.display='block';"
+  onerror="document.getElementById('adsb-error').style.display='flex';this.style.display='none';">
+</iframe>
+</body></html>'''
+
     def _generate_sdr_page(self):
         """Build the SDR control HTML page."""
         body = '''
@@ -5544,6 +5728,24 @@ pollTimer = setInterval(pollStatus, 1000);
     <summary style="padding:4px 0; color:var(--t-accent); font-size:0.95em;">Recent History</summary>
     <div id="auto-history" style="max-height:300px; overflow-y:auto; font-size:0.85em; margin-top:4px;"></div>
   </details>
+</div>
+
+<div id="adsb-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">ADS-B Aircraft Tracking</h3>
+    <a href="/aircraft" target="content" onclick="setActive(document.querySelector('.shell-nav a[href=\\'/aircraft\\']'))"
+       style="font-size:0.85em; color:var(--t-accent); text-decoration:none;">&rarr; Open Map</a>
+  </div>
+  <div class="st-row" style="margin-bottom:8px;">
+    <div class="st-item"><span class="st-label">dump1090-fa:</span><span id="adsb-svc-d1090" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Web:</span><span id="adsb-svc-web" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">fr24feed:</span><span id="adsb-svc-fr24" class="st-val">&#x25cf;</span></div>
+  </div>
+  <div class="st-row">
+    <div class="st-item"><span class="st-label">Aircraft:</span><span id="adsb-aircraft" class="st-val cyan">--</span></div>
+    <div class="st-item"><span class="st-label">Messages:</span><span id="adsb-messages" class="st-val white">--</span></div>
+    <div class="st-item"><span class="st-label">Rate:</span><span id="adsb-rate" class="st-val green">--</span><span class="st-label"> msg/s</span></div>
+  </div>
 </div>
 
 <div class="controls">
@@ -6543,6 +6745,32 @@ setInterval(updateAutomation, 2000);
 setInterval(updateAutoHistory, 5000);
 updateAutomation();
 updateAutoHistory();
+
+// --- ADS-B Status ---
+var _adsbBusy = false;
+function updateAdsb() {
+  if (_adsbBusy) return;
+  _adsbBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/adsbstatus', {signal:_ac.signal}).then(function(r){return r.json();}).then(function(d) {
+    var panel = document.getElementById('adsb-panel');
+    if (!d.enabled) { panel.style.display='none'; return; }
+    panel.style.display='';
+    function svcDot(el, ok) {
+      el.textContent = '\u25cf';
+      el.style.color = ok ? '#2ecc71' : '#e74c3c';
+      el.title = ok ? 'running' : 'stopped';
+    }
+    svcDot(document.getElementById('adsb-svc-d1090'), d.dump1090);
+    svcDot(document.getElementById('adsb-svc-web'), d.web);
+    svcDot(document.getElementById('adsb-svc-fr24'), d.fr24feed);
+    document.getElementById('adsb-aircraft').textContent = d.aircraft;
+    document.getElementById('adsb-messages').textContent = d.messages.toLocaleString();
+    document.getElementById('adsb-rate').textContent = d.messages_rate > 0 ? d.messages_rate.toFixed(1) : '0.0';
+  }).catch(function(){}).finally(function(){ _adsbBusy=false; });
+}
+setInterval(updateAdsb, 3000);
+updateAdsb();
 
 // --- Web Mic PTT ---
 var _dbMicWs=null, _dbMicStream=null, _dbMicCtx=null, _dbMicProc=null, _dbMicActive=false;

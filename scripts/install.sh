@@ -920,6 +920,264 @@ fi
 set -e
 echo
 
+# ── 7b. ADS-B stack (optional — dump1090-fa + FlightRadar24 feeder) ─
+echo "[ 7b ] Installing ADS-B stack (optional — dump1090-fa + fr24feed)..."
+set +e
+
+DUMP1090_PORT=30080   # Avoids conflict with gateway default port 8080
+
+if [ "$DISTRO" = "arch" ]; then
+    # ── RTL-SDR SoapySDR plugin (from official extra repo) ──
+    if pacman -Q soapyrtlsdr &>/dev/null; then
+        echo "  ✓ soapyrtlsdr already installed"
+    else
+        sudo pacman -S --noconfirm soapyrtlsdr \
+            && echo "  ✓ soapyrtlsdr installed" \
+            || echo "  ⚠ Could not install soapyrtlsdr"
+    fi
+
+    # ── lighttpd (serves dump1090-fa web UI) ──
+    if command -v lighttpd &>/dev/null; then
+        echo "  ✓ lighttpd already installed"
+    else
+        sudo pacman -S --noconfirm lighttpd \
+            && echo "  ✓ lighttpd installed" \
+            || echo "  ⚠ Could not install lighttpd"
+    fi
+
+    # ── dump1090-fa: build from source (AUR package fails on modern GCC) ──
+    if command -v dump1090-fa &>/dev/null; then
+        echo "  ✓ dump1090-fa already installed"
+    else
+        echo "  Building dump1090-fa from source (FlightAware GitHub)..."
+        _D1090_BUILD=$(mktemp -d)
+        if git clone --depth 1 https://github.com/flightaware/dump1090.git "$_D1090_BUILD" 2>/dev/null; then
+            # Remove -Werror so it builds on newer GCC without warnings-as-errors
+            sed -i 's/-Werror //' "$_D1090_BUILD/Makefile"
+            sed -i 's/-Werror$//' "$_D1090_BUILD/Makefile"
+            if make -C "$_D1090_BUILD" -j"$(nproc)" RTLSDR=yes 2>/dev/null; then
+                sudo install -Dm755 "$_D1090_BUILD/dump1090" /usr/bin/dump1090-fa
+                sudo install -Dm755 "$_D1090_BUILD/view1090" /usr/bin/view1090
+                sudo mkdir -p /usr/share/dump1090-fa
+                sudo cp -r "$_D1090_BUILD/public_html" /usr/share/dump1090-fa/html
+                echo "  ✓ dump1090-fa built and installed"
+            else
+                echo "  ⚠ dump1090-fa build failed — check build deps: sudo pacman -S base-devel librtlsdr"
+            fi
+        else
+            echo "  ⚠ Could not clone dump1090-fa from GitHub"
+        fi
+        rm -rf "$_D1090_BUILD"
+    fi
+
+    # ── fr24feed: AUR package 'flightradar24' (pre-built binary from FR24) ──
+    # Requires --nodeps because 'dump1090' generic dep has no pacman provider
+    AUR_USER=${SUDO_USER:-$USER}
+    AUR_HELPER=""
+    for helper in yay paru; do
+        if sudo -u "$AUR_USER" bash -c "command -v $helper" &>/dev/null; then
+            AUR_HELPER="$helper"
+            break
+        fi
+    done
+
+    if command -v fr24feed &>/dev/null || pacman -Q flightradar24 &>/dev/null; then
+        echo "  ✓ fr24feed (flightradar24) already installed"
+    elif [ -n "$AUR_HELPER" ]; then
+        echo "  Installing fr24feed from AUR (flightradar24)..."
+        _FR24_PKG=$(mktemp -d)
+        if sudo -u "$AUR_USER" bash -c "cd '$_FR24_PKG' && $AUR_HELPER -G flightradar24 --getpkgbuild" 2>/dev/null \
+            && sudo -u "$AUR_USER" bash -c "cd '$_FR24_PKG/flightradar24' && makepkg --noconfirm --skipchecksums" 2>/dev/null; then
+            _PKG_FILE=$(ls "$_FR24_PKG"/flightradar24/flightradar24-*.pkg.tar.zst 2>/dev/null | head -1)
+            if [ -n "$_PKG_FILE" ]; then
+                sudo pacman -U "$_PKG_FILE" --nodeps --nodeps --noconfirm \
+                    && echo "  ✓ fr24feed installed" \
+                    || echo "  ⚠ Could not install fr24feed package"
+            else
+                echo "  ⚠ fr24feed package file not found after build"
+            fi
+        else
+            echo "  ⚠ Could not build fr24feed from AUR"
+            echo "    Manual: $AUR_HELPER -G flightradar24 && cd flightradar24 && makepkg -si --nodeps"
+        fi
+        rm -rf "$_FR24_PKG"
+    else
+        echo "  ⚠ No AUR helper found — cannot install fr24feed"
+        echo "    Install yay/paru, then: yay -G flightradar24 && cd flightradar24 && makepkg -si --nodeps"
+    fi
+
+    # ── dump1090 user and rtlsdr group membership ──
+    id dump1090 &>/dev/null || sudo useradd -r -s /sbin/nologin -d /var/lib/dump1090-fa dump1090
+    sudo usermod -aG rtlsdr dump1090 2>/dev/null || true
+    sudo mkdir -p /var/lib/dump1090-fa
+    sudo chown dump1090:dump1090 /var/lib/dump1090-fa 2>/dev/null || true
+
+    # ── lighttpd config for dump1090-fa on port 30080 ──
+    sudo mkdir -p /etc/dump1090-fa
+    if [ ! -f /etc/dump1090-fa/lighttpd.conf ]; then
+        sudo tee /etc/dump1090-fa/lighttpd.conf > /dev/null << LIGHTTPD_EOF
+server.port = $DUMP1090_PORT
+server.bind = "0.0.0.0"
+server.document-root = "/usr/share/dump1090-fa/html"
+server.pid-file = "/run/dump1090-fa/lighttpd.pid"
+server.errorlog = "/var/log/dump1090-fa-lighttpd.log"
+server.modules = ( "mod_alias", "mod_setenv", "mod_staticfile", "mod_dirlisting" )
+index-file.names = ( "index.html" )
+alias.url = ( "/data/" => "/run/dump1090-fa/" )
+\$HTTP["url"] =~ "^/data/.*\\.json\$" {
+    setenv.set-response-header = ( "Access-Control-Allow-Origin" => "*" )
+}
+mimetype.assign = (
+    ".html" => "text/html", ".js" => "application/javascript",
+    ".css"  => "text/css",  ".json" => "application/json",
+    ".png"  => "image/png", ".gif" => "image/gif", ".ico" => "image/x-icon"
+)
+LIGHTTPD_EOF
+        echo "  ✓ lighttpd config written for port $DUMP1090_PORT"
+    else
+        echo "  ✓ lighttpd config already exists"
+    fi
+
+    # ── systemd service: dump1090-fa decoder ──
+    if [ ! -f /etc/systemd/system/dump1090-fa.service ]; then
+        sudo tee /etc/systemd/system/dump1090-fa.service > /dev/null << SVCEOF
+[Unit]
+Description=dump1090-fa ADS-B receiver
+After=network.target
+
+[Service]
+User=dump1090
+Group=rtlsdr
+RuntimeDirectory=dump1090-fa
+RuntimeDirectoryMode=0755
+ExecStart=/usr/bin/dump1090-fa --device-type rtlsdr --net --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004 --write-json /run/dump1090-fa --quiet
+Type=simple
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        echo "  ✓ dump1090-fa.service created"
+    fi
+
+    # ── systemd service: dump1090-fa web (lighttpd) ──
+    if [ ! -f /etc/systemd/system/dump1090-fa-web.service ]; then
+        sudo tee /etc/systemd/system/dump1090-fa-web.service > /dev/null << WEBSVCEOF
+[Unit]
+Description=dump1090-fa web interface (lighttpd on port $DUMP1090_PORT)
+After=dump1090-fa.service
+Requires=dump1090-fa.service
+
+[Service]
+Type=forking
+PIDFile=/run/dump1090-fa/lighttpd.pid
+ExecStart=/usr/bin/lighttpd -f /etc/dump1090-fa/lighttpd.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+WEBSVCEOF
+        echo "  ✓ dump1090-fa-web.service created"
+    fi
+
+else
+    # Debian/Ubuntu/Raspberry Pi — use FlightAware apt repo for dump1090-fa
+    # and FlightRadar24 apt repo for fr24feed
+
+    # dump1090-fa via FlightAware piaware apt repository
+    if command -v dump1090-fa &>/dev/null; then
+        echo "  ✓ dump1090-fa already installed"
+    else
+        echo "  Adding FlightAware apt repository and installing dump1090-fa..."
+        FA_DEB_URL="https://flightaware.com/adsb/piaware/files/packages/pool/piaware/p/piaware-support"
+        FA_DEB="piaware-support_10.0_all.deb"
+        if curl -fsSL "${FA_DEB_URL}/${FA_DEB}" -o "/tmp/${FA_DEB}" 2>/dev/null; then
+            if sudo dpkg -i "/tmp/${FA_DEB}" 2>/dev/null && sudo apt-get install -y dump1090-fa 2>/dev/null; then
+                echo "  ✓ dump1090-fa installed"
+            else
+                echo "  ⚠ Could not install dump1090-fa via FlightAware repo"
+                echo "    Manual install: https://flightaware.com/adsb/piaware/install"
+            fi
+            rm -f "/tmp/${FA_DEB}"
+        else
+            echo "  ⚠ Could not download FlightAware apt package"
+            echo "    Manual install: https://flightaware.com/adsb/piaware/install"
+        fi
+    fi
+
+    # Configure dump1090-fa HTTP port to avoid conflict with gateway on 8080
+    DUMP1090_DEFAULT="/etc/default/dump1090-fa"
+    if [ -f "$DUMP1090_DEFAULT" ]; then
+        if grep -q "net-http-port" "$DUMP1090_DEFAULT"; then
+            sudo sed -i "s/--net-http-port [0-9]*/--net-http-port $DUMP1090_PORT/" "$DUMP1090_DEFAULT" \
+                && echo "  ✓ dump1090-fa HTTP port updated to $DUMP1090_PORT" \
+                || echo "  ⚠ Could not update HTTP port in $DUMP1090_DEFAULT"
+        else
+            # Append http port to NET_OPTIONS line, or add it
+            if grep -q "NET_OPTIONS" "$DUMP1090_DEFAULT"; then
+                sudo sed -i "s/NET_OPTIONS=\"\(.*\)\"/NET_OPTIONS=\"\1 --net-http-port $DUMP1090_PORT\"/" "$DUMP1090_DEFAULT" \
+                    && echo "  ✓ dump1090-fa HTTP port set to $DUMP1090_PORT" \
+                    || echo "  ⚠ Could not set HTTP port in $DUMP1090_DEFAULT — add --net-http-port $DUMP1090_PORT to NET_OPTIONS manually"
+            else
+                echo "NET_OPTIONS=\"--net --net-http-port $DUMP1090_PORT --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004,30104\"" \
+                    | sudo tee -a "$DUMP1090_DEFAULT" > /dev/null \
+                    && echo "  ✓ dump1090-fa HTTP port set to $DUMP1090_PORT" \
+                    || echo "  ⚠ Could not write to $DUMP1090_DEFAULT"
+            fi
+        fi
+    else
+        echo "  ⚠ $DUMP1090_DEFAULT not found — configure dump1090-fa HTTP port to $DUMP1090_PORT manually"
+    fi
+
+    # fr24feed via FlightRadar24 apt repository
+    if command -v fr24feed &>/dev/null; then
+        echo "  ✓ fr24feed already installed"
+    else
+        echo "  Adding FlightRadar24 apt repository and installing fr24feed..."
+        curl -s https://repo-feed.flightradar24.com/flightradar24.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/flightradar24.gpg 2>/dev/null
+        echo "deb [signed-by=/usr/share/keyrings/flightradar24.gpg] https://repo-feed.flightradar24.com rpi-stable main" \
+            | sudo tee /etc/apt/sources.list.d/fr24feed.list > /dev/null
+        if sudo apt-get update -qq 2>/dev/null && sudo apt-get install -y fr24feed 2>/dev/null; then
+            echo "  ✓ fr24feed installed"
+        else
+            echo "  ⚠ Could not install fr24feed from apt"
+            echo "    Manual install: https://www.flightradar24.com/share-your-data"
+        fi
+    fi
+fi
+
+# Enable and start dump1090-fa service
+if systemctl list-unit-files dump1090-fa.service &>/dev/null 2>&1; then
+    sudo systemctl enable dump1090-fa.service 2>/dev/null \
+        && echo "  ✓ dump1090-fa.service enabled (starts on boot)" \
+        || echo "  ⚠ Could not enable dump1090-fa.service"
+    sudo systemctl restart dump1090-fa.service 2>/dev/null \
+        && echo "  ✓ dump1090-fa started" \
+        || echo "  ⚠ Could not start dump1090-fa.service — check: journalctl -u dump1090-fa -n 20"
+else
+    echo "  ⚠ dump1090-fa.service not found — install dump1090-fa first"
+fi
+
+# fr24feed requires interactive account signup — print instructions
+echo ""
+echo "  ── FlightRadar24 signup (run once to activate feeding) ──────────────"
+echo "  fr24feed is installed but needs your FR24 account credentials."
+echo "  Run this command and follow the prompts:"
+echo "    sudo fr24feed --signup"
+echo "  Then enable the service:"
+echo "    sudo systemctl enable --now fr24feed"
+echo "  ─────────────────────────────────────────────────────────────────────"
+echo ""
+echo "  To enable ADS-B in the gateway set in gateway_config.txt:"
+echo "    ENABLE_ADSB = true"
+echo "    ADSB_PORT   = $DUMP1090_PORT"
+
+set -e
+echo
+
 # ── 8. Ollama local LLM (optional — for free Smart Announcements) ──
 echo "[ 8/15 ] Installing Ollama local LLM (optional — for Smart Announcements)..."
 set +e
@@ -1129,6 +1387,9 @@ printf '%s ALL=(ALL) NOPASSWD: %s stop radio-gateway.service\n' \
     "$ACTUAL_USER" "$SYSTEMCTL_BIN" >> /tmp/_sudoers_gw
 printf '%s ALL=(ALL) NOPASSWD: %s restart radio-gateway.service\n' \
     "$ACTUAL_USER" "$SYSTEMCTL_BIN" >> /tmp/_sudoers_gw
+REBOOT_BIN="$(command -v reboot 2>/dev/null || echo /sbin/reboot)"
+printf '%s ALL=(ALL) NOPASSWD: %s\n' \
+    "$ACTUAL_USER" "$REBOOT_BIN" >> /tmp/_sudoers_gw
 if visudo -cf /tmp/_sudoers_gw > /dev/null 2>&1; then
     sudo cp /tmp/_sudoers_gw "$SUDOERS_GW"
     sudo chmod 440 "$SUDOERS_GW"
@@ -1218,6 +1479,16 @@ echo "  Set ENABLE_SDR = true and SDR_DEVICE_TYPE = sdrplay in gateway_config.tx
 echo "  Use the SDR Control page (http://<gateway-ip>:8080/sdr) to tune and manage"
 echo "  Audio chain: RSPduo → SoapySDR → rtl_airband → PulseAudio → sdr_capture sink → gateway"
 echo "  Verify SDR sinks: pw-cli list-objects | grep sdr_capture"
+echo
+echo "ADS-B AIRCRAFT TRACKING (optional — RTL-SDR + dump1090-fa + FlightRadar24):"
+echo "  dump1090-fa is installed and configured on port $DUMP1090_PORT"
+echo "  Enable in gateway_config.txt:"
+echo "    ENABLE_ADSB = true"
+echo "    ADSB_PORT   = $DUMP1090_PORT"
+echo "  ADS-B map will appear as an 'ADS-B' tab in the gateway web UI"
+echo "  To feed FlightRadar24, run: sudo fr24feed --signup"
+echo "  then: sudo systemctl enable --now fr24feed"
+echo "  Status: sudo systemctl status dump1090-fa fr24feed"
 echo
 echo "STREAMING (optional):"
 echo "  Configure /etc/darkice.cfg with your Broadcastify credentials"

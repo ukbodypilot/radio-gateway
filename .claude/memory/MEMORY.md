@@ -18,9 +18,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - WirePlumber persistence: `~/.config/wireplumber/wireplumber.conf.d/90-sdr-capture-sink.conf`
 - Creates `sdr_capture` and `sdr_capture2` sinks; installer deploys this config (step 12)
 - **CRITICAL:** WirePlumber null-sinks need `monitor.passthrough = true` or monitor output is silence
-- Route SDR app output to sink in pavucontrol or app settings
 - **ALSA loopback:** `SDR_DEVICE_NAME = hw:4,1` — traditional method, 200ms blob delivery
-- 3 cards pinned to hw:4, hw:5, hw:6 via `enable=1,1,1 index=4,5,6`
 
 ## SDR Control Page (v1.5.0) — RTLSDR-Airband + SoapySDR + RSPduo
 - **`RTLAirbandManager` class** (~250 lines, before WebConfigServer): manages rtl_airband lifecycle
@@ -30,6 +28,22 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **Settings persistence:** `sdr_channels.json` (in .gitignore) stores current settings + 10 channel memory slots
 - **Dependencies:** rtlsdr-airband-git, soapysdr, soapysdrplay3-git, libsdrplay, sdrplay.service
 
+## ADS-B Aircraft Tracking (2026-03-21)
+- **Hardware:** RTL2838/R820T USB SDR dongle — separate from RSPduo used by rtl_airband, no hardware conflict
+- **dump1090-fa:** FlightAware ADS-B decoder; v7+ has NO built-in HTTP server, writes JSON to `/run/dump1090-fa/`
+- **lighttpd:** serves dump1090-fa web UI on port 30080 (avoids conflict with gateway on 8080)
+- **fr24feed** (Arch: `flightradar24` AUR): reads Beast data from dump1090 port 30002, uploads to FlightRadar24
+- **Gateway reverse proxy:** `/adsb/*` → `http://127.0.0.1:{ADSB_PORT}` via `urllib.request` — single port via Cloudflare tunnel
+- **Routes:** `/aircraft` (iframe wrapper page), `/adsb/*` (reverse proxy), `/adsbstatus` (JSON: services/aircraft/msg rate)
+- **Dashboard panel:** `#adsb-panel` with service health dots + aircraft count/messages/rate, polled 3s
+- **Config:** `ENABLE_ADSB` (default False), `ADSB_PORT` (default 30080)
+- **Nav link:** `ADS-B` appears between SDR and Recordings when `ENABLE_ADSB=true`
+- **Installer step 7b (Arch):** clone dump1090 from GitHub, strip `-Werror` from Makefile (`sed`), build; `flightradar24` AUR with `--nodeps --nodeps` (depends on generic `dump1090`, no pacman provider)
+- **Installer step 7b (Debian/Pi):** FlightAware apt repo for dump1090-fa, FR24 apt repo for fr24feed, patch `/etc/default/dump1090-fa` for port 30080
+- **Makefile quirk:** `-Werror` + `-Wunterminated-string-initialization` on modern GCC causes build failure — fix: `sed -i 's/-Werror //'`
+- **Signup:** `sudo fr24feed --signup --config-file=/etc/fr24feed.ini` (interactive, cannot be automated)
+- **Config sections:** reordered alphabetically by title (33 sections, Advanced/Diagnostics last)
+
 ## Announcement Input (port 9601)
 - `NetworkAnnouncementSource` — listens on 9601, inbound TCP, length-prefixed PCM
 - `ptt_control=True`, `priority=0` — mixer routes audio to radio TX and activates PTT
@@ -37,213 +51,89 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 
 ## Browser Microphone PTT (2026-03-12)
 - `WebMicSource` class: receives browser mic audio via WebSocket `/ws_mic`, routes to radio TX
-- PTT keyed/unkeyed via CAT `!ptt` command on WebSocket connect/disconnect
 - **CRITICAL:** AIOC GPIO PTT (`PTT_METHOD=aioc`) does NOT key this user's radio — PTT is wired via CAT serial cable only. WebMic uses CAT `!ptt` directly.
-- `_webmic_ptt_active` flag prevents PTT release timer from interfering
-- Browser: `getUserMedia` with AGC+noise suppression enabled, `ScriptProcessorNode` (buffer=2048, must be power of 2), Float32→Int16 PCM conversion
+- Browser: `getUserMedia`, `ScriptProcessorNode` (buffer=2048, must be power of 2), Float32→Int16 PCM conversion
 - Config: `ENABLE_WEB_MIC` (default True), `WEB_MIC_VOLUME` (default 25.0, raw multiplier)
-- Single client only (409 Conflict if already connected)
-- Queue: 64 slots, drop-oldest on overflow
-
-## Key Architecture
-- `AIOCRadioSource` — reads from AIOC ALSA device (radio RX audio)
-- `SDRSource` — reads from ALSA loopback via background reader thread
-- `PipeWireSDRSource` — reads from PipeWire virtual sink monitor via `parec` subprocess
-- `WebMicSource` — receives browser mic audio via WebSocket for radio TX
-- `RemoteAudioServer` / `RemoteAudioSource` — TCP audio link
-- `AudioMixer` — mixes SDR + AIOC with duck-out logic; returns 8-tuple
-- `audio_transmit_loop()` — feeds Mumble encoder
-- pymumble/pymumble_py3 — Mumble protocol; SSL shim for Python 3.12+
+- Single client only (409 Conflict if already connected); queue: 64 slots, drop-oldest on overflow
 
 ## Web Configuration UI & Live Dashboard
 - `WebConfigServer` class: built-in HTTP server (Python `http.server`, no Flask)
-- Pages: `/` (config editor), `/dashboard` (live status), `/sdr` (SDR control), `/radio` (TH-9800 CAT control), `/d75` (TH-D75), `/recordings`, `/logs`
+- Pages: `/` shell, `/dashboard`, `/sdr`, `/radio` (TH-9800), `/d75` (TH-D75), `/aircraft` (ADS-B), `/recordings`, `/logs`
 - Config: `ENABLE_WEB_CONFIG`, `WEB_CONFIG_PORT` (default 8080), `WEB_CONFIG_PASSWORD`
-- **Shell/iframe structure (2026-03-18):** `/` serves a persistent shell page with nav bar + iframe (`name="content"`). All page links use `target="content"` to load inside the iframe. Shell page caches across page loads (audio player, WebSocket PCM stay alive).
-- **Shell nav bar**: always shows all 7 links: Dashboard | TH-9800 | TH-D75 | SDR | Recordings | Config | Logs. TH-9800 and TH-D75 greyed out (`nav-disabled` class) when disabled in config — never hidden. Nav links use CSS `border-left` separators and `flex-wrap` so they wrap on mobile.
-- **Action bar (bottom)**: Email Status / Restart / Exit buttons in a centered fixed bar at bottom of shell page. Moved from top bar 2026-03-18.
-- **In-page nav strips removed (2026-03-18):** All per-page nav `<p>` link strips removed — shell navbar is sole navigation.
-- Dashboard layout (top to bottom): Listen box, Status (audio bars first, then info, timers), System Status, Controls (Mute, Radio/SDR Processing, Audio, SDR), then bottom row (Playback, Smart Announce, Broadcastify, PTT & Relay, Text to Speech, System)
-- **Listen box**: MP3 stream + WebSocket PCM with volume sliders, at top of dashboard
-- **Text to Speech box**: text entry, 9-voice selector (gTTS), send button + status line. Auto-switches RTS to Radio Controlled for TX, restores after. `/tts` POST endpoint runs `speak_text()` in background thread.
-- **Smart Announce box**: separate box with 3 buttons + status
-- **Wake Lock**: Screen Wake Lock API acquired during PCM playback to prevent device sleep
-- **System Status box**: `/sysinfo` endpoint (2s poll), CPU/load/RAM/swap/disk/net/TCP/temps/IPs
-- **Logs page**: Audio Trace + Watchdog Trace toggle buttons (`/tracecmd`, `/tracestatus` endpoints)
-- **Soundboard**: auto-fills empty playback slots 1-9 with random Mixkit sound effects (~750 curated pool), refresh button
-- **Responsive layouts**: all pages use `repeat(auto-fit, minmax())` grids for narrow screens; shell nav and action bar also wrap on mobile
+- **Shell/iframe structure (2026-03-18):** `/` serves persistent shell page with nav bar + iframe (`name="content"`). Shell caches across page loads (audio player, WebSocket PCM stay alive).
+- **Shell nav bar:** Dashboard | TH-9800 | TH-D75 | SDR | [ADS-B] | Recordings | Config | Logs. TH-9800/D75 greyed when disabled. ADS-B visible only when `ENABLE_ADSB=true`.
+- **Action bar (bottom):** Email Status / Restart / Exit buttons in fixed bar at bottom of shell page.
+- Dashboard layout: Listen box, Status (audio bars/info/timers), System Status, Controls (Mute/Radio/SDR/Audio), bottom row (Playback/Smart Announce/Broadcastify/PTT/TTS/System/ADS-B panel)
+- **System Status box:** `/sysinfo` endpoint (2s poll), CPU/load/RAM/swap/disk/net/TCP/temps/IPs
+- **Soundboard:** auto-fills empty slots 1-9 with random Mixkit sound effects (~750 curated pool)
 
 ## TH-9800 CAT Control
 - `RadioCATClient` class: TCP client for TH9800_CAT.py server
-- **CRITICAL: press response unreliable** — step-right + step-left (net zero) to read channel
 - **CRITICAL: DISPLAY_TEXT vfo_byte** — must use vfo_byte from packet (0x40/0x60=LEFT, 0xC0/0xE0=RIGHT), NOT stale `_channel_vfo`. Fixed 2026-03-13.
 - `_drain_paused` during set_channel, web commands, and RTS changes (prevents background drain race)
 - `_drain()` must use single `_recv_line(0.1)` — loop version breaks all packet parsing
-- **Web radio control** (`/radio`): full front panel replica, `/catstatus` + `/catcmd` endpoints
-- **Graceful close (2026-03-12):** `close()` sets `_stop=True`, sends `!exit`, `shutdown(SHUT_RDWR)`, waits for drain thread
-- **Auto serial connect (2026-03-21):** On startup, always sends `!serial disconnect` then `!serial connect` (unconditional cycle — no status check, no stale response race). Calls `set_rts(True)` after success so dashboard shows "USB Controlled". SERIAL_CONNECT web handler does the same.
+- **Auto serial connect (2026-03-21):** On startup, always sends `!serial disconnect` then `!serial connect` (unconditional cycle). Calls `set_rts(True)` after success.
 
 ## Auto RTS for Playback, TTS & Announcements (2026-03-13)
-- **Playback (keys 1-9, 0):** Auto-sets RTS to Radio Controlled before playing, restores after
-- **TTS (web dashboard):** Same RTS auto-switch in `speak_text()` before queueing file
-- **Smart Announce:** Same RTS auto-switch in `_run_announcement()`
+- Playback (keys 1-9, 0), TTS, Smart Announce all auto-set RTS to Radio Controlled before TX, restore after
 - **CRITICAL:** RTS save/restore is SKIPPED when `PTT_METHOD=software` — causes VFO switching artifacts
-- For non-software PTT: must pause drain thread around ALL `set_rts()` calls
 - Display refresh (VFO dial press+release both sides) after RTS restore, also with drain paused
-- Playback RTS restore runs in background thread to avoid blocking audio loop
 
-## Systemd Service & Process Management (2026-03-12, updated 2026-03-14)
-- **Service:** `radio-gateway.service` — `KillMode=control-group` (kills all children on stop/restart)
-- **Service:** `th9800-cat.service` — headless CAT server, started/stopped by start.sh based on `ENABLE_CAT_CONTROL`
-- `TimeoutStopSec=15` to allow graceful serial cleanup
-- start.sh: reads config, sudo keepalive, renice -10, manages th9800-cat.service + Claude Code launches
-- start.sh uses `ENABLE_CAT_CONTROL` (not old `START_TH9800_CAT`) to decide whether to start CAT service
-- Gateway restart via `q` key uses `os.execv` (replaces process in-place, same PID)
-- **Save & Restart** in web config now launches `start.sh` via detached subprocess (`start_new_session=True`) then exits. Previously used `os.execv` which skipped ALSA/AIOC/USB resets and left external components in restart loops.
-- **CRITICAL:** Always restart gateway via start.sh, never `python3 radio_gateway.py` directly (ALSA loopback, AIOC reset, etc. are needed)
-
-## Web UI Toast Notifications (2026-03-14)
-- `gateway.notify(message, level)` pushes to 20-entry ring buffer (`_notifications`)
-- Included in `/status` JSON response, polled every 1s by dashboard
-- Client-side: `showToast()` renders color-coded popups (red=error, orange=warning, blue=info), auto-dismiss 8s
-- Wired to: PTT failures (CAT not connected, radio not responding, serial disconnected), playback failures (file not found, decode error), TTS failures
-
-## Web UI Fetch Pileup Fix (2026-03-14)
-- All polling functions (updateStatus, updateSysInfo, updateRadio, pollStatus) have in-flight guards
-- Prevents fetch requests from piling up and exhausting browser's 6-connection limit
-- Without this, the web UI freezes (buttons unresponsive, status stops updating)
-
-## Audio Processing — Per-Source AudioProcessor (2026-03-10, updated 2026-03-13)
-- `AudioProcessor` class: independent filter state per source (radio, SDR)
-- Filter chain order: HPF → LPF → Notch → Noise Gate
-- **Removed 2026-03-13:** Spectral NS (bad quality, robotic artifacts) and De-esser (ineffective). Echo cancellation also removed.
-- HPF defaults to ON for AIOC radio audio (`ENABLE_HIGHPASS_FILTER = true` in config)
-- **CRITICAL:** Requires `scipy` — all filters silently return unmodified audio if scipy is missing
+## Systemd Service & Process Management
+- **Service:** `radio-gateway.service` — `KillMode=control-group`, `TimeoutStopSec=15`
+- **CRITICAL:** Always restart gateway via start.sh, never `python3 radio_gateway.py` directly
+- **Save & Restart** in web config launches `start.sh` via detached subprocess (`start_new_session=True`)
+- Gateway `q` key uses `os.execv` (replaces process in-place, same PID)
 
 ## PTT Methods
 - `PTT_METHOD`: `aioc` (default), `relay`, or `software`
-- AIOC: HID GPIO, Relay: CH340 USB relay, Software: CAT TCP `!ptt on`/`!ptt off`
-- **CRITICAL:** Always use `!ptt on`/`!ptt off` (explicit state), never bare `!ptt` toggle (blind toggle causes state inversion if radio/gateway diverge)
-- Software PTT checks `_last_radio_rx` — refuses to key if radio hasn't sent data in >5 seconds (radio powered off)
-- RTS save/restore and VFO dial-press refresh are skipped in software PTT mode (they cause VFO switching artifacts)
-- `_software_ptt_on` tracker removed (2026-03-21) — made redundant by explicit on/off commands
+- **CRITICAL:** Always use `!ptt on`/`!ptt off` (explicit state), never bare `!ptt` (blind toggle causes state inversion)
+- Software PTT refuses to key if radio hasn't sent data in >5s (radio powered off)
+- `_software_ptt_on` tracker removed (2026-03-21) — redundant after explicit on/off
 
 ## AIOC PTT — RTS Relay Coordination (CRITICAL, 2026-03-15)
-- **Hardware:** RTS line controls a relay switching radio's TX serial between USB dongle and radio front panel
-- **RTS=USB Controlled:** serial connected to USB dongle (CAT commands work)
-- **RTS=Radio Controlled:** serial connected to front panel (CAT commands blocked, but mic wiring correct for AIOC PTT)
+- **RTS=USB Controlled:** serial → USB dongle (CAT works). **RTS=Radio Controlled:** serial → front panel (CAT blocked)
 - **AIOC PTT REQUIRES Radio Controlled** — PTT fails without it due to mic wiring
-- **Sequence:** pause drain → set RTS Radio Controlled → key AIOC → [transmit] → unkey AIOC → set RTS USB Controlled → resume drain
-- **CRITICAL:** No CAT send/receive allowed while Radio Controlled — serial is physically disconnected from USB
+- **Sequence:** pause drain → RTS Radio Controlled → key AIOC → [TX] → unkey AIOC → RTS USB Controlled → resume drain
 
 ## Smart Announcements (Modular AI Backend)
 - `SmartAnnouncementManager`: scheduled AI-powered spoken announcements
 - Backends: `google-scrape`, `claude-scrape`, `duckduckgo` (default), `claude` (API), `gemini`
-- Keyboard: `[`=Smart#1, `]`=Smart#2, `\`=Smart#3; Mumble: `!smart`/`!smart N`
-- Config: 3 slots with individual keys (`SMART_ANNOUNCE_N_PROMPT`, `_INTERVAL`, `_VOICE`, `_TARGET_SECS`)
-
-## Claude-Scrape Backend (2026-03-15)
-- Runs Firefox on **Xvfb virtual display `:99`** — does NOT touch the user's desktop `:0`
-- VNC access to virtual display: port **5999** (for login/troubleshooting)
-- Firefox uses separate profile `claude-scrape` (`--no-remote -P claude-scrape`)
-- **First-time setup:** VNC to port 5999, log into claude.ai in the Firefox window
-- Flow: navigate claude.ai/new → paste prompt → wait → Ctrl+A/Ctrl+C → extract → Ollama rewrite
-- Ollama condenses Claude's verbose response to target word count
-- RTS switching skipped for software PTT mode (serial must stay USB Controlled)
-
-## Edge TTS (2026-03-15)
-- `TTS_ENGINE = edge` — Microsoft Neural voices, much more natural than gTTS
-- Config dropdown: edge (default) or gtts
-- 9 voices mapped to same numbers as gTTS (Andrew, Ryan, William, etc.)
-- Requires `edge-tts` pip package (added to installer)
-
-## Other Features
-- **Cloudflare Tunnel**: cloudflared output → `/tmp/cloudflared_output.log` (not pipe) + `start_new_session=True` so it survives gateway restarts (no SIGPIPE). URL cached in `/tmp/cloudflare_tunnel_url`. On restart, pgrep adopts existing process. On fresh launch, URL file cleared so email waits for new URL (not stale cached). Retry up to 3× if code 1 immediate exit.
-- **Email**: Gmail SMTP on startup/demand (`@` key), includes tunnel base URL + `/config` URL + LAN link + detailed status dump (uptime, Mumble, CAT, PTT, all mutes, KV4P/D75/SDR status, VAD state, gateway name/version, system stats) + last 200 log lines appended. URLs do NOT include `/dashboard` suffix (removed 2026-03-18).
-- **Relay Control**: `RelayController` class, radio power (`j`), charger (auto), PTT relay
-- **SDR Rebroadcast**: `b` key, routes SDR audio to radio TX
-- **Status Bar**: 3-line display, `[HH:MM:SS]` timestamps, `StatusBarWriter` wraps stdout/stderr
-- **Config page**: unsaved changes warning via `beforeunload` event
-
-## Web Config UI Changes (2026-03-20)
-- **KV4P CTCSS config dropdowns:** `KV4P_CTCSS_TX` and `KV4P_CTCSS_RX` added to `_SELECT_OPTIONS` — dropdown with all 38 DRA818 tones (None + 67.0–250.3 Hz), values stored as integer codes 0–38
-- **D75 + KV4P mute buttons:** added `btn-w` (D75) and `btn-y` (KV4P) to Mute Controls group in dashboard; keyboard shortcut `y` = KV4P mute (`w` was already D75); KV4P added to mutes summary list and console help text
-- **Config sections collapsed by default:** all `<details>` sections start collapsed (removed `idx < 3` open-by-default logic)
+- Claude-scrape runs Firefox on Xvfb `:99` (VNC port 5999) — does NOT touch desktop `:0`
 
 ## KV4P HT Radio (added 2026-03-19)
 - `KV4PAudioSource` class: CP2102 USB-serial (10c4:ea60), kv4p-ht-python package, Opus codec
-- Config: `KV4P_PORT = /dev/kv4p`, `KV4P_BAUD`, `ENABLE_KV4P`, `TX_RADIO = kv4p`
-- udev: `/etc/udev/rules.d/99-kv4p.rules` → symlink `/dev/kv4p` (idVendor=10c4, idProduct=ea60)
-- kv4p-ht-python installed at `~/kv4p-ht-python` (editable install, `pip install --break-system-packages -e`)
-- Dashboard status bar: teal bar (`.bar-kv4p { background: #1abc9c }`)
-- **TX audio fix:** Mixer outputs 4800 bytes (50ms), Opus frame = 3840 bytes (40ms)
-  - Old: 960 bytes dropped per tick = 20% audio loss
-  - Fix: `_tx_buf` accumulation carries remainder across ticks; `_tx_buf` cleared on PTT drop
-- **Announcement delay fix:** `_needs_delay = self.announcement_delay_active and not _use_kv4p_tx`
-  - KV4P is serial audio, no physical relay — skip the 0.5s relay settle delay
-- **CTCSS web control:** dropdown with all 38 DRA818 tones (67.0–250.3 Hz, NO 69.3)
-  - Handler converts Hz string → DRA818 code (1-based, 0=none)
-  - **CRITICAL:** DRA818 uses 38 tones (no 69.3 Hz) — using TH-9800's 39-tone list caused off-by-one (103.5→code14=107.2 Hz instead of code13=103.5 Hz)
+- Config: `KV4P_PORT = /dev/kv4p`, `ENABLE_KV4P`, `TX_RADIO = kv4p`
+- **TX audio fix:** `_tx_buf` accumulation carries 960-byte remainder across ticks (else 20% audio dropout)
+- **CRITICAL:** DRA818 uses 38 tones (no 69.3 Hz) — using TH-9800's 39-tone list causes off-by-one CTCSS errors
 - **CRITICAL:** PTT_METHOD=aioc does NOT key KV4P — KV4P uses its own serial PTT (`_ptt_kv4p`)
-- Audio trace: `buf_carry` = bytes in carry buffer per tick (NOT dropped); `frames_sent` is the key metric
 
-## SDR "Manager Not Available" UI Fix (2026-03-19)
-- JS `_sdrPollErrorActive` flag: poll-set errors clear on recovery without stomping user-action feedback
+## Audio Processing
+- `AudioProcessor` class: HPF → LPF → Notch → Noise Gate filter chain, independent state per source
+- **CRITICAL:** Requires `scipy` — filters silently return unmodified audio if scipy is missing
+- HPF defaults to ON for AIOC radio audio
 
-## Web UI Poll Guard — Fields Never Overwritten While Focused (2026-03-19)
-- All KV4P control fields use `document.activeElement` check before poll-update
-- `_kvset(id, val)` helper skips update if element is currently focused
-- `_ctrlEditUntil` timer remains as secondary guard (30s on focus for dropdowns)
-
-## Stable Checkpoint
-- Git tag `v-stable-pre-refactor` = last known-good state before major refactor
-- To restore: `git checkout v-stable-pre-refactor -- radio_gateway.py`
-
-## Planned Refactor (2026-03-20) — work on main, no branch
-**Order of work:**
-1. **Split into files** — mechanical only, no behaviour change
-   - `radio_gateway.py` — main() + config + startup (~200 lines)
-   - `gateway_core.py` — RadioGateway class, audio loops, PTT
-   - `audio_sources.py` — AIOC, SDR, KV4P, D75, Remote, Announce
-   - `ptt.py` — PTT controller classes
-   - `web_server.py` — WebConfigServer + HTTP handlers
-   - `web_dashboard.py` — dashboard HTML/JS strings
-   - `smart_announce.py` — SmartAnnouncementManager
-   - `cat_client.py` — RadioCATClient, D75CATClient
-2. **Lockfile fix** — `/tmp/gateway.lock` PID file in start.sh + gateway
-3. **Minor fixes** — ANSI in email, CW unknown chars, SA id=0 in UI, TCP_NODELAY dead key
-4. **PTT refactor** — per-radio PTT controller objects, per-source TX radio config
-   - `TH9800PTT`, `D75PTT`, `KV4PPTT` classes each with `key()`/`unkey()`
-   - Per-source TX radio: `PLAYBACK_TX_RADIO`, `TTS_TX_RADIO`, `SMART_ANNOUNCE_TX_RADIO`, `CW_TX_RADIO`, `MUMBLE_TX_RADIO`
-   - Remove global `TX_RADIO` and `PTT_METHOD` routing from `set_ptt_state()`
-   - TH9800PTT owns RTS state — no other code touches it
-   - PTT state tracked per-radio, not shared `ptt_active` flag
+## Other Features
+- **Cloudflare Tunnel:** URL cached in `/tmp/cloudflare_tunnel_url`; existing process adopted on restart; retry 3× on code 1 exit
+- **Email:** Gmail SMTP on startup/`@` key; includes tunnel URL + LAN link + status dump + last 200 log lines
+- **Web UI fetch pileup fix:** all polling functions have in-flight guards (prevents 6-connection browser limit exhaustion)
+- **Web UI toast notifications:** `gateway.notify()` → 20-entry ring buffer → color-coded popups (auto-dismiss 8s)
+- **Edge TTS:** `TTS_ENGINE = edge` — Microsoft Neural voices; 9 voices; requires `edge-tts` pip package
 
 ## Known Bugs Fixed (details in bugs.md)
-See bugs.md for full history. Key recent: DISPLAY_TEXT VFO misattribution (2026-03-13),
-RTS change corrupts display (2026-03-13), audio processing silent (scipy missing),
-WebSocket PCM double-push/latency, CAT serial orphans, ScriptProcessor buffer size,
-KV4P TX 20% audio dropout (2026-03-19), KV4P CTCSS wrong tone (DRA818 table off-by-one, 2026-03-19),
-TH9800 PTT state inversion / blind toggle (2026-03-21), setup_radio before serial connect (2026-03-21),
+Key recent: DISPLAY_TEXT VFO misattribution (2026-03-13), RTS change corrupts display (2026-03-13),
+WebSocket PCM double-push/latency, KV4P TX 20% audio dropout (2026-03-19), KV4P CTCSS DRA818 off-by-one (2026-03-19),
+TH9800 PTT blind toggle state inversion (2026-03-21), setup_radio before serial connect (2026-03-21),
 SDR manager circular import (2026-03-21).
 
 ## User Preferences
 - CBR Opus (not VBR), commits requested explicitly, concise responses, no emojis
 - **gateway_config.txt is NOT committed** — repo is PUBLIC; config is in .gitignore
-- Fixed-width status bar is important
 - Config file overrides code defaults — changing defaults in code has no effect if config has the old value
 
-## Machine Setup — user-optiplex3020 (Arch Linux, 2026-03-04)
-- Cloned to `/home/user/Downloads/radio-gateway`
-- Git user: ukbodypilot / robin.pengelly@gmail.com; token in remote URL
-- Arch Linux (EndeavourOS), XFCE4, RDP via xrdp+x11vnc
-- Python 3.14 on this machine
-- sudo password: `user`
-- Relay USB port: `2-1.3` → `/dev/relay_radio` (CH340 "USB Serial")
-- FTDI CAT cable: `2-1.1` → `/dev/ttyUSB1` (FT232R)
-
-## Display Setup
-- `:0` — User desktop (XFCE4), VNC port 5900, xrdp port 3389
-- `:99` — Xvfb virtual display (1920x1080) for claude-scrape, VNC port 5999
-- Firefox `claude-scrape` profile runs on `:99` — logged into claude.ai
+## Machine Setup — user-optiplex3020 (Arch Linux)
+- Cloned to `/home/user/Downloads/radio-gateway`; Git user: ukbodypilot / robin.pengelly@gmail.com; token in remote URL
+- Arch Linux (EndeavourOS), XFCE4, Python 3.14, sudo password: `user`
+- Relay USB: `2-1.3` → `/dev/relay_radio`; FTDI CAT cable: `2-1.1` → `/dev/ttyUSB1`
+- `:0` — User desktop (VNC 5900, xrdp 3389); `:99` — Xvfb (VNC 5999) for claude-scrape
 - **Do NOT touch `:0` VNC/xrdp config** — user relies on them for remote access
