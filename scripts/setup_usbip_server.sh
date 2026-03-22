@@ -75,10 +75,18 @@ for mod in usbip_core usbip_host; do
     fi
 done
 
-# ─── Step 3: usbipd systemd service ──────────────────────────────────────────
+# Detect init system
+USE_SYSTEMD=false
+if [[ "$(ps -p 1 -o comm=)" == "systemd" ]]; then
+    USE_SYSTEMD=true
+fi
+info "Init system: $( $USE_SYSTEMD && echo systemd || echo SysV/other )"
+
+# ─── Step 3: Service setup ────────────────────────────────────────────────────
 step "3. Creating usbipd service"
 
-cat > /etc/systemd/system/usbipd.service << EOF
+if $USE_SYSTEMD; then
+    cat > /etc/systemd/system/usbipd.service << EOF
 [Unit]
 Description=USB/IP Daemon
 After=network.target
@@ -93,8 +101,44 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-
-info "Created /etc/systemd/system/usbipd.service"
+    info "Created /etc/systemd/system/usbipd.service"
+else
+    # SysV init (MX Linux, older Debian, etc.)
+    cat > /etc/init.d/usbipd << SYSV
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          usbipd
+# Required-Start:    \$network
+# Required-Stop:     \$network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: USB/IP Daemon
+### END INIT INFO
+DAEMON=${USBIPD_BIN}
+PIDFILE=/var/run/usbipd.pid
+case "\$1" in
+  start)
+    echo "Starting usbipd..."
+    start-stop-daemon --start --background --make-pidfile --pidfile \$PIDFILE --exec \$DAEMON
+    sleep 1
+    /usr/local/bin/usbip-bind-devices &
+    ;;
+  stop)
+    echo "Stopping usbipd..."
+    start-stop-daemon --stop --pidfile \$PIDFILE 2>/dev/null || true
+    rm -f \$PIDFILE
+    ;;
+  restart) \$0 stop; sleep 1; \$0 start ;;
+  status)
+    start-stop-daemon --status --pidfile \$PIDFILE && echo "usbipd running" || echo "usbipd stopped"
+    ;;
+  *) echo "Usage: \$0 {start|stop|restart|status}"; exit 1 ;;
+esac
+exit 0
+SYSV
+    chmod +x /etc/init.d/usbipd
+    info "Created /etc/init.d/usbipd (SysV)"
+fi
 
 # ─── Step 4: Device bind script ───────────────────────────────────────────────
 step "4. Creating device bind script"
@@ -171,10 +215,11 @@ BINDEOF
 chmod +x /usr/local/bin/usbip-bind-devices
 info "Created /usr/local/bin/usbip-bind-devices"
 
-# ─── Step 5: usbip-bind systemd service ──────────────────────────────────────
+# ─── Step 5: usbip-bind service ───────────────────────────────────────────────
 step "5. Creating usbip-bind service"
 
-cat > /etc/systemd/system/usbip-bind.service << 'EOF'
+if $USE_SYSTEMD; then
+    cat > /etc/systemd/system/usbip-bind.service << 'EOF'
 [Unit]
 Description=USB/IP Device Binding
 After=usbipd.service
@@ -189,18 +234,27 @@ ExecStop=/bin/bash -c 'usbip list -l 2>/dev/null | grep -oP "^\s+\K[0-9]+-[0-9.]
 [Install]
 WantedBy=multi-user.target
 EOF
-
-info "Created /etc/systemd/system/usbip-bind.service"
+    info "Created /etc/systemd/system/usbip-bind.service"
+else
+    info "SysV: bind script called directly from /etc/init.d/usbipd start"
+fi
 
 # ─── Step 6: Enable and start ─────────────────────────────────────────────────
 step "6. Enabling services"
 
-systemctl daemon-reload
-systemctl enable usbipd.service
-systemctl enable usbip-bind.service
-systemctl start usbipd.service
-sleep 1
-systemctl is-active usbipd.service && info "usbipd is running" || warn "usbipd failed to start — check: journalctl -u usbipd"
+if $USE_SYSTEMD; then
+    systemctl daemon-reload
+    systemctl enable usbipd.service
+    systemctl enable usbip-bind.service
+    systemctl start usbipd.service
+    sleep 1
+    systemctl is-active usbipd.service && info "usbipd is running" || warn "usbipd failed to start — check: journalctl -u usbipd"
+else
+    update-rc.d usbipd defaults
+    service usbipd start
+    sleep 1
+    service usbipd status && info "usbipd is running" || warn "usbipd failed to start — check: /var/log/usbip-bind.log"
+fi
 
 # ─── Step 7: Firewall ─────────────────────────────────────────────────────────
 step "7. Firewall"
@@ -226,8 +280,12 @@ echo ""
 echo "  2. Edit the bind config and add device IDs to share:"
 echo "     sudo nano /usr/local/bin/usbip-bind-devices"
 echo ""
-echo "  3. Start binding:"
-echo "     sudo systemctl start usbip-bind"
+echo "  3. Start binding (after editing bind config):"
+if $USE_SYSTEMD; then
+    echo "     sudo systemctl start usbip-bind"
+else
+    echo "     sudo service usbipd restart"
+fi
 echo ""
 echo "  4. Verify devices are exported:"
 echo "     sudo usbip list -l"
