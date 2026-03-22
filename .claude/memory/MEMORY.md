@@ -120,6 +120,9 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **Web UI toast notifications:** `gateway.notify()` → 20-entry ring buffer → color-coded popups (auto-dismiss 8s)
 - **Edge TTS:** `TTS_ENGINE = edge` — Microsoft Neural voices; 9 voices; requires `edge-tts` pip package
 
+## Planned Next Feature
+- [USBIP USB over TCP](project_usbip.md) — `USBIPManager` class to share USB devices (BT dongle, RTL-SDR) from a remote Pi to the gateway over TCP port 3240
+
 ## Known Bugs Fixed (details in bugs.md)
 Key recent: DISPLAY_TEXT VFO misattribution (2026-03-13), RTS change corrupts display (2026-03-13),
 WebSocket PCM double-push/latency, KV4P TX 20% audio dropout (2026-03-19), KV4P CTCSS DRA818 off-by-one (2026-03-19),
