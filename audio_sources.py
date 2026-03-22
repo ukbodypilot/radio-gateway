@@ -396,8 +396,9 @@ class AIOCRadioSource(AudioSource):
             self.gateway.last_successful_read = time.time()
             self.gateway.audio_capture_active = True
 
-            # Calculate audio level (for status display)
-            current_level = self.gateway.calculate_audio_level(data)
+            # Calculate audio level (for status display) — gate to VAD state so
+            # the noise floor doesn't show as activity when the radio is silent.
+            current_level = self.gateway.calculate_audio_level(data) if self.gateway.vad_active else 0
             if current_level > self.gateway.tx_audio_level:
                 self.gateway.tx_audio_level = current_level
             else:
