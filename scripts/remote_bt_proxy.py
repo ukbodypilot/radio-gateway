@@ -60,19 +60,31 @@ AUDIO_FRAME_SIZE    = 48     # bytes per SCO frame (D75 uses 48-byte SCO frames)
 
 _AF_BLUETOOTH = 31   # same as socket.AF_BLUETOOTH
 
-def _sco_connect(sock, mac):
+def _sco_connect(sock, mac, timeout=8.0):
     """Connect a BTPROTO_SCO socket by calling libc connect() via ctypes.
 
     Builds sockaddr_sco { sa_family_t(2), bdaddr_t(6) } manually.
     bdaddr is stored little-endian (reversed MAC octets).
+    Handles EINPROGRESS (non-blocking socket) by waiting with select().
     """
+    import select as _select
     bdaddr = bytes(reversed([int(x, 16) for x in mac.split(':')]))
     sockaddr = struct.pack('=H6s', _AF_BLUETOOTH, bdaddr)
     libc = ctypes.CDLL(None, use_errno=True)
     ret = libc.connect(sock.fileno(), sockaddr, ctypes.c_uint32(len(sockaddr)))
     if ret < 0:
         errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno))
+        if errno == 115:  # EINPROGRESS — non-blocking connect in progress
+            # Wait for the socket to become writable (connect complete)
+            _, writable, _ = _select.select([], [sock], [], timeout)
+            if not writable:
+                raise OSError(110, "Connection timed out")  # ETIMEDOUT
+            # Check for connect error
+            err = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+            if err:
+                raise OSError(err, os.strerror(err))
+        else:
+            raise OSError(errno, os.strerror(errno))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
