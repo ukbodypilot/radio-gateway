@@ -346,7 +346,7 @@ class AudioManager:
             print(f"[Audio] Connecting RFCOMM ch1 to {self._mac}...")
             self._rfcomm = socket.socket(socket.AF_BLUETOOTH,
                                          socket.SOCK_STREAM, BTPROTO_RFCOMM)
-            self._rfcomm.settimeout(5.0)
+            self._rfcomm.settimeout(15.0)
             self._rfcomm.connect((self._mac, 1))
             print(f"[Audio] RFCOMM ch1 connected")
             time.sleep(0.3)
@@ -668,6 +668,8 @@ class CATServer:
             if not self._serial.connected:
                 ok = self._serial.connect()
             if ok and not self._audio.connected:
+                # Give the D75 a moment after SPP (ch2) before connecting HSP (ch1)
+                time.sleep(2.0)
                 # Audio without CKPD since CAT serial is now open
                 self._audio.connect(send_ckpd=False)
             return 'started' if ok else 'btstart failed'
