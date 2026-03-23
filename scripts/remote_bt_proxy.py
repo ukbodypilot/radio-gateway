@@ -108,19 +108,15 @@ class SerialManager:
         return self._connected
 
     def connect(self):
-        """Bind rfcomm0 to D75 ch2 and open pyserial."""
+        """Connect via raw RFCOMM socket to D75 ch2 (SPP/CAT). No sudo needed."""
         try:
-            import serial as _pyserial
-        except ImportError:
-            print("[Serial] ERROR: pyserial not installed — run: pip3 install pyserial")
-            return False
-        try:
-            subprocess.run(['sudo', 'rfcomm', 'bind', '0', self._mac, '2'],
-                           capture_output=True, timeout=5)
-            time.sleep(0.5)
-            self._ser = _pyserial.Serial('/dev/rfcomm0', 9600, timeout=1, rtscts=False)
+            sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, BTPROTO_RFCOMM)
+            sock.settimeout(8.0)
+            sock.connect((self._mac, 2))   # channel 2 = SPP
+            sock.settimeout(1.0)
+            self._ser = sock
             self._connected = True
-            print(f"[Serial] Connected to {self._mac} ch2 via /dev/rfcomm0")
+            print(f"[Serial] Connected to {self._mac} ch2 (raw RFCOMM)")
             self._init_radio()
             self._start_poll()
             return True
@@ -142,10 +138,21 @@ class SerialManager:
             if not self._ser:
                 return None
             try:
-                self._ser.write((cmd.strip() + '\r').encode('ascii'))
-                self._ser.flush()
-                resp = self._ser.read_until(b'\r', size=256)
-                return resp.decode('ascii', errors='ignore').strip() if resp else None
+                self._ser.sendall((cmd.strip() + '\r').encode('ascii'))
+                # Read until \r with a 2-second timeout
+                buf = b''
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    try:
+                        chunk = self._ser.recv(256)
+                    except socket.timeout:
+                        break
+                    if not chunk:
+                        break
+                    buf += chunk
+                    if b'\r' in buf:
+                        break
+                return buf.decode('ascii', errors='ignore').strip() if buf else None
             except Exception as e:
                 if VERBOSE:
                     print(f"[Serial] send_raw error: {e}")
@@ -185,11 +192,6 @@ class SerialManager:
                     pass
                 self._ser = None
             self._connected = False
-        try:
-            subprocess.run(['sudo', 'rfcomm', 'release', '0'],
-                           capture_output=True, timeout=5)
-        except Exception:
-            pass
 
     def _init_radio(self):
         """Query model ID, firmware, serial number."""
