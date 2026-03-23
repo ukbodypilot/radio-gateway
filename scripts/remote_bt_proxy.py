@@ -273,6 +273,19 @@ class SerialManager:
             with self._state_lock:
                 self.serial_number = r[2:].strip()
         print(f"[Serial] Radio: model={self.model_id!r} fw={self.fw_version!r}")
+        # Query initial frequency and s-meter for both bands
+        for band in (0, 1):
+            r = self.send_raw(f"SM {band}")
+            print(f"[Serial] SM {band} init response: {r!r}")
+            if r:
+                self._process_message(r)
+            r = self.send_raw(f"FO {band}")
+            print(f"[Serial] FO {band} init response: {r!r}")
+            if r:
+                self._process_message(r)
+        with self._state_lock:
+            for b in (0, 1):
+                print(f"[Serial] Band {b} initial state: {self.band[b]}")
 
     def _read_loop(self):
         """Read RFCOMM bytes, split on \\r, put lines in _rx_queue."""
@@ -298,10 +311,19 @@ class SerialManager:
         print("[Serial] Read loop ended")
 
     def _stream_loop(self):
-        """Drain _rx_queue between send_raw() calls, updating state from streaming messages."""
+        """Drain _rx_queue between send_raw() calls; polls S-meter every 2s.
+
+        AI 1 streaming pushes FQ/TX/RX/MD/DL but NOT SM — S-meter must be
+        polled explicitly.
+        """
+        _last_sm_poll = 0.0
+        _last_state_dump = 0.0
+        SM_POLL_INTERVAL = 0.5
+        STATE_DUMP_INTERVAL = 30.0
         while not self._stop_evt.is_set() and self._connected:
+            # Drain queue (shorter timeout so SM poll fires promptly)
             try:
-                line = self._rx_queue.get(timeout=1.0)
+                line = self._rx_queue.get(timeout=0.5)
                 # Only process if send_lock is free (otherwise send_raw handles it)
                 if self._send_lock.acquire(blocking=False):
                     try:
@@ -313,13 +335,33 @@ class SerialManager:
                     self._rx_queue.put(line)
                     time.sleep(0.05)
             except _queue_mod.Empty:
-                continue
+                pass
+            # Periodic S-meter poll (AI 1 does NOT push SM — must query explicitly)
+            now = time.time()
+            if now - _last_sm_poll >= SM_POLL_INTERVAL and self._connected:
+                _last_sm_poll = now
+                r = self.send_raw("SM 0")
+                if r:
+                    self._process_message(r)
+                else:
+                    print("[Serial] SM 0 poll: no response (timeout)")
+                r = self.send_raw("SM 1")
+                if r:
+                    self._process_message(r)
+                else:
+                    print("[Serial] SM 1 poll: no response (timeout)")
+            # Periodic state dump for diagnosis
+            if now - _last_state_dump >= STATE_DUMP_INTERVAL:
+                _last_state_dump = now
+                with self._state_lock:
+                    print(f"[Serial] State dump — connected={self._connected} "
+                          f"model={self.model_id!r} band0={self.band[0]} band1={self.band[1]}")
 
     def _process_message(self, line):
         """Update cached state from a streaming CAT message."""
         if not line:
             return
-        if VERBOSE or line.startswith('FQ') or line.startswith('SM'):
+        if VERBOSE or line.startswith('FQ') or line.startswith('SM') or line.startswith('BY'):
             print(f"[Serial] << {line!r}")
         try:
             if line.startswith('FQ') and ',' in line:
@@ -346,6 +388,29 @@ class SerialManager:
                 with self._state_lock:
                     if 0 <= band <= 1:
                         self.band[band]['mode'] = mode
+            elif line.startswith('BY') and ',' in line:
+                # BY = SquelchOpen (busy indicator). BY band,0 = squelch closed → zero s_meter.
+                # BY band,1 = squelch opened → SM poll at 0.5s will pick up the value.
+                parts = line.split(',')
+                band  = int(line[2:].split(',')[0].strip())
+                sq_open = int(parts[-1].strip())
+                if sq_open == 0:
+                    with self._state_lock:
+                        if 0 <= band <= 1:
+                            self.band[band]['s_meter'] = 0
+            elif line.startswith('FO') and ',' in line:
+                # FO = FrequencyInfo — gives current frequency on init and after FQ push
+                parts = line.split(',')
+                try:
+                    band = int(line[2:].split(',')[0].strip())
+                    raw  = parts[1].strip()    # 10-digit frequency in Hz
+                    if len(raw) >= 7:
+                        freq = f"{int(raw[:4])}.{raw[4:7]}"
+                        with self._state_lock:
+                            if 0 <= band <= 1:
+                                self.band[band]['frequency'] = freq
+                except (ValueError, IndexError):
+                    pass
             elif line.startswith('TX'):
                 with self._state_lock:
                     self.transmitting = True
@@ -713,15 +778,29 @@ class CATServer:
 
         # ── btstart / btstop ───────────────────────────────────────────────────
         elif cmd == 'btstart':
-            ok = True
-            if not self._serial.connected:
+            # AT+CKPD=200 activates D75 audio routing but cannot be sent while
+            # CAT serial (RFCOMM ch2) is open — it causes cross-channel errors.
+            # Sequence: disconnect serial → connect audio WITH CKPD → reconnect serial.
+            if not self._audio.connected:
+                serial_was_up = self._serial.connected
+                if serial_was_up:
+                    print("[btstart] Disconnecting serial so CKPD is safe...")
+                    self._serial.disconnect()
+                    time.sleep(1.0)
+                print("[btstart] Connecting audio (with CKPD)...")
+                audio_ok = self._audio.connect(send_ckpd=True)
+                if not audio_ok:
+                    if serial_was_up:
+                        self._serial.connect()   # restore serial even if audio failed
+                    return 'btstart failed (audio)'
+                time.sleep(0.5)
+                print("[btstart] Reconnecting serial...")
                 ok = self._serial.connect()
-            if ok and not self._audio.connected:
-                # Give the D75 a moment after SPP (ch2) before connecting HSP (ch1)
-                time.sleep(2.0)
-                # Audio without CKPD since CAT serial is now open
-                self._audio.connect(send_ckpd=False)
-            return 'started' if ok else 'btstart failed'
+            else:
+                ok = True
+                if not self._serial.connected:
+                    ok = self._serial.connect()
+            return 'started' if ok else 'btstart failed (serial)'
 
         elif cmd == 'btstop':
             self._audio.disconnect()
