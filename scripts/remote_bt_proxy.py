@@ -166,7 +166,10 @@ class SerialManager:
             print(f"[Serial] Connected to {self._mac} ch2 (raw RFCOMM)")
             self._init_radio()
             # Enable real-time push updates (FQ, SM, TX/RX stream to us)
-            self.send_raw("AI 1")
+            self.send_raw("AI 0")   # disable first (D75_CAT.py pattern)
+            time.sleep(0.2)
+            r = self.send_raw("AI 1")
+            print(f"[Serial] AI 1 response: {r!r}")
             self._poll_thread = threading.Thread(
                 target=self._stream_loop, daemon=True, name="serial-stream")
             self._poll_thread.start()
@@ -316,6 +319,8 @@ class SerialManager:
         """Update cached state from a streaming CAT message."""
         if not line:
             return
+        if VERBOSE or line.startswith('FQ') or line.startswith('SM'):
+            print(f"[Serial] << {line!r}")
         try:
             if line.startswith('FQ') and ',' in line:
                 # FQ band,XXXXXXXXXX  (10-digit freq in Hz)
