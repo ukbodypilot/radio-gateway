@@ -120,8 +120,8 @@ case "\$1" in
   start)
     echo "Starting usbipd..."
     start-stop-daemon --start --background --make-pidfile --pidfile \$PIDFILE --exec \$DAEMON
-    sleep 1
-    /usr/local/bin/usbip-bind-devices &
+    sleep 2
+    nohup /usr/local/bin/usbip-bind-devices >> /var/log/usbip-bind.log 2>&1 &
     ;;
   stop)
     echo "Stopping usbipd..."
@@ -148,19 +148,22 @@ cat > /usr/local/bin/usbip-bind-devices << 'BINDEOF'
 # =============================================================================
 # USBIP Device Binder — auto-bind USB devices for remote sharing
 #
-# Edit BIND_IDS below to add devices to share (use `lsusb` to find IDs).
-# Run manually: sudo usbip-bind-devices
-# Or managed by usbip-bind.service on boot.
+# BIND_IDS accepts two formats — use whichever is easier:
+#   Bus ID:          "1-1"  or  "1-1.4"   (from: sudo usbip list -l)
+#   Vendor:Product:  "0bda:a728"           (from: lsusb)
+#
+# Run manually:  sudo usbip-bind-devices
+# Check log:     cat /var/log/usbip-bind.log
 # =============================================================================
 
 BIND_IDS=(
-    # Format: "vendor_id:product_id"  # Description
-    # Examples — uncomment as needed:
-    # "0bda:a728"   # Realtek Bluetooth 5.4 Radio
-    # "0bda:2838"   # RTL2838 DVB-T (ADS-B / RTL-SDR)
-    # "1209:7388"   # AIOC (All-In-One Cable)
-    # "0403:6001"   # FT232R (CAT cable)
-    # "10c4:ea60"   # CP2102 USB-Serial (KV4P)
+    # Examples — uncomment and edit:
+    # "1-1"          # bind by bus ID (simplest)
+    # "0bda:a728"    # Realtek Bluetooth 5.4 Radio
+    # "0bda:2838"    # RTL2838 DVB-T (ADS-B / RTL-SDR)
+    # "1209:7388"    # AIOC (All-In-One Cable)
+    # "0403:6001"    # FT232R (CAT cable)
+    # "10c4:ea60"    # CP2102 USB-Serial (KV4P)
 )
 
 LOG=/var/log/usbip-bind.log
@@ -169,46 +172,55 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 log "=== usbip-bind-devices starting ==="
 
 if [[ ${#BIND_IDS[@]} -eq 0 ]]; then
-    log "No devices configured in BIND_IDS — edit /usr/local/bin/usbip-bind-devices"
+    log "No devices configured — edit BIND_IDS in /usr/local/bin/usbip-bind-devices"
+    log "Available devices:"
+    usbip list -l 2>&1 | tee -a "$LOG"
     exit 0
 fi
 
 # Wait briefly for usbipd to be ready
-sleep 1
+sleep 2
+
+bind_one() {
+    local bus_id="$1" label="$2"
+    log "Binding $label at bus $bus_id..."
+    local out
+    out=$(usbip bind -b "$bus_id" 2>&1)
+    if echo "$out" | grep -q "complete\|already"; then
+        log "  OK: $bus_id bound"
+        return 0
+    else
+        log "  ERROR: $bus_id — $out"
+        return 1
+    fi
+}
 
 bound=0
 for id in "${BIND_IDS[@]}"; do
-    vendor="${id%%:*}"
-    product="${id##*:}"
-
-    # Find all bus IDs matching this vendor:product
-    bus_ids=()
-    while IFS= read -r vid_path; do
-        v=$(cat "$vid_path" 2>/dev/null)
-        p=$(cat "$(dirname "$vid_path")/idProduct" 2>/dev/null)
-        if [[ "${v,,}" == "${vendor,,}" && "${p,,}" == "${product,,}" ]]; then
-            bus_ids+=("$(basename "$(dirname "$vid_path")")")
-        fi
-    done < <(find /sys/bus/usb/devices -maxdepth 2 -name idVendor 2>/dev/null)
-
-    if [[ ${#bus_ids[@]} -eq 0 ]]; then
-        log "WARNING: Device $id not found (not plugged in?)"
-        continue
+    # Detect format: bus ID looks like digits/dashes/dots only (e.g. 1-1, 1-1.4)
+    if [[ "$id" =~ ^[0-9]+(-[0-9]+(\.[0-9]+)*)+$ ]]; then
+        # Direct bus ID
+        bind_one "$id" "$id" && ((bound++)) || true
+    else
+        # vendor:product — find matching bus IDs via sysfs
+        vendor="${id%%:*}"
+        product="${id##*:}"
+        found=0
+        while IFS= read -r vid_path; do
+            v=$(cat "$vid_path" 2>/dev/null)
+            p=$(cat "$(dirname "$vid_path")/idProduct" 2>/dev/null)
+            if [[ "${v,,}" == "${vendor,,}" && "${p,,}" == "${product,,}" ]]; then
+                bus_id=$(basename "$(dirname "$vid_path")")
+                bind_one "$bus_id" "$id" && ((bound++)) || true
+                found=1
+            fi
+        done < <(find /sys/bus/usb/devices -maxdepth 2 -name idVendor 2>/dev/null)
+        [[ $found -eq 0 ]] && log "WARNING: No device found for $id (not plugged in?)"
     fi
-
-    for bus_id in "${bus_ids[@]}"; do
-        log "Binding $id at bus $bus_id..."
-        if usbip bind -b "$bus_id" 2>&1 | tee -a "$LOG"; then
-            log "  OK: $bus_id bound"
-            ((bound++)) || true
-        else
-            log "  SKIP: $bus_id may already be bound"
-        fi
-    done
 done
 
-log "Binding complete ($bound device(s) newly bound)"
-log "Currently exported devices:"
+log "Done — $bound device(s) bound"
+log "Currently exported:"
 usbip list -l 2>&1 | tee -a "$LOG"
 BINDEOF
 
