@@ -703,7 +703,8 @@ class WebConfigServer:
                 elif self.path == '/d75status':
                     # D75 CAT state endpoint
                     data = {'connected': False, 'd75_enabled': False, 'tcp_connected': False,
-                            'serial_connected': False, 'service_running': False, 'status_detail': ''}
+                            'serial_connected': False, 'btstart_in_progress': False,
+                            'service_running': False, 'status_detail': ''}
                     if parent.gateway:
                         data['d75_enabled'] = getattr(parent.gateway.config, 'ENABLE_D75', False)
                         data['d75_mode'] = str(getattr(parent.gateway.config, 'D75_CONNECTION', 'bluetooth')).lower().strip()
@@ -730,7 +731,10 @@ class WebConfigServer:
                         elif not data.get('tcp_connected', False):
                             data['status_detail'] = 'Gateway cannot reach D75 CAT server (TCP)'
                         elif not data.get('serial_connected', False):
-                            data['status_detail'] = 'D75 CAT running but radio not responding (BT/serial down)'
+                            if data.get('btstart_in_progress', False):
+                                data['status_detail'] = 'Connecting BT — please wait...'
+                            else:
+                                data['status_detail'] = 'D75 CAT running but radio not responding (BT/serial down)'
                         else:
                             data['status_detail'] = ''
                         # Include audio status
@@ -1779,8 +1783,16 @@ class WebConfigServer:
                                                     gw.d75_audio_source = None
                                             # Auto-trigger btstart so user doesn't need a second click
                                             _cat_ref = gw.d75_cat
+                                            _cat_ref._btstart_in_progress = True
+                                            def _btstart_bg(c):
+                                                c.send_command("!btstart")
+                                                for _w in range(40):
+                                                    time.sleep(1)
+                                                    if not c._btstart_in_progress:
+                                                        return
+                                                c._btstart_in_progress = False
                                             threading.Thread(
-                                                target=lambda c: c.send_command("!btstart"),
+                                                target=_btstart_bg,
                                                 args=(_cat_ref,), daemon=True, name="D75-reconnect-btstart"
                                             ).start()
                                         result = {'ok': True, 'response': 'Connected — starting BT link in background'}
@@ -1798,6 +1810,7 @@ class WebConfigServer:
                                 result = {'ok': True, 'response': resp or ''}
                             elif cmd == 'btstart':
                                 gw.d75_cat._bt_stopped = False
+                                gw.d75_cat._btstart_in_progress = True
                                 resp = gw.d75_cat.send_command("!btstart")
                                 result = {'ok': True, 'response': resp or ''}
                             elif cmd == 'btstop':
@@ -1810,6 +1823,7 @@ class WebConfigServer:
                                     gw.d75_cat._sock.sendall(b"!btstop\n")
                                     resp = gw.d75_cat._recv_line(timeout=15.0)
                                 gw.d75_cat._serial_connected = False
+                                gw.d75_cat._btstart_in_progress = False
                                 gw.d75_cat._poll_paused = False
                                 result = {'ok': True, 'response': resp or ''}
                             elif cmd == 'ptt':
@@ -4017,8 +4031,8 @@ updateRadio();
     <option value="0">Dual</option><option value="1">Single</option>
   </select>
   <span style="color:#333;">|</span>
-  <button class="rb rb-sm" onclick="d75cmd('up')">Up</button>
-  <button class="rb rb-sm" onclick="d75cmd('down')">Down</button>
+  <button class="rb rb-sm" onclick="d75cmd('cat','UP')">Up</button>
+  <button class="rb rb-sm" onclick="d75cmd('cat','DN')">Down</button>
   <span style="color:#333;">|</span>
   <span class="d75-label">Battery:</span> <span id="d75-battery" class="d75-val">—</span>
   <span class="d75-label">BT:</span> <span id="d75-bt-state" class="d75-val">—</span>
@@ -4452,6 +4466,7 @@ function _updateToneDisplay(band, fi) {
 }
 
 var _d75Channels = [];  // cached channel list for re-rendering
+var _d75LastStatus = {};  // last polled status (dual_band, active_band, etc.)
 
 function d75LoadMemories() {
   var btn = document.getElementById('d75-mem-scan-btn');
@@ -4511,27 +4526,31 @@ function _d75RenderMemList() {
 }
 
 function d75GoChannel(band, ch) {
-  // Look up channel frequency from scan data and set it via FQ (same path as manual freq entry)
+  // Look up channel frequency from scan data and set it via FQ
   var chData = (_d75Channels || []).find(function(c) { return c.ch === ch; });
   if (!chData) { _d75flash('CH ' + ch + ' not in list — rescan first', '#e74c3c'); return; }
   var hz = Math.round(chData.freq * 1000000);
   var padded = ('0000000000' + hz).slice(-10);
-  if (band === 0) {
-    // Band A: radio may be in single-band or memory mode — switch to dual-band VFO first
-    d75cmd('cat', 'DL 0');
+  var isDual = (_d75LastStatus.dual_band === 0);   // DL 0=dual, DL 1=single
+  var activeBand = (_d75LastStatus.active_band !== undefined) ? _d75LastStatus.active_band : band;
+
+  if (!isDual && activeBand !== band) {
+    // Single-band mode, target band not active — switch active band (stay in single mode)
+    d75cmd('cat', 'BC ' + band);
     setTimeout(function() {
-      d75cmd('cat', 'VM 0,0');
+      d75cmd('cat', 'VM ' + band + ',0');
       setTimeout(function() {
-        d75cmd('cat', 'FQ 0,' + padded);
-      }, 400);
-    }, 400);
+        d75cmd('cat', 'FQ ' + band + ',' + padded);
+      }, 300);
+    }, 300);
   } else {
+    // Dual mode, or single-band with correct band already active
     d75cmd('cat', 'VM ' + band + ',0');
     setTimeout(function() {
       d75cmd('cat', 'FQ ' + band + ',' + padded);
     }, 200);
   }
-  _d75flash('Band ' + (band ? 'B' : 'A') + ' → ' + chData.freq + ' MHz' + (band === 0 ? ' (dual-band on)' : ''), '#2ecc71');
+  _d75flash('Band ' + (band ? 'B' : 'A') + ' → ' + chData.freq + ' MHz', '#2ecc71');
 }
 
 function d75VolDebounce(val) {
@@ -4548,6 +4567,7 @@ function updateD75() {
   if (_d75Busy) return;
   _d75Busy = true;
   fetch('/d75status').then(function(r){return r.json()}).then(function(d) {
+    _d75LastStatus = d;
     var isFullyUp = d.connected && d.serial_connected;
     // Update status checklist in offline panel
     var _green = '#2ecc71', _red = '#e74c3c', _grey = '#888';
@@ -4567,13 +4587,14 @@ function updateD75() {
 
     _chk('d75-chk-serial', d.serial_connected);
     var isBTMode = (d.d75_mode || 'bluetooth') === 'bluetooth';
-    document.getElementById('d75-chk-serial-text').textContent = d.serial_connected ? 'Connected' : 'Not responding';
-    document.getElementById('d75-chk-serial-text').style.color = d.serial_connected ? _green : _red;
-    document.getElementById('d75-offline-btstart-btn').style.display = (d.tcp_connected && !d.serial_connected && isBTMode) ? '' : 'none';
+    var btPending = d.btstart_in_progress && !d.serial_connected;
+    document.getElementById('d75-chk-serial-text').textContent = d.serial_connected ? 'Connected' : (btPending ? 'Connecting...' : 'Not responding');
+    document.getElementById('d75-chk-serial-text').style.color = d.serial_connected ? _green : (btPending ? '#f39c12' : _red);
+    document.getElementById('d75-offline-btstart-btn').style.display = (d.tcp_connected && !d.serial_connected && isBTMode && !btPending) ? '' : 'none';
 
     if (d.status_detail) {
       document.getElementById('d75-status-detail').textContent = d.status_detail;
-      document.getElementById('d75-status-detail').style.color = '#f39c12';
+      document.getElementById('d75-status-detail').style.color = btPending ? '#f39c12' : _red;
     }
 
     if (!d.d75_enabled) {
@@ -4595,7 +4616,7 @@ function updateD75() {
     document.getElementById('d75-mode').textContent = isBT ? 'Bluetooth' : 'USB';
     document.getElementById('d75-mode').style.color = d.serial_connected ? '#2ecc71' : '#e74c3c';
     document.getElementById('d75-audio-row').style.display = isBT ? '' : 'none';
-    document.getElementById('d75-btstart-btn').style.display = (isBT && d.tcp_connected && !d.serial_connected) ? '' : 'none';
+    document.getElementById('d75-btstart-btn').style.display = (isBT && d.tcp_connected && !d.serial_connected && !btPending) ? '' : 'none';
     document.getElementById('d75-btstop-btn').style.display = (isBT && d.tcp_connected && d.serial_connected) ? '' : 'none';
     document.getElementById('d75-audio-off-btn').style.display = (isBT && d.tcp_connected && d.serial_connected && d.audio_connected) ? '' : 'none';
     document.getElementById('d75-audio-on-btn').style.display = (isBT && d.tcp_connected && d.serial_connected && !d.audio_connected) ? '' : 'none';

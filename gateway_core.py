@@ -4565,6 +4565,7 @@ class RadioGateway:
                         if d75_mode == 'bluetooth':
                             # BT mode: btstart connects BT audio + serial
                             # Run in background thread so it doesn't block gateway startup
+                            self.d75_cat._btstart_in_progress = True
                             def _d75_btstart_bg(cat):
                                 cat._send_cmd("!btstart")
                                 # Poll for completion (btstart retries internally)
@@ -4574,10 +4575,12 @@ class RadioGateway:
                                         _st = cat._send_cmd("!audio status")
                                         if _st and '"connected": true' in _st:
                                             print(f"\n  [D75] btstart OK (took {_btwait+1}s)")
+                                            cat._btstart_in_progress = False
                                             return
                                     except Exception:
                                         pass
                                 print(f"\n  [D75] btstart timeout — audio may not be connected")
+                                cat._btstart_in_progress = False
                             threading.Thread(target=_d75_btstart_bg, args=(self.d75_cat,),
                                              name="D75-btstart", daemon=True).start()
                             print("  btstart initiated (running in background)")
@@ -4628,8 +4631,16 @@ class RadioGateway:
                                 continue
                             print(f"\n[D75] Auto-reconnected to CAT server")
                             if mode == 'bluetooth':
+                                _cat._btstart_in_progress = True
                                 def _bg(cat):
                                     cat._send_cmd("!btstart")
+                                    # poll_state() will clear _btstart_in_progress on success;
+                                    # clear it after 40s timeout so the button comes back if BT never connects
+                                    for _w in range(40):
+                                        time.sleep(1)
+                                        if not cat._btstart_in_progress:
+                                            return
+                                    cat._btstart_in_progress = False
                                 threading.Thread(target=_bg, args=(_cat,), daemon=True, name="D75-auto-btstart").start()
                             else:
                                 _cat._send_cmd("!serial connect")

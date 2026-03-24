@@ -231,6 +231,7 @@ class SerialManager:
             b0 = dict(self.band[0]) if self.band[0] else dict(empty)
             b1 = dict(self.band[1]) if self.band[1] else dict(empty)
             return {
+                'serial_connected': self._connected,
                 'model_id':      self.model_id if self._connected else '',
                 'fw_version':    self.fw_version,
                 'serial_number': self.serial_number,
@@ -694,6 +695,7 @@ class CATServer:
         self._audio   = audio_mgr
         self._sock    = None
         self._running = False
+        self._btstart_thread = None  # tracks background btstart
 
     def start(self, host=SERVER_HOST, port=CAT_PORT):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -804,34 +806,38 @@ class CATServer:
 
         # ── btstart / btstop ───────────────────────────────────────────────────
         elif cmd == 'btstart':
-            # CKPD cannot be sent while CAT serial (RFCOMM ch2) is open.
-            # Strategy: connect audio hardware (RFCOMM ch1 + SCO) WITHOUT CKPD first
-            # so that if BT is unreachable we never touched serial.
-            # Only disconnect serial briefly once we know BT is actually up.
-            if not self._audio.connected:
-                print("[btstart] Connecting audio hardware (no CKPD yet)...")
-                audio_ok = self._audio.connect(send_ckpd=False)
-                if not audio_ok:
-                    print("[btstart] Audio failed — serial untouched")
-                    return 'btstart failed (BT unreachable?)'
-                # BT is up — now briefly drop serial to send CKPD safely
-                serial_was_up = self._serial.connected
-                if serial_was_up:
-                    print("[btstart] Dropping serial briefly for CKPD...")
-                    self._serial.disconnect()
-                    time.sleep(0.5)
-                self._audio.send_ckpd()
-                time.sleep(0.3)
-                if serial_was_up:
-                    print("[btstart] Reconnecting serial...")
-                    ok = self._serial.connect()
+            # Run BT connect in background so this command returns immediately.
+            # Caller polls !status or !audio status to wait for completion.
+            if self._btstart_thread and self._btstart_thread.is_alive():
+                return 'btstart already in progress'
+            def _do_btstart():
+                # CKPD cannot be sent while CAT serial (RFCOMM ch2) is open.
+                # Strategy: connect audio hardware (RFCOMM ch1 + SCO) WITHOUT CKPD first
+                # so that if BT is unreachable we never touched serial.
+                # Only disconnect serial briefly once we know BT is actually up.
+                if not self._audio.connected:
+                    print("[btstart] Connecting audio hardware (no CKPD yet)...")
+                    audio_ok = self._audio.connect(send_ckpd=False)
+                    if not audio_ok:
+                        print("[btstart] Audio failed — serial untouched")
+                        return
+                    serial_was_up = self._serial.connected
+                    if serial_was_up:
+                        print("[btstart] Dropping serial briefly for CKPD...")
+                        self._serial.disconnect()
+                        time.sleep(0.5)
+                    self._audio.send_ckpd()
+                    time.sleep(0.3)
+                    if serial_was_up:
+                        print("[btstart] Reconnecting serial...")
+                        self._serial.connect()
                 else:
-                    ok = True
-            else:
-                ok = True
-                if not self._serial.connected:
-                    ok = self._serial.connect()
-            return 'started' if ok else 'btstart failed (serial)'
+                    if not self._serial.connected:
+                        self._serial.connect()
+                print("[btstart] Done")
+            self._btstart_thread = threading.Thread(target=_do_btstart, daemon=True, name="btstart")
+            self._btstart_thread.start()
+            return 'btstart initiated'
 
         elif cmd == 'btstop':
             self._audio.disconnect()

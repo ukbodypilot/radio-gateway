@@ -130,7 +130,8 @@ SDR post-duck stutter: aioc_ducks_sdrs gate removed + re-duck inhibit (2s) + fad
 MCP sdr_tune wrong payload keys (2026-03-23),
 SDR2 permanently ducked: D75 noise above SDR_SIGNAL_THRESHOLD=-70 kept other_audio_active=True (2026-03-24),
 ANNIN level bar stuck after voice note transmission (2026-03-24),
-D75 default unmuted caused noise + SDR ducking on startup (2026-03-24).
+D75 default unmuted caused noise + SDR ducking on startup (2026-03-24),
+D75 BT Start button shown during auto-connect: added _btstart_in_progress flag, UI shows "Connecting..." (2026-03-24).
 
 ## User Preferences
 - CBR Opus (not VBR), commits requested explicitly, concise responses, no emojis

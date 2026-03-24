@@ -1,5 +1,10 @@
 # Bug History — Radio Gateway
 
+## D75 BT Start button appears during auto-connect (2026-03-24)
+**Symptom:** After gateway auto-connects to D75 proxy (via retry loop), the web UI shows "Radio BT Serial: Not responding" and a BT Start button even though btstart was already triggered automatically. User sees this and thinks they need to press the button.
+**Root cause:** No "in progress" state was tracked. The UI showed `serial_connected=False` with the BT Start button immediately, with no indication that btstart was already running.
+**Fix:** Added `_btstart_in_progress` flag to `D75CATClient`. Set True when btstart is sent (retry loop, reconnect handler, btstart web command, polling loop auto-reconnect). Cleared when `poll_state` sets `serial_connected=True`, or when btstop runs. Reported in `/d75status`. UI shows "Connecting..." (orange) instead of "Not responding" (red) and hides the BT Start buttons when pending.
+
 ## DISPLAY_TEXT VFO Misattribution — Wrong Frequency on Wrong VFO (2026-03-13)
 **Symptom:** Left VFO web display showed the right VFO's frequency (both showed 146400 instead of left=147435, right=146400). Display corruption happened during RTS changes for playback/announcements.
 

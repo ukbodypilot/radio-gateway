@@ -1021,6 +1021,7 @@ class D75CATClient:
         self._poll_thread = None
         self._poll_paused = False
         self._bt_stopped = False  # Set by btstop, cleared by btstart — suppresses auto-reconnect
+        self._btstart_in_progress = False  # True while btstart has been sent but serial not yet up
 
         # Radio state (populated by !status JSON response)
         self._connected = False
@@ -1172,7 +1173,13 @@ class D75CATClient:
             return
         try:
             data = json_mod.loads(resp)
-            self._serial_connected = bool(data.get('model_id'))
+            # Use explicit serial_connected flag if proxy provides it (avoids empty model_id on init)
+            if 'serial_connected' in data:
+                self._serial_connected = bool(data['serial_connected'])
+            else:
+                self._serial_connected = bool(data.get('model_id'))
+            if self._serial_connected:
+                self._btstart_in_progress = False
             self._model = data.get('model_id', '')
             self._serial_number = data.get('serial_number', '')
             self._firmware = data.get('fw_version', '')
@@ -1231,6 +1238,7 @@ class D75CATClient:
                         pass
                     if not self._serial_connected and not self._bt_stopped:
                         print(f"[D75 CAT] Serial not connected — requesting btstart...")
+                        self._btstart_in_progress = True
                         try:
                             resp = self.send_command("!btstart")
                             print(f"[D75 CAT] btstart: {resp}")
@@ -1267,6 +1275,7 @@ class D75CATClient:
         return {
             'connected': self._connected,
             'serial_connected': self._serial_connected,
+            'btstart_in_progress': self._btstart_in_progress,
             'model': self._model,
             'serial_number': self._serial_number,
             'firmware': self._firmware,
