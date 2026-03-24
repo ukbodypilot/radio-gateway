@@ -192,6 +192,16 @@ if [ "$CLAUDE_RUNNING" = false ]; then
                 ts "  Claude Code started in tmux session '$CLAUDE_TMUX_SESSION'"
                 ts "    Attach: tmux attach -t $CLAUDE_TMUX_SESSION"
             fi
+            # Open a visible terminal window showing the claude session (if on a display)
+            if [ -n "$DISPLAY" ] && command -v xfce4-terminal > /dev/null 2>&1; then
+                # Only open if no terminal is already attached to this session
+                if ! tmux list-clients -t "$CLAUDE_TMUX_SESSION" 2>/dev/null | grep -q pts; then
+                    xfce4-terminal --title="Claude Gateway" --geometry=220x50 \
+                        -e "tmux attach-session -t $CLAUDE_TMUX_SESSION" &
+                    disown
+                    ts "  Claude Code terminal window opened"
+                fi
+            fi
         elif command -v xfce4-terminal > /dev/null 2>&1; then
             xfce4-terminal --geometry=130x25 --working-directory="$GATEWAY_DIR" -e "$CLAUDE_BIN" &
             disown
