@@ -4568,18 +4568,14 @@ class RadioGateway:
                             self.d75_cat._btstart_in_progress = True
                             def _d75_btstart_bg(cat):
                                 cat._send_cmd("!btstart")
-                                # Poll for completion (btstart retries internally)
-                                for _btwait in range(40):
+                                # poll_state() clears _btstart_in_progress when serial connects
+                                # (via serial_connected in status response). Wait with timeout.
+                                for _btwait in range(60):
                                     time.sleep(1)
-                                    try:
-                                        _st = cat._send_cmd("!audio status")
-                                        if _st and '"connected": true' in _st:
-                                            print(f"\n  [D75] btstart OK (took {_btwait+1}s)")
-                                            cat._btstart_in_progress = False
-                                            return
-                                    except Exception:
-                                        pass
-                                print(f"\n  [D75] btstart timeout — audio may not be connected")
+                                    if not cat._btstart_in_progress:
+                                        print(f"\n  [D75] btstart OK (took {_btwait+1}s)")
+                                        return
+                                print(f"\n  [D75] btstart timeout — serial not connected after 60s")
                                 cat._btstart_in_progress = False
                             threading.Thread(target=_d75_btstart_bg, args=(self.d75_cat,),
                                              name="D75-btstart", daemon=True).start()
