@@ -1169,6 +1169,7 @@ class D75CATClient:
         active_band, band_0/band_1 with frequency, mode, squelch, power, s_meter.
         """
         resp = self._send_cmd("!status")
+        print(f"[D75-TRACE] poll_state: resp={resp!r:.120} btstart_in_progress={self._btstart_in_progress}")
         if not resp:
             return
         try:
@@ -1178,6 +1179,7 @@ class D75CATClient:
                 self._serial_connected = bool(data['serial_connected'])
             else:
                 self._serial_connected = bool(data.get('model_id'))
+            print(f"[D75-TRACE] poll_state: serial_connected={self._serial_connected} has_sc_field={'serial_connected' in data} model_id={data.get('model_id')!r}")
             if self._serial_connected:
                 self._btstart_in_progress = False
             self._model = data.get('model_id', '')

@@ -4567,11 +4567,13 @@ class RadioGateway:
                             # Run in background thread so it doesn't block gateway startup
                             self.d75_cat._btstart_in_progress = True
                             def _d75_btstart_bg(cat):
-                                cat._send_cmd("!btstart")
+                                resp = cat._send_cmd("!btstart")
+                                print(f"[D75-TRACE] btstart_bg: !btstart resp={resp!r}")
                                 # poll_state() clears _btstart_in_progress when serial connects
                                 # (via serial_connected in status response). Wait with timeout.
                                 for _btwait in range(60):
                                     time.sleep(1)
+                                    print(f"[D75-TRACE] btstart_bg: wait {_btwait+1}s btstart_in_progress={cat._btstart_in_progress} serial_connected={cat._serial_connected}")
                                     if not cat._btstart_in_progress:
                                         print(f"\n  [D75] btstart OK (took {_btwait+1}s)")
                                         return

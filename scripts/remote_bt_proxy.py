@@ -230,7 +230,7 @@ class SerialManager:
                      'memory_mode': 0, 'channel': ''}
             b0 = dict(self.band[0]) if self.band[0] else dict(empty)
             b1 = dict(self.band[1]) if self.band[1] else dict(empty)
-            return {
+            d = {
                 'serial_connected': self._connected,
                 'model_id':      self.model_id if self._connected else '',
                 'fw_version':    self.fw_version,
@@ -244,6 +244,8 @@ class SerialManager:
                 'band_0':        b0,
                 'band_1':        b1,
             }
+            print(f"[D75-TRACE] to_dict: serial_connected={self._connected} model_id={self.model_id!r}")
+            return d
 
     # ── private ────────────────────────────────────────────────────────────────
 
