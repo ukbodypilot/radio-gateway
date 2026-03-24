@@ -286,6 +286,10 @@ class SerialManager:
             r = self.send_raw(f"PC {band}")
             if r:
                 self._process_message(r)
+        for cmd in ("DL", "BC"):
+            r = self.send_raw(cmd)
+            if r:
+                self._process_message(r)
         with self._state_lock:
             for b in (0, 1):
                 bd = self.band[b]
@@ -421,9 +425,12 @@ class SerialManager:
             elif line.startswith('RX'):
                 with self._state_lock:
                     self.transmitting = False
-            elif line.startswith('DL') and ',' in line:
+            elif line.startswith('DL '):
                 with self._state_lock:
-                    self.dual_band = int(line.split(',')[-1].strip())
+                    self.dual_band = int(line.split()[-1].strip())
+            elif line.startswith('BC '):
+                with self._state_lock:
+                    self.active_band = int(line.split()[-1].strip())
             elif line.startswith('PC') and ',' in line:
                 parts = line.split(',')
                 band = int(line[2:].split(',')[0].strip())

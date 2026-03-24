@@ -4009,11 +4009,11 @@ updateRadio();
 <!-- Radio Controls Row -->
 <div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
   <span class="d75-label">Band:</span>
-  <select id="d75-active-band" class="d75-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;d75cmd('band',this.value)">
+  <select id="d75-active-band" class="d75-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;d75cmd('cat','BC '+this.value)">
     <option value="0">A</option><option value="1">B</option>
   </select>
   <span class="d75-label">Dual:</span>
-  <select id="d75-dual" class="d75-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;d75cmd('dual',this.value)">
+  <select id="d75-dual" class="d75-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;d75cmd('cat','DL '+this.value)">
     <option value="0">Dual</option><option value="1">Single</option>
   </select>
   <span style="color:#333;">|</span>
