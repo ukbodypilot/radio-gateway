@@ -849,6 +849,8 @@ class CATServer:
             if not self._serial.connected:
                 return 'serial not connected'
             r = self._serial.send_raw(data)
+            if r:
+                self._serial._process_message(r)  # Update state from set-command ACKs (e.g. PC, FQ)
             return r or 'no response'
 
         # ── audio management ───────────────────────────────────────────────────

@@ -4509,11 +4509,22 @@ function d75GoChannel(band, ch) {
   if (!chData) { _d75flash('CH ' + ch + ' not in list — rescan first', '#e74c3c'); return; }
   var hz = Math.round(chData.freq * 1000000);
   var padded = ('0000000000' + hz).slice(-10);
-  d75cmd('cat', 'VM ' + band + ',0');  // VFO mode
-  setTimeout(function() {
-    d75cmd('cat', 'FQ ' + band + ',' + padded);
-  }, 200);
-  _d75flash('Band ' + (band ? 'B' : 'A') + ' → ' + chData.freq + ' MHz', '#2ecc71');
+  if (band === 0) {
+    // Band A: radio may be in single-band or memory mode — switch to dual-band VFO first
+    d75cmd('cat', 'DL 0');
+    setTimeout(function() {
+      d75cmd('cat', 'VM 0,0');
+      setTimeout(function() {
+        d75cmd('cat', 'FQ 0,' + padded);
+      }, 400);
+    }, 400);
+  } else {
+    d75cmd('cat', 'VM ' + band + ',0');
+    setTimeout(function() {
+      d75cmd('cat', 'FQ ' + band + ',' + padded);
+    }, 200);
+  }
+  _d75flash('Band ' + (band ? 'B' : 'A') + ' → ' + chData.freq + ' MHz' + (band === 0 ? ' (dual-band on)' : ''), '#2ecc71');
 }
 
 function d75VolDebounce(val) {
@@ -4545,7 +4556,7 @@ function updateD75() {
     _chk('d75-chk-tcp', d.tcp_connected);
     document.getElementById('d75-chk-tcp-text').textContent = d.tcp_connected ? 'Connected' : 'Disconnected';
     document.getElementById('d75-chk-tcp-text').style.color = d.tcp_connected ? _green : _red;
-    document.getElementById('d75-reconnect-btn').style.display = (d.service_running && !d.tcp_connected) ? '' : 'none';
+    document.getElementById('d75-reconnect-btn').style.display = !d.tcp_connected ? '' : 'none';
 
     _chk('d75-chk-serial', d.serial_connected);
     var isBTMode = (d.d75_mode || 'bluetooth') === 'bluetooth';
