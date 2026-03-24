@@ -982,6 +982,39 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
+                elif self.path == '/telegramstatus':
+                    import json as json_mod, os as _os
+                    data = {'enabled': False, 'bot_running': False, 'bot_username': '',
+                            'tmux_session': '', 'tmux_active': False,
+                            'messages_today': 0, 'last_message_time': None,
+                            'last_message_text': '', 'last_reply_time': None}
+                    data['enabled'] = bool(getattr(parent.config, 'ENABLE_TELEGRAM', False)) if parent.config else False
+                    if data['enabled']:
+                        status_file = getattr(parent.config, 'TELEGRAM_STATUS_FILE', '/tmp/tg_status.json')
+                        try:
+                            with open(status_file) as _sf:
+                                _sd = json_mod.load(_sf)
+                            data.update({k: _sd[k] for k in data if k in _sd})
+                        except Exception:
+                            pass
+                        # Verify tmux session is live
+                        session = getattr(parent.config, 'TELEGRAM_TMUX_SESSION', 'claude-gateway')
+                        data['tmux_session'] = session
+                        try:
+                            import subprocess as _sp
+                            _r = _sp.run(['tmux', 'has-session', '-t', session],
+                                         capture_output=True, timeout=2)
+                            data['tmux_active'] = (_r.returncode == 0)
+                        except Exception:
+                            data['tmux_active'] = False
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
                 elif self.path == '/usbipstatus':
                     import json as json_mod
                     if parent.usbip_manager:
@@ -5822,6 +5855,24 @@ pollTimer = setInterval(pollStatus, 1000);
   <div id="usbip-devices-list" style="margin-top:6px; font-size:0.9em; color:#ccc;">No devices</div>
 </div>
 
+<div id="tg-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Telegram Bot</h3>
+    <span id="tg-bot-name" style="font-size:0.85em; color:#aaa;"></span>
+  </div>
+  <div class="st-row" style="margin-bottom:8px;">
+    <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Session:</span><span id="tg-session" class="st-val white">--</span></div>
+  </div>
+  <div class="st-row" style="margin-bottom:6px;">
+    <div class="st-item"><span class="st-label">Today:</span><span id="tg-msgs-today" class="st-val cyan">--</span><span class="st-label"> msgs</span></div>
+    <div class="st-item"><span class="st-label">Last in:</span><span id="tg-last-in" class="st-val white">--</span></div>
+    <div class="st-item"><span class="st-label">Last out:</span><span id="tg-last-out" class="st-val green">--</span></div>
+  </div>
+  <div style="font-size:0.85em; color:#aaa; margin-top:4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" id="tg-last-text"></div>
+</div>
+
 <div class="controls">
   <div class="ctrl-group" id="mute-group">
     <h3>Mute Controls</h3>
@@ -6876,6 +6927,39 @@ function updateUsbip() {
 }
 setInterval(updateUsbip, 10000);
 updateUsbip();
+
+// --- Telegram Bot Status ---
+var _tgBusy = false;
+function updateTelegram() {
+  if (_tgBusy) return;
+  _tgBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/telegramstatus', {signal:_ac.signal}).then(function(r){return r.json();}).then(function(d) {
+    var panel = document.getElementById('tg-panel');
+    if (!d.enabled) { panel.style.display='none'; return; }
+    panel.style.display='';
+    function dot(id, ok, title) {
+      var el = document.getElementById(id);
+      el.textContent = '\u25cf';
+      el.style.color = ok ? '#2ecc71' : '#e74c3c';
+      el.title = title || (ok ? 'ok' : 'offline');
+    }
+    dot('tg-dot-bot', d.bot_running, d.bot_running ? 'bot running' : 'bot not running');
+    dot('tg-dot-tmux', d.tmux_active, d.tmux_active ? 'session active' : 'session not found');
+    document.getElementById('tg-bot-name').textContent = d.bot_username || '';
+    document.getElementById('tg-session').textContent = d.tmux_session || '--';
+    document.getElementById('tg-msgs-today').textContent = d.messages_today != null ? d.messages_today : '--';
+    function fmtTime(ts) {
+      if (!ts) return '--';
+      try { return new Date(ts).toLocaleTimeString(); } catch(e) { return ts.slice(11,19) || '--'; }
+    }
+    document.getElementById('tg-last-in').textContent = fmtTime(d.last_message_time);
+    document.getElementById('tg-last-out').textContent = fmtTime(d.last_reply_time);
+    document.getElementById('tg-last-text').textContent = d.last_message_text ? '\u00bb ' + d.last_message_text : '';
+  }).catch(function(){}).finally(function(){ _tgBusy=false; });
+}
+setInterval(updateTelegram, 5000);
+updateTelegram();
 
 // --- Web Mic PTT ---
 var _dbMicWs=null, _dbMicStream=null, _dbMicCtx=null, _dbMicProc=null, _dbMicActive=false;

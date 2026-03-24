@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram Bot — Radio Gateway Control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/home/user/Downloads/radio-gateway
+ExecStart=/usr/bin/python3 /home/user/Downloads/radio-gateway/tools/telegram_bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

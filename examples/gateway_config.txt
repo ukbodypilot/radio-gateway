@@ -491,6 +491,32 @@ SMART_ANNOUNCE_3_VOICE = 1
 SMART_ANNOUNCE_3_TARGET_SECS = 15
 
 
+[telegram]
+# Telegram bot — control the gateway from your phone via plain English.
+# Messages are injected into a running Claude Code tmux session which
+# uses the gateway MCP tools to act on requests.  Claude replies via
+# the telegram_reply() MCP tool, which sends the response back to Telegram.
+#
+# Setup:
+#   1. Create a bot via @BotFather on Telegram → copy the token below
+#   2. Send /start to the bot from your phone → check the update for your chat ID
+#   3. Set ENABLE_TELEGRAM = true
+#   4. Start Claude Code in a tmux session:
+#        tmux new-session -s claude-gateway
+#        claude
+#   5. Enable the systemd service:
+#        sudo cp tools/telegram-bot.service /etc/systemd/system/
+#        sudo systemctl enable --now telegram-bot
+
+ENABLE_TELEGRAM = false
+
+TELEGRAM_BOT_TOKEN =          # Token from @BotFather (e.g. 123456:ABC-DEF...)
+TELEGRAM_CHAT_ID =             # Your Telegram chat ID (integer) — only this ID is accepted
+TELEGRAM_TMUX_SESSION = claude-gateway   # Name of the tmux session running Claude Code
+TELEGRAM_STATUS_FILE = /tmp/tg_status.json
+TELEGRAM_PROMPT_SUFFIX = When you have completely finished, call telegram_reply() with your response. Do not call it until done.
+
+
 [web]
 # Web-based configuration editor and live dashboard
 #

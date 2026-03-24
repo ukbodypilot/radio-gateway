@@ -1579,6 +1579,110 @@ ANNOUNCE_INPUT_VOLUME = 4.0            # Volume multiplier for announcement audi
 sudo ufw allow 9601/tcp
 ```
 
+## Telegram Bot — Phone Control
+
+Control the gateway from your phone using plain English via Telegram. Messages are injected into a running Claude Code tmux session which uses the gateway MCP tools to act on requests. Claude replies via the `telegram_reply()` MCP tool, which sends the response directly back to Telegram.
+
+```
+You (phone) → Telegram → telegram_bot.py → tmux send-keys → Claude Code session
+                                                                  ↓ (MCP tools)
+You (phone) ← Telegram ← telegram_reply() MCP tool ←←←←←←←←←← gateway
+```
+
+**Example interactions:**
+
+> *"What frequency is SDR1 on?"*
+> *"Tune SDR2 to 162.550 MHz NFM"*
+> *"Is anyone transmitting on the radio?"*
+> *"Play announcement slot 3"*
+> *"What's the CPU temperature?"*
+> *"Restart the SDR"*
+
+Claude maintains full context across the session — follow-up questions work naturally.
+
+### How It Works
+
+- `tools/telegram_bot.py` polls Telegram using long-polling (30s timeout — near-zero CPU when idle)
+- When a message arrives it is injected into the Claude Code tmux session as if typed at the keyboard
+- Claude processes the request using the gateway MCP tools, then calls `telegram_reply()` when done
+- `telegram_reply()` is an MCP tool that sends the response directly to Telegram
+- **Zero idle cost** — the bot sleeps in the Telegram long-poll; Claude Code is only active when a message arrives
+
+### Setup
+
+**Step 1 — Create a Telegram bot**
+
+Open Telegram, message `@BotFather`, send `/newbot`, follow the prompts. Copy the token it gives you.
+
+**Step 2 — Get your chat ID**
+
+Send any message to your new bot, then check:
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"
+# Look for "chat":{"id": <number>} — that is your TELEGRAM_CHAT_ID
+```
+
+**Step 3 — Configure**
+
+```ini
+[telegram]
+ENABLE_TELEGRAM = true
+TELEGRAM_BOT_TOKEN = 123456:ABC-DEF...
+TELEGRAM_CHAT_ID = 987654321
+TELEGRAM_TMUX_SESSION = claude-gateway
+```
+
+**Step 4 — Start Claude Code in a named tmux session**
+
+```bash
+tmux new-session -s claude-gateway
+claude
+# (Claude Code is now running inside tmux — you can attach/detach normally)
+```
+
+**Step 5 — Enable the systemd service**
+
+```bash
+sudo cp tools/telegram-bot.service /etc/systemd/system/
+sudo systemctl enable --now telegram-bot
+sudo systemctl status telegram-bot
+```
+
+Or run manually for testing:
+```bash
+python3 tools/telegram_bot.py
+```
+
+### Architecture Notes
+
+**Why tmux?**  Running Claude Code in tmux keeps the full conversation context alive across messages. Each Telegram message is appended to the existing session — Claude remembers what was said earlier in the conversation, which makes follow-up questions work naturally.
+
+**Why not `claude -p`?**  `claude -p` (non-interactive) spawns a fresh session per message — no context between messages. The tmux approach is a persistent session.
+
+**The `telegram_reply()` tool**  is the completion signal. Claude is instructed to call it when done. This avoids any ambiguity about when Claude has finished — the tool firing means the response is sent. Claude naturally won't call it mid-thought because it models it as "send this to the user."
+
+**Security**  Only messages from `TELEGRAM_CHAT_ID` are accepted. All others get an "Unauthorized" reply. The bot token should be kept in `gateway_config.txt` (gitignored).
+
+### Dashboard
+
+When `ENABLE_TELEGRAM = true`, a **Telegram Bot** panel appears on the dashboard showing:
+- Bot process status (running / offline)
+- Claude tmux session status (active / not found)
+- Messages received today
+- Timestamp of last inbound message and last reply
+- Last message text preview
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `ENABLE_TELEGRAM` | `false` | Enable the Telegram bot |
+| `TELEGRAM_BOT_TOKEN` | — | Token from @BotFather |
+| `TELEGRAM_CHAT_ID` | — | Your Telegram chat ID (only source accepted) |
+| `TELEGRAM_TMUX_SESSION` | `claude-gateway` | Name of the tmux session running Claude Code |
+| `TELEGRAM_STATUS_FILE` | `/tmp/tg_status.json` | Status file path (read by dashboard) |
+| `TELEGRAM_PROMPT_SUFFIX` | *(see config)* | Instruction appended to every injected message |
+
 ## Windows Audio Client
 
 `windows_audio_client.py` is a standalone client that either sends audio to the gateway or receives audio from it, depending on the selected role.
