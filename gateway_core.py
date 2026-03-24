@@ -2529,6 +2529,12 @@ class RTLAirbandManager:
     SAMPLE_RATES = [0.5, 1.0, 2.0, 2.56, 6.0, 8.0, 10.66]
     MODULATIONS = ['nfm', 'am']
     CONFIG_PATH = '/etc/rtl_airband/rspduo_gateway.conf'
+    CONFIG_PATH_SDR2 = '/etc/rtl_airband/rspduo_gateway2.conf'
+    # RSPduo dual-tuner via Master/Slave API:
+    #   SDR1 opens as Master (rspduo_mode=4) → Tuner 1
+    #   SDR2 opens as Slave  (rspduo_mode=8) → Tuner 2 (only visible after Master is streaming)
+    MASTER_DEVICE_STRING = "driver=sdrplay,rspduo_mode=4"
+    SLAVE_DEVICE_STRING = "driver=sdrplay,rspduo_mode=8"
 
     # All tunable setting keys with their types and defaults
     _SETTING_KEYS = {
@@ -2555,6 +2561,22 @@ class RTLAirbandManager:
         'iq_correction': (bool, True),
         'external_ref': (bool, False),
         'continuous': (bool, True),
+        # SDR2 (Tuner 2) independent settings — gain/filters are per-tuner
+        'frequency2': (float, 462.550),
+        'modulation2': (str, 'nfm'),
+        'gain_mode2': (str, 'agc'),
+        'rfgr2': (int, 4),
+        'ifgr2': (int, 40),
+        'agc_setpoint2': (int, -30),
+        'squelch_threshold2': (int, 0),
+        'tau2': (int, 200),
+        'ampfactor2': (float, 1.0),
+        'lowpass2': (int, 2500),
+        'highpass2': (int, 100),
+        'notch2': (float, 0.0),
+        'notch_q2': (float, 10.0),
+        'channel_bw2': (float, 0.0),
+        'continuous2': (bool, True),
     }
 
     def __init__(self, gateway_dir):
@@ -2566,24 +2588,15 @@ class RTLAirbandManager:
         for key, (typ, default) in self._SETTING_KEYS.items():
             setattr(self, key, default)
 
-        # Channel memory (10 slots)
-        self.channels = [None] * 10
-        self._load_channels()
+        self._load_settings()
 
-    def _load_channels(self):
-        """Load channel memory and current settings from JSON file."""
+    def _load_settings(self):
+        """Load current tuning state from JSON file."""
         try:
             if os.path.exists(self._channels_path):
                 with open(self._channels_path, 'r') as f:
                     data = json_mod.load(f)
-                self.channels = data.get('channels', [None] * 10)
-                # Pad to 10 slots
-                while len(self.channels) < 10:
-                    self.channels.append(None)
-                self.channels = self.channels[:10]
-                # Restore current tuning state
                 saved = data.get('current', {})
-                # Migrate: old 'bandwidth' key was actually sample_rate
                 if 'bandwidth' in saved and 'sample_rate' not in saved:
                     saved['sample_rate'] = saved.pop('bandwidth')
                 for key, (typ, default) in self._SETTING_KEYS.items():
@@ -2593,15 +2606,15 @@ class RTLAirbandManager:
                         except (ValueError, TypeError):
                             pass
         except Exception:
-            self.channels = [None] * 10
+            pass
 
-    def _save_channels(self):
-        """Persist channel memory and current settings to JSON file."""
+    def _save_settings(self):
+        """Persist current tuning state to JSON file."""
         try:
             with open(self._channels_path, 'w') as f:
-                json_mod.dump({'channels': self.channels, 'current': self._current_settings()}, f, indent=2)
+                json_mod.dump({'current': self._current_settings()}, f, indent=2)
         except Exception as e:
-            print(f"  [SDR] Failed to save channels: {e}")
+            print(f"  [SDR] Failed to save settings: {e}")
 
     def _current_settings(self):
         """Return current tuning state as a dict."""
@@ -2610,7 +2623,6 @@ class RTLAirbandManager:
     def get_status(self):
         """Return status dict for the /sdrstatus endpoint."""
         alive = False
-        # Always check via pgrep — rtl_airband daemonizes so self._process may show exited
         try:
             result = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
             alive = result.returncode == 0
@@ -2618,16 +2630,10 @@ class RTLAirbandManager:
             pass
         d = self._current_settings()
         d['process_alive'] = alive
-        d['channels'] = []
-        for i, ch in enumerate(self.channels):
-            if ch:
-                d['channels'].append({'slot': i, 'name': ch.get('name', ''), 'frequency': ch.get('frequency', 0), 'modulation': ch.get('modulation', '')})
-            else:
-                d['channels'].append(None)
         return d
 
     def apply_settings(self, **kwargs):
-        """Update tuning state, rewrite config, restart rtl_airband."""
+        """Update SDR1 tuning state, rewrite both configs, restart both rtl_airband processes."""
         for key, (typ, _default) in self._SETTING_KEYS.items():
             if key in kwargs:
                 try:
@@ -2636,44 +2642,37 @@ class RTLAirbandManager:
                     pass
         try:
             self._write_config()
+            self._write_config_sdr2()
             self._restart_process()
-            self._save_channels()  # Persist current settings to disk
+            self._save_settings()
             return {'ok': True}
         except Exception as e:
             return {'ok': False, 'error': str(e)}
 
-    def save_channel(self, slot, name=''):
-        """Save current settings to a channel slot."""
-        if not (0 <= slot <= 9):
-            return {'ok': False, 'error': 'Invalid slot'}
-        settings = self._current_settings()
-        settings['name'] = name or f"CH {slot}"
-        self.channels[slot] = settings
-        self._save_channels()
-        return {'ok': True}
-
-    def recall_channel(self, slot):
-        """Recall and apply settings from a channel slot."""
-        if not (0 <= slot <= 9):
-            return {'ok': False, 'error': 'Invalid slot'}
-        ch = self.channels[slot]
-        if not ch:
-            return {'ok': False, 'error': 'Empty slot'}
-        return self.apply_settings(**ch)
-
-    def delete_channel(self, slot):
-        """Clear a channel slot."""
-        if not (0 <= slot <= 9):
-            return {'ok': False, 'error': 'Invalid slot'}
-        self.channels[slot] = None
-        self._save_channels()
-        return {'ok': True}
+    def apply_settings_sdr2(self, **kwargs):
+        """Update SDR2 (Tuner 2) settings and restart both processes."""
+        sdr2_keys = {'frequency2', 'modulation2', 'gain_mode2', 'rfgr2', 'ifgr2',
+                     'agc_setpoint2', 'squelch_threshold2', 'tau2', 'ampfactor2',
+                     'lowpass2', 'highpass2', 'notch2', 'notch_q2', 'channel_bw2',
+                     'continuous2'}
+        for key in sdr2_keys:
+            if key in kwargs:
+                typ = self._SETTING_KEYS[key][0]
+                try:
+                    setattr(self, key, typ(kwargs[key]))
+                except (ValueError, TypeError):
+                    pass
+        try:
+            self._write_config_sdr2()
+            self._restart_process()
+            self._save_settings()
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
 
     def _write_config(self):
-        """Generate and write the rtl_airband config file."""
-        # Build device_string with SoapySDR settings
-        ds_parts = ['driver=sdrplay']
-        # Antenna selection is set at device level in rtl_airband, not device_string
+        """Generate and write the SDR1 (Master / Tuner 1) rtl_airband config file."""
+        device_string = self.MASTER_DEVICE_STRING
 
         # Build gain line (omit entirely for AGC)
         gain_line = ''
@@ -2688,9 +2687,10 @@ class RTLAirbandManager:
         settings_parts.append(f'iqcorr_ctrl={str(self.iq_correction).lower()}')
         settings_parts.append(f'extref_ctrl={str(self.external_ref).lower()}')
         settings_parts.append(f'agc_setpoint={self.agc_setpoint}')
-
-        device_string = ','.join(ds_parts)
         device_settings = ','.join(settings_parts)
+
+        # Cap sample rate at 2 MSps — limit in RSPduo Master/Slave mode
+        sample_rate = min(self.sample_rate, 2.0)
 
         # Build optional channel-level lines
         ch_opts = ''
@@ -2718,7 +2718,7 @@ class RTLAirbandManager:
         if self.antenna:
             dev_opts += f'  antenna = "{self.antenna}";\n'
 
-        conf = f'''# Auto-generated by Radio Gateway SDR Manager
+        conf = f'''# Auto-generated by Radio Gateway SDR Manager (SDR1 — Master / Tuner 1)
 # Do not edit manually — changes will be overwritten on next tune.
 
 devices:
@@ -2728,7 +2728,7 @@ devices:
   device_settings = "{device_settings}";
   mode = "multichannel";
   centerfreq = {self.frequency};
-  sample_rate = {self.sample_rate};
+  sample_rate = {sample_rate};
 {gain_line}
 {dev_opts}
   channels:
@@ -2756,9 +2756,86 @@ devices:
         if proc.returncode != 0:
             raise RuntimeError(f"Failed to write config: {proc.stderr.decode()}")
 
+    def _write_config_sdr2(self):
+        """Generate and write the SDR2 (Slave / Tuner 2) rtl_airband config file.
+
+        NOTE: SDR2 must be started AFTER SDR1 (Master) is already streaming.
+        The Slave device (rspduo_mode=8) only appears in the SoapySDR device list
+        once the Master process has opened the RSPduo.
+        """
+        device_string = self.SLAVE_DEVICE_STRING
+
+        # Gain line (omit for AGC)
+        gain_line = ''
+        if self.gain_mode2 == 'manual':
+            gain_line = f'  gain = "RFGR={self.rfgr2},IFGR={self.ifgr2}";\n'
+
+        # Device settings for AGC setpoint (always written — same as SDR1)
+        device_settings = f'agc_setpoint={self.agc_setpoint2}'
+
+        # Cap sample rate to match SDR1 (shared clock — Slave inherits from Master)
+        sample_rate = min(self.sample_rate, 2.0)
+
+        # Channel-level options
+        ch_opts = ''
+        if self.squelch_threshold2 != 0:
+            ch_opts += f'      squelch_threshold = {self.squelch_threshold2};\n'
+        if self.ampfactor2 != 1.0:
+            ch_opts += f'      ampfactor = {self.ampfactor2};\n'
+        if self.lowpass2 != 2500:
+            ch_opts += f'      lowpass = {self.lowpass2};\n'
+        if self.highpass2 != 100:
+            ch_opts += f'      highpass = {self.highpass2};\n'
+        if self.notch2 > 0:
+            ch_opts += f'      notch = {self.notch2};\n'
+            if self.notch_q2 != 10.0:
+                ch_opts += f'      notch_q = {self.notch_q2};\n'
+        if self.channel_bw2 > 0:
+            ch_opts += f'      bandwidth = {self.channel_bw2};\n'
+
+        # Device-level options
+        dev_opts = ''
+        if self.tau2 != 200:
+            dev_opts += f'  tau = {self.tau2};\n'
+
+        conf = f'''# Auto-generated by Radio Gateway SDR Manager (SDR2 — Slave / Tuner 2)
+# Do not edit manually — changes will be overwritten on next tune.
+
+devices:
+({{
+  type = "soapysdr";
+  device_string = "{device_string}";
+  device_settings = "{device_settings}";
+  mode = "multichannel";
+  centerfreq = {self.frequency2};
+  sample_rate = {sample_rate};
+{gain_line}{dev_opts}
+  channels:
+  (
+    {{
+      freq = {self.frequency2};
+      modulation = "{self.modulation2}";
+{ch_opts}      outputs: (
+        {{
+          type = "pulse";
+          stream_name = "SDR2 {self.frequency2:.3f} MHz";
+          sink = "sdr_capture2";
+          continuous = {'true' if self.continuous2 else 'false'};
+        }}
+      );
+    }}
+  );
+}});
+'''
+        proc = subprocess.run(
+            ['sudo', 'tee', self.CONFIG_PATH_SDR2],
+            input=conf.encode(), capture_output=True, timeout=5
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"Failed to write SDR2 config: {proc.stderr.decode()}")
+
     def _restart_process(self):
-        """Kill existing rtl_airband and start a new one."""
-        # Kill all existing
+        """Kill existing rtl_airband processes and start SDR1 (Master) + SDR2 (Slave)."""
         # Kill all existing rtl_airband — use SIGKILL since it may ignore SIGTERM
         subprocess.run(['sudo', 'killall', '-9', 'rtl_airband'], capture_output=True, timeout=5)
         self._process = None
@@ -2779,14 +2856,13 @@ devices:
         # Wait for sdrplay_apiService to be ready — 2s is not enough at boot
         time.sleep(5)
 
-        # Start rtl_airband (daemon mode — it forks into background)
+        # Start SDR1 (Tuner 1 / channel 0 — becomes RSPduo Master)
         # -e routes daemon logs to stderr (syslog disabled); stdout has startup errors
         proc = subprocess.run(
             ['rtl_airband', '-e', '-c', self.CONFIG_PATH],
             capture_output=True, timeout=10
         )
-        # Verify it's running — retry for up to 5s since the daemon may take a moment
-        # to crash if sdrplay still isn't ready
+        # Verify SDR1 is running — retry for up to 5s
         alive = False
         for _ in range(5):
             time.sleep(1)
@@ -2796,7 +2872,23 @@ devices:
                 break
         if not alive:
             err = (proc.stdout.decode()[:200] or proc.stderr.decode()[:200]).strip()
-            raise RuntimeError(f"rtl_airband failed to start: {err}")
+            raise RuntimeError(f"rtl_airband (SDR1) failed to start: {err}")
+
+        # Start SDR2 (Slave / Tuner 2) — must start AFTER SDR1 (Master) is streaming.
+        # The Slave device only appears in the SoapySDR list once Master is active.
+        time.sleep(3)
+        if os.path.exists(self.CONFIG_PATH_SDR2):
+            proc2 = subprocess.run(
+                ['rtl_airband', '-e', '-c', self.CONFIG_PATH_SDR2],
+                capture_output=True, timeout=10
+            )
+            # Check that we now have 2 rtl_airband processes
+            time.sleep(2)
+            chk2 = subprocess.run(['pgrep', '-a', 'rtl_airband'], capture_output=True, timeout=2)
+            pids = [l for l in chk2.stdout.decode().splitlines() if 'rtl_airband' in l]
+            if len(pids) < 2:
+                err2 = (proc2.stdout.decode()[:200] or proc2.stderr.decode()[:200]).strip()
+                print(f"  [SDR] Warning: SDR2 (Tuner 2) failed to start: {err2}")
 
     def stop(self):
         """Stop rtl_airband."""
@@ -3046,9 +3138,11 @@ class RadioGateway:
         # Per-source audio processors
         self.radio_processor = AudioProcessor("radio", config)
         self.sdr_processor = AudioProcessor("sdr", config)
+        self.sdr2_processor = AudioProcessor("sdr2", config)
         self.d75_processor = AudioProcessor("d75", config)
         self._sync_radio_processor()
         self._sync_sdr_processor()
+        self._sync_sdr2_processor()
         self._sync_d75_processor()
         
         # Initialize audio mixer and sources
@@ -3233,22 +3327,20 @@ class RadioGateway:
             bar_color = GREEN
         
         # All return paths have EXACTLY the same visible character width:
-        # 6-char bar + space + 4 chars = 11 visible characters total
+        # 4 chars (% value) + space + 6-char bar = 11 visible characters total
 
         # Show MUTE if muted (fixed width, colored)
         if muted:
-            return f"{bar_color}-MUTE-{RESET} {bar_color}M   {RESET}"
-
-        # Show DUCK if ducked (fixed width, colored) - for SDR only
-        if ducked:
-            return f"{bar_color}-DUCK-{RESET} {bar_color}D   {RESET}"
+            return f"{bar_color}M   {RESET} {bar_color}-MUTE-{RESET}"
 
         # Create a 6-character bar graph
         bar_length = 6
         filled = int((level / 100.0) * bar_length)
-
         bar = '█' * filled + '-' * (bar_length - filled)
-        return f"{bar_color}{bar}{RESET} {YELLOW}{level:3d}%{RESET}"
+
+        # % value to the LEFT of the bar: RED when ducked, GREEN when passing
+        pct_color = RED if ducked else GREEN
+        return f"{pct_color}{level:3d}%{RESET} {bar_color}{bar}{RESET}"
     
     def apply_highpass_filter(self, pcm_data):
         """Apply high-pass filter to remove low-frequency rumble"""
@@ -3359,6 +3451,24 @@ class RadioGateway:
         p.notch_freq = self.config.SDR_PROC_NOTCH_FREQ
         p.notch_q = self.config.SDR_PROC_NOTCH_Q
 
+    def _sync_sdr2_processor(self):
+        """Sync SDR2-specific config flags into the SDR2 AudioProcessor instance.
+        Uses the same SDR_PROC_* keys as SDR1 — both share one processing config section.
+        SDR2 gets its OWN processor instance so IIR filter state is never shared with SDR1.
+        """
+        p = self.sdr2_processor
+        p.enable_noise_gate = self.config.SDR_PROC_ENABLE_NOISE_GATE
+        p.gate_threshold = self.config.SDR_PROC_NOISE_GATE_THRESHOLD
+        p.gate_attack = self.config.SDR_PROC_NOISE_GATE_ATTACK
+        p.gate_release = self.config.SDR_PROC_NOISE_GATE_RELEASE
+        p.enable_hpf = self.config.SDR_PROC_ENABLE_HPF
+        p.hpf_cutoff = self.config.SDR_PROC_HPF_CUTOFF
+        p.enable_lpf = self.config.SDR_PROC_ENABLE_LPF
+        p.lpf_cutoff = self.config.SDR_PROC_LPF_CUTOFF
+        p.enable_notch = self.config.SDR_PROC_ENABLE_NOTCH
+        p.notch_freq = self.config.SDR_PROC_NOTCH_FREQ
+        p.notch_q = self.config.SDR_PROC_NOTCH_Q
+
     def _sync_d75_processor(self):
         """Sync D75-specific config flags into the D75 AudioProcessor instance."""
         p = self.d75_processor
@@ -3410,8 +3520,15 @@ class RadioGateway:
         self.highpass_state = self.radio_processor.highpass_state
         return result
 
-    def process_audio_for_sdr(self, pcm_data):
-        """Apply SDR-specific audio processing chain."""
+    def process_audio_for_sdr(self, pcm_data, source_name='SDR1'):
+        """Apply SDR-specific audio processing chain.
+        Each source gets its own processor instance so IIR filter state is isolated —
+        mixing SDR1 and SDR2 through a single shared processor caused filter-state
+        contamination at every 50ms chunk boundary (root cause of 5Hz clicks).
+        """
+        if source_name == 'SDR2':
+            self._sync_sdr2_processor()
+            return self.sdr2_processor.process(pcm_data)
         self._sync_sdr_processor()
         return self.sdr_processor.process(pcm_data)
     
@@ -4195,22 +4312,31 @@ class RadioGateway:
             else:
                 print("  Text-to-speech: DISABLED (set ENABLE_TTS = true to enable)")
             
+            # Derive numeric SDR mixer priorities from SDR_PRIORITY_ORDER
+            _sdr_order = getattr(self.config, 'SDR_PRIORITY_ORDER', 'sdr1')
+            if _sdr_order == 'sdr2':
+                _sdr1_mix_pri, _sdr2_mix_pri = 2, 1
+            elif _sdr_order == 'equal':
+                _sdr1_mix_pri, _sdr2_mix_pri = 1, 1
+            else:  # 'sdr1' default
+                _sdr1_mix_pri, _sdr2_mix_pri = 1, 2
+
             # Initialize SDR1 source if enabled
             if self.config.ENABLE_SDR:
                 try:
                     print("Initializing SDR1 audio source...")
                     _sdr1_cls = PipeWireSDRSource if self.config.SDR_DEVICE_NAME.startswith(('pw:', 'pipewire:')) else SDRSource
-                    self.sdr_source = _sdr1_cls(self.config, self, name="SDR1", sdr_priority=self.config.SDR_PRIORITY)
+                    self.sdr_source = _sdr1_cls(self.config, self, name="SDR1", sdr_priority=_sdr1_mix_pri)
                     if self.sdr_source.setup_audio():
                         # Set initial state from config
                         self.sdr_source.enabled = True
                         self.sdr_source.duck = self.config.SDR_DUCK
                         self.sdr_source.mix_ratio = self.config.SDR_MIX_RATIO
-                        self.sdr_source.sdr_priority = self.config.SDR_PRIORITY
+                        self.sdr_source.sdr_priority = _sdr1_mix_pri
                         self.mixer.add_source(self.sdr_source)
                         print("✓ SDR1 audio source added to mixer")
                         print(f"  Device: {self.config.SDR_DEVICE_NAME}")
-                        print(f"  Priority: {self.config.SDR_PRIORITY} (1=higher, 2=lower)")
+                        print(f"  Priority order: {_sdr_order} (SDR1 mixer pri={_sdr1_mix_pri})")
                         if self.config.SDR_DUCK:
                             print(f"  Ducking: ENABLED (SDR silenced when higher priority audio active)")
                         else:
@@ -4226,23 +4352,23 @@ class RadioGateway:
                 self.sdr_source = None
                 if self.config.VERBOSE_LOGGING:
                     print("  SDR1 audio: DISABLED (set ENABLE_SDR = true to enable)")
-            
+
             # Initialize SDR2 source if enabled
             if self.config.ENABLE_SDR2:
                 try:
                     print("Initializing SDR2 audio source...")
                     _sdr2_cls = PipeWireSDRSource if self.config.SDR2_DEVICE_NAME.startswith(('pw:', 'pipewire:')) else SDRSource
-                    self.sdr2_source = _sdr2_cls(self.config, self, name="SDR2", sdr_priority=self.config.SDR2_PRIORITY)
+                    self.sdr2_source = _sdr2_cls(self.config, self, name="SDR2", sdr_priority=_sdr2_mix_pri)
                     if self.sdr2_source.setup_audio():
                         # Set initial state from config
                         self.sdr2_source.enabled = True
                         self.sdr2_source.duck = self.config.SDR2_DUCK
                         self.sdr2_source.mix_ratio = self.config.SDR2_MIX_RATIO
-                        self.sdr2_source.sdr_priority = self.config.SDR2_PRIORITY
+                        self.sdr2_source.sdr_priority = _sdr2_mix_pri
                         self.mixer.add_source(self.sdr2_source)
                         print("✓ SDR2 audio source added to mixer")
                         print(f"  Device: {self.config.SDR2_DEVICE_NAME}")
-                        print(f"  Priority: {self.config.SDR2_PRIORITY} (1=higher, 2=lower)")
+                        print(f"  Priority order: {_sdr_order} (SDR2 mixer pri={_sdr2_mix_pri})")
                         if self.config.SDR2_DUCK:
                             print(f"  Ducking: ENABLED (SDR silenced when higher priority audio active)")
                         else:
@@ -4259,7 +4385,7 @@ class RadioGateway:
                     print(f"⚠ Warning: Could not initialize SDR2 source: {sdr2_err}")
                     # Create disabled source object so status bar still shows it
                     try:
-                        self.sdr2_source = _sdr2_cls(self.config, self, name="SDR2", sdr_priority=self.config.SDR2_PRIORITY)
+                        self.sdr2_source = _sdr2_cls(self.config, self, name="SDR2", sdr_priority=_sdr2_mix_pri)
                         self.sdr2_source.enabled = False
                     except:
                         self.sdr2_source = None
@@ -6108,6 +6234,8 @@ class RadioGateway:
                         _kv4p_snap.get('tx_input_rms', 0.0),  # 45: RMS of PCM fed to encoder
                         _kv4p_snap.get('tx_errors', 0),       # 46: encoder exceptions
                         self.announcement_delay_active and not (str(getattr(self.config, 'TX_RADIO', '')).lower() == 'kv4p' and bool(self.kv4p_audio_source)),  # 47: TX to KV4P silenced by PTT settle delay (False when TX_RADIO=kv4p, fix in place)
+                        self.sdr2_source._serve_discontinuity if self.sdr2_source and hasattr(self.sdr2_source, '_serve_discontinuity') else 0.0,  # 48: SDR2 sample discontinuity (abs delta)
+                        self.sdr2_source._sub_buffer_after if self.sdr2_source and hasattr(self.sdr2_source, '_sub_buffer_after') else -1,  # 49: SDR2 sub-buffer bytes after serve
                     ))
     
     def _find_darkice_pid(self):
@@ -6806,6 +6934,9 @@ class RadioGateway:
             'radio_tx': radio_tx,
             'sdr1_level': sdr1_level,
             'sdr2_level': sdr2_level,
+            'sdr1_ducked': getattr(self, 'sdr_ducked', False),
+            'sdr2_ducked': getattr(self, 'sdr2_ducked', False),
+            'cl_ducked': getattr(self, 'remote_audio_ducked', False),
             'remote_level': sv_level if self.remote_audio_server else cl_level,
             'remote_mode': 'SV' if self.remote_audio_server else 'CL',
             'speaker_level': speaker_level,
@@ -7738,7 +7869,8 @@ class RadioGateway:
             OUT_DISC, \
             KV4P_RXF, KV4P_RXB, KV4P_QDROP, KV4P_SBB, KV4P_SBA, \
             KV4P_GOT, KV4P_RMS, KV4P_QLEN, KV4P_DECERR, \
-            KV4P_TXF, KV4P_TXDROP, KV4P_TXRMS, KV4P_TXERR, KV4P_TXANN = range(48)
+            KV4P_TXF, KV4P_TXDROP, KV4P_TXRMS, KV4P_TXERR, KV4P_TXANN, \
+            SDR2_DISC, SDR2_SBA = range(50)
 
         with open(out_path, 'w') as f:
             dur = trace[-1][T] - trace[0][T] if len(trace) > 1 else 0
@@ -7907,6 +8039,7 @@ class RadioGateway:
 
                 # Sample discontinuities
                 sdr1_discs = [r[SDR1_DISC] for r in trace if r[SDR1_DISC] > 0]
+                sdr2_discs = [r[SDR2_DISC] for r in trace if len(r) > SDR2_DISC and r[SDR2_DISC] > 0]
                 aioc_discs = [r[AIOC_DISC] for r in trace if r[AIOC_DISC] > 0]
 
                 f.write("SAMPLE DISCONTINUITIES (inter-chunk boundary jumps)\n")
@@ -7919,6 +8052,14 @@ class RadioGateway:
                             f">1000: {len(big_jumps)}  >5000: {len(huge_jumps)}\n")
                 else:
                     f.write("  SDR1: no discontinuities (all chunks zero or no audio)\n")
+                if sdr2_discs:
+                    big_jumps = [d for d in sdr2_discs if d > 1000]
+                    huge_jumps = [d for d in sdr2_discs if d > 5000]
+                    f.write(f"  SDR2: count={len(sdr2_discs)}/{len(trace)}  "
+                            f"mean={statistics.mean(sdr2_discs):.0f}  max={max(sdr2_discs):.0f}  "
+                            f">1000: {len(big_jumps)}  >5000: {len(huge_jumps)}\n")
+                else:
+                    f.write("  SDR2: no discontinuities (all chunks zero or no audio)\n")
                 if aioc_discs:
                     big_jumps = [d for d in aioc_discs if d > 1000]
                     huge_jumps = [d for d in aioc_discs if d > 5000]
@@ -8023,6 +8164,78 @@ class RadioGateway:
                     f.write(f"  mutes: {', '.join(mutes)}\n")
                 f.write("\n")
 
+            # ── Duck-release analysis ──
+            # For each SDR: find every tick where the SDR went from ducked→not-ducked.
+            # Check: did fade-in fire on the release tick (or next tick)?
+            # Also check: was the queue depth reasonable at release?
+            duck_release_events = []
+            for i in range(1, len(trace)):
+                prev_r = trace[i-1]
+                curr_r = trace[i]
+                if not (len(prev_r) > MXST and len(curr_r) > MXST):
+                    continue
+                prev_st = prev_r[MXST] or {}
+                curr_st = curr_r[MXST] or {}
+                for sname in sorted((prev_st.get('sdrs', {}) | curr_st.get('sdrs', {})).keys()):
+                    prev_s = prev_st.get('sdrs', {}).get(sname, {})
+                    curr_s = curr_st.get('sdrs', {}).get(sname, {})
+                    if prev_s.get('ducked') and not curr_s.get('ducked'):
+                        # Duck just released for this SDR
+                        sdr_q = curr_r[SQ] if sname == 'SDR1' else (curr_r[SQ2] if len(curr_r) > SQ2 else -1)
+                        fi_fired = curr_s.get('fi', False)
+                        inc = curr_s.get('inc', False)
+                        # Missing fade-in: included on release tick but prev_included was True
+                        # (fade-in should always fire after a duck due to our reset fix)
+                        missing_fi = inc and not fi_fired
+                        duck_release_events.append({
+                            'tick': i, 't': curr_r[T], 'sdr': sname,
+                            'q': sdr_q, 'fi': fi_fired, 'inc': inc, 'missing_fi': missing_fi,
+                        })
+
+            if duck_release_events:
+                f.write("DUCK RELEASE EVENTS\n")
+                for ev in duck_release_events:
+                    fi_str = 'fade-in=YES' if ev['fi'] else ('fade-in=MISSING!' if ev['missing_fi'] else 'fade-in=no(not-inc)')
+                    f.write(f"  tick {ev['tick']:4d}  t={ev['t']:.3f}s  {ev['sdr']}  "
+                            f"q={ev['q']}  inc={ev['inc']}  {fi_str}\n")
+                missing = [ev for ev in duck_release_events if ev['missing_fi']]
+                if missing:
+                    f.write(f"  *** {len(missing)} duck release(s) WITHOUT fade-in — SDR resumed at full volume → click risk ***\n")
+                else:
+                    f.write(f"  All {len(duck_release_events)} duck release(s) had correct fade-in.\n")
+                f.write("\n")
+            else:
+                f.write("DUCK RELEASE EVENTS: none (no duck→unduck transitions observed)\n\n")
+
+            # ── Gap-stutter analysis ──
+            gap_stutter_ticks = [
+                (i, r) for i, r in enumerate(trace)
+                if len(r) > MXST and r[MXST]
+                and r[MXST].get('dk') and not r[MXST].get('ducks')
+                and r[MXST].get('oaa') and r[MXST].get('nptt_none')
+            ]
+            if gap_stutter_ticks:
+                f.write(f"GAP-STUTTER EVENTS (is_ducked=T, aioc_ducks=F, oaa=T, aioc_gap=T)\n")
+                f.write(f"  *** {len(gap_stutter_ticks)} ticks where AIOC blob gap briefly un-ducked SDR ***\n")
+                f.write(f"  These are the cause of SDR stutter during AIOC transmission.\n")
+                f.write(f"  First occurrence: tick {gap_stutter_ticks[0][0]}  t={gap_stutter_ticks[0][1][0]:.3f}s\n")
+                # Show run-lengths (how many consecutive gap-stutter ticks)
+                runs = []
+                run_start = gap_stutter_ticks[0][0]
+                run_len = 1
+                for k in range(1, len(gap_stutter_ticks)):
+                    if gap_stutter_ticks[k][0] == gap_stutter_ticks[k-1][0] + 1:
+                        run_len += 1
+                    else:
+                        runs.append((run_start, run_len))
+                        run_start = gap_stutter_ticks[k][0]
+                        run_len = 1
+                runs.append((run_start, run_len))
+                f.write(f"  Gap bursts (tick, length): {runs[:20]}\n")
+                f.write(f"  Total gap-stutter ticks: {len(gap_stutter_ticks)} (~{len(gap_stutter_ticks)*50}ms of SDR bleed-through)\n\n")
+            else:
+                f.write("GAP-STUTTER EVENTS: none detected\n\n")
+
             # ── Rebroadcast summary ──
             rebro_vals = [r[REBRO] for r in trace if len(r) > REBRO and r[REBRO]]
             if rebro_vals:
@@ -8039,8 +8252,9 @@ class RadioGateway:
             # ── Per-tick detail (first 200 + any anomalies) ──
             #
             # Mixer state column legend:
-            #   D=ducked H=hold P=padding T=trans_out A=aioc_ducks R=radio_sig O=other_active
+            #   D=ducked H=hold P=padding T=trans_out A=aioc_ducks R=radio_sig O=other_active N=aioc_gap(nptt_none)
             #   Per SDR: D=ducked S=signal H=hold X=sole .=excluded I=included(no signal)
+            #   GAP-STUTTER: D=True, A=False, O=True, N=True → is_ducked but AIOC gap un-ducked SDR
             def _fmt_mxst(st):
                 """Format mixer state dict into compact string."""
                 if not st:
@@ -8053,12 +8267,18 @@ class RadioGateway:
                 flags += 'A' if st.get('ducks') else '-'
                 flags += 'R' if st.get('radioSig') else '-'
                 flags += 'O' if st.get('oaa') else '-'
+                flags += 'N' if st.get('nptt_none') else '-'
+                flags += 'I' if st.get('ri') else '-'
                 sdrs = st.get('sdrs', {})
                 for sname in sorted(sdrs.keys()):
                     s = sdrs[sname]
                     flags += ' '
                     if s.get('ducked'):
                         flags += 'D'
+                    elif s.get('fi'):
+                        flags += 'F'  # fade-in fired (first inclusion after silence/duck)
+                    elif s.get('fo'):
+                        flags += 'O'  # fade-out fired (last frame before going silent)
                     elif s.get('inc'):
                         if s.get('sig'):
                             flags += 'S'
@@ -8091,19 +8311,24 @@ class RadioGateway:
             f.write(f"\n{'='*140}\n")
             f.write("PER-TICK DETAIL (all ticks; * = anomaly)\n")
             f.write(f"{'='*140}\n")
-            f.write("  State: D=ducked H=hold P=padding T=trans_out A=aioc_ducks R=radio_sig O=other_active\n")
-            f.write("  SDR:   D=ducked S=signal H=hold_inc X=sole_src I=inc(other) .=excluded\n")
+            f.write("  State: D=ducked H=hold P=padding T=trans_out A=aioc_ducks R=radio_sig O=other_active N=aioc_gap I=reduck_inhibit\n")
+            f.write("  * GAP-STUTTER tick: D=T A=F O=T N=T → is_ducked but AIOC blob gap caused SDR to briefly un-duck\n")
+            f.write("  SDR:   D=ducked F=fade-in(first-inc) O=fade-out(going-silent) S=signal H=hold_inc X=sole_src I=inc(other) .=excluded\n")
+            f.write("  * MISSING-FADE-IN tick: SDR included at duck-release without fade-in → click risk\n")
             f.write("  PB: B=prebuffering (waiting to rebuild cushion) .=normal\n")
             f.write("  RB: sig=rebroadcast sending  hold=PTT hold  idle=on but no signal\n")
-            f.write("  s1_disc/a_disc/o_disc: sample discontinuity at chunk boundary (abs delta, >5000=click)\n")
+            f.write("  s1_disc/s2_disc/a_disc/o_disc: sample discontinuity at chunk boundary (abs delta, >5000=click)\n")
             f.write("  s1_sba/a_sba: sub-buffer bytes remaining AFTER serving this chunk\n")
             f.write("  kv_txf: TX Opus frames sent | kv_txdrop: TX PCM bytes dropped (partial frame) | kv_txrms: TX input RMS | kv_ann: TX silenced by PTT settle delay\n\n")
+            _missing_fi_ticks = {ev['tick'] for ev in duck_release_events if ev['missing_fi']}
+            _duck_release_ticks = {ev['tick'] for ev in duck_release_events}
+
             hdr = (f"{'tick':>6} {'t(s)':>7} {'dt':>6} "
                    f"{'s1_q':>4} {'s1_sb':>6} {'s1_sba':>6} {'s2_q':>4} {'s2_sb':>6} {'pb':>2} "
                    f"{'aioc_q':>6} {'aioc_sb':>7} {'a_sba':>6} {'mixer':>5} {'mix_ms':>6} "
                    f"{'outcome':>10} {'m_ms':>5} {'spk_q':>5} {'rms':>7} {'dlen':>5} "
                    f"{'sv_ms':>6} {'sv#':>3} "
-                   f"{'s1_disc':>7} {'a_disc':>7} {'o_disc':>7} "
+                   f"{'s1_disc':>7} {'s2_disc':>7} {'a_disc':>7} {'o_disc':>7} "
                    f"{'kv_rxf':>6} {'kv_rxB':>6} {'kv_qd':>5} {'kv_sbb':>7} {'kv_sba':>7} {'kv_got':>6} {'kv_rms':>7} {'kv_q':>4} "
                    f"{'kv_txf':>6} {'kv_txdrop':>9} {'kv_txrms':>8} {'kv_txerr':>8} {'kv_ann':>6} "
                    f"{'sources':>14} {'state':>14} {'rb':>4}\n")
@@ -8112,6 +8337,14 @@ class RadioGateway:
             for i, r in enumerate(trace):
                 expected_len = self.config.AUDIO_CHUNK_SIZE * 2
                 _has_enh = len(r) > SDR1_DISC
+                _st = r[MXST] if len(r) > MXST and r[MXST] else {}
+                # Gap-stutter event: is_ducked=True but aioc_ducks_sdrs=False because
+                # AIOC had a blob gap this tick (nptt_none=True) — SDR briefly un-ducked
+                _gap_stutter = (_st.get('dk') and not _st.get('ducks')
+                                and _st.get('oaa') and _st.get('nptt_none'))
+                # SDR queue unexpectedly large: means get_audio() was not draining
+                # it during a duck, so stale buffered audio will play at release.
+                _sdr_q_spike = r[SQ] > 8 or (len(r) > SQ2 and r[SQ2] > 8)
                 is_anomaly = (r[DT] > 80 or not r[MGOT] or r[MMS] > 20
                               or r[OUTCOME] not in ('sent', 'mix')
                               or r[MUMMS] > 5 or r[SPKQD] >= 7 or r[DRMS] == 0
@@ -8120,7 +8353,11 @@ class RadioGateway:
                               or (len(r) > SVMS and r[SVMS] > 5.0)
                               or (_has_enh and r[SDR1_DISC] > 5000)
                               or (_has_enh and r[AIOC_DISC] > 5000)
-                              or (len(r) > OUT_DISC and r[OUT_DISC] > 5000))
+                              or (len(r) > OUT_DISC and r[OUT_DISC] > 5000)
+                              or (len(r) > SDR2_DISC and r[SDR2_DISC] > 5000)
+                              or _gap_stutter
+                              or i in _missing_fi_ticks
+                              or _sdr_q_spike)
                 flag = '*' if is_anomaly else ' '
                 st = _fmt_mxst(r[MXST]) if len(r) > MXST else ''
                 sq2 = r[SQ2] if len(r) > SQ2 else -1
@@ -8135,6 +8372,7 @@ class RadioGateway:
                 a_disc = r[AIOC_DISC] if _has_enh else 0.0
                 a_sba = r[AIOC_SBA] if _has_enh else -1
                 o_disc = r[OUT_DISC] if (len(r) > OUT_DISC) else 0.0
+                s2_disc = r[SDR2_DISC] if len(r) > SDR2_DISC else 0.0
                 _kv = len(r) > KV4P_RXF
                 kv_rxf = r[KV4P_RXF] if _kv else 0
                 kv_rxB = r[KV4P_RXB] if _kv else 0
@@ -8156,7 +8394,7 @@ class RadioGateway:
                         f"{r[MMS]:6.1f} "
                         f"{r[OUTCOME]:>10} {r[MUMMS]:5.1f} {r[SPKQD]:5} {r[DRMS]:7.0f} "
                         f"{r[DLEN]:5} {sv_ms:6.1f} {sv_n:3} "
-                        f"{s1_disc:7.0f} {a_disc:7.0f} {o_disc:7.0f} "
+                        f"{s1_disc:7.0f} {s2_disc:7.0f} {a_disc:7.0f} {o_disc:7.0f} "
                         f"{kv_rxf:6} {kv_rxB:6} {kv_qd:5} {kv_sbb:7} {kv_sba:7} {'yes' if kv_got else 'no':>6} {kv_rms:7.0f} {kv_q:4} "
                         f"{kv_txf:6} {kv_txdrop:9} {kv_txrms:8.0f} {kv_txerr:8} {kv_ann:>6} "
                         f"{r[MSRC]:>14} {st} {rb:>4}\n")

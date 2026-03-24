@@ -280,6 +280,35 @@ When ANY connection closed, it reset `loggedin = False` for all connections.
 
 **Lesson:** Never assume shared hardware state survives a process restart. Always cycle to a known clean state on startup rather than trying to detect and preserve prior state. The "skip if already connected" optimisation caused more problems than the brief reconnect delay it saved.
 
+## Shared SDR AudioProcessor — 5Hz IIR Filter Contamination (2026-03-23)
+**Symptom:** SDR audio had tiny but audible stutters at ~5Hz. Audio trace showed `o_disc` values of 5000–10208 (output clicks) correlating with SDR activity. `s1_disc` was low (mean=209, max=1180) but output had 22 clicks.
+
+**Root cause:** `sdr_processor` was a single shared `AudioProcessor` instance used by BOTH `SDR1` and `SDR2` sources. IIR filters (HPF, LPF, notch, noise gate) maintain state between calls. SDR1 processed its 50ms chunk → updated filter state with SDR1's signal. SDR2 then called `process_audio_for_sdr()` with the same processor → first output sample was calculated using SDR1's previous filter state → large boundary jump (effectively a click) at every 50ms chunk boundary. The shared state also contaminated SDR1 on the next tick. Manifested as clicks at ~2.7Hz average (perceived as 5Hz due to burst clustering and coincidence with 5Hz AIOC blob rhythm).
+
+**Fix:** Created separate `sdr2_processor = AudioProcessor("sdr2", config)` with its own IIR state. `process_audio_for_sdr(pcm_data, source_name='SDR1')` now routes SDR2 to `sdr2_processor` and SDR1 to `sdr_processor`. Both sources pass `self.name` when calling `process_audio_for_sdr()`. Also added `s2_disc` column to audio trace.
+
+**Secondary bug fixed:** Both `SDRSource.get_audio()` and `PipeWireSDRSource.get_audio()` were always looking up `SDR_DISPLAY_GAIN`/`SDR_AUDIO_BOOST` (SDR1 keys) even for the SDR2 instance. Fixed to use `SDR2_DISPLAY_GAIN`/`SDR2_AUDIO_BOOST` when `self.name == 'SDR2'`.
+
+**Lesson:** Any stateful audio processor (IIR filters, noise gate envelopes) must never be shared between independent audio streams. A single instance shared between two sources interleaves their per-call state updates, corrupting both.
+
+## SDR Post-Duck Stutter — Flapping + Missing Fade-In (2026-03-23)
+**Symptom:** After AIOC (radio RX) transmission ends, SDR audio plays with big gaps and choppy stuttering until there is a natural break in audio, then resumes normally.
+
+**Root cause 1 — aioc_ducks_sdrs gate caused flapping:**
+Old formula: `aioc_ducks_sdrs = (is_ducked or in_padding) and (non_ptt_audio is not None or _aioc_blob_recent)`
+When AIOC stopped, `non_ptt_audio=None` and `_aioc_blob_recent` expired (150ms) → `aioc_ducks_sdrs=False` → SDR started playing immediately even though `is_ducked=True` (1s hold still active). Any AIOC tail blob (VoIP echo, trailing audio) then set `non_ptt_audio != None` → `aioc_ducks_sdrs=True` → SDR abruptly cut off. Each tail blob restarted this cycle. Trace confirmed: tick 62 duck releases, tick 63 AIOC tail re-ducks (`o_disc=5605` click), repeat.
+**Fix:** `aioc_ducks_sdrs = ds['is_ducked'] or in_padding` — SDR suppressed for entire hold period, no `non_ptt_audio` gate. Hold expires 1s after last AIOC blob → single clean duck-in → no flapping.
+
+**Root cause 2 — AIOC tail blobs caused immediate re-duck after hold expires:**
+After duck-in (`is_ducked=False`), if AIOC sent any blob, `other_audio_active=True`, `prev_signal=False` (just cleared at duck-in) → new duck-out fired immediately → new 1s padding silence → new duck cycle.
+**Fix:** `REDUCK_INHIBIT_TIME=2.0s` — after duck-in, new duck-out blocked for 2s. `_duck_in_time` stored in duck state dict. Trace shows `I` flag while inhibit active.
+
+**Root cause 3 — missing fade-in at duck release:**
+`sdr_prev_included` was never updated during a duck (duck path sets `should_duck=True` and skips the else branch). After any duck, `sdr_prev_included=True` from before the duck → first SDR chunk after duck played at full volume (no 10ms onset fade-in) → audible click.
+**Fix:** At duck-in transition, reset `sdr_prev_included[name]=False` for all SDRs. Fade-in now always fires on the duck-release tick. Trace `F` flag and DUCK RELEASE EVENTS section confirm.
+
+**Lesson:** When suppressing audio via a high-level gate (`aioc_ducks_sdrs`), the gate must be stable for the full duration the audio should be suppressed — don't poke holes in it based on input data availability. Use a separate hold timer. Re-entry into a duck cycle after release should require a cooldown.
+
 ## KV4P Web UI Poll Overwriting User Input (2026-03-19)
 **Symptom:** CTCSS and other fields reset while user was trying to type/select a value.
 

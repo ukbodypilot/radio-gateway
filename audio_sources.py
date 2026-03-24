@@ -396,14 +396,6 @@ class AIOCRadioSource(AudioSource):
             self.gateway.last_successful_read = time.time()
             self.gateway.audio_capture_active = True
 
-            # Calculate audio level (for status display) — gate to VAD state so
-            # the noise floor doesn't show as activity when the radio is silent.
-            current_level = self.gateway.calculate_audio_level(data) if self.gateway.vad_active else 0
-            if current_level > self.gateway.tx_audio_level:
-                self.gateway.tx_audio_level = current_level
-            else:
-                self.gateway.tx_audio_level = int(self.gateway.tx_audio_level * 0.7 + current_level * 0.3)
-
             # Apply volume if needed
             if self.volume != 1.0 and data:
                 arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
@@ -432,6 +424,21 @@ class AIOCRadioSource(AudioSource):
 
             # Check VAD - always call to keep the envelope/state current.
             should_transmit = self.gateway.check_vad(data)
+
+            # Calculate audio level for the RX (AIOC) status bar — gate on AIOC's OWN
+            # VAD result, not gateway.vad_active (shared global state).
+            # Problem: check_vad() in the main loop is also called on the MIXED audio
+            # (AIOC + SDR) every tick AFTER this method returns.  That call can set
+            # vad_active=True due to SDR signal even when AIOC is silent.  The next
+            # tick's get_audio() would then read vad_active=True and calculate the AIOC
+            # noise floor level (~20%), making the RX bar show false activity.
+            # Using should_transmit (this call's local result) means the bar only lights
+            # up when AIOC itself has signal above threshold.
+            current_level = self.gateway.calculate_audio_level(data) if should_transmit else 0
+            if current_level > self.gateway.tx_audio_level:
+                self.gateway.tx_audio_level = current_level
+            else:
+                self.gateway.tx_audio_level = int(self.gateway.tx_audio_level * 0.7 + current_level * 0.3)
 
             # Full-duplex: when the gateway is transmitting (PTT active), bypass
             # the VAD gate so radio RX still flows to Mumble via the normal path.
@@ -1652,20 +1659,22 @@ class SDRSource(AudioSource):
                 raw_level = max(0, min(100, (db + 60) * (100 / 60)))
             else:
                 raw_level = 0
-            display_gain = getattr(self.gateway.config, 'SDR_DISPLAY_GAIN', 1.0)
+            _dg_key = 'SDR2_DISPLAY_GAIN' if self.name == 'SDR2' else 'SDR_DISPLAY_GAIN'
+            display_gain = getattr(self.gateway.config, _dg_key, 1.0)
             display_level = min(100, int(raw_level * display_gain))
             if display_level > self.audio_level:
                 self.audio_level = display_level
             else:
                 self.audio_level = int(self.audio_level * 0.7 + display_level * 0.3)
 
-            audio_boost = getattr(self.gateway.config, 'SDR_AUDIO_BOOST', 1.0)
+            _ab_key = 'SDR2_AUDIO_BOOST' if self.name == 'SDR2' else 'SDR_AUDIO_BOOST'
+            audio_boost = getattr(self.gateway.config, _ab_key, 1.0)
             if audio_boost != 1.0:
                 arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
                 raw = arr.tobytes()
 
         # Apply per-source audio processing (HPF, LPF, notch, gate, etc.)
-        raw = self.gateway.process_audio_for_sdr(raw)
+        raw = self.gateway.process_audio_for_sdr(raw, self.name)
 
         return raw, False  # SDR never triggers PTT
 
@@ -2183,20 +2192,22 @@ class PipeWireSDRSource(SDRSource):
                 raw_level = max(0, min(100, (db + 60) * (100 / 60)))
             else:
                 raw_level = 0
-            display_gain = getattr(self.gateway.config, 'SDR_DISPLAY_GAIN', 1.0)
+            _dg_key = 'SDR2_DISPLAY_GAIN' if self.name == 'SDR2' else 'SDR_DISPLAY_GAIN'
+            display_gain = getattr(self.gateway.config, _dg_key, 1.0)
             display_level = min(100, int(raw_level * display_gain))
             if display_level > self.audio_level:
                 self.audio_level = display_level
             else:
                 self.audio_level = int(self.audio_level * 0.7 + display_level * 0.3)
 
-            audio_boost = getattr(self.gateway.config, 'SDR_AUDIO_BOOST', 1.0)
+            _ab_key = 'SDR2_AUDIO_BOOST' if self.name == 'SDR2' else 'SDR_AUDIO_BOOST'
+            audio_boost = getattr(self.gateway.config, _ab_key, 1.0)
             if audio_boost != 1.0:
                 arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
                 raw = arr.tobytes()
 
         # Apply SDR audio processing (HPF, LPF, notch, gate)
-        raw = self.gateway.process_audio_for_sdr(raw)
+        raw = self.gateway.process_audio_for_sdr(raw, self.name)
 
         return raw, False
 
@@ -3841,6 +3852,10 @@ class AudioMixer:
         self.SIGNAL_ATTACK_TIME  = config.SIGNAL_ATTACK_TIME
         self.SIGNAL_RELEASE_TIME = config.SIGNAL_RELEASE_TIME
         self.SWITCH_PADDING_TIME = getattr(config, 'SWITCH_PADDING_TIME', 1.0)
+        # After duck-in, block new duck-out for this many seconds.
+        # Prevents AIOC tail blobs (VoIP trailing audio, echo, tones) from
+        # immediately re-ducking the SDR and causing stutter.
+        self.REDUCK_INHIBIT_TIME = getattr(config, 'REDUCK_INHIBIT_TIME', 2.0)
 
         # Duck state machines — one entry per duck-group (e.g. 'aioc_vs_sdrs')
         # Tracks current duck state and active padding windows
@@ -4097,6 +4112,8 @@ class AudioMixer:
             'padding_end_time': 0.0,
             'transition_type': None,   # 'out' = duck starting, 'in' = duck ending
             '_radio_last_audio_time': 0.0,
+            '_aioc_last_blob_time': 0.0,  # monotonic time of last tick with actual AIOC audio
+            '_duck_in_time': 0.0,         # monotonic time of last duck-in (is_ducked→False)
         })
 
         # Track when Radio/PTT last had audio.  AIOC delivers 200ms blobs with
@@ -4116,8 +4133,13 @@ class AudioMixer:
         prev_signal = ds['prev_signal']
         ds['prev_signal'] = other_audio_active
 
-        if not ds['is_ducked'] and other_audio_active and not prev_signal:
+        _reduck_inhibit = (current_time - ds.get('_duck_in_time', 0.0)) < self.REDUCK_INHIBIT_TIME
+        if not ds['is_ducked'] and other_audio_active and not prev_signal and not _reduck_inhibit:
             # Transition: other audio just became active → start ducking SDRs.
+            # _reduck_inhibit blocks re-ducking for REDUCK_INHIBIT_TIME after the
+            # last duck-in: AIOC tail blobs (VoIP trailing audio, echo, system
+            # tones) during that window are ignored, preventing them from starting
+            # a new 1s duck cycle and causing post-duck stutter.
             # Record whether SDR had actual signal now so we know whether the
             # transition-silence is needed (SDR→radio handoff) or not (radio-only).
             ds['is_ducked'] = True
@@ -4143,18 +4165,39 @@ class AudioMixer:
             ds['is_ducked'] = False
             ds['padding_end_time'] = 0.0
             ds['transition_type'] = None
+            ds['_duck_in_time'] = current_time  # arm re-duck inhibit timer
+            # Reset sdr_prev_included so the onset fade-in always fires when
+            # SDR resumes after a duck.  Without this, sdr_prev_included stays
+            # True from before the duck and the first SDR chunk after duck-in
+            # jumps to full volume with no fade-in → audible click.
+            for _n in _sdr_source_names:
+                self.sdr_prev_included[_n] = False
             if self.config.VERBOSE_LOGGING:
                 print(f"  [Mixer] SDR duck-IN: immediate (no padding)")
 
         in_padding = current_time < ds['padding_end_time']
-        # Effective duck: only suppress SDRs when AIOC is actually delivering
-        # audio this tick.  The hold above keeps is_ducked stable through AIOC
-        # inter-blob gaps so no spurious duck-in/duck-out transitions fire —
-        # but if AIOC returned None (VAD released / reader stall), SDRs can
-        # play through immediately rather than sitting silent for the full 1s
-        # hold window.  If an inter-blob gap occurs during transmission and SDR
-        # briefly plays, the 10ms onset fade-in keeps it inaudible.
-        aioc_ducks_sdrs = (ds['is_ducked'] or in_padding) and non_ptt_audio is not None
+        # SDR suppression: suppress whenever is_ducked or in_padding.
+        # Tying this to is_ducked (not to whether non_ptt_audio is None) is
+        # critical to prevent post-duck flapping stutter:
+        #
+        #   Old logic: aioc_ducks_sdrs = (is_ducked or padding) and non_ptt_audio is not None
+        #   Problem:   AIOC stops → non_ptt_audio=None → aioc_ducks_sdrs=False immediately.
+        #              SDR plays.  AIOC sends a tail blob 150ms later → aioc_ducks_sdrs=True.
+        #              SDR abruptly cut off.  Repeat for each tail → choppy stutter.
+        #
+        #   New logic: aioc_ducks_sdrs = is_ducked or in_padding
+        #   Effect:    SDR stays suppressed through the full 1s hold window after AIOC
+        #              stops.  AIOC tail blobs reset _radio_last_audio_time, extending the
+        #              hold — SDR never starts until AIOC is truly done and 1s has passed.
+        #              Clean single release, no flapping.
+        #
+        # Keep _aioc_last_blob_time/_aioc_blob_recent for the trace nptt_none flag only.
+        if non_ptt_audio is not None:
+            ds['_aioc_last_blob_time'] = current_time
+        _aioc_blob_recent = (current_time - ds['_aioc_last_blob_time']) < 0.15
+        _aioc_audio_none = non_ptt_audio is None  # captured for trace: True = AIOC gap this tick
+
+        aioc_ducks_sdrs = ds['is_ducked'] or in_padding
         # During duck-out padding: silence ALL output so the switch is a clean break
         in_transition_out = in_padding and ds['transition_type'] == 'out'
 
@@ -4256,7 +4299,7 @@ class AudioMixer:
 
             # Track ducking state for status bar
             if should_duck:
-                _sdr_trace[sdr_name] = {'ducked': True, 'inc': False, 'sig': False, 'hold': False, 'sole': False}
+                _sdr_trace[sdr_name] = {'ducked': True, 'inc': False, 'sig': False, 'hold': False, 'sole': False, 'fi': False, 'fo': False}
                 if sdr_name == "SDR1":
                     sdr1_was_ducked = True
                 elif sdr_name == "SDR2":
@@ -4295,7 +4338,7 @@ class AudioMixer:
                 other_sdrs_have_signal = bool(_sdrs_with_signal - {sdr_name})
                 sdr_is_sole_source = no_aioc and (has_instant or hold_active)
                 include_sdr = has_instant or hold_active or sdr_is_sole_source
-                _sdr_trace[sdr_name] = {'ducked': False, 'inc': include_sdr, 'sig': has_sig_hyst, 'inst': has_instant, 'hold': hold_active, 'sole': sdr_is_sole_source}
+                _sdr_trace[sdr_name] = {'ducked': False, 'inc': include_sdr, 'sig': has_sig_hyst, 'inst': has_instant, 'hold': hold_active, 'sole': sdr_is_sole_source, 'fi': False, 'fo': False}
 
                 if sdr_audio is None:
                     # No data this cycle (reader thread momentarily behind).
@@ -4309,6 +4352,11 @@ class AudioMixer:
                     continue
 
                 prev_included = self.sdr_prev_included.get(sdr_name, False)
+                # Track fade-in/fade-out events for trace instrumentation.
+                # fi=True → 10ms onset fade applied (first inclusion after silence/duck)
+                # fo=True → fade-out applied (last frame before going silent)
+                _sdr_trace[sdr_name]['fi'] = include_sdr and not prev_included
+                _sdr_trace[sdr_name]['fo'] = not include_sdr and prev_included
 
                 if include_sdr:
                     audio_to_include = sdr_audio
@@ -4393,6 +4441,8 @@ class AudioMixer:
             'oaa': other_audio_active,
             'radioSig': _radio_has_signal,
             'ducks': aioc_ducks_sdrs,
+            'nptt_none': _aioc_audio_none,  # True = AIOC blob gap this tick
+            'ri': _reduck_inhibit,          # True = re-duck blocked by inhibit timer
             'ptt': ptt_required,
             'sdrs': _sdr_trace,
         }

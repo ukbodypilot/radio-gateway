@@ -225,7 +225,6 @@ class Config:
             'SDR_DISPLAY_GAIN': 1.0,     # Display sensitivity multiplier (1.0 = normal, higher = more sensitive bar)
             'SDR_AUDIO_BOOST': 1.0,      # Actual audio volume boost (1.0 = no change, 2.0 = 2x louder)
             'SDR_BUFFER_MULTIPLIER': 4,  # Buffer size multiplier (4 = 4x normal buffer, ~200ms per ALSA read)
-            'SDR_PRIORITY': 1,           # SDR priority for ducking (1 = higher priority, 2 = lower priority)
             'SDR_WATCHDOG_TIMEOUT': 10,        # seconds with no successful read before recovery
             'SDR_WATCHDOG_MAX_RESTARTS': 5,    # max recovery attempts before giving up
             'SDR_WATCHDOG_MODPROBE': False,    # enable kernel module reload (requires sudoers entry)
@@ -237,10 +236,10 @@ class Config:
             'SDR2_DISPLAY_GAIN': 1.0,
             'SDR2_AUDIO_BOOST': 1.5,
             'SDR2_BUFFER_MULTIPLIER': 4,
-            'SDR2_PRIORITY': 2,          # SDR2 priority for ducking (1 = higher, 2 = lower)
             'SDR2_WATCHDOG_TIMEOUT': 10,
             'SDR2_WATCHDOG_MAX_RESTARTS': 5,
             'SDR2_WATCHDOG_MODPROBE': False,
+            'SDR_PRIORITY_ORDER': 'sdr1',    # which SDR ducks the other: sdr1 / sdr2 / equal
             # Signal Detection Hysteresis (prevents stuttering from rapid on/off)
             'SIGNAL_ATTACK_TIME': 0.25,  # Seconds of CONTINUOUS signal required before a source switch is allowed
             'SIGNAL_RELEASE_TIME': 3.0,  # Seconds of continuous silence required before switching back
