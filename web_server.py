@@ -1764,22 +1764,29 @@ class WebConfigServer:
                                     if gw.d75_cat.connect():
                                         gw.d75_cat.start_polling()
                                         d75_mode = str(getattr(gw.config, 'D75_CONNECTION', 'bluetooth')).lower().strip()
-                                        if d75_mode == 'bluetooth' and not gw.d75_audio_source:
-                                            try:
-                                                gw.d75_audio_source = D75AudioSource(gw.config, gw)
-                                                if gw.d75_audio_source.setup_audio():
-                                                    gw.d75_audio_source.enabled = True
-                                                    gw.d75_audio_source.duck = gw.config.D75_AUDIO_DUCK
-                                                    gw.d75_audio_source.sdr_priority = int(gw.config.D75_AUDIO_PRIORITY)
-                                                    gw.mixer.add_source(gw.d75_audio_source)
-                                                else:
+                                        if d75_mode == 'bluetooth':
+                                            if not gw.d75_audio_source:
+                                                try:
+                                                    gw.d75_audio_source = D75AudioSource(gw.config, gw)
+                                                    if gw.d75_audio_source.setup_audio():
+                                                        gw.d75_audio_source.enabled = True
+                                                        gw.d75_audio_source.duck = gw.config.D75_AUDIO_DUCK
+                                                        gw.d75_audio_source.sdr_priority = int(gw.config.D75_AUDIO_PRIORITY)
+                                                        gw.mixer.add_source(gw.d75_audio_source)
+                                                    else:
+                                                        gw.d75_audio_source = None
+                                                except Exception:
                                                     gw.d75_audio_source = None
-                                            except Exception:
-                                                gw.d75_audio_source = None
-                                        result = {'ok': True, 'response': 'Connected to D75 CAT server'}
+                                            # Auto-trigger btstart so user doesn't need a second click
+                                            _cat_ref = gw.d75_cat
+                                            threading.Thread(
+                                                target=lambda c: c.send_command("!btstart"),
+                                                args=(_cat_ref,), daemon=True, name="D75-reconnect-btstart"
+                                            ).start()
+                                        result = {'ok': True, 'response': 'Connected — starting BT link in background'}
                                     else:
                                         gw.d75_cat = None
-                                        result = {'ok': False, 'error': 'Could not connect to D75 CAT server — is the service running?'}
+                                        result = {'ok': False, 'error': 'Could not connect to D75 CAT server — is the proxy running on the remote machine?'}
                                 except Exception as e:
                                     gw.d75_cat = None
                                     result = {'ok': False, 'error': f'Reconnect failed: {e}'}

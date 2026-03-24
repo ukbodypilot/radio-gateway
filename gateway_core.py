@@ -4609,11 +4609,51 @@ class RadioGateway:
                         else:
                             print("  USB mode: audio via AIOC (no BT audio source)")
                     else:
-                        print("  Failed to connect to D75 CAT server")
+                        print("  Failed to connect to D75 CAT server — will retry in background")
                         self.d75_cat = None
                 except Exception as e:
-                    print(f"  D75 CAT error: {e}")
+                    print(f"  D75 CAT error: {e} — will retry in background")
                     self.d75_cat = None
+
+                # Background retry loop: if initial connect failed, keep trying until proxy is up
+                def _d75_retry_loop(gw, host, port, password, mode, verbose):
+                    import time as _time
+                    while True:
+                        _time.sleep(10)
+                        if gw.d75_cat is not None:
+                            return  # Already connected — stop retrying
+                        try:
+                            _cat = D75CATClient(host, port, password, verbose=False)
+                            if not _cat.connect():
+                                continue
+                            print(f"\n[D75] Auto-reconnected to CAT server")
+                            if mode == 'bluetooth':
+                                def _bg(cat):
+                                    cat._send_cmd("!btstart")
+                                threading.Thread(target=_bg, args=(_cat,), daemon=True, name="D75-auto-btstart").start()
+                            else:
+                                _cat._send_cmd("!serial connect")
+                            _cat.start_polling()
+                            if mode == 'bluetooth' and gw.d75_audio_source is None:
+                                try:
+                                    gw.d75_audio_source = D75AudioSource(gw.config, gw)
+                                    if gw.d75_audio_source.setup_audio():
+                                        gw.d75_audio_source.enabled = True
+                                        gw.d75_audio_source.muted = gw.d75_muted
+                                        gw.d75_audio_source.duck = gw.config.D75_AUDIO_DUCK
+                                        gw.d75_audio_source.sdr_priority = int(gw.config.D75_AUDIO_PRIORITY)
+                                        gw.mixer.add_source(gw.d75_audio_source)
+                                except Exception:
+                                    gw.d75_audio_source = None
+                            gw.d75_cat = _cat  # Make visible atomically after everything is set up
+                            return
+                        except Exception:
+                            pass
+                threading.Thread(
+                    target=_d75_retry_loop,
+                    args=(self, d75_host, d75_port, d75_pass, d75_mode, verbose),
+                    daemon=True, name="D75-retry"
+                ).start()
 
             # Initialize KV4P HT Radio
             if getattr(self.config, 'ENABLE_KV4P', False):
