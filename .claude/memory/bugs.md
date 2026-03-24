@@ -333,3 +333,26 @@ After duck-in (`is_ducked=False`), if AIOC sent any blob, `other_audio_active=Tr
 **Root cause:** Status poll fires every 1.5s and unconditionally overwrites all control fields. `_ctrlEditUntil` timer (set on `onfocus`) only protects for 5 seconds — expires before slow user finishes.
 
 **Fix:** `_kvset(id, val)` helper skips update if `document.activeElement.id === id`. Field is never overwritten while focused, regardless of timing. Timer bumped to 30s for dropdowns.
+
+## SDR2 Permanently Ducked — D75 Noise Above SDR_SIGNAL_THRESHOLD (2026-03-24)
+**Symptom:** SDR2 level bar shows red on dashboard; only clicks heard; audio trace shows `ducked: 489/489 (100%)`, `other_audio_active: 489/489 (100%)`, source breakdown `D75: 466 (95.3%)`.
+
+**Root cause:** `SDR_SIGNAL_THRESHOLD = -70.0` dBFS was too sensitive. D75 Bluetooth audio source continuously produces background audio at ~-65 dBFS (below VAD threshold -40 dBFS, but above -70 dBFS). `has_actual_audio(non_ptt_audio, "Radio")` mixed all non-PTT sources including D75, so D75 idle noise kept `other_audio_active=True` 100% of the time → `is_ducked` never released → SDRs suppressed permanently.
+
+**Fix:** Raised `SDR_SIGNAL_THRESHOLD` from -70.0 to -45.0 in `gateway_config.txt`. Now matches VAD threshold — audio that can't pass the VAD gate won't duck the SDRs either.
+
+**Lesson:** SDR_SIGNAL_THRESHOLD must be above the noise floor of ALL non-PTT sources (AIOC + D75 + Remote), not just AIOC. Use audio trace to check `other_audio_active` percentage — should be near 0% when radio is quiet.
+
+## ANNIN Level Bar Stuck After Voice Note Transmission (2026-03-24)
+**Symptom:** AN: bar on dashboard stays at non-zero % indefinitely after voice note finishes transmitting.
+
+**Root cause:** `NetworkAnnouncementSource.get_audio()` only updates `audio_level` on the "happy path" (when audio is above threshold and returned). The early-return paths (`Queue.Empty` → return None, below-threshold hold expired → return None) left `audio_level` at its last value.
+
+**Fix:** Added `self.audio_level = 0` before both `return None, False` exits in `get_audio()` (`audio_sources.py`). Level now resets when the queue drains and the PTT hold expires.
+
+## Telegram Voice Note — Only Brief PTT, No Audio (2026-03-24)
+**Symptom:** Radio keys PTT for ~0.5s then releases; voice not heard; bot reports success.
+
+**Root cause:** `_transmit_audio()` sent all PCM chunks as fast as TCP would allow. ANNIN queue is `maxsize=16` (drop-oldest). A 5.3s voice note = ~106 chunks at 50ms each. First 16 queued, rest dropped. ~0.8s of audio played then silence; PTT released.
+
+**Fix:** Added real-time pacing in `_transmit_audio()`: after each chunk, sleep until `next_send` time (one chunk interval = `chunk_size / sample_rate` seconds). Queue stays full but never overflows.
