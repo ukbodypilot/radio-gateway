@@ -1071,7 +1071,8 @@ class D75CATClient:
     def close(self):
         """Close TCP connection."""
         self._stop = True
-        if self._poll_thread and self._poll_thread.is_alive():
+        if (self._poll_thread and self._poll_thread.is_alive()
+                and self._poll_thread is not threading.current_thread()):
             self._poll_thread.join(timeout=2.0)
         if self._sock:
             try:
