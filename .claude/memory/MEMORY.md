@@ -151,9 +151,18 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **Web UI toast notifications:** `gateway.notify()` → 20-entry ring buffer → color-coded popups (auto-dismiss 8s)
 - **Edge TTS:** `TTS_ENGINE = edge` — Microsoft Neural voices; 9 voices; requires `edge-tts` pip package
 
+## MCP Server (gateway_mcp.py) — AI Control Interface (2026-03-23)
+- **File:** `gateway_mcp.py` — stdio MCP server; 19 tools; talks to gateway HTTP API on port 8080
+- **Config:** `.claude/settings.json` (project-level) — Claude Code auto-loads it in this directory
+- **Transport:** stdio (local Claude Code); future: SSE/HTTP via Cloudflare tunnel
+- **Reads:** `gateway_config.txt` at startup to get WEB_CONFIG_PORT and WEB_CONFIG_PASSWORD
+- **Tools:** gateway_status, sdr_status, cat_status, system_info, sdr_tune, sdr_restart, sdr_stop, radio_ptt, radio_tts, radio_cw, radio_ai_announce, radio_set_tx, radio_get_tx, recordings_list, recordings_delete, gateway_logs, gateway_key, automation_trigger, audio_trace_toggle
+- **Install:** `pip install --break-system-packages mcp` (mcp v1.26.0 installed 2026-03-23)
+- **Self-describing:** each tool has full docstring with args — AI can use cold without docs
+
 ## Planned Next Features
 - [USBIP USB over TCP](project_usbip.md) — `USBIPManager` class to share USB devices (BT dongle, RTL-SDR) from a remote Pi to the gateway over TCP port 3240
-- **MCP Server** — AI control interface; Claude Code on same machine via stdio MCP (no API keys); future: remote via Cloudflare tunnel + OpenAPI spec for any AI. Human gives natural-language instructions, AI calls gateway tools.
+- **MCP remote access** — expose gateway_mcp.py over SSE/HTTP via Cloudflare tunnel + OpenAPI spec for any AI (current impl is local stdio only)
 
 ## Known Bugs Fixed (details in bugs.md)
 Key recent: DISPLAY_TEXT VFO misattribution (2026-03-13), RTS change corrupts display (2026-03-13),

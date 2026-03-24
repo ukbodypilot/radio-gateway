@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "radio-gateway": {
+      "command": "python3",
+      "args": ["/home/user/Downloads/radio-gateway/gateway_mcp.py"],
+      "cwd": "/home/user/Downloads/radio-gateway"
+    }
+  }
+}
