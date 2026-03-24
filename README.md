@@ -1017,6 +1017,79 @@ python3 test_sdr_loopback.py
 python3 test_loopback_bidirectional.py
 ```
 
+### RSPduo Dual Simultaneous Tuner
+
+The gateway supports running both tuners of an SDRplay RSPduo **simultaneously** — Tuner 1 feeding SDR1 and Tuner 2 feeding SDR2 — each receiving a completely different frequency at the same time. This is handled automatically by the `RTLAirbandManager` class using RTLSDR-Airband + SoapySDR.
+
+#### Why the obvious approach (Mode 2) doesn't work
+
+The RSPduo API exposes a "Dual Tuner Independent RX" mode (mode 2). It looks right but fails for multi-process use: mode 2 opens the entire RSPduo and holds an exclusive device lock. A second rtl_airband process attempting to open the device gets "device not found". The gateway needs one rtl_airband process per audio stream, so mode 2 is a dead end.
+
+#### The working approach: Master / Slave (mode 4 + mode 8)
+
+The SDRplay API provides a Master/Slave split where two separate processes each open one tuner:
+
+| Mode | Role | Tuner | Gateway stream |
+|------|------|-------|---------------|
+| 4 | Master | Tuner 1 | SDR1 → `sdr_capture` |
+| 8 | Slave  | Tuner 2 | SDR2 → `sdr_capture2` |
+
+The Master process opens the hardware and establishes the device context. The Slave process then attaches alongside it. Both processes run independently — one per audio sink.
+
+#### Required plugin: fventuri SoapySDRPlay3
+
+The standard `soapysdrplay3` package (AUR, apt) does **not** expose `rspduo_mode=4` or `rspduo_mode=8`. You need [fventuri's fork](https://github.com/fventuri/SoapySDRPlay3/tree/dual-tuner-submodes), specifically the `dual-tuner-submodes` branch. The gateway installer builds and installs this automatically.
+
+> **Arch Linux:** The AUR package `soapysdrplay3-git` will overwrite the fventuri plugin on the next `pacman -Syu`. To prevent this, add `IgnorePkg = soapysdrplay3-git` to `/etc/pacman.conf`. The installer places the plugin in `/opt/soapy-fventuri/` and replaces the system copy in-place rather than installing to `/usr/local/lib/` — this avoids SoapySDR's "duplicate entry" error when both locations contain a `libsdrPlaySupport.so`.
+
+#### Startup sequence (order is critical)
+
+The Slave device only appears in SoapySDR's device enumeration **after the Master is already running and streaming**. Starting them simultaneously or Slave-first will fail with "device not found". The gateway enforces the correct sequence automatically:
+
+```
+1. Kill any existing rtl_airband processes (SIGKILL — ignores SIGTERM)
+2. Restart sdrplay.service (SIGKILL + fresh start; wait 5s for daemon to be ready)
+3. Start rtl_airband with rspduo_mode=4 (Master → Tuner 1)
+4. Poll pgrep for up to 5s to confirm Master is alive
+5. Wait 3 seconds — Master needs time to open the RSPduo fully
+6. Start rtl_airband with rspduo_mode=8 (Slave → Tuner 2)
+7. Verify two rtl_airband processes are running
+```
+
+#### Sample rate limit
+
+In Master/Slave mode both tuners share the RSPduo's ADC clock. The maximum reliable sample rate per tuner is **2.0 MSps**. The gateway caps this automatically — requesting higher rates causes one or both processes to fail at startup or produce corrupted audio.
+
+#### Configuration
+
+```ini
+[sdr]
+ENABLE_SDR  = true
+ENABLE_SDR2 = true
+
+SDR_DEVICE_NAME  = pw:sdr_capture   # SDR1 — Tuner 1 (Master)
+SDR2_DEVICE_NAME = pw:sdr_capture2  # SDR2 — Tuner 2 (Slave)
+```
+
+The SDR web page (`/sdr`) generates the rtl_airband config files automatically and manages the Master/Slave startup sequence. Settings (frequency, modulation, squelch, etc.) for both tuners persist in `sdr_channels.json`.
+
+#### Verifying dual-tuner support is active
+
+```bash
+# Should show rspduo_mode=4 and rspduo_mode=8 in the device list
+SoapySDRUtil --find | grep rspduo_mode
+
+# After starting SDR1, the Slave device should also appear:
+SoapySDRUtil --find="driver=sdrplay,rspduo_mode=8"
+```
+
+If only modes 1 and 2 appear, the fventuri plugin is not loaded. Check which `libsdrPlaySupport.so` is active:
+```bash
+SoapySDRUtil --check=sdrplay
+```
+
+> See also: [rspduo-airband](https://github.com/ukbodypilot/rspduo-airband) — a standalone tool that packages this same Master/Slave approach as a simple Python script, useful outside the gateway context.
+
 ## Keyboard Controls
 
 Press keys during operation to control the gateway:
