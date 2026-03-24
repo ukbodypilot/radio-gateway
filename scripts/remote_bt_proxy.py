@@ -813,29 +813,24 @@ class CATServer:
             if self._btstart_thread and self._btstart_thread.is_alive():
                 return 'btstart already in progress'
             def _do_btstart():
-                # CKPD cannot be sent while CAT serial (RFCOMM ch2) is open.
-                # Strategy: connect audio hardware (RFCOMM ch1 + SCO) WITHOUT CKPD first
-                # so that if BT is unreachable we never touched serial.
-                # Only disconnect serial briefly once we know BT is actually up.
+                # Strategy: connect audio (RFCOMM ch1 + SCO) without CKPD first —
+                # if BT is unreachable we bail before touching serial.
+                # Once audio is up, briefly drop serial to send CKPD, then reconnect it.
                 if not self._audio.connected:
                     print("[btstart] Connecting audio hardware (no CKPD yet)...")
-                    audio_ok = self._audio.connect(send_ckpd=False)
-                    if not audio_ok:
-                        print("[btstart] Audio failed — serial untouched")
+                    if not self._audio.connect(send_ckpd=False):
+                        print("[btstart] Audio failed — aborting")
                         return
-                    serial_was_up = self._serial.connected
-                    if serial_was_up:
+                    if self._serial.connected:
                         print("[btstart] Dropping serial briefly for CKPD...")
                         self._serial.disconnect()
                         time.sleep(0.5)
                     self._audio.send_ckpd()
                     time.sleep(0.3)
-                    if serial_was_up:
-                        print("[btstart] Reconnecting serial...")
-                        self._serial.connect()
-                else:
-                    if not self._serial.connected:
-                        self._serial.connect()
+                # Always connect serial at the end (whether audio was already up or not)
+                if not self._serial.connected:
+                    print("[btstart] Connecting serial...")
+                    self._serial.connect()
                 print("[btstart] Done")
             self._btstart_thread = threading.Thread(target=_do_btstart, daemon=True, name="btstart")
             self._btstart_thread.start()
