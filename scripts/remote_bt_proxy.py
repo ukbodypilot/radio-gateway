@@ -895,6 +895,10 @@ class CATServer:
                 # Strategy: connect audio (RFCOMM ch1 + SCO) without CKPD first —
                 # if BT is unreachable we bail before touching serial.
                 # Once audio is up, briefly drop serial to send CKPD, then reconnect it.
+                # Clean up any stale state from previous failed attempts
+                if not self._audio.connected and (self._audio._sco or self._audio._rfcomm):
+                    print("[btstart] Cleaning up stale audio sockets...")
+                    self._audio._close_sockets()
                 if not self._audio.connected:
                     print("[btstart] Connecting audio hardware (no CKPD yet)...")
                     if not self._audio.connect(send_ckpd=False):
