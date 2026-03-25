@@ -389,6 +389,7 @@ class SerialManager:
                 for b in (0, 1):
                     r = self.send_raw(f"FO {b}")
                     if r:
+                        print(f"[Serial] FO {b} raw: {r!r}")
                         self._process_message(r)
             # Periodic state dump for diagnosis
             if now - _last_state_dump >= STATE_DUMP_INTERVAL:
