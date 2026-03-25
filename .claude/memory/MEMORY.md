@@ -10,6 +10,7 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 **Installer:** `scripts/install.sh` (13 steps, targets Debian/Ubuntu/RPi/Arch Linux)
 **Config:** `gateway_config.txt` (INI format with `[section]` headers, copied from `examples/` on install)
 **Start script:** `start.sh` (11 steps: kill procs, Mumble GUI, TH-9800 CAT, Claude Code, CPU governor, loopback, AIOC USB reset, pipe, DarkIce, FFmpeg, gateway w/nice -10)
+- **HEADLESS_MODE = true** (2026-03-25): skips Mumble GUI launch in start.sh — user no longer uses GUI client on gateway machine
 **Windows client:** `windows_audio_client.py` (server: send audio, client: receive audio, `m` to switch)
 
 ## SDR Input — PipeWire (preferred) or ALSA Loopback
@@ -64,6 +65,8 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - Pages: `/` shell, `/dashboard`, `/sdr`, `/radio` (TH-9800), `/d75` (TH-D75), `/aircraft` (ADS-B), `/recordings`, `/logs`
 - Config: `ENABLE_WEB_CONFIG`, `WEB_CONFIG_PORT` (default 8080), `WEB_CONFIG_PASSWORD`
 - Dashboard layout: Listen box, Status (audio bars/info/timers), System Status, Controls, bottom row (Playback/Smart Announce/Broadcastify/PTT/TTS/System/ADS-B/Telegram panels)
+- **D75/KV4P processing buttons (2026-03-25):** Gate/HPF/LPF/Notch per source, with live highlighting
+- **Telegram panel:** "Open" button launches xfce4-terminal attached to Claude tmux session via `/open_tmux` endpoint
 
 ## TH-9800 CAT Control
 - `RadioCATClient` class: TCP client for TH9800_CAT.py server
@@ -126,10 +129,18 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
   was keeping `other_audio_active=True` 100% → SDRs permanently ducked. -45 matches VAD threshold.
 - **D75 starts muted by default** (fixed 2026-03-24): prevents D75 background noise from ducking SDRs on startup
 
-## MCP Server (gateway_mcp.py) — AI Control Interface (2026-03-23)
-- **File:** `gateway_mcp.py` — stdio MCP server; 19 tools + `telegram_reply()`; talks to gateway HTTP API on port 8080
+## MCP Server (gateway_mcp.py) — AI Control Interface (2026-03-25)
+- **File:** `gateway_mcp.py` — stdio MCP server; 31 tools; talks to gateway HTTP API on port 8080
 - **Config:** `.mcp.json` (project root); `.claude/settings.json`: `enableAllProjectMcpServers: true`
-- **Tools:** gateway_status, sdr_status, cat_status, system_info, sdr_tune, sdr_restart, sdr_stop, radio_ptt, radio_tts, radio_cw, radio_ai_announce, radio_set_tx, radio_get_tx, recordings_list, recordings_delete, gateway_logs, gateway_key, automation_trigger, audio_trace_toggle, telegram_reply
+- **CRITICAL:** MCP server is a Claude Code child process — restarting the gateway does NOT restart MCP. Use `/mcp` in Claude Code to reconnect.
+- **Original 20 tools:** gateway_status, sdr_status, cat_status, system_info, sdr_tune, sdr_restart, sdr_stop, radio_ptt, radio_tts, radio_cw, radio_ai_announce, radio_set_tx, radio_get_tx, recordings_list, recordings_delete, gateway_logs, gateway_key, automation_trigger, audio_trace_toggle, telegram_reply
+- **11 new tools (2026-03-25):** radio_frequency, d75_status, d75_command, d75_frequency, kv4p_status, kv4p_command, mixer_control, recording_playback (stub), config_read, telegram_status, process_control
+
+### /mixer HTTP Endpoint (2026-03-25)
+- **POST `/mixer`** — dedicated mixer control, works headless (no stdin needed)
+- **7 actions:** status, mute/unmute/toggle, volume (absolute 0.1-3.0), duck (per-source), boost (d75/kv4p/remote 0-500%), flag (vad/agc/echo_cancel/rebroadcast), processing (gate/hpf/lpf/notch per source)
+- **Sources:** global, tx, rx, sdr1, sdr2, d75, kv4p, remote, announce, speaker
+- Replaces `/key` workaround for MCP — supports explicit set not just toggle
 
 ## Telegram Bot — Phone Control (2026-03-24)
 - **File:** `tools/telegram_bot.py` — stdlib only (no pip); service: `tools/telegram-bot.service`
