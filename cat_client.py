@@ -1274,7 +1274,8 @@ class D75CATClient:
         tnc_names = {0: 'Off', 1: 'APRS', 2: 'KISS'}
         beacon_names = {0: 'Manual', 1: 'PTT', 2: 'Auto', 3: 'SmartBeacon'}
         return {
-            'connected': self._connected,
+            'connected': self._connected and self._serial_connected,
+            'tcp_connected': self._connected,
             'serial_connected': self._serial_connected,
             'btstart_in_progress': self._btstart_in_progress,
             'model': self._model,

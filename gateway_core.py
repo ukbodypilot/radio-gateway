@@ -5745,7 +5745,7 @@ class RadioGateway:
             'ms2_state': self.mumble_server_2.state if self.mumble_server_2 else None,
             'cat_enabled': bool(self.cat_client) or getattr(self.config, 'ENABLE_CAT_CONTROL', False),
             'd75_enabled': bool(self.d75_cat) or getattr(self.config, 'ENABLE_D75', False),
-            'd75_connected': bool(self.d75_cat),
+            'd75_connected': bool(self.d75_cat and getattr(self.d75_cat, '_serial_connected', False)),
             'd75_audio_connected': bool(self.d75_audio_source and self.d75_audio_source.server_connected),
             'd75_mode': str(getattr(self.config, 'D75_CONNECTION', 'bluetooth')).lower().strip(),
             'd75_level': self.d75_audio_source.audio_level if self.d75_audio_source else 0,
