@@ -20,9 +20,9 @@ import math as _math_mod
 import re
 import numpy as np
 
-from audio_sources import generate_cw_pcm
+from audio_sources import generate_cw_pcm, D75AudioSource
 from smart_announce import SmartAnnouncementManager
-from cat_client import RadioCATClient
+from cat_client import RadioCATClient, D75CATClient
 
 # ============================================================================
 # WEB CONFIGURATION UI
