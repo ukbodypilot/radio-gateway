@@ -831,32 +831,26 @@ class WebConfigServer:
                                 if freq_hz < 1000000:
                                     continue
                                 freq = freq_hz / 1_000_000
-                                tx_hz = int(fields[2])
-                                tx_freq = tx_hz / 1_000_000
+                                offset_hz = int(fields[2])  # ME[2] = offset in Hz (same as FO[2])
+                                offset_mhz = offset_hz / 1_000_000
                                 mode = int(fields[5])
                                 tone_on = fields[8] == '1'
                                 ctcss_on = fields[9] == '1'
                                 dcs_on = fields[10] == '1'
-                                shift = int(fields[13])
-                                # Determine shift display from actual TX freq
-                                if tx_freq == freq or tx_freq == 0:
+                                shift = int(fields[13])  # 0=simplex, 1=+, 2=-
+                                # Determine shift display
+                                if shift == 0 or offset_hz == 0:
                                     shift_str = 'S'
                                     offset_str = ''
+                                elif shift == 1:
+                                    shift_str = '+'
+                                    offset_str = f'{offset_mhz:.4f}'
+                                elif shift == 2:
+                                    shift_str = '-'
+                                    offset_str = f'{offset_mhz:.4f}'
                                 else:
-                                    diff = tx_freq - freq
-                                    if abs(diff) < 0.001:
-                                        shift_str = 'S'
-                                        offset_str = ''
-                                    elif diff > 0:
-                                        shift_str = '+'
-                                        offset_str = f'{diff:.4f}'
-                                    else:
-                                        shift_str = '-'
-                                        offset_str = f'{abs(diff):.4f}'
-                                    # If TX is a completely different band, show TX freq directly
-                                    if abs(diff) > 10:
-                                        shift_str = 'X'
-                                        offset_str = f'{tx_freq:.4f}'
+                                    shift_str = 'S'
+                                    offset_str = ''
                                 tone_str = ''
                                 tone_idx = int(fields[14])
                                 ctcss_idx = int(fields[15])
@@ -869,12 +863,24 @@ class WebConfigServer:
                                     idx = int(fields[16])
                                     if idx < len(_dcs): tone_str = 'D' + _dcs[idx]
                                 name = fields[20].strip() if len(fields) > 20 else ''
+                                # Power: ME field[21] on D75 if present (0=H,1=L,2=EL)
+                                power = int(fields[21]) if len(fields) > 21 and fields[21].strip().isdigit() else -1
                                 channels.append({
                                     'ch': ch_str, 'freq': round(freq, 4),
                                     'offset': offset_str,
                                     'mode': _modes.get(mode, '?'),
                                     'shift': shift_str,
                                     'tone': tone_str, 'name': name,
+                                    # Raw values for FO/PC load
+                                    'mode_num': mode,
+                                    'tone_on': 1 if tone_on else 0,
+                                    'ctcss_on': 1 if ctcss_on else 0,
+                                    'dcs_on': 1 if dcs_on else 0,
+                                    'tone_idx': tone_idx, 'ctcss_idx': ctcss_idx,
+                                    'dcs_idx': int(fields[16]) if len(fields) > 16 else 0,
+                                    'shift_num': shift,
+                                    'offset_hz': offset_hz,
+                                    'power': power,
                                 })
                                 _empty_streak = 0
                             except (ValueError, IndexError):
@@ -4742,7 +4748,8 @@ function _d75RenderMemList() {
   h += '<th style="padding:2px 6px;">CH</th><th style="padding:2px 6px;">Freq</th>';
   h += '<th style="padding:2px 6px;">Name</th><th style="padding:2px 6px;">Mode</th>';
   h += '<th style="padding:2px 6px;">Tone</th><th style="padding:2px 6px;">Shift</th>';
-  h += '<th style="padding:2px 6px;">Offset</th><th style="padding:2px 6px; text-align:center;">Load</th></tr>';
+  h += '<th style="padding:2px 6px;">Offset</th><th style="padding:2px 6px;">Pwr</th>';
+  h += '<th style="padding:2px 6px; text-align:center;">Load</th></tr>';
   _d75Channels.forEach(function(c) {
     h += '<tr class="mem-row">';
     h += '<td style="padding:3px 6px; color:var(--t-accent);">' + c.ch + '</td>';
@@ -4753,6 +4760,7 @@ function _d75RenderMemList() {
     var _sc = c.shift==='X'?'#e74c3c':c.shift==='S'?'#888':'#f39c12';
     h += '<td style="padding:3px 6px; color:'+_sc+';">' + (c.shift==='X'?'Xband':c.shift) + '</td>';
     h += '<td style="padding:3px 6px;">' + (c.offset || '') + '</td>';
+    var _pn = {0:'H',1:'L',2:'EL',3:'EL2'}; h += '<td style="padding:3px 6px; color:#f39c12;">' + (_pn[c.power] || '') + '</td>';
     h += '<td style="padding:3px 6px; white-space:nowrap;">';
     h += '<button class="rb rb-sm" style="padding:2px 6px;' + (aOk ? '' : 'opacity:0.3;cursor:default;') + '" onclick="' + (aOk ? "d75GoChannel(0," + "'" + c.ch + "'" + ")" : '') + '"' + (aOk ? '' : ' disabled') + '>A</button> ';
     h += '<button class="rb rb-sm" style="padding:2px 6px;' + (bOk ? '' : 'opacity:0.3;cursor:default;') + '" onclick="' + (bOk ? "d75GoChannel(1," + "'" + c.ch + "'" + ")" : '') + '"' + (bOk ? '' : ' disabled') + '>B</button>';
@@ -4763,31 +4771,76 @@ function _d75RenderMemList() {
 }
 
 function d75GoChannel(band, ch) {
-  // Look up channel frequency from scan data and set it via FQ
+  // Look up channel data from scan and load via FO (freq+mode+tone+shift atomically) + PC (power)
   var chData = (_d75Channels || []).find(function(c) { return c.ch === ch; });
   if (!chData) { _d75flash('CH ' + ch + ' not in list — rescan first', '#e74c3c'); return; }
-  var hz = Math.round(chData.freq * 1000000);
-  var padded = ('0000000000' + hz).slice(-10);
   var isDual = (_d75LastStatus.dual_band === 0);   // DL 0=dual, DL 1=single
   var activeBand = (_d75LastStatus.active_band !== undefined) ? _d75LastStatus.active_band : band;
 
-  if (!isDual && activeBand !== band) {
-    // Single-band mode, target band not active — switch active band (stay in single mode)
-    d75cmd('cat', 'BC ' + band);
-    setTimeout(function() {
-      d75cmd('cat', 'VM ' + band + ',0');
-      setTimeout(function() {
-        d75cmd('cat', 'FQ ' + band + ',' + padded);
-      }, 300);
-    }, 300);
-  } else {
-    // Dual mode, or single-band with correct band already active
+  function _loadViaFO() {
+    // Switch to VFO mode first
     d75cmd('cat', 'VM ' + band + ',0');
     setTimeout(function() {
-      d75cmd('cat', 'FQ ' + band + ',' + padded);
+      // Read current FO as template, then overlay memory channel values
+      fetch('/d75cmd', {method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cmd:'cat', args:'FO ' + band})})
+        .then(function(r){return r.json()}).then(function(d) {
+          var resp = d.response || '';
+          // Find FO line in response
+          var foLine = '';
+          resp.split('\n').forEach(function(l) {
+            l = l.trim();
+            if (l.indexOf('FO ') === 0) foLine = l.substring(3);
+            else if (l.indexOf(',') > 0 && l.split(',').length >= 21) foLine = l;
+          });
+          if (!foLine || foLine.split(',').length < 21) {
+            _d75flash('FO read failed — falling back to FQ only', '#e74c3c');
+            var hz = Math.round(chData.freq * 1000000);
+            d75cmd('cat', 'FQ ' + band + ',' + ('0000000000' + hz).slice(-10));
+            return;
+          }
+          var f = foLine.split(',');
+          // Set frequency
+          var hz = Math.round(chData.freq * 1000000);
+          f[1] = ('0000000000' + hz).slice(-10);
+          // Set mode
+          if (chData.mode_num !== undefined) f[5] = String(chData.mode_num);
+          // Set tone flags and indices
+          f[8] = String(chData.tone_on || 0);
+          f[9] = String(chData.ctcss_on || 0);
+          f[10] = String(chData.dcs_on || 0);
+          f[14] = String(chData.tone_idx || 0);
+          f[15] = String(chData.ctcss_idx || 0);
+          f[16] = String(chData.dcs_idx || 0);
+          // Set shift and offset
+          f[13] = String(chData.shift_num || 0);
+          if (chData.offset_hz > 0) {
+            f[2] = ('0000000000' + chData.offset_hz).slice(-10);
+          } else {
+            f[2] = '0000000000';
+          }
+          // Send FO
+          d75cmd('cat', 'FO ' + f.join(','));
+          // Set power if known
+          if (chData.power >= 0) {
+            setTimeout(function() {
+              d75cmd('cat', 'PC ' + band + ',' + chData.power);
+            }, 200);
+          }
+        });
     }, 200);
   }
-  _d75flash('Band ' + (band ? 'B' : 'A') + ' → ' + chData.freq + ' MHz', '#2ecc71');
+
+  if (!isDual && activeBand !== band) {
+    // Single-band mode, target band not active — switch active band first
+    d75cmd('cat', 'BC ' + band);
+    setTimeout(_loadViaFO, 300);
+  } else {
+    _loadViaFO();
+  }
+  var info = chData.freq + ' MHz';
+  if (chData.tone) info += ' ' + chData.tone;
+  _d75flash('Band ' + (band ? 'B' : 'A') + ' → ' + info, '#2ecc71');
 }
 
 function d75VolDebounce(val) {
