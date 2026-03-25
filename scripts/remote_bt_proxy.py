@@ -446,24 +446,27 @@ class SerialManager:
                             "612","624","627","631","632","654","662","664","703","712","723",
                             "731","732","734","743","754"]
                         try:
-                            tx_raw   = parts[2].strip()
+                            n = len(parts)
                             shift    = int(parts[3].strip())
                             tone_on  = parts[5].strip() == '1'
                             ctcss_on = parts[6].strip() == '1'
                             dcs_on   = parts[7].strip() == '1'
-                            tone_idx  = int(parts[8].strip())
-                            ctcss_idx = int(parts[9].strip())
-                            dcs_idx   = int(parts[10].strip())
+                            # D75 has 21 fields — indices at 14/15/16
+                            # Standard 11-field format — indices at 8/9/10
+                            if n >= 17:
+                                tone_idx  = int(parts[14].strip())
+                                ctcss_idx = int(parts[15].strip())
+                                dcs_idx   = int(parts[16].strip())
+                            else:
+                                tone_idx  = int(parts[8].strip())
+                                ctcss_idx = int(parts[9].strip())
+                                dcs_idx   = int(parts[10].strip())
                             tone_hz  = _ctcss_list[tone_idx]  if tone_idx  < len(_ctcss_list) else ''
                             ctcss_hz = _ctcss_list[ctcss_idx] if ctcss_idx < len(_ctcss_list) else ''
                             dcs_code = _dcs_list[dcs_idx]     if dcs_idx   < len(_dcs_list)   else ''
-                            # Calculate offset from TX freq
-                            offset_hz = 0
-                            offset_str = ''
-                            if len(tx_raw) >= 9:
-                                offset_hz = int(tx_raw) - int(raw)
-                            if abs(offset_hz) >= 1000:
-                                offset_str = f'{abs(offset_hz) / 1_000_000:.4f}'
+                            # fp[2] is the stored offset value in Hz (not absolute TX freq)
+                            offset_hz  = int(parts[2].strip())
+                            offset_str = f'{offset_hz / 1_000_000:.4f}' if offset_hz >= 1000 else ''
                             fi = {
                                 'tone_status':  tone_on,
                                 'ctcss_status': ctcss_on,
@@ -969,16 +972,7 @@ class CATServer:
             if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
                 return f'could not read FO: {fo_resp!r}'
             fp = fo_resp.split(',')
-            rxfreq    = fp[1].strip()
-            txfreq    = fp[2].strip()
-            shift_d   = fp[3].strip()
-            rev       = fp[4].strip()
-            tone_fl   = '0'
-            ctcss_fl  = '0'
-            dcs_fl    = '0'
-            tone_idx  = fp[8].strip()  if len(fp) > 8  else '00'
-            ctcss_idx = fp[9].strip()  if len(fp) > 9  else '00'
-            dcs_idx   = fp[10].strip() if len(fp) > 10 else '000'
+            n = len(fp)
             _ctcss = ["67.0","69.3","71.9","74.4","77.0","79.7","82.5","85.4","88.5",
                 "91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0",
                 "127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9",
@@ -993,29 +987,37 @@ class CATServer:
                 "465","466","503","506","516","523","526","532","546","565","606",
                 "612","624","627","631","632","654","662","664","703","712","723",
                 "731","732","734","743","754"]
+            # D75=21 fields: tone/ctcss/dcs indices at fp[14/15/16]
+            # Standard=11 fields: indices at fp[8/9/10]
+            i_tone_fl = 5; i_ctcss_fl = 6; i_dcs_fl = 7
+            i_tone_idx, i_ctcss_idx, i_dcs_idx = (14, 15, 16) if n >= 17 else (8, 9, 10)
+            # Apply requested change
+            fp[i_tone_fl]  = '0'
+            fp[i_ctcss_fl] = '0'
+            fp[i_dcs_fl]   = '0'
             if ttype == 'off':
-                pass  # all flags remain 0
+                pass
             elif ttype in ('tone', 'ctcss'):
                 hz = parts[2] if len(parts) > 2 else ''
                 if hz not in _ctcss:
                     return f'unknown CTCSS freq: {hz}'
                 idx = _ctcss.index(hz)
                 if ttype == 'tone':
-                    tone_fl  = '1'
-                    tone_idx = f'{idx:02d}'
+                    fp[i_tone_fl]  = '1'
+                    fp[i_tone_idx] = f'{idx:02d}'
                 else:
-                    ctcss_fl  = '1'
-                    ctcss_idx = f'{idx:02d}'
-                    tone_idx  = f'{idx:02d}'
+                    fp[i_ctcss_fl]  = '1'
+                    fp[i_ctcss_idx] = f'{idx:02d}'
+                    fp[i_tone_idx]  = f'{idx:02d}'
             elif ttype == 'dcs':
                 code = parts[2] if len(parts) > 2 else ''
                 if code not in _dcs:
                     return f'unknown DCS code: {code}'
-                dcs_fl  = '1'
-                dcs_idx = f'{_dcs.index(code):03d}'
+                fp[i_dcs_fl]   = '1'
+                fp[i_dcs_idx]  = f'{_dcs.index(code):03d}'
             else:
                 return f'unknown tone type: {ttype}'
-            fo_set = f"FO {band},{rxfreq},{txfreq},{shift_d},{rev},{tone_fl},{ctcss_fl},{dcs_fl},{tone_idx},{ctcss_idx},{dcs_idx}"
+            fo_set = ','.join(fp)
             print(f"[tone] FO SET send={fo_set!r}")
             r = self._serial.send_raw(fo_set)
             print(f"[tone] FO SET resp={r!r}")
@@ -1042,18 +1044,9 @@ class CATServer:
             if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
                 return f'could not read FO: {fo_resp!r}'
             fp = fo_resp.split(',')
-            rxfreq    = fp[1].strip()
-            txfreq    = fp[2].strip()
-            rev       = fp[4].strip()
-            tone_fl   = fp[5].strip()
-            ctcss_fl  = fp[6].strip()
-            dcs_fl    = fp[7].strip()
-            tone_idx  = fp[8].strip()  if len(fp) > 8  else '00'
-            ctcss_idx = fp[9].strip()  if len(fp) > 9  else '00'
-            dcs_idx   = fp[10].strip() if len(fp) > 10 else '000'
-            if direction == '0':
-                txfreq = rxfreq  # simplex: TX = RX
-            fo_set = f"FO {band},{rxfreq},{txfreq},{direction},{rev},{tone_fl},{ctcss_fl},{dcs_fl},{tone_idx},{ctcss_idx},{dcs_idx}"
+            # Only change the shift direction field (fp[3]); leave all others unchanged
+            fp[3] = direction
+            fo_set = ','.join(fp)
             r = self._serial.send_raw(fo_set)
             if r:
                 self._serial._process_message(r)
@@ -1076,24 +1069,9 @@ class CATServer:
             if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
                 return f'could not read FO: {fo_resp!r}'
             fp = fo_resp.split(',')
-            rxfreq    = fp[1].strip()
-            shift_d   = fp[3].strip()
-            rev       = fp[4].strip()
-            tone_fl   = fp[5].strip()
-            ctcss_fl  = fp[6].strip()
-            dcs_fl    = fp[7].strip()
-            tone_idx  = fp[8].strip()  if len(fp) > 8  else '00'
-            ctcss_idx = fp[9].strip()  if len(fp) > 9  else '00'
-            dcs_idx   = fp[10].strip() if len(fp) > 10 else '000'
-            rx_hz  = int(rxfreq)
-            if shift_d == '1':
-                tx_hz = rx_hz + int(offset_mhz * 1_000_000)
-            elif shift_d == '2':
-                tx_hz = rx_hz - int(offset_mhz * 1_000_000)
-            else:
-                tx_hz = rx_hz
-            txfreq = f"{tx_hz:010d}"
-            fo_set = f"FO {band},{rxfreq},{txfreq},{shift_d},{rev},{tone_fl},{ctcss_fl},{dcs_fl},{tone_idx},{ctcss_idx},{dcs_idx}"
+            # fp[2] is the stored offset value in Hz — just set it directly
+            fp[2] = f'{int(offset_mhz * 1_000_000):010d}'
+            fo_set = ','.join(fp)
             r = self._serial.send_raw(fo_set)
             if r:
                 self._serial._process_message(r)
