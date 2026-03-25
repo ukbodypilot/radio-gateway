@@ -832,26 +832,32 @@ class WebConfigServer:
                                 if freq_hz < 1000000:
                                     continue
                                 freq = freq_hz / 1_000_000
-                                offset_hz = int(fields[2])  # ME[2] = offset in Hz (same as FO[2])
-                                offset_mhz = offset_hz / 1_000_000
+                                tx_hz = int(fields[2])  # ME[2] = TX freq in Hz (NOT offset)
+                                tx_freq = tx_hz / 1_000_000
                                 mode = int(fields[5])
                                 tone_on = fields[8] == '1'
                                 ctcss_on = fields[9] == '1'
                                 dcs_on = fields[10] == '1'
                                 shift = int(fields[13])  # 0=simplex, 1=+, 2=-
-                                # Determine shift display
-                                if shift == 0 or offset_hz == 0:
+                                # Determine shift display from TX vs RX freq
+                                if tx_hz == 0 or tx_hz == freq_hz:
                                     shift_str = 'S'
                                     offset_str = ''
-                                elif shift == 1:
-                                    shift_str = '+'
-                                    offset_str = f'{offset_mhz:.4f}'
-                                elif shift == 2:
-                                    shift_str = '-'
-                                    offset_str = f'{offset_mhz:.4f}'
                                 else:
-                                    shift_str = 'S'
-                                    offset_str = ''
+                                    diff = tx_freq - freq
+                                    if abs(diff) < 0.001:
+                                        shift_str = 'S'
+                                        offset_str = ''
+                                    elif abs(diff) > 50:
+                                        # Cross-band: show TX freq directly
+                                        shift_str = 'X'
+                                        offset_str = f'{tx_freq:.4f}'
+                                    elif diff > 0:
+                                        shift_str = '+'
+                                        offset_str = f'{diff:.4f}'
+                                    else:
+                                        shift_str = '-'
+                                        offset_str = f'{abs(diff):.4f}'
                                 tone_str = ''
                                 tone_idx = int(fields[14])
                                 ctcss_idx = int(fields[15])
@@ -4784,7 +4790,24 @@ function d75GoChannel(band, ch) {
     d75cmd('cat', 'VM ' + band + ',0');
     setTimeout(function() {
       if (chData.me_fields) {
-        var fo = band + ',' + chData.me_fields;
+        // ME field[2] = TX freq in Hz; FO field[2] = offset in Hz — must convert
+        var mf = chData.me_fields.split(',');
+        var rxHz = parseInt(mf[0]) || 0;  // me_fields[0] = RX freq
+        var txHz = parseInt(mf[1]) || 0;  // me_fields[1] = TX freq
+        var offsetHz = 0;
+        var shift = parseInt(mf[12]) || 0;  // me_fields[12] = shift (0=S,1=+,2=-)
+        if (txHz > 0 && txHz !== rxHz) {
+          offsetHz = Math.abs(txHz - rxHz);
+          // Fix shift direction from actual TX/RX relationship
+          if (txHz > rxHz) shift = 1;      // +
+          else if (txHz < rxHz) shift = 2; // -
+        } else {
+          shift = 0; offsetHz = 0;
+        }
+        mf[1] = ('0000000000' + offsetHz).slice(-10);
+        mf[12] = String(shift);
+        _d75dbg('TX=' + txHz + ' RX=' + rxHz + ' offset=' + offsetHz + ' shift=' + shift);
+        var fo = band + ',' + mf.join(',');
         _d75dbg('FO ' + fo.substring(0, 80));
         d75cmd('cat', 'FO ' + fo);
       } else {
