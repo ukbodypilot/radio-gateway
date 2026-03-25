@@ -408,21 +408,9 @@ RELAY_CHARGER_OFF_TIME = 06:00
 [smart]
 # Smart announcements (AI-powered)
 #
-# AI generates spoken announcements from prompts, with web search for
-# real-time data (weather, news, time, etc). Audio is broadcast via gTTS + PTT.
-#
-# Backends:
-#   duckduckgo — Free, no API key. DuckDuckGo search + Ollama local LLM.
-#                Install Ollama: curl -fsSL https://ollama.com/install.sh | sh
-#                Then: ollama pull llama3.2:3b (or llama3.2:1b on Raspberry Pi)
-#   google-scrape — Free. Drives real Firefox via xdotool, scrapes Google AI Overview.
-#                   Requires: xdotool, xclip, Firefox running on DISPLAY=:0
-#   claude-scrape — Free. Drives Firefox on a virtual display (Xvfb :99) to query
-#                   claude.ai. Does not interfere with desktop. Response condensed
-#                   via Ollama. First run: VNC to port 5999, log into claude.ai.
-#                   Requires: Xvfb, x11vnc, xdotool, xclip, Firefox, logged into claude.ai
-#   claude     — Anthropic Claude API with web search. Requires API key + credits.
-#   gemini     — Google Gemini API with Google Search. Requires API key.
+# Claude CLI generates spoken announcements from prompts, including web search for
+# real-time data (weather, news, etc). Audio is broadcast via gTTS + PTT.
+# Requires: Claude Code installed and authenticated (same session used by the gateway).
 #
 # Mumble command: !smart <N> to trigger manually, !smart to list all
 # Manual triggers (keyboard/Mumble) ignore the time window restriction.
@@ -434,32 +422,6 @@ RELAY_CHARGER_OFF_TIME = 06:00
 #   SMART_ANNOUNCE_N_TARGET_SECS  — target speech length in seconds (max 60)
 
 ENABLE_SMART_ANNOUNCE = true
-
-# AI Backend — choose: duckduckgo (free), google-scrape (free), claude-scrape (free), claude, or gemini
-SMART_ANNOUNCE_AI_BACKEND = google-scrape
-
-# Ollama model for duckduckgo/google-scrape/claude-scrape backends (blank = auto-detect first available)
-# Recommended: llama3.1:8b (PC w/ GPU), llama3.2:3b (PC CPU-only), llama3.2:1b (Pi)
-SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:1b
-
-# Ollama generation parameters
-# temperature: 0.0 = deterministic/focused, 1.0 = creative/varied (default 0.5)
-# top_p: nucleus sampling cutoff, lower = more focused (default 0.5)
-SMART_ANNOUNCE_OLLAMA_TEMPERATURE = 0.5
-SMART_ANNOUNCE_OLLAMA_TOP_P = 0.5
-
-# Context window size (lower = less RAM/CPU, 1024 is plenty for short announcements)
-SMART_ANNOUNCE_OLLAMA_NUM_CTX = 1024
-
-# CPU threads for Ollama (0 = all cores, 2 = leave cores free for gateway)
-SMART_ANNOUNCE_OLLAMA_NUM_THREAD = 2
-
-# Claude API key (used when AI_BACKEND = claude)
-# WARNING: Do not commit this file with a real API key
-SMART_ANNOUNCE_API_KEY =
-
-# Gemini API key (used when AI_BACKEND = gemini)
-SMART_ANNOUNCE_GEMINI_API_KEY =
 
 # Time window — scheduled announcements only play between these times (system clock)
 # Format: HH:MM (24-hour). Leave blank for no restriction.

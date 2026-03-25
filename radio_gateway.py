@@ -302,16 +302,8 @@ class Config:
             'RELAY_CHARGER_BAUD': 9600,
             'RELAY_CHARGER_ON_TIME': '23:00',
             'RELAY_CHARGER_OFF_TIME': '06:00',
-            # Smart Announcements (AI-powered)
+            # Smart Announcements (AI-powered via Claude CLI)
             'ENABLE_SMART_ANNOUNCE': True,
-            'SMART_ANNOUNCE_AI_BACKEND': 'google-scrape',  # google-scrape, claude-scrape, duckduckgo, claude, or gemini
-            'SMART_ANNOUNCE_OLLAMA_MODEL': 'llama3.2:1b',  # Ollama model (blank = auto-detect)
-            'SMART_ANNOUNCE_OLLAMA_TEMPERATURE': 0.5,  # 0.0=focused, 1.0=creative
-            'SMART_ANNOUNCE_OLLAMA_TOP_P': 0.5,        # nucleus sampling (0.0-1.0)
-            'SMART_ANNOUNCE_OLLAMA_NUM_CTX': 1024,     # context window (lower = less RAM/CPU)
-            'SMART_ANNOUNCE_OLLAMA_NUM_THREAD': 2,     # CPU threads (0 = all cores)
-            'SMART_ANNOUNCE_API_KEY': '',            # Claude API key
-            'SMART_ANNOUNCE_GEMINI_API_KEY': '',     # Gemini API key
             'SMART_ANNOUNCE_TOP_TEXT': '',           # Global top text (used if slot has none)
             'SMART_ANNOUNCE_TAIL_TEXT': '',          # Global tail text (used if slot has none)
             'SMART_ANNOUNCE_START_TIME': '08:00',   # HH:MM — empty = no restriction

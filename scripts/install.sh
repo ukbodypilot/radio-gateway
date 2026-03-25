@@ -55,12 +55,7 @@ if [ "$DISTRO" = "arch" ]; then
         ffmpeg \
         opus \
         git \
-        tmux \
-        xdotool \
-        xclip \
-        xorg-server-xvfb \
-        xorg-xdpyinfo \
-        x11vnc
+        tmux
 else
     sudo apt-get update -qq
     sudo apt-get install -y \
@@ -75,12 +70,7 @@ else
         libopus0 \
         libopus-dev \
         git \
-        tmux \
-        xdotool \
-        xclip \
-        xvfb \
-        x11-utils \
-        x11vnc
+        tmux
 fi
 
 echo "  ✓ System packages installed"
@@ -181,7 +171,7 @@ set -e
 
 # Core packages (excluding pymumble — handled separately due to PyPI name variants)
 # Only install packages that are missing — avoids slow pip index checks on re-run
-CORE_PKGS="hid numpy scipy pyaudio soundfile resampy psutil gtts edge-tts pyserial anthropic google-genai ddgs opuslib"
+CORE_PKGS="hid numpy scipy pyaudio soundfile resampy psutil gtts edge-tts pyserial opuslib"
 MISSING_PKGS=""
 for pkg in $CORE_PKGS; do
     # Map pip names to Python import names where they differ
@@ -191,10 +181,8 @@ for pkg in $CORE_PKGS; do
         gtts)        imp="gtts" ;;
         edge-tts)    imp="edge_tts" ;;
         pyserial)    imp="serial" ;;
-        google-genai)       imp="google.genai" ;;
-        ddgs)               imp="ddgs" ;;
-        opuslib)            imp="opuslib" ;;
-        *)                  imp="$pkg" ;;
+        opuslib)     imp="opuslib" ;;
+        *)           imp="$pkg" ;;
     esac
     if ! python3 -c "import $imp" 2>/dev/null; then
         MISSING_PKGS="$MISSING_PKGS $pkg"
@@ -234,21 +222,6 @@ if ! $MUMBLE_OK; then
     echo "              or: pip3 install pymumble-py3 --break-system-packages"
 fi
 
-# Fix protobuf version conflict: pymumble uses protobuf 3.x descriptors which
-# break with protobuf 5.x (installed by google-genai's dependency chain).
-# Protobuf 3.20.x is the latest 3.x release and works with both libraries.
-PROTO_VER=$(python3 -c "import google.protobuf; print(google.protobuf.__version__)" 2>/dev/null || echo "")
-if [ -n "$PROTO_VER" ]; then
-    PROTO_MAJOR=$(echo "$PROTO_VER" | cut -d. -f1)
-    if [ "$PROTO_MAJOR" -ge 4 ] 2>/dev/null; then
-        echo "  ⚠ protobuf $PROTO_VER detected — downgrading to 3.20.x (pymumble compatibility)"
-        _pip "protobuf>=3.20,<3.21" 2>/dev/null \
-            && echo "  ✓ protobuf pinned to 3.20.x" \
-            || echo "  ⚠ Could not downgrade protobuf — pymumble may fail to import"
-    else
-        echo "  ✓ protobuf $PROTO_VER OK (compatible with pymumble)"
-    fi
-fi
 echo
 
 # ── 3b. KV4P HT Python driver ────────────────────────────────
@@ -1184,57 +1157,6 @@ echo "  To enable ADS-B in the gateway set in gateway_config.txt:"
 echo "    ENABLE_ADSB = true"
 echo "    ADSB_PORT   = $DUMP1090_PORT"
 
-set -e
-echo
-
-# ── 8. Ollama local LLM (optional — for free Smart Announcements) ──
-echo "[ 8/15 ] Installing Ollama local LLM (optional — for Smart Announcements)..."
-set +e
-if command -v ollama &>/dev/null; then
-    echo "  ✓ Ollama already installed"
-    # Check if a model is available
-    if ollama list 2>/dev/null | grep -q ":"; then
-        OLLAMA_MODEL=$(ollama list 2>/dev/null | awk 'NR==2{print $1}')
-        echo "  ✓ Model available: $OLLAMA_MODEL"
-    else
-        echo "  Pulling llama3.2:3b model (2GB download)..."
-        if $IS_PI; then
-            # Pi: use smaller model
-            if ollama pull llama3.2:1b 2>/dev/null; then
-                echo "  ✓ llama3.2:1b model ready (optimized for Pi)"
-            else
-                echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:1b"
-            fi
-        else
-            if ollama pull llama3.2:3b 2>/dev/null; then
-                echo "  ✓ llama3.2:3b model ready"
-            else
-                echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:3b"
-            fi
-        fi
-    fi
-else
-    echo "  Installing Ollama..."
-    if curl -fsSL https://ollama.com/install.sh | sh 2>/dev/null; then
-        echo "  ✓ Ollama installed"
-        # Wait for service to start
-        sleep 2
-        echo "  Pulling default model..."
-        if $IS_PI; then
-            ollama pull llama3.2:1b 2>/dev/null \
-                && echo "  ✓ llama3.2:1b model ready (optimized for Pi)" \
-                || echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:1b"
-        else
-            ollama pull llama3.2:3b 2>/dev/null \
-                && echo "  ✓ llama3.2:3b model ready" \
-                || echo "  ⚠ Could not pull model — run manually: ollama pull llama3.2:3b"
-        fi
-    else
-        echo "  ⚠ Could not install Ollama — Smart Announcements will use search snippets only"
-        echo "    Install manually: curl -fsSL https://ollama.com/install.sh | sh"
-        echo "    This is optional: only needed for SMART_ANNOUNCE_AI_BACKEND = duckduckgo"
-    fi
-fi
 set -e
 echo
 

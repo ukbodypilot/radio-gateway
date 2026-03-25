@@ -131,7 +131,7 @@ A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, A
 - **Voice Activity Detection (VAD)**: Smart audio gate prevents noise transmission (enabled by default)
 - **Real-Time Audio Processing**: Noise gate, HPF, LPF, notch filter
 - **Live Status Display**: Real-time bars showing TX/RX/SDR levels with color coding
-- **Smart Announcements**: AI-powered scheduled broadcasts with pluggable backend (Google AI scrape, DuckDuckGo+Ollama, Claude, or Gemini)
+- **Smart Announcements**: AI-powered scheduled broadcasts via Claude CLI — web search + natural speech composition, no API key needed
 - **Local Mumble Server**: Run up to 2 managed mumble-server instances on the same machine
 - **Cloudflare Tunnel**: Free public HTTPS access via `*.trycloudflare.com` — no port forwarding or domain needed
 - **Email Notifications**: Gmail SMTP alerts with gateway status and tunnel URL on startup or on demand
@@ -420,20 +420,16 @@ RELAY_CHARGER_OFF_TIME = 06:00
 
 ### Smart Announcements (AI-Powered)
 
-Scheduled radio announcements with a pluggable AI backend. The gateway searches for live data, an AI composes a natural spoken message, and the gateway broadcasts it via gTTS.
+Scheduled radio announcements powered by the Claude CLI. Claude searches the web, composes a natural spoken message within the target word count, and the gateway broadcasts it via gTTS + PTT.
 
-**AI Backends:**
-- **`google-scrape`** (default) — Free, no API key needed. Drives the user's real Firefox browser via `xdotool` to perform a Google search, clicks AI Mode, and extracts the AI Overview text. Optionally feeds the result through Ollama for speech formatting. Requires Firefox running and logged into Google on the desktop (`DISPLAY=:0`), plus `xdotool` and `xclip`.
-- **`duckduckgo`** — Free, no API key needed. Uses DuckDuckGo web search for live data + Ollama local LLM for natural speech composition. Falls back to formatted search snippets if Ollama is not installed.
-- **`claude`** — Anthropic Claude API with built-in web search. Requires API key and credits.
-- **`gemini`** — Google Gemini API with Google Search grounding. Requires API key.
+Requires Claude Code installed and authenticated on the same machine (`claude` binary in PATH).
 
 **How it works:**
-1. Configure one or more announcement entries with an interval, voice, target length, and a prompt
-2. On each interval, the backend searches for live data and composes a spoken message within the word limit
-3. The text is converted to speech via gTTS and broadcast on radio via AIOC PTT
+1. Configure one or more announcement slots with an interval, voice, target length, and a prompt
+2. On each interval, `claude -p` is called with the prompt and a spoken-radio formatting instruction
+3. The response is converted to speech via gTTS and broadcast on radio via AIOC PTT
 4. If the radio is busy (VAD active or playback running), the announcement waits up to ~8 minutes for a clear channel
-5. Manual triggers (keyboard/Mumble) ignore the time window restriction
+5. Manual triggers ignore the time window restriction
 
 **Keyboard shortcuts:**
 - `[` = Trigger smart announcement #1 immediately
@@ -442,62 +438,34 @@ Scheduled radio announcements with a pluggable AI backend. The gateway searches 
 
 **Mumble command:** `!smart` lists configured announcements; `!smart <N>` triggers one manually.
 
-**Example announcements:**
-```ini
-# Hourly weather update (15 seconds, US English voice)
-SMART_ANNOUNCE_1 = 3600, 1, 15, {Give a brief weather update for London, UK including temperature and conditions}
-
-# Time check every 30 minutes (10 seconds, US English)
-SMART_ANNOUNCE_2 = 1800, 1, 10, {What is the current UTC time and date, spoken naturally}
-
-# News headlines every 2 hours (20 seconds, British English)
-SMART_ANNOUNCE_3 = 7200, 2, 20, {Summarize the top 2 breaking news headlines from the UK}
-```
-
-**Configuration:**
+**Example configuration:**
 ```ini
 ENABLE_SMART_ANNOUNCE = true
-
-# AI Backend — choose: google-scrape (free), duckduckgo (free), claude, or gemini
-SMART_ANNOUNCE_AI_BACKEND = google-scrape
-
-# Ollama model for google-scrape/duckduckgo backends (blank = auto-detect)
-SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:1b
-SMART_ANNOUNCE_OLLAMA_TEMPERATURE = 0.5
-SMART_ANNOUNCE_OLLAMA_TOP_P = 0.5
-
-# Claude API key (used when AI_BACKEND = claude)
-SMART_ANNOUNCE_API_KEY =
-
-# Gemini API key (used when AI_BACKEND = gemini)
-SMART_ANNOUNCE_GEMINI_API_KEY =
 
 # Time window (HH:MM, 24-hour). Blank = no restriction. Handles overnight wrap.
 SMART_ANNOUNCE_START_TIME = 08:00
 SMART_ANNOUNCE_END_TIME = 22:00
 
-SMART_ANNOUNCE_1 = interval_secs, voice, target_secs, {prompt text}
-# Up to 19 entries (SMART_ANNOUNCE_1 through SMART_ANNOUNCE_19)
-```
+# Optional spoken prefix/suffix for all slots
+SMART_ANNOUNCE_TOP_TEXT =
+SMART_ANNOUNCE_TAIL_TEXT =
 
-**Google-scrape backend setup (free):**
-```bash
-sudo pacman -S xdotool xclip   # or: sudo apt install xdotool xclip
-# Open Firefox, log into Google, and keep it running on the desktop
-# Optional: install Ollama to reformat AI Overview text for speech
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.2:3b
-```
+# Slot 1 — hourly weather (20 seconds, US English voice, manual trigger only)
+SMART_ANNOUNCE_1_PROMPT = Weather forecast for the next 24 hours in London, UK
+SMART_ANNOUNCE_1_INTERVAL = 3600
+SMART_ANNOUNCE_1_VOICE = 1
+SMART_ANNOUNCE_1_TARGET_SECS = 20
+SMART_ANNOUNCE_1_MODE = manual
+SMART_ANNOUNCE_1_TOP_TEXT = Q S T. Q S T.
+SMART_ANNOUNCE_1_TAIL_TEXT = W A 6 N K R. clear.
 
-**DuckDuckGo backend setup (free):**
-```bash
-pip3 install ddgs --break-system-packages
-# Optional: install Ollama for natural speech composition
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.2:3b    # or llama3.2:1b on Raspberry Pi
+# Slot 2 — HF band conditions every 10 hours (British English voice)
+SMART_ANNOUNCE_2_PROMPT = How are the HF ham radio band conditions looking over the next 24 hours
+SMART_ANNOUNCE_2_INTERVAL = 36000
+SMART_ANNOUNCE_2_VOICE = 2
+SMART_ANNOUNCE_2_TARGET_SECS = 20
+SMART_ANNOUNCE_2_MODE = auto
 ```
-
-**Requires:** `xdotool` + `xclip` for google-scrape, `ddgs` for duckduckgo (all handled by `scripts/install.sh`). Claude/Gemini backends require their respective API keys.
 
 ### Dynamic DNS (No-IP)
 
@@ -1959,15 +1927,6 @@ PTT_TTS_DELAY = 0.5          # Silence padding before TTS (seconds)
 ```ini
 ENABLE_SMART_ANNOUNCE = false              # Enable AI-powered scheduled announcements
 
-# AI Backend — google-scrape (free), duckduckgo (free), claude, or gemini
-# google-scrape: drives real Firefox via xdotool, scrapes Google AI Overview
-SMART_ANNOUNCE_AI_BACKEND = google-scrape
-SMART_ANNOUNCE_OLLAMA_MODEL = llama3.2:1b  # Ollama model for google-scrape/duckduckgo
-SMART_ANNOUNCE_OLLAMA_TEMPERATURE = 0.5    # 0.0=focused, 1.0=creative
-SMART_ANNOUNCE_OLLAMA_TOP_P = 0.5          # Nucleus sampling (0.0-1.0)
-SMART_ANNOUNCE_API_KEY =                   # Claude API key (used when backend = claude)
-SMART_ANNOUNCE_GEMINI_API_KEY =            # Gemini API key (used when backend = gemini)
-
 # Time window — only play between these times (system clock, 24-hour HH:MM)
 # Leave blank for no restriction. Handles overnight wrap (e.g. 22:00 to 06:00).
 # Manual triggers (keyboard/Mumble) always ignore the time window.
@@ -1990,7 +1949,6 @@ SMART_ANNOUNCE_2 = 1800, 1, 10, {What is the current UTC time and date}
 - `target_secs` — target speech length in seconds (max 60, ~2.5 words/second)
 - `{prompt text}` — instructions for the AI (anything inside braces, can include punctuation)
 
-**Google-scrape backend (default, free):** drives your real Firefox via xdotool, scrapes Google AI Overview. Install Ollama for best results: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2:1b`
 
 ### Audio Processing Settings
 
@@ -2545,7 +2503,7 @@ class MySource(AudioSource):
 
 **ALSA suppression fix** — Fixed ALSA warning spam during startup caused by `StatusBarWriter` making `sys.stderr.fileno()` return fd 1 instead of fd 2. Hardcoded fd 2 in all three PyAudio init sites.
 
-**Firefox auto-launch** — google-scrape backend auto-launches Firefox if closed, with area-based readiness detection and 5s settle time.
+**Firefox auto-launch** — Smart announce backend auto-launches Firefox if closed, with area-based readiness detection and 5s settle time. *(historical — smart announce now uses Claude CLI)*
 
 ### v1.2.0
 
@@ -2555,9 +2513,9 @@ class MySource(AudioSource):
 
 **Windows audio client volume control** — `,`/`<` and `.`/`>` keys adjust output volume 0-100% in 5% steps. Level bar shows `|` marker at volume ceiling; dB value scaled by volume. Client mode scales PCM output by volume percentage.
 
-**Codebase cleanup** — Fixed crash bug (`search_results` undefined in DuckDuckGo fallback), eliminated ~97 lines through deduplication (SDR setup, Ollama init, duplicate JS), added thread safety lock to SmartAnnouncementManager, fixed temp file leak in `speak_text()`, replaced `shell=True` subprocess with safe `subprocess.run`.
+**Codebase cleanup** — Added thread safety lock to SmartAnnouncementManager, fixed temp file leak in `speak_text()`, replaced `shell=True` subprocess with safe `subprocess.run`.
 
-**Default updates** — `PLAYBACK_VOLUME` 2.0→1.0, `CW_VOLUME` 1.5→1.0, `TTS_SPEED` 1.0→1.3, `SMART_ANNOUNCE_AI_BACKEND` duckduckgo→google-scrape.
+**Default updates** — `PLAYBACK_VOLUME` 2.0→1.0, `CW_VOLUME` 1.5→1.0, `TTS_SPEED` 1.0→1.3.
 
 ### v1.1.0
 

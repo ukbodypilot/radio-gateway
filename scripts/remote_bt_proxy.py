@@ -327,8 +327,10 @@ class SerialManager:
         polled explicitly.
         """
         _last_sm_poll = 0.0
+        _last_fo_poll = 0.0
         _last_state_dump = 0.0
         SM_POLL_INTERVAL = 0.5
+        FO_POLL_INTERVAL = 15.0
         STATE_DUMP_INTERVAL = 30.0
         while not self._stop_evt.is_set() and self._connected:
             # Drain queue (shorter timeout so SM poll fires promptly)
@@ -360,6 +362,13 @@ class SerialManager:
                     self._process_message(r)
                 else:
                     print("[Serial] SM 1 poll: no response (timeout)")
+            # Periodic FO poll — keeps freq_info (tone/shift/offset) current
+            if now - _last_fo_poll >= FO_POLL_INTERVAL and self._connected:
+                _last_fo_poll = now
+                for b in (0, 1):
+                    r = self.send_raw(f"FO {b}")
+                    if r:
+                        self._process_message(r)
             # Periodic state dump for diagnosis
             if now - _last_state_dump >= STATE_DUMP_INTERVAL:
                 _last_state_dump = now
@@ -409,16 +418,66 @@ class SerialManager:
                         if 0 <= band <= 1:
                             self.band[band]['s_meter'] = 0
             elif line.startswith('FO') and ',' in line:
-                # FO = FrequencyInfo — gives current frequency on init and after FQ push
+                # FO band,rxfreq,txfreq,shift,rev,tone,ctcss,dcs,tone_idx,ctcss_idx,dcs_idx
                 parts = line.split(',')
                 try:
                     band = int(line[2:].split(',')[0].strip())
-                    raw  = parts[1].strip()    # 10-digit frequency in Hz
+                    raw  = parts[1].strip()    # 10-digit RX frequency in Hz
                     if len(raw) >= 7:
                         freq = f"{int(raw[:4])}.{raw[4:7]}"
                         with self._state_lock:
                             if 0 <= band <= 1:
                                 self.band[band]['frequency'] = freq
+                    # Parse tone/shift/offset fields if present
+                    if len(parts) >= 11:
+                        _ctcss_list = ["67.0","69.3","71.9","74.4","77.0","79.7","82.5","85.4","88.5",
+                            "91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0",
+                            "127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9",
+                            "173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"]
+                        _dcs_list = ["023","025","026","031","032","036","043","047","051","053","054",
+                            "065","071","072","073","074","114","115","116","122","125","131",
+                            "132","134","143","145","152","155","156","162","165","172","174",
+                            "205","212","223","225","226","243","244","245","246","251","252",
+                            "255","261","263","265","266","271","274","306","311","315","325",
+                            "331","332","343","346","351","356","364","365","371","411","412",
+                            "413","423","431","432","445","446","452","454","455","462","464",
+                            "465","466","503","506","516","523","526","532","546","565","606",
+                            "612","624","627","631","632","654","662","664","703","712","723",
+                            "731","732","734","743","754"]
+                        try:
+                            tx_raw   = parts[2].strip()
+                            shift    = int(parts[3].strip())
+                            tone_on  = parts[5].strip() == '1'
+                            ctcss_on = parts[6].strip() == '1'
+                            dcs_on   = parts[7].strip() == '1'
+                            tone_idx  = int(parts[8].strip())
+                            ctcss_idx = int(parts[9].strip())
+                            dcs_idx   = int(parts[10].strip())
+                            tone_hz  = _ctcss_list[tone_idx]  if tone_idx  < len(_ctcss_list) else ''
+                            ctcss_hz = _ctcss_list[ctcss_idx] if ctcss_idx < len(_ctcss_list) else ''
+                            dcs_code = _dcs_list[dcs_idx]     if dcs_idx   < len(_dcs_list)   else ''
+                            # Calculate offset from TX freq
+                            offset_hz = 0
+                            offset_str = ''
+                            if len(tx_raw) >= 9:
+                                offset_hz = int(tx_raw) - int(raw)
+                            if abs(offset_hz) >= 1000:
+                                offset_str = f'{abs(offset_hz) / 1_000_000:.4f}'
+                            fi = {
+                                'tone_status':  tone_on,
+                                'ctcss_status': ctcss_on,
+                                'dcs_status':   dcs_on,
+                                'tone_hz':      tone_hz if tone_on else '',
+                                'ctcss_hz':     ctcss_hz if ctcss_on else '',
+                                'dcs_code':     dcs_code if dcs_on else '',
+                                'shift_direction': str(shift),
+                                'offset':       offset_str,
+                            }
+                            with self._state_lock:
+                                if 0 <= band <= 1:
+                                    self.band[band]['freq_info'] = fi
+                        except (ValueError, IndexError):
+                            pass
                 except (ValueError, IndexError):
                     pass
             elif line.startswith('TX'):
@@ -890,6 +949,140 @@ class CATServer:
                 r = self._serial.send_raw(f"FQ {parts[0]}")
                 return r or 'no response'
             return 'usage: !freq <band> [mhz]'
+
+        # ── tone / ctcss / dcs ─────────────────────────────────────────────────
+        elif cmd == 'tone':
+            # !tone {band} off|tone|ctcss|dcs [{hz_or_code}]
+            if not self._serial.connected:
+                return 'serial not connected'
+            parts = (data or '').split()
+            if len(parts) < 2:
+                return 'usage: !tone {band} off|tone|ctcss|dcs [{hz_or_code}]'
+            band  = int(parts[0])
+            ttype = parts[1].lower()
+            fo_resp = self._serial.send_raw(f"FO {band}")
+            if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
+                return f'could not read FO: {fo_resp!r}'
+            fp = fo_resp.split(',')
+            rxfreq    = fp[1].strip()
+            txfreq    = fp[2].strip()
+            shift_d   = fp[3].strip()
+            rev       = fp[4].strip()
+            tone_fl   = '0'
+            ctcss_fl  = '0'
+            dcs_fl    = '0'
+            tone_idx  = fp[8].strip()  if len(fp) > 8  else '00'
+            ctcss_idx = fp[9].strip()  if len(fp) > 9  else '00'
+            dcs_idx   = fp[10].strip() if len(fp) > 10 else '000'
+            _ctcss = ["67.0","69.3","71.9","74.4","77.0","79.7","82.5","85.4","88.5",
+                "91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0",
+                "127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9",
+                "173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"]
+            _dcs = ["023","025","026","031","032","036","043","047","051","053","054",
+                "065","071","072","073","074","114","115","116","122","125","131",
+                "132","134","143","145","152","155","156","162","165","172","174",
+                "205","212","223","225","226","243","244","245","246","251","252",
+                "255","261","263","265","266","271","274","306","311","315","325",
+                "331","332","343","346","351","356","364","365","371","411","412",
+                "413","423","431","432","445","446","452","454","455","462","464",
+                "465","466","503","506","516","523","526","532","546","565","606",
+                "612","624","627","631","632","654","662","664","703","712","723",
+                "731","732","734","743","754"]
+            if ttype == 'off':
+                pass  # all flags remain 0
+            elif ttype in ('tone', 'ctcss'):
+                hz = parts[2] if len(parts) > 2 else ''
+                if hz not in _ctcss:
+                    return f'unknown CTCSS freq: {hz}'
+                idx = _ctcss.index(hz)
+                if ttype == 'tone':
+                    tone_fl  = '1'
+                    tone_idx = f'{idx:02d}'
+                else:
+                    ctcss_fl  = '1'
+                    ctcss_idx = f'{idx:02d}'
+                    tone_idx  = f'{idx:02d}'
+            elif ttype == 'dcs':
+                code = parts[2] if len(parts) > 2 else ''
+                if code not in _dcs:
+                    return f'unknown DCS code: {code}'
+                dcs_fl  = '1'
+                dcs_idx = f'{_dcs.index(code):03d}'
+            else:
+                return f'unknown tone type: {ttype}'
+            fo_set = f"FO {band},{rxfreq},{txfreq},{shift_d},{rev},{tone_fl},{ctcss_fl},{dcs_fl},{tone_idx},{ctcss_idx},{dcs_idx}"
+            r = self._serial.send_raw(fo_set)
+            if r:
+                self._serial._process_message(r)
+            return r or 'ok'
+
+        # ── shift direction ────────────────────────────────────────────────────
+        elif cmd == 'shift':
+            # !shift {band} {0=simplex|1=plus|2=minus}
+            if not self._serial.connected:
+                return 'serial not connected'
+            parts = (data or '').split()
+            if len(parts) < 2:
+                return 'usage: !shift {band} 0|1|2'
+            band      = int(parts[0])
+            direction = parts[1].strip()
+            fo_resp = self._serial.send_raw(f"FO {band}")
+            if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
+                return f'could not read FO: {fo_resp!r}'
+            fp = fo_resp.split(',')
+            rxfreq    = fp[1].strip()
+            txfreq    = fp[2].strip()
+            rev       = fp[4].strip()
+            tone_fl   = fp[5].strip()
+            ctcss_fl  = fp[6].strip()
+            dcs_fl    = fp[7].strip()
+            tone_idx  = fp[8].strip()  if len(fp) > 8  else '00'
+            ctcss_idx = fp[9].strip()  if len(fp) > 9  else '00'
+            dcs_idx   = fp[10].strip() if len(fp) > 10 else '000'
+            if direction == '0':
+                txfreq = rxfreq  # simplex: TX = RX
+            fo_set = f"FO {band},{rxfreq},{txfreq},{direction},{rev},{tone_fl},{ctcss_fl},{dcs_fl},{tone_idx},{ctcss_idx},{dcs_idx}"
+            r = self._serial.send_raw(fo_set)
+            if r:
+                self._serial._process_message(r)
+            return r or 'ok'
+
+        # ── repeater offset ────────────────────────────────────────────────────
+        elif cmd == 'offset':
+            # !offset {band} {mhz}  (e.g. 0.600)
+            if not self._serial.connected:
+                return 'serial not connected'
+            parts = (data or '').split()
+            if len(parts) < 2:
+                return 'usage: !offset {band} {mhz}'
+            band       = int(parts[0])
+            offset_mhz = float(parts[1])
+            fo_resp = self._serial.send_raw(f"FO {band}")
+            if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
+                return f'could not read FO: {fo_resp!r}'
+            fp = fo_resp.split(',')
+            rxfreq    = fp[1].strip()
+            shift_d   = fp[3].strip()
+            rev       = fp[4].strip()
+            tone_fl   = fp[5].strip()
+            ctcss_fl  = fp[6].strip()
+            dcs_fl    = fp[7].strip()
+            tone_idx  = fp[8].strip()  if len(fp) > 8  else '00'
+            ctcss_idx = fp[9].strip()  if len(fp) > 9  else '00'
+            dcs_idx   = fp[10].strip() if len(fp) > 10 else '000'
+            rx_hz  = int(rxfreq)
+            if shift_d == '1':
+                tx_hz = rx_hz + int(offset_mhz * 1_000_000)
+            elif shift_d == '2':
+                tx_hz = rx_hz - int(offset_mhz * 1_000_000)
+            else:
+                tx_hz = rx_hz
+            txfreq = f"{tx_hz:010d}"
+            fo_set = f"FO {band},{rxfreq},{txfreq},{shift_d},{rev},{tone_fl},{ctcss_fl},{dcs_fl},{tone_idx},{ctcss_idx},{dcs_idx}"
+            r = self._serial.send_raw(fo_set)
+            if r:
+                self._serial._process_message(r)
+            return r or 'ok'
 
         return f'unknown command: {cmd}'
 

@@ -94,9 +94,10 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **AIOC PTT REQUIRES Radio Controlled** — PTT fails without it due to mic wiring
 - **Sequence:** pause drain → RTS Radio Controlled → key AIOC → [TX] → unkey AIOC → RTS USB Controlled → resume drain
 
-## Smart Announcements (Modular AI Backend)
-- `SmartAnnouncementManager`: scheduled AI-powered spoken announcements
-- Backends: `google-scrape`, `claude-scrape`, `duckduckgo` (default), `claude` (API), `gemini`
+## Smart Announcements (Claude CLI backend)
+- `SmartAnnouncementManager` in `smart_announce.py`: scheduled AI-powered spoken announcements via `claude -p`
+- No API key, no external dependencies — uses existing Claude Code auth (Max subscription)
+- `_init_claude_cli()` finds binary; `_call_claude_cli()` runs subprocess with 120s timeout
 
 ## KV4P HT Radio (added 2026-03-19)
 - `KV4PAudioSource` class: CP2102 USB-serial (10c4:ea60), kv4p-ht-python package, Opus codec
@@ -128,6 +129,15 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **Installer:** installs tmux + mcp packages; copies telegram-bot.service to systemd (not enabled — needs config first)
 - **Dashboard panel:** bot status, tmux liveness, messages today, last in/out times, last message preview
 
+## Smart Announcements — claude-cli backend (2026-03-24)
+- **Replaced** all old backends (google-scrape, claude-scrape, duckduckgo+Ollama, claude API, gemini) with single `claude -p` subprocess
+- `smart_announce.py`: ~300 lines (down from ~1300); no external dependencies; uses `claude CLI` auth (Max subscription, no API key)
+- `_init_claude_cli()`: finds binary via shutil.which or `~/.local/bin/claude`
+- `_call_claude_cli()`: runs `claude -p "<system>+<prompt>"`, 120s timeout, returns stdout
+- Old class in `gateway_core.py` deleted (lines 742-2024); import from `smart_announce.py` now active
+- Config keys removed: `SMART_ANNOUNCE_AI_BACKEND`, `SMART_ANNOUNCE_OLLAMA_*`, `SMART_ANNOUNCE_API_KEY`, `SMART_ANNOUNCE_GEMINI_API_KEY`
+- `_client` replaced by `_claude_bin` throughout gateway_core.py and web_server.py
+
 ## Planned Next Features
 - [USBIP USB over TCP](project_usbip.md) — `USBIPManager` class to share USB devices over TCP port 3240
 - **MCP remote access** — expose gateway_mcp.py over SSE/HTTP via Cloudflare tunnel
@@ -149,10 +159,13 @@ D75 serial never connects: btstart blocking caused protocol desync, _do_btstart 
 - **gateway_config.txt is NOT committed** — repo is PUBLIC; config is in .gitignore
 - Config file overrides code defaults — changing defaults in code has no effect if config has the old value
 
+## Claude Access Methods (see feedback_access_methods.md)
+Claude runs on the same machine as the gateway. Available methods: MCP tools (preferred for control), direct HTTP to port 8080, filesystem read/edit, shell commands. Do NOT assume MCP is the only option.
+
 ## Machine Setup — user-optiplex3020 (Arch Linux)
 - Cloned to `/home/user/Downloads/radio-gateway`; Git user: ukbodypilot / robin.pengelly@gmail.com; token in remote URL
 - Arch Linux (EndeavourOS), XFCE4, Python 3.14, sudo password: `user`
 - Relay USB: `2-1.3` → `/dev/relay_radio`; FTDI CAT cable: `2-1.1` → `/dev/ttyUSB1`
-- `:0` — User desktop (VNC 5900, xrdp 3389); `:99` — Xvfb (VNC 5999) for claude-scrape
+- `:0` — User desktop (VNC 5900, xrdp 3389)
 - **Do NOT touch `:0` VNC/xrdp config** — user relies on them for remote access
 - KV4P HT: `/dev/kv4p` → ttyUSB0; TX_RADIO = kv4p; Telegram bot: @radio_gateway_bot, chat_id=6538333604
