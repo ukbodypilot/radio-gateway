@@ -2395,6 +2395,25 @@ class WebConfigServer:
                     self.wfile.write(json_mod.dumps({'deleted': deleted}).encode('utf-8'))
                     return
 
+                elif self.path == '/open_tmux':
+                    # Open local terminal attached to Claude tmux session
+                    session = getattr(parent.config, 'TELEGRAM_TMUX_SESSION', 'claude-gateway') if parent.config else 'claude-gateway'
+                    try:
+                        subprocess.Popen(
+                            ['xfce4-terminal', '-e', f'tmux attach-session -t {session}'],
+                            env={**os.environ, 'DISPLAY': ':0'},
+                            start_new_session=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        )
+                        ok = True
+                    except Exception:
+                        ok = False
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps({'ok': ok}).encode('utf-8'))
+                    return
+
                 elif self.path == '/exit':
                     # Graceful full shutdown (no restart)
                     self.send_response(200)
@@ -5904,7 +5923,7 @@ pollTimer = setInterval(pollStatus, 1000);
   </div>
   <div class="st-row" style="margin-bottom:8px;">
     <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val">&#x25cf;</span> <button onclick="openTmux()" style="font-size:0.75em; padding:2px 8px; margin-left:4px; cursor:pointer; background:var(--t-border); color:#fff; border:1px solid #555; border-radius:3px;" title="Open terminal attached to Claude tmux session">Open</button></div>
     <div class="st-item"><span class="st-label">Session:</span><span id="tg-session" class="st-val white">--</span></div>
   </div>
   <div class="st-row" style="margin-bottom:6px;">
@@ -6156,6 +6175,9 @@ function togProc(source, filter) {
 }
 function darkiceCmd(cmd) {
   fetch('/darkicecmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+}
+function openTmux() {
+  fetch('/open_tmux', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
 }
 function sendAIText() {
   var text = document.getElementById('ai-text').value.trim();
