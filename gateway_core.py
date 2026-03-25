@@ -5729,6 +5729,7 @@ class RadioGateway:
             'smart_countdowns': sa_countdowns,
             'smart_activity': self.smart_announce.get_activity() if self.smart_announce and hasattr(self.smart_announce, 'get_activity') else {},
             'ddns': ddns_status,
+            'tunnel_url': self.cloudflare_tunnel.get_url() if self.cloudflare_tunnel else '',
             'charger': charger_state,
             'cat': cat_state,
             'cat_reliability': cat_reliability,
