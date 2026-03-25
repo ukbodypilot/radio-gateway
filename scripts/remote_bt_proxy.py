@@ -137,6 +137,7 @@ class SerialManager:
         self.active_band   = 0
         self.dual_band     = 0
         self.bluetooth     = False
+        self.battery_level = -1
         self.transmitting  = False
 
         self._stop_evt    = threading.Event()
@@ -238,10 +239,10 @@ class SerialManager:
                 'serial_number': self.serial_number,
                 'active_band':   self.active_band,
                 'dual_band':     self.dual_band,
-                'bluetooth':     self.bluetooth,
+                'bluetooth':     self._connected,  # BT is on if serial is connected
                 'transmitting':  self.transmitting,
                 'af_gain':       -1,
-                'battery_level': -1,
+                'battery_level': self.battery_level,
                 'band_0':        b0,
                 'band_1':        b1,
             }
@@ -327,7 +328,7 @@ class SerialManager:
             if not _init_done:
                 _init_done = True
                 time.sleep(0.5)
-                for cmd in ("DL", "BC", "PC 0", "PC 1"):
+                for cmd in ("DL", "BC", "PC 0", "PC 1", "BL"):
                     if not self._connected:
                         break
                     time.sleep(0.2)
@@ -520,6 +521,11 @@ class SerialManager:
                 with self._state_lock:
                     if 0 <= band <= 1:
                         self.band[band]['power'] = pwr
+            elif line.startswith('BL'):
+                val = line[2:].strip().lstrip(' ')
+                if val.isdigit():
+                    with self._state_lock:
+                        self.battery_level = int(val)
         except Exception:
             pass
 
