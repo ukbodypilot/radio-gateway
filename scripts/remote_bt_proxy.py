@@ -281,10 +281,6 @@ class SerialManager:
             with self._state_lock:
                 self.serial_number = r[2:].strip()
         print(f"[Serial] Radio: model={self.model_id!r} fw={self.fw_version!r}")
-        with self._state_lock:
-            for b in (0, 1):
-                bd = self.band[b]
-                print(f"[Serial] Band {'A' if b == 0 else 'B'}: freq={bd.get('frequency','?')} sm={bd.get('s_meter','?')}")
 
     def _read_loop(self):
         """Read RFCOMM bytes, split on \\r, put lines in _rx_queue."""
@@ -338,7 +334,8 @@ class SerialManager:
                     r = self.send_raw(cmd, timeout=1.0)
                     if r:
                         self._process_message(r)
-                print(f"[Serial] Init done — FO deferred to periodic poll")
+                _last_fo_poll = 0.0  # Trigger FO poll on next cycle
+                print(f"[Serial] Init done — FO will poll shortly")
                 continue
             # Drain queue (shorter timeout so polls fire)
             try:
