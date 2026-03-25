@@ -259,48 +259,28 @@ class SerialManager:
         self._connected = False
 
     def _init_radio(self):
-        """Query model ID, firmware, serial number on connect.
-        BT RFCOMM needs breathing room — small delays between commands."""
-        _INIT_DELAY = 0.15  # seconds between init commands
+        """Minimal init after BT connect — just ID/FV/AE.
+        FO/SM/PC/DL/BC are deferred to _stream_loop polling to avoid
+        overwhelming the BT RFCOMM link during early connection."""
+        time.sleep(0.5)  # Let BT serial settle before first command
         for _ in range(3):
-            r = self.send_raw("ID")
+            r = self.send_raw("ID", timeout=3.0)
             if r and r.startswith("ID"):
                 with self._state_lock:
                     self.model_id = r[2:].strip()
                 break
             time.sleep(0.5)
-        time.sleep(_INIT_DELAY)
-        r = self.send_raw("FV")
+        time.sleep(0.2)
+        r = self.send_raw("FV", timeout=2.0)
         if r and r.startswith("FV"):
             with self._state_lock:
                 self.fw_version = r[2:].strip()
-        time.sleep(_INIT_DELAY)
-        r = self.send_raw("AE")
+        time.sleep(0.2)
+        r = self.send_raw("AE", timeout=2.0)
         if r and r.startswith("AE"):
             with self._state_lock:
                 self.serial_number = r[2:].strip()
         print(f"[Serial] Radio: model={self.model_id!r} fw={self.fw_version!r}")
-        # Query initial frequency, s-meter, and power for both bands
-        for band in (0, 1):
-            time.sleep(_INIT_DELAY)
-            r = self.send_raw(f"SM {band}")
-            if r:
-                self._process_message(r)
-            time.sleep(_INIT_DELAY)
-            r = self.send_raw(f"FO {band}")
-            if r:
-                self._process_message(r)
-            else:
-                print(f"[Serial] WARNING: FO {band} got no response — frequency will be blank until VFO moves")
-            time.sleep(_INIT_DELAY)
-            r = self.send_raw(f"PC {band}")
-            if r:
-                self._process_message(r)
-        for cmd in ("DL", "BC"):
-            time.sleep(_INIT_DELAY)
-            r = self.send_raw(cmd)
-            if r:
-                self._process_message(r)
         with self._state_lock:
             for b in (0, 1):
                 bd = self.band[b]
@@ -343,7 +323,42 @@ class SerialManager:
         SM_POLL_INTERVAL = 3.0     # BT RFCOMM can't handle 0.5s — causes timeouts and link death
         FO_POLL_INTERVAL = 15.0
         STATE_DUMP_INTERVAL = 30.0
+        _init_done = False
         while not self._stop_evt.is_set() and self._connected:
+            # Deferred init: query FO/SM/PC/DL/BC after stream loop starts
+            # (gives BT link time to stabilize before heavy queries)
+            if not _init_done:
+                _init_done = True
+                time.sleep(1.0)  # Let BT settle after AI 1
+                print("[Serial] Deferred init: querying FO/SM/PC/DL/BC...")
+                for band in (0, 1):
+                    if not self._connected:
+                        break
+                    time.sleep(0.3)
+                    r = self.send_raw(f"FO {band}", timeout=3.0)
+                    if r:
+                        self._process_message(r)
+                    else:
+                        print(f"[Serial] FO {band}: no response")
+                    time.sleep(0.3)
+                    r = self.send_raw(f"PC {band}", timeout=2.0)
+                    if r:
+                        self._process_message(r)
+                for cmd in ("DL", "BC"):
+                    if not self._connected:
+                        break
+                    time.sleep(0.2)
+                    r = self.send_raw(cmd, timeout=2.0)
+                    if r:
+                        self._process_message(r)
+                if self._connected:
+                    with self._state_lock:
+                        for b in (0, 1):
+                            bd = self.band[b]
+                            print(f"[Serial] Band {'A' if b == 0 else 'B'}: "
+                                  f"freq={bd.get('frequency','?')} sm={bd.get('s_meter','?')}")
+                    _last_fo_poll = time.time()
+                continue
             # Drain queue (shorter timeout so polls fire)
             try:
                 line = self._rx_queue.get(timeout=0.5)
