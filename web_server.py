@@ -865,15 +865,16 @@ class WebConfigServer:
                                     shift_str = 'S'
                                     offset_str = ''
                                 tone_str = ''
-                                tone_idx = int(fields[14])
-                                ctcss_idx = int(fields[15])
+                                # ME field[14]=lockout, [15]=tone_idx, [16]=ctcss_idx, [17]=dcs_idx
+                                tone_idx = int(fields[15])
+                                ctcss_idx = int(fields[16])
                                 if ctcss_on:
                                     if ctcss_idx < len(_ctcss): tone_str = _ctcss[ctcss_idx]
                                 elif tone_on:
                                     idx = ctcss_idx if tone_idx == 0 and ctcss_idx > 0 else tone_idx
                                     if idx < len(_ctcss): tone_str = _ctcss[idx]
                                 elif dcs_on:
-                                    idx = int(fields[16])
+                                    idx = int(fields[17])
                                     if idx < len(_dcs): tone_str = 'D' + _dcs[idx]
                                 name = fields[20].strip() if len(fields) > 20 else ''
                                 # Power: ME field[21] on D75 if present (0=H,1=L,2=EL)
@@ -884,8 +885,9 @@ class WebConfigServer:
                                     'mode': _modes.get(mode, '?'),
                                     'shift': shift_str,
                                     'tone': tone_str, 'name': name,
-                                    # Raw ME fields 1-20 (same layout as FO) for direct FO construction
-                                    'me_fields': ','.join(fields[1:21]) if len(fields) >= 21 else '',
+                                    # ME→FO field mapping: ME has lockout field at [14] that FO lacks
+                                    # FO = band + ME[1:14] + ME[15:22] (skip ME[14]=lockout)
+                                    'me_fields': ','.join(fields[1:14] + fields[15:22]) if len(fields) >= 22 else '',
                                     'power': power,
                                 })
                                 _empty_streak = 0
