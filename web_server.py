@@ -4779,6 +4779,7 @@ function _d75RenderMemList() {
 }
 
 function d75GoChannel(band, ch) {
+  if (!_d75LastStatus.serial_connected) { _d75flash('D75 not connected', '#e74c3c'); return; }
   var chData = (_d75Channels || []).find(function(c) { return c.ch === ch; });
   if (!chData) { _d75flash('CH ' + ch + ' not in list — rescan first', '#e74c3c'); return; }
   var isDual = (_d75LastStatus.dual_band === 0);
