@@ -1017,6 +1017,12 @@ class CATServer:
                 fp[i_dcs_idx]  = f'{_dcs.index(code):03d}'
             else:
                 return f'unknown tone type: {ttype}'
+            # fp[4] = mode — preserve current live mode so FO SET doesn't revert
+            # the user's mode (e.g. FM) back to what the stored VFO has (e.g. DV)
+            with self._state_lock:
+                live_mode = self.band[band].get('mode') if 0 <= band <= 1 else None
+            if live_mode is not None:
+                fp[4] = str(live_mode)
             fo_set = ','.join(fp)
             print(f"[tone] FO SET send={fo_set!r}")
             r = self._serial.send_raw(fo_set)
@@ -1044,8 +1050,11 @@ class CATServer:
             if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
                 return f'could not read FO: {fo_resp!r}'
             fp = fo_resp.split(',')
-            # Only change the shift direction field (fp[3]); leave all others unchanged
             fp[3] = direction
+            with self._state_lock:
+                live_mode = self.band[band].get('mode') if 0 <= band <= 1 else None
+            if live_mode is not None:
+                fp[4] = str(live_mode)
             fo_set = ','.join(fp)
             r = self._serial.send_raw(fo_set)
             if r:
@@ -1069,8 +1078,11 @@ class CATServer:
             if not fo_resp or not fo_resp.startswith('FO') or fo_resp.count(',') < 10:
                 return f'could not read FO: {fo_resp!r}'
             fp = fo_resp.split(',')
-            # fp[2] is the stored offset value in Hz — just set it directly
             fp[2] = f'{int(offset_mhz * 1_000_000):010d}'
+            with self._state_lock:
+                live_mode = self.band[band].get('mode') if 0 <= band <= 1 else None
+            if live_mode is not None:
+                fp[4] = str(live_mode)
             fo_set = ','.join(fp)
             r = self._serial.send_raw(fo_set)
             if r:
