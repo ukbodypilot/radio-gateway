@@ -266,7 +266,7 @@ class Config:
             'STREAM_BITRATE': 16,
             'STREAM_FORMAT': 'mp3',
             # Speaker Output (local monitoring)
-            'ENABLE_SPEAKER_OUTPUT': False,
+            'ENABLE_SPEAKER_OUTPUT': True,
             'SPEAKER_OUTPUT_DEVICE': '',   # '' = system default; or partial name e.g. 'USB Audio', 'hw:2,0'
             'SPEAKER_VOLUME': 1.0,         # float multiplier
             'SPEAKER_START_MUTED': True,   # Start with speaker muted (toggle with 's' key)
@@ -414,7 +414,7 @@ class Config:
             'EMAIL_RECIPIENT': '',        # Where to send notifications (blank = same as EMAIL_ADDRESS)
             'EMAIL_ON_STARTUP': True,     # Send status email on startup
             # Dynamic DNS (No-IP compatible)
-            'ENABLE_DDNS': False,
+            'ENABLE_DDNS': True,
             'DDNS_USERNAME': '',
             'DDNS_PASSWORD': '',
             'DDNS_HOSTNAME': '',
@@ -443,11 +443,11 @@ class Config:
             'MUMBLE_SERVER_2_OPUS_THRESHOLD': 0,
             'MUMBLE_SERVER_2_AUTOSTART': False,
             # USB/IP — share USB devices from a remote machine over TCP
-            'ENABLE_USBIP': False,
+            'ENABLE_USBIP': True,
             'USBIP_SERVER': '',              # IP or hostname of the USB/IP server
             'USBIP_DEVICES': '',             # Comma-separated bus IDs to attach, e.g. "1-1.4,1-1.3"
             # ADS-B aircraft tracking (RTL-SDR via dump1090-fa + FlightRadar24)
-            'ENABLE_ADSB': False,
+            'ENABLE_ADSB': True,
             'ADSB_PORT': 30080,          # dump1090-fa HTTP port (30080 avoids conflict with gateway on 8080)
             # Automation Engine
             'ENABLE_AUTOMATION': False,
