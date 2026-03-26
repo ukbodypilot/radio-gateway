@@ -4598,7 +4598,13 @@ class AudioMixer:
         return mixed_audio, ptt_required, active_sources, False, False, None, False, None
 
     def _mix_audio_streams(self, audio1, audio2, ratio=0.5):
-        """Mix two audio streams together"""
+        """Mix two audio streams using additive mixing with soft limiting.
+
+        Broadcast-style mixing: sum both streams at full volume, then apply
+        a soft limiter so peaks compress gracefully instead of clipping.
+        When only one source has significant audio, it plays at full level.
+        The ratio parameter is ignored — kept for API compatibility.
+        """
         arr1 = np.frombuffer(audio1, dtype=np.int16).astype(np.float32)
         arr2 = np.frombuffer(audio2, dtype=np.int16).astype(np.float32)
 
@@ -4607,8 +4613,23 @@ class AudioMixer:
         arr1 = arr1[:min_len]
         arr2 = arr2[:min_len]
 
-        mixed = np.clip(arr1 * ratio + arr2 * (1.0 - ratio), -32768, 32767).astype(np.int16)
-        return mixed.tobytes()
+        # Additive mix at full volume
+        mixed = arr1 + arr2
+
+        # Soft limiter (tanh-style): compress peaks above 24000 gradually
+        # instead of hard clipping at 32767. This preserves both sources
+        # without the volume drop of ratio-based mixing.
+        _KNEE = 24000.0
+        _MAX = 32767.0
+        abs_mixed = np.abs(mixed)
+        over = abs_mixed > _KNEE
+        if np.any(over):
+            # Compress the amount above the knee using tanh
+            excess = (abs_mixed[over] - _KNEE) / (_MAX - _KNEE)
+            compressed = _KNEE + (_MAX - _KNEE) * np.tanh(excess)
+            mixed[over] = np.sign(mixed[over]) * compressed
+
+        return mixed.astype(np.int16).tobytes()
     
     def _apply_volume(self, audio, volume):
         """Apply volume multiplier to audio"""
