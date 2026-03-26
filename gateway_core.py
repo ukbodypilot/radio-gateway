@@ -256,9 +256,11 @@ class EmailNotifier:
         if self.gateway and self.gateway.cloudflare_tunnel:
             url = self.gateway.cloudflare_tunnel.get_url()
             if url:
+                ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
                 lines.append(f"Gateway:   {url}")
                 lines.append(f"Config:    {url}/config")
                 lines.append(f"Monitor:   {url}/monitor")
+                lines.append(f"App WS:    {ws_url}/ws_monitor")
                 lines.append("")
 
         # LAN link
