@@ -650,20 +650,28 @@ class AudioManager:
     _sco_tx_count = 0
     _sco_tx_errors = 0
     def write_sco(self, data):
-        """Write TX audio data to SCO (called from AudioServer TX reader)."""
+        """Write TX audio data to SCO (called from AudioServer TX reader).
+
+        SCO is SEQPACKET with 48-byte frames. Must split incoming data into
+        frame-sized chunks and pace delivery to match real-time rate (~3ms/frame)
+        to avoid burst-then-silence stutter.
+        """
         if self._sco and self._connected:
             try:
-                # SCO is SEQPACKET — must send in frame-sized chunks (48 bytes)
-                sent = 0
+                n_frames = 0
                 for i in range(0, len(data), AUDIO_FRAME_SIZE):
                     frame = data[i:i + AUDIO_FRAME_SIZE]
                     if len(frame) < AUDIO_FRAME_SIZE:
                         frame += b'\x00' * (AUDIO_FRAME_SIZE - len(frame))
                     self._sco.send(frame)
-                    sent += len(frame)
+                    n_frames += 1
+                    # Pace at real-time rate: 48 bytes = 24 samples @ 8kHz = 3ms
+                    # Sleep slightly less than 3ms to account for send() overhead
+                    if n_frames % 4 == 0:
+                        time.sleep(0.010)  # ~10ms per 4 frames (12ms of audio)
                 self._sco_tx_count += 1
                 if self._sco_tx_count <= 3 or self._sco_tx_count % 200 == 0:
-                    print(f"[Audio TX] #{self._sco_tx_count}: {len(data)}B → {sent}B in {len(data)//AUDIO_FRAME_SIZE + 1} frames")
+                    print(f"[Audio TX] #{self._sco_tx_count}: {len(data)}B → {n_frames} frames")
             except Exception as e:
                 self._sco_tx_errors += 1
                 if self._sco_tx_errors <= 3 or self._sco_tx_errors % 50 == 0:
