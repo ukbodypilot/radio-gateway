@@ -260,7 +260,7 @@ class EmailNotifier:
                 lines.append(f"Gateway:   {url}")
                 lines.append(f"Config:    {url}/config")
                 lines.append(f"Monitor:   {url}/monitor")
-                lines.append(f"App WS:    {ws_url}/ws_monitor")
+                lines.append(f"Monitor App (internet): {ws_url}/ws_monitor")
                 lines.append("")
 
         # LAN link
@@ -272,6 +272,7 @@ class EmailNotifier:
             lan_ip = s.getsockname()[0]
             s.close()
             lines.append(f"LAN:       http://{lan_ip}:{port}")
+            lines.append(f"Monitor App (LAN):      ws://{lan_ip}:{port}/ws_monitor")
         except Exception:
             pass
         lines.append(f"Local:     http://localhost:{port}")
