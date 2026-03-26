@@ -3194,14 +3194,14 @@ class WebConfigServer:
   #shell-frame {{ flex: 1; border: none; width: 100%; }}
   #shell-bars {{
     background: var(--t-panel); border-bottom: 1px solid var(--t-border);
-    padding: 4px 14px; display: flex; flex-wrap: wrap; gap: 4px 14px;
-    align-items: center; flex-shrink: 0; font-family: monospace; font-size: 0.85em;
-    min-height: 26px;
+    padding: 2px 14px; display: flex; flex-wrap: wrap; gap: 2px 14px;
+    align-items: center; flex-shrink: 0; font-family: monospace; font-size: 0.8em;
+    min-height: 20px;
   }}
   #shell-bars .sb {{ display: flex; gap: 4px; align-items: center; white-space: nowrap; width: 190px; }}
   #shell-bars .sb-label {{ color: #888; width: 3.2em; text-align: right; flex-shrink: 0; }}
   #shell-bars .sb-pct {{ width: 3.2em; text-align: right; flex-shrink: 0; }}
-  #shell-bars .sb-track {{ width: 100px; height: 14px; background: rgba(255,255,255,0.05); border-radius: 2px; flex-shrink: 0; overflow: hidden; }}
+  #shell-bars .sb-track {{ width: 100px; height: 10px; background: rgba(255,255,255,0.05); border-radius: 2px; flex-shrink: 0; overflow: hidden; }}
   #shell-bars .sb-bar {{ display: block; height: 100%; border-radius: 2px; }}
   .sb-rx {{ background: #2ecc71; }} .sb-tx {{ background: #e74c3c; }}
   .sb-sdr1 {{ background: var(--t-accent); }} .sb-sdr2 {{ background: #e056a0; }}
