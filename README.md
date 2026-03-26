@@ -111,6 +111,7 @@ A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, A
 ## Table of Contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Quick Start](#quick-start)
 - [SDR Integration](#sdr-integration)
 - [Remote Audio Link](#remote-audio-link)
@@ -118,6 +119,8 @@ A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, A
 - [Status Bar](#status-bar)
 - [Architecture](#architecture)
 - [Configuration Reference](#configuration-reference)
+- [MCP Server](#mcp-server--ai-control-interface)
+- [Room Monitor (Android App)](#room-monitor-android-app)
 - [Windows Audio Client](#windows-audio-client)
 - [Troubleshooting](#troubleshooting)
 - [Advanced Features](#advanced-features)
@@ -136,6 +139,9 @@ A multi-source radio audio gateway with Mumble VoIP bridging, SDR integration, A
 - **Cloudflare Tunnel**: Free public HTTPS access via `*.trycloudflare.com` — no port forwarding or domain needed
 - **Email Notifications**: Gmail SMTP alerts with gateway status and tunnel URL on startup or on demand
 - **Browser Audio Player**: Listen to gateway audio live from the dashboard — MP3 stream and low-latency WebSocket PCM player with pre-buffering
+- **Room Monitor**: Remote room mic monitoring via browser or Android app — streams phone/device microphone to the gateway mixer without triggering PTT. Works over Cloudflare tunnel for internet access.
+- **Broadcast-Style Audio Mixing**: Additive mixing with soft tanh limiter — single sources play at full volume, overlapping sources compress gracefully instead of halving.
+- **SDR Click Suppressor**: Detects and interpolates sample-to-sample jumps to eliminate subtle clicks in SDR audio.
 - **Broadcastify Dashboard**: Live streaming status, DarkIce process control (start/stop/restart), and TCP connection stats (bytes sent, send rate, RTT)
 
 ### Audio Sources (Priority-Based Mixing)
@@ -151,7 +157,26 @@ Priority 2           → SDR2 Receiver    [→ Mumble TX, with ducking]
 Priority 2           → KV4P HT          [→ Mumble TX, with ducking — configurable]
 Priority 3 (default) → SDRSV            [→ Mumble TX, Remote Audio Link client]
 Priority 4 (Lowest)  → EchoLink         [→ Mumble TX]
+Priority 5           → Monitor          [→ Mixer only, no PTT — WebMonitorSource]
 ```
+
+## Screenshots
+
+| Dashboard | Controls | Monitor |
+|:-:|:-:|:-:|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Controls](docs/screenshots/controls.png) | ![Monitor](docs/screenshots/monitor.png) |
+
+| TH-9800 | TH-D75 | KV4P |
+|:-:|:-:|:-:|
+| ![TH-9800](docs/screenshots/th9800.png) | ![TH-D75](docs/screenshots/thd75.png) | ![KV4P](docs/screenshots/kv4p.png) |
+
+| SDR Control | ADS-B Tracking | Config |
+|:-:|:-:|:-:|
+| ![SDR](docs/screenshots/sdr.png) | ![ADS-B](docs/screenshots/adsb.png) | ![Config](docs/screenshots/config.png) |
+
+| Recordings | Logs |
+|:-:|:-:|
+| ![Recordings](docs/screenshots/recordings.png) | ![Logs](docs/screenshots/logs.png) |
 
 #### 1. **File Playback** (Priority 0, PTT enabled)
    - 10 announcement slots (keys 1-9 + Station ID on 0)
@@ -493,7 +518,7 @@ DDNS_UPDATE_URL = https://dynupdate.no-ip.com/nic/update
 
 ### Web Configuration UI & Live Dashboard
 
-A built-in web interface for editing gateway config and monitoring live status from any browser. Runs Python's built-in HTTP server on a daemon thread — no extra dependencies.
+A built-in web interface for editing gateway config and monitoring live status from any browser. Runs Python's built-in HTTP server on a daemon thread — no extra dependencies. Shell frame with persistent audio level bars always visible on every page. Compact nav bar with inline MP3/PCM audio controls. No page titles — active page is implicit from the nav underline.
 
 ```ini
 [web]
@@ -502,6 +527,7 @@ WEB_CONFIG_PORT = 8080
 WEB_CONFIG_PASSWORD =
 GATEWAY_NAME = My Gateway
 WEB_THEME = blue
+ENABLE_WEB_MONITOR = false
 ```
 
 | Setting | Description |
@@ -511,6 +537,7 @@ WEB_THEME = blue
 | `WEB_CONFIG_PASSWORD` | Basic auth password (user: `admin`). Blank = no auth |
 | `GATEWAY_NAME` | Display name shown at top of dashboard and in browser tab (blank = none) |
 | `WEB_THEME` | Dashboard color theme: `blue` (default), `red`, `green`, `purple`, `amber`, `teal`, `pink` |
+| `ENABLE_WEB_MONITOR` | Enable room monitor WebSocket endpoint (`true` / `false`) |
 
 **Config Editor** (`http://<gateway-ip>:8080/`):
 - Settings grouped by INI section with collapsible panels
@@ -528,7 +555,6 @@ WEB_THEME = blue
 - Uptime timer and smart announcement countdowns
 - Mumble connection, PTT, VAD, volume, processing flags, mute states
 - DDNS, charger, CAT control indicators
-- Remote key control buttons — same keyboard shortcuts available via clickable buttons
 - Auto-reconnects when gateway restarts (no manual refresh needed)
 - Fixed-width grid layout — bars and values don't shift when levels change
 - Gateway name displayed at top of dashboard for multi-gateway setups
@@ -536,10 +562,10 @@ WEB_THEME = blue
 - **Audio player** — listen to the gateway's mixed audio output live in the browser:
   - **MP3 stream** — shared FFmpeg encoder, play/stop button, volume slider, elapsed timer
   - **Low-latency WebSocket PCM** — AudioWorklet-based player with 200ms pre-buffer for smooth playback
-- **Broadcastify controls** — DarkIce process status and start/stop/restart buttons. Live TCP stats: bytes sent, send rate, RTT, connection age, restart counts
+- **Broadcastify status panel** — DarkIce streaming state (LIVE/NO CONN/OFF), process age, bytes sent, TCP send rate, RTT (color-coded), restart counts. Start/Stop/Restart buttons.
 - **Smart Announce status** — separated into its own box with 3 trigger buttons and live step-by-step progress (Searching, Waiting for radio, Speaking, Done/Error)
 - **Playback file status** — shows all loaded audio slots with filenames, highlights currently playing file
-- **System status box** — CPU usage, load average, RAM, swap, disk, network, temperatures, IPs (polled every 2 seconds)
+- **System status box** — CPU usage, load average, RAM, swap, disk, network, temperatures, IPs (polled every 2 seconds). Cloudflare tunnel URL shown when active.
 - **Text to Speech** — text entry field, 9-voice selector, send button with status line (gTTS)
 - **Screen Wake Lock** — prevents device sleep during WebSocket PCM playback
 - **Toast notifications** — real-time error/warning popups (top-right, auto-dismiss) for PTT failures, playback errors, CAT disconnection, and radio non-response
@@ -547,6 +573,16 @@ WEB_THEME = blue
 
 ![Live Dashboard](docs/img/dashboard.png)
 *Live dashboard showing gateway status, audio level bars, system info, mute/processing/playback controls, and the browser audio player.*
+
+**Controls** (`http://<gateway-ip>:8080/controls`):
+- Separate page for all control groups — mute/volume, processing toggles, playback, Smart Announce, Broadcastify, PTT, TTS, System, ADS-B, Telegram panels
+- Remote key control buttons — same keyboard shortcuts available via clickable buttons
+
+**Monitor** (`http://<gateway-ip>:8080/monitor`):
+- Remote room monitoring page — streams device microphone to the gateway mixer
+- Gain control, VAD threshold, level meter
+- Works over Cloudflare tunnel for internet access
+- Android Room Monitor APK downloadable from `/monitor-apk`
 
 **TH-9800 Radio Control** (`http://<gateway-ip>:8080/radio`):
 - Full front-panel replica of the TH-9800 dual-band radio in the browser
@@ -564,6 +600,10 @@ WEB_THEME = blue
 - GPS status, D-STAR call routing, band A / band B VFO display
 - Memory channel browser, squelch, volume, bandwidth, and power controls
 - Serial connect/disconnect, baud rate selector, GPS NMEA passthrough
+- **D75 BT TX Audio**: Transmit playback, TTS, and announcements through the D75 via Bluetooth SCO. Dedicated TX thread paces 48-byte frames at 3ms intervals for smooth audio.
+- **D75 Memory Channel Load**: Load memory channels into VFO via FO command with full tone, mode, shift, offset, and power settings. Handles ME->FO field mapping (lockout field skip, TX freq->offset conversion for cross-band).
+- **D75 BT Reliability**: Auto-reconnect with 15s btstart retry, SM poll rate limiting (3s with backoff), deferred init, fire-and-forget PTT to avoid blocking audio thread.
+- **D75 Proxy Status**: Battery level, TNC mode, beacon type now reported from proxy.
 
 ![TH-D75 Control](docs/img/radio-thd75.png)
 *TH-D75 control page showing band A/B VFOs, memory channels, and D-STAR status.*
@@ -596,6 +636,7 @@ WEB_THEME = blue
 
 **ADS-B Aircraft Tracking** (`http://<gateway-ip>:8080/aircraft` — when `ENABLE_ADSB = true`):
 - Embedded FlightAware PiAware SkyAware map via lighttpd reverse proxy
+- Dark mode with NEXRAD weather overlay
 - Live aircraft positions, altitude, speed, heading, and squawk from dump1090-fa
 - Single-port access through the gateway's Cloudflare tunnel — no extra port forwarding needed
 - Dashboard panel showing aircraft count, message rate, and service health
@@ -1661,6 +1702,26 @@ When `ENABLE_TELEGRAM = true`, a **Telegram Bot** panel appears on the dashboard
 | `TELEGRAM_STATUS_FILE` | `/tmp/tg_status.json` | Status file path (read by dashboard) |
 | `TELEGRAM_PROMPT_SUFFIX` | *(see config)* | Instruction appended to every injected message |
 
+## MCP Server — AI Control Interface
+
+`gateway_mcp.py` is a stdio-based MCP (Model Context Protocol) server with 31 tools that gives Claude (or any MCP-compatible AI) full control of the gateway via the HTTP API on port 8080.
+
+**Tools (31):** `gateway_status`, `sdr_status`, `cat_status`, `system_info`, `sdr_tune`, `sdr_restart`, `sdr_stop`, `radio_ptt`, `radio_tts`, `radio_cw`, `radio_ai_announce`, `radio_set_tx`, `radio_get_tx`, `radio_frequency`, `recordings_list`, `recordings_delete`, `recording_playback`, `gateway_logs`, `gateway_key`, `automation_trigger`, `audio_trace_toggle`, `telegram_reply`, `telegram_status`, `d75_status`, `d75_command`, `d75_frequency`, `kv4p_status`, `kv4p_command`, `mixer_control`, `config_read`, `process_control`
+
+**Configuration:** `.mcp.json` in the project root. Enable in Claude Code via `.claude/settings.json`: `"enableAllProjectMcpServers": true`.
+
+**Note:** The MCP server is a Claude Code child process — restarting the gateway does NOT restart MCP. Use `/mcp` in Claude Code to reconnect after changes.
+
+## Room Monitor (Android App)
+
+A companion Android app for always-on room monitoring. Runs as a foreground service with persistent notification — captures raw unprocessed mic audio and streams to the gateway over WebSocket even when the screen is locked.
+
+- Source: `tools/room-monitor-app/`
+- Built APK: `tools/room-monitor.apk` (also downloadable from gateway at `/monitor-apk`)
+- Auto-converts pasted HTTP(S) URLs to WebSocket (ws/wss)
+- Gain control (1x-50x), VAD threshold, level meter
+- Dark theme matching gateway UI
+
 ## Windows Audio Client
 
 `windows_audio_client.py` is a standalone client that either sends audio to the gateway or receives audio from it, depending on the selected role.
@@ -2068,6 +2129,7 @@ MUMBLE_TO_ECHOLINK = false
 ENABLE_WEB_CONFIG = false              # Enable web config editor
 WEB_CONFIG_PORT = 8080                 # HTTP listen port
 WEB_CONFIG_PASSWORD =                  # Basic auth password (user: admin), blank = no auth
+ENABLE_WEB_MONITOR = false             # Enable room monitor WebSocket endpoint
 ```
 
 ### Dynamic DNS Settings
