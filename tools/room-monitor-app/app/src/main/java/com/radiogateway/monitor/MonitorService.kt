@@ -95,7 +95,7 @@ class MonitorService : Service() {
         wsClient?.close()
         audioRecord?.release()
         wakeLock?.release()
-        stopForeground(STOPFOREGROUND_REMOVE)
+        stopForeground(true)
         super.onDestroy()
     }
 

@@ -705,6 +705,21 @@ class WebConfigServer:
                     self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
+                elif self.path == '/monitor-apk':
+                    import os
+                    apk_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'room-monitor.apk')
+                    if os.path.exists(apk_path):
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/vnd.android.package-archive')
+                        self.send_header('Content-Disposition', 'attachment; filename="room-monitor.apk"')
+                        self.send_header('Content-Length', str(os.path.getsize(apk_path)))
+                        self.end_headers()
+                        with open(apk_path, 'rb') as f:
+                            self.wfile.write(f.read())
+                    else:
+                        self.send_response(404)
+                        self.end_headers()
+                        self.wfile.write(b'APK not built yet')
                 elif self.path == '/d75status':
                     # D75 CAT state endpoint
                     data = {'connected': False, 'd75_enabled': False, 'tcp_connected': False,

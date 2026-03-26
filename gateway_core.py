@@ -258,6 +258,7 @@ class EmailNotifier:
             if url:
                 lines.append(f"Gateway:   {url}")
                 lines.append(f"Config:    {url}/config")
+                lines.append(f"Monitor:   {url}/monitor")
                 lines.append("")
 
         # LAN link
