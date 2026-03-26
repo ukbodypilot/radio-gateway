@@ -105,7 +105,7 @@ from audio_sources import (
     EchoLinkSource, SDRSource, PipeWireSDRSource,
     RemoteAudioServer, RemoteAudioSource, D75AudioSource,
     KV4PCATClient, KV4PAudioSource, NetworkAnnouncementSource,
-    WebMicSource, StreamOutputSource, AudioMixer, generate_cw_pcm,
+    WebMicSource, WebMonitorSource, StreamOutputSource, AudioMixer, generate_cw_pcm,
 )
 from ptt import RelayController, GPIORelayController
 from cat_client import RadioCATClient, D75CATClient
@@ -1880,6 +1880,7 @@ class RadioGateway:
         self.announce_input_source = None  # NetworkAnnouncementSource (port 9601)
         self.announce_input_muted = False # Announcement input: mute toggle
         self.web_mic_source = None        # WebMicSource (browser mic → radio TX)
+        self.web_monitor_source = None    # WebMonitorSource (room monitor, no PTT)
         self.aioc_available = False  # Track if AIOC is connected
 
         # SDR rebroadcast — route mixed SDR audio to AIOC radio TX
@@ -3172,6 +3173,16 @@ class RadioGateway:
                 except Exception as e:
                     print(f"⚠ Warning: Could not initialize web mic source: {e}")
                     self.web_mic_source = None
+
+            # Initialize web monitor source (browser mic → mixer, no PTT)
+            try:
+                self.web_monitor_source = WebMonitorSource(self.config, self)
+                if self.web_monitor_source.setup_audio():
+                    self.mixer.add_source(self.web_monitor_source)
+                    print("✓ Web monitor source (MONITOR) added to mixer")
+            except Exception as e:
+                print(f"⚠ Warning: Could not initialize web monitor source: {e}")
+                self.web_monitor_source = None
 
             # Initialize relay controllers
             if getattr(self.config, 'ENABLE_RELAY_RADIO', False):

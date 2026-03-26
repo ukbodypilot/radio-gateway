@@ -70,3 +70,7 @@ pymumble-pymumble_py3/
 serial_prog/
 audio/.cache/
 recordings/
+tools/room-monitor-app/.gradle/
+tools/room-monitor-app/app/build/
+tools/room-monitor-app/build/
+tools/room-monitor-app/local.properties

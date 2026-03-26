@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="#1a1a2e"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Room Monitor"
+        android:textSize="24sp"
+        android:textColor="#00d4ff"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Server URL -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Gateway URL"
+        android:textColor="#888888"
+        android:textSize="12sp" />
+    <EditText
+        android:id="@+id/serverUrl"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:hint="ws://192.168.2.140:8080/ws_monitor"
+        android:text="ws://192.168.2.140:8080/ws_monitor"
+        android:textColor="#e0e0e0"
+        android:textColorHint="#555555"
+        android:background="#16213e"
+        android:padding="12dp"
+        android:textSize="14sp"
+        android:inputType="textUri"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Status -->
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Disconnected"
+        android:textSize="18sp"
+        android:textColor="#e74c3c"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Audio level bar -->
+    <ProgressBar
+        android:id="@+id/levelBar"
+        style="@android:style/Widget.ProgressBar.Horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="16dp"
+        android:max="100"
+        android:progress="0"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Stats -->
+    <TextView
+        android:id="@+id/statsText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Duration: 0:00 | Sent: 0 KB"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Gain slider -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Mic Gain"
+        android:textColor="#888888"
+        android:textSize="12sp" />
+    <SeekBar
+        android:id="@+id/gainSlider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="20"
+        android:layout_marginBottom="16dp" />
+
+    <!-- VAD threshold slider -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="VAD Threshold"
+        android:textColor="#888888"
+        android:textSize="12sp" />
+    <SeekBar
+        android:id="@+id/vadSlider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="40"
+        android:progress="15"
+        android:layout_marginBottom="8dp" />
+
+    <CheckBox
+        android:id="@+id/vadEnable"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Voice Activity Detection"
+        android:textColor="#e0e0e0"
+        android:checked="true"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Start/Stop button -->
+    <Button
+        android:id="@+id/startStopBtn"
+        android:layout_width="200dp"
+        android:layout_height="64dp"
+        android:text="START"
+        android:textSize="20sp"
+        android:backgroundTint="#0f3460" />
+
+</LinearLayout>

@@ -3777,6 +3777,89 @@ class WebMicSource(AudioSource):
         self._sub_buffer = b''
 
 
+class WebMonitorSource(AudioSource):
+    """Receives browser monitor audio via WebSocket — NO PTT control.
+
+    Audio feeds into the mixer like any other source (SDR, remote, etc.)
+    but never keys the transmitter.  Used for room monitoring via phone mic.
+    """
+    def __init__(self, config, gateway):
+        super().__init__("MONITOR", config)
+        self.gateway = gateway
+        self.priority = 5
+        self.ptt_control = False  # Never trigger PTT
+        self.volume = float(getattr(config, 'WEB_MONITOR_VOLUME', 1.0))
+        self.enabled = True
+        self.muted = False
+
+        self.audio_level = 0
+        self.client_connected = False
+
+        self._chunk_queue = _queue_mod.Queue(maxsize=64)
+        self._sub_buffer = b''
+        self._chunk_bytes = config.AUDIO_CHUNK_SIZE * 2  # 16-bit mono
+
+    def setup_audio(self):
+        return True
+
+    def push_audio(self, pcm_bytes):
+        """Called by WebSocket handler to push raw PCM into the queue."""
+        try:
+            self._chunk_queue.put_nowait(pcm_bytes)
+        except _queue_mod.Full:
+            try:
+                self._chunk_queue.get_nowait()
+            except _queue_mod.Empty:
+                pass
+            try:
+                self._chunk_queue.put_nowait(pcm_bytes)
+            except _queue_mod.Full:
+                pass
+
+    def get_audio(self, chunk_size):
+        if not self.enabled or self.muted or not self.client_connected:
+            return None, False
+
+        cb = self._chunk_bytes
+
+        while len(self._sub_buffer) < cb:
+            try:
+                blob = self._chunk_queue.get_nowait()
+                self._sub_buffer += blob
+            except _queue_mod.Empty:
+                return None, False  # No audio — return nothing (no PTT)
+
+        raw = self._sub_buffer[:cb]
+        self._sub_buffer = self._sub_buffer[cb:]
+
+        # Level metering
+        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
+        raw_level = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60))) if rms > 0 else 0
+        self.audio_level = raw_level if raw_level > self.audio_level else int(self.audio_level * 0.7 + raw_level * 0.3)
+
+        # Apply volume multiplier
+        if self.volume != 1.0:
+            arr = arr * self.volume
+            raw = np.clip(arr, -32768, 32767).astype(np.int16).tobytes()
+
+        return raw, False  # Never trigger PTT
+
+    def is_active(self):
+        return self.enabled and not self.muted and self.client_connected
+
+    def get_status(self):
+        if not self.enabled:
+            return "MONITOR: Disabled"
+        elif self.client_connected:
+            return f"MONITOR: Live ({self.audio_level}%)"
+        else:
+            return "MONITOR: Idle"
+
+    def cleanup(self):
+        self._sub_buffer = b''
+
+
 class StreamOutputSource:
     """Stream audio output to named pipe for Darkice"""
     def __init__(self, config, gateway):

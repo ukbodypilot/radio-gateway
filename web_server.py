@@ -698,6 +698,13 @@ class WebConfigServer:
                     self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
+                elif self.path == '/monitor':
+                    html = parent._generate_monitor_page()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                    self.end_headers()
+                    self.wfile.write(html.encode('utf-8'))
                 elif self.path == '/d75status':
                     # D75 CAT state endpoint
                     data = {'connected': False, 'd75_enabled': False, 'tcp_connected': False,
@@ -1308,6 +1315,91 @@ class WebConfigServer:
                             except Exception:
                                 pass
                         print(f"[WS-Mic] Disconnected {_client_ip}")
+                    return
+                elif self.path == '/ws_monitor':
+                    # WebSocket endpoint for room monitor — audio into mixer, NO PTT
+                    self._upgrading_ws = True
+                    import hashlib, base64
+                    ws_key = self.headers.get('Sec-WebSocket-Key', '')
+                    if not ws_key or self.headers.get('Upgrade', '').lower() != 'websocket':
+                        self._upgrading_ws = False
+                        self.send_response(400)
+                        self.end_headers()
+                        return
+                    _mon_src = parent.gateway.web_monitor_source if parent.gateway else None
+                    if not _mon_src:
+                        self._upgrading_ws = False
+                        self.send_response(503)
+                        self.end_headers()
+                        return
+                    if _mon_src.client_connected:
+                        self._upgrading_ws = False
+                        self.send_response(409)
+                        self.end_headers()
+                        return
+                    _WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+                    accept = base64.b64encode(
+                        hashlib.sha1((ws_key + _WS_MAGIC).encode()).digest()
+                    ).decode()
+                    self.wfile.flush()
+                    handshake = (
+                        'HTTP/1.1 101 Switching Protocols\r\n'
+                        'Upgrade: websocket\r\n'
+                        'Connection: Upgrade\r\n'
+                        f'Sec-WebSocket-Accept: {accept}\r\n'
+                        '\r\n'
+                    )
+                    self.request.sendall(handshake.encode('ascii'))
+                    self.close_connection = True
+                    _sock = self.request
+                    _client_ip = self.client_address[0]
+                    _sock.settimeout(30)
+                    _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    _mon_src.client_connected = True
+                    print(f"\n[WS-Monitor] Room monitor connected from {_client_ip}")
+                    try:
+                        while True:
+                            try:
+                                hdr = _sock.recv(2)
+                                if not hdr or len(hdr) < 2:
+                                    break
+                                opcode = hdr[0] & 0x0F
+                                masked = (hdr[1] & 0x80) != 0
+                                payload_len = hdr[1] & 0x7F
+                                if payload_len == 126:
+                                    ext = _sock.recv(2)
+                                    payload_len = int.from_bytes(ext, 'big')
+                                elif payload_len == 127:
+                                    ext = _sock.recv(8)
+                                    payload_len = int.from_bytes(ext, 'big')
+                                mask_key = _sock.recv(4) if masked else b''
+                                payload = b''
+                                while len(payload) < payload_len:
+                                    chunk = _sock.recv(payload_len - len(payload))
+                                    if not chunk:
+                                        break
+                                    payload += chunk
+                                if masked and mask_key:
+                                    payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+                                if opcode == 0x8:  # Close
+                                    _sock.sendall(b'\x88\x00')
+                                    break
+                                elif opcode == 0x9:  # Ping → Pong
+                                    pong = bytearray([0x8A, len(payload) if len(payload) < 126 else 0])
+                                    if len(payload) < 126:
+                                        pong[1] = len(payload)
+                                    pong.extend(payload)
+                                    _sock.sendall(bytes(pong))
+                                elif opcode == 0x2:  # Binary — PCM audio data
+                                    _mon_src.push_audio(payload)
+                            except socket.timeout:
+                                continue
+                            except (ConnectionResetError, BrokenPipeError, OSError):
+                                break
+                    finally:
+                        _mon_src.client_connected = False
+                        _mon_src._sub_buffer = b''
+                        print(f"[WS-Monitor] Disconnected {_client_ip}")
                     return
                 elif self.path == '/stream':
                     # MP3 audio stream from shared encoder
@@ -3213,7 +3305,7 @@ class WebConfigServer:
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}{_telegram_link}<a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}{_telegram_link}<a href="/monitor" target="content" onclick="setActive(this)">Monitor</a><a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     <span class="shell-pcm">
       <button id="play-btn" onclick="toggleStream()" style="min-width:52px; text-align:center;">&#9654; MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
@@ -7752,6 +7844,308 @@ updateControls();
 </script>
 '''
         return self._wrap_html('Controls', body)
+
+    def _generate_monitor_page(self):
+        """Build the room monitor page — phone mic → mixer (no PTT)."""
+        body = '''
+<h1>Room Monitor</h1>
+<p style="color:#888; margin:0 0 16px; font-size:0.9em;">
+  Streams phone microphone audio into the gateway mixer without triggering PTT.
+</p>
+
+<div id="mon-status-panel" style="background:var(--t-panel); border:1px solid var(--t-border);
+  border-radius:8px; padding:16px; margin-bottom:16px;">
+  <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+    <span id="mon-dot" style="width:12px; height:12px; border-radius:50%; background:#555;
+      display:inline-block; flex-shrink:0;"></span>
+    <span id="mon-state" style="font-size:1.1em; font-weight:bold; color:#888;">Disconnected</span>
+  </div>
+  <div style="margin-bottom:8px;">
+    <span style="color:#888; font-size:0.85em;">Level</span>
+    <div style="background:rgba(255,255,255,0.05); border-radius:3px; height:18px; overflow:hidden; margin-top:2px;">
+      <div id="mon-level-bar" style="height:100%; width:0%; background:var(--t-accent); border-radius:3px;
+        transition:width 0.08s;"></div>
+    </div>
+    <div style="text-align:right; font-size:0.8em; color:#888; margin-top:2px;">
+      <span id="mon-db">—</span> dB
+    </div>
+  </div>
+  <div style="display:flex; gap:24px; font-size:0.85em; color:#888;">
+    <span>Duration: <span id="mon-duration" style="color:#e0e0e0;">0:00</span></span>
+    <span>Sent: <span id="mon-bytes" style="color:#e0e0e0;">0 B</span></span>
+  </div>
+</div>
+
+<button id="mon-btn" onclick="monToggle()" style="
+  display:block; width:100%; max-width:400px; margin:0 auto 20px;
+  padding:20px; font-size:1.3em; font-weight:bold; border-radius:12px;
+  border:3px solid #2ecc71; background:#1a3a1a; color:#e0e0e0;
+  cursor:pointer; touch-action:manipulation; user-select:none;
+  -webkit-tap-highlight-color:transparent;">
+  Start Monitor
+</button>
+
+<details style="max-width:400px; margin:0 auto 20px;">
+  <summary>Settings</summary>
+  <div style="padding:12px 14px;">
+    <div style="margin-bottom:14px;">
+      <label style="color:#888; font-size:0.85em; display:block; margin-bottom:4px;">
+        Gain: <span id="mon-gain-val">1x</span>
+      </label>
+      <input id="mon-gain" type="range" min="1" max="10" step="0.5" value="1"
+        style="width:100%; accent-color:var(--t-accent);"
+        oninput="document.getElementById('mon-gain-val').textContent=this.value+'x'">
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input id="mon-vad-en" type="checkbox" checked
+          style="accent-color:var(--t-accent); width:18px; height:18px;">
+        <span style="color:#888; font-size:0.85em;">VAD (only send when sound detected)</span>
+      </label>
+    </div>
+    <div>
+      <label style="color:#888; font-size:0.85em; display:block; margin-bottom:4px;">
+        VAD Threshold: <span id="mon-vad-val">-45 dB</span>
+      </label>
+      <input id="mon-vad-thr" type="range" min="-60" max="-20" step="1" value="-45"
+        style="width:100%; accent-color:var(--t-accent);"
+        oninput="document.getElementById('mon-vad-val').textContent=this.value+' dB'">
+    </div>
+  </div>
+</details>
+
+<div style="text-align:center; margin-top:24px;">
+  <a href="/monitor-apk" style="color:var(--t-accent); font-size:0.9em;">Download Android APK</a>
+</div>
+
+<script>
+var _monWs=null, _monStream=null, _monCtx=null, _monProc=null, _monActive=false;
+var _monStart=0, _monBytes=0, _monTimer=null, _monReconnTimer=null;
+var _monWakeLock=null, _monSilentAudio=null;
+
+function monToggle() {
+  if (_monActive) { monStop(); } else { monStart(); }
+}
+
+function monStart() {
+  _monActive = true;
+  var btn = document.getElementById('mon-btn');
+  btn.textContent = 'Connecting...';
+  btn.style.background = '#3a3a1a';
+  btn.style.borderColor = '#f39c12';
+  btn.style.color = '#f39c12';
+  document.getElementById('mon-state').textContent = 'Connecting';
+  document.getElementById('mon-state').style.color = '#f39c12';
+  document.getElementById('mon-dot').style.background = '#f39c12';
+
+  navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+      sampleRate: 48000
+    }
+  }).then(function(stream) {
+    _monStream = stream;
+    monConnectWS();
+  }).catch(function(e) {
+    monSetState('error', 'Mic denied');
+    _monActive = false;
+  });
+}
+
+function monConnectWS() {
+  if (!_monActive || !_monStream) return;
+  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  _monWs = new WebSocket(proto + '//' + location.host + '/ws_monitor');
+  _monWs.binaryType = 'arraybuffer';
+
+  _monWs.onopen = function() {
+    monSetState('live', 'Live');
+    _monStart = Date.now();
+    _monBytes = 0;
+    monStartAudio();
+    monStartTimer();
+    monRequestWakeLock();
+    monStartSilentAudio();
+  };
+
+  _monWs.onerror = function() {
+    monHandleDisconnect();
+  };
+
+  _monWs.onclose = function() {
+    monHandleDisconnect();
+  };
+}
+
+function monStartAudio() {
+  if (!_monStream) return;
+  _monCtx = new AudioContext({sampleRate: 48000});
+  var source = _monCtx.createMediaStreamSource(_monStream);
+  _monProc = _monCtx.createScriptProcessor(2048, 1, 1);
+  _monProc.onaudioprocess = function(e) {
+    if (!_monWs || _monWs.readyState !== 1) return;
+    var f32 = e.inputBuffer.getChannelData(0);
+    var gain = parseFloat(document.getElementById('mon-gain').value) || 1;
+
+    // Compute RMS and peak
+    var sum = 0, peak = 0;
+    for (var i = 0; i < f32.length; i++) {
+      var s = f32[i] * gain;
+      sum += s * s;
+      var a = Math.abs(s);
+      if (a > peak) peak = a;
+    }
+    var rms = Math.sqrt(sum / f32.length);
+    var db = rms > 0 ? 20 * Math.log10(rms) : -100;
+
+    // Update level display
+    var pct = Math.min(100, Math.max(0, Math.round((db + 60) * (100 / 60))));
+    document.getElementById('mon-level-bar').style.width = pct + '%';
+    document.getElementById('mon-db').textContent = db > -100 ? db.toFixed(1) : '—';
+
+    // VAD check
+    var vadEn = document.getElementById('mon-vad-en').checked;
+    var vadThr = parseFloat(document.getElementById('mon-vad-thr').value) || -45;
+    if (vadEn && db < vadThr) return;  // Below threshold — don't send
+
+    // Convert to 16-bit signed LE PCM with gain applied
+    var buf = new ArrayBuffer(f32.length * 2);
+    var i16 = new Int16Array(buf);
+    for (var i = 0; i < f32.length; i++) {
+      var s = Math.max(-1, Math.min(1, f32[i] * gain));
+      i16[i] = s < 0 ? s * 32768 : s * 32767;
+    }
+    _monWs.send(buf);
+    _monBytes += buf.byteLength;
+  };
+  source.connect(_monProc);
+  _monProc.connect(_monCtx.destination);
+}
+
+function monStartTimer() {
+  if (_monTimer) clearInterval(_monTimer);
+  _monTimer = setInterval(function() {
+    if (!_monActive) return;
+    var elapsed = Math.floor((Date.now() - _monStart) / 1000);
+    var m = Math.floor(elapsed / 60);
+    var s = elapsed % 60;
+    document.getElementById('mon-duration').textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    // Format bytes
+    var b = _monBytes;
+    var units = ['B', 'KB', 'MB', 'GB'];
+    var u = 0;
+    while (b >= 1024 && u < units.length - 1) { b /= 1024; u++; }
+    document.getElementById('mon-bytes').textContent = (u > 0 ? b.toFixed(1) : b) + ' ' + units[u];
+  }, 1000);
+}
+
+function monHandleDisconnect() {
+  monStopAudio();
+  if (_monTimer) { clearInterval(_monTimer); _monTimer = null; }
+  if (_monActive) {
+    // Auto-reconnect
+    monSetState('reconnecting', 'Reconnecting...');
+    if (_monReconnTimer) clearTimeout(_monReconnTimer);
+    _monReconnTimer = setTimeout(function() {
+      _monReconnTimer = null;
+      if (_monActive && _monStream) monConnectWS();
+    }, 5000);
+  } else {
+    monSetState('off', 'Disconnected');
+  }
+}
+
+function monStop() {
+  _monActive = false;
+  if (_monReconnTimer) { clearTimeout(_monReconnTimer); _monReconnTimer = null; }
+  monStopAudio();
+  if (_monWs) { try { _monWs.close(); } catch(e){} _monWs = null; }
+  if (_monStream) { _monStream.getTracks().forEach(function(t){t.stop();}); _monStream = null; }
+  if (_monTimer) { clearInterval(_monTimer); _monTimer = null; }
+  monReleaseWakeLock();
+  monStopSilentAudio();
+  monSetState('off', 'Disconnected');
+  document.getElementById('mon-level-bar').style.width = '0%';
+  document.getElementById('mon-db').textContent = '\\u2014';
+  document.getElementById('mon-duration').textContent = '0:00';
+  document.getElementById('mon-bytes').textContent = '0 B';
+}
+
+function monStopAudio() {
+  if (_monProc) { _monProc.disconnect(); _monProc = null; }
+  if (_monCtx) { _monCtx.close().catch(function(){}); _monCtx = null; }
+}
+
+function monSetState(state, text) {
+  var dot = document.getElementById('mon-dot');
+  var label = document.getElementById('mon-state');
+  var btn = document.getElementById('mon-btn');
+  label.textContent = text;
+  if (state === 'live') {
+    dot.style.background = '#2ecc71';
+    label.style.color = '#2ecc71';
+    btn.textContent = 'Stop Monitor';
+    btn.style.background = '#3a1a1a';
+    btn.style.borderColor = '#e74c3c';
+    btn.style.color = '#e74c3c';
+  } else if (state === 'reconnecting') {
+    dot.style.background = '#f39c12';
+    label.style.color = '#f39c12';
+    btn.textContent = 'Stop Monitor';
+    btn.style.background = '#3a3a1a';
+    btn.style.borderColor = '#f39c12';
+    btn.style.color = '#f39c12';
+  } else if (state === 'error') {
+    dot.style.background = '#e74c3c';
+    label.style.color = '#e74c3c';
+    btn.textContent = 'Start Monitor';
+    btn.style.background = '#1a3a1a';
+    btn.style.borderColor = '#2ecc71';
+    btn.style.color = '#e0e0e0';
+  } else {
+    dot.style.background = '#555';
+    label.style.color = '#888';
+    btn.textContent = 'Start Monitor';
+    btn.style.background = '#1a3a1a';
+    btn.style.borderColor = '#2ecc71';
+    btn.style.color = '#e0e0e0';
+  }
+}
+
+// Wake Lock API — keep screen on
+function monRequestWakeLock() {
+  if ('wakeLock' in navigator) {
+    navigator.wakeLock.request('screen').then(function(wl) {
+      _monWakeLock = wl;
+      _monWakeLock.addEventListener('release', function() { _monWakeLock = null; });
+    }).catch(function(){});
+  }
+}
+function monReleaseWakeLock() {
+  if (_monWakeLock) { _monWakeLock.release().catch(function(){}); _monWakeLock = null; }
+}
+// Re-acquire wake lock when page becomes visible again
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible' && _monActive) monRequestWakeLock();
+});
+
+// Silent audio loop — backup to prevent tab suspension
+function monStartSilentAudio() {
+  if (_monSilentAudio) return;
+  _monSilentAudio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
+  _monSilentAudio.loop = true;
+  _monSilentAudio.volume = 0.01;
+  _monSilentAudio.play().catch(function(){});
+}
+function monStopSilentAudio() {
+  if (_monSilentAudio) { _monSilentAudio.pause(); _monSilentAudio = null; }
+}
+</script>
+'''
+        return self._wrap_html('Monitor', body)
 
     def _generate_recordings_page(self):
         """Build the recordings manager HTML page."""

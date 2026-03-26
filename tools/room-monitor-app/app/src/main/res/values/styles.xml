@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RoomMonitor" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <item name="colorPrimary">#0f3460</item>
+        <item name="colorPrimaryVariant">#1a1a2e</item>
+        <item name="colorOnPrimary">#e0e0e0</item>
+        <item name="colorSecondary">#00d4ff</item>
+        <item name="android:windowBackground">#1a1a2e</item>
+        <item name="android:statusBarColor">#0f3460</item>
+    </style>
+</resources>
