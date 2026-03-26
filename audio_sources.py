@@ -4090,12 +4090,12 @@ class AudioMixer:
                 if ptt_audio is None:
                     ptt_audio = audio
                 else:
-                    ptt_audio = self._mix_audio_streams(ptt_audio, audio, 0.5)
+                    ptt_audio = self._mix_audio_streams(ptt_audio, audio)
             else:
                 if non_ptt_audio is None:
                     non_ptt_audio = audio
                 else:
-                    non_ptt_audio = self._mix_audio_streams(non_ptt_audio, audio, 0.5)
+                    non_ptt_audio = self._mix_audio_streams(non_ptt_audio, audio)
 
         # Collect SDR source names for duck state machine (audio fetched in Phase 2)
         _sdr_source_names = [s.name for s in self.sources if s.name.startswith("SDR") and s.enabled]
@@ -4593,7 +4593,7 @@ class AudioMixer:
             if mixed_audio is None:
                 mixed_audio = audio
             else:
-                mixed_audio = self._mix_audio_streams(mixed_audio, audio, 0.5)
+                mixed_audio = self._mix_audio_streams(mixed_audio, audio)
         
         return mixed_audio, ptt_required, active_sources, False, False, None, False, None
 
