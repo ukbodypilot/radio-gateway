@@ -231,7 +231,7 @@ class EmailNotifier:
         # HTML version (makes URLs clickable)
         # Linkify URLs BEFORE inserting <br> tags, otherwise <br> gets captured in the URL
         import re
-        html_body = re.sub(r'(https?://\S+)', r'<a href="\1">\1</a>', body)
+        html_body = re.sub(r'((?:https?|wss?)://\S+)', r'<a href="\1">\1</a>', body)
         html_body = html_body.replace('\n', '<br>\n')
         msg.attach(MIMEText(f'<html><body style="font-family:monospace;font-size:14px">{html_body}</body></html>', 'html'))
 
