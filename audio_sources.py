@@ -899,6 +899,7 @@ class FilePlaybackSource(AudioSource):
         """Pre-decode an audio file and add it to the playback queue.
         Decoding happens here (caller's thread) so the audio transmit loop
         never blocks on file I/O."""
+        self._pb_log_n = 0  # Reset playback log counter
         import os
 
         # Check if file exists
@@ -1151,9 +1152,24 @@ class FilePlaybackSource(AudioSource):
 
         # During the PTT announcement delay the radio is keying up.  Return silence
         # without advancing the file position so no audio is lost.
-        if getattr(self.gateway, 'announcement_delay_active', False):
+        # Skip delay for D75/KV4P — no relay settling needed.
+        _tx_radio = str(getattr(self.gateway.config, 'TX_RADIO', 'th9800')).lower()
+        _skip_delay = _tx_radio in ('d75', 'kv4p')
+        if getattr(self.gateway, 'announcement_delay_active', False) and not _skip_delay:
             return b'\x00' * chunk_bytes, True
-        
+
+        # Instrument: log playback state on first few calls per file
+        if not hasattr(self, '_pb_log_n'):
+            self._pb_log_n = 0
+        self._pb_log_n += 1
+        if self._pb_log_n <= 5 or self._pb_log_n % 50 == 0:
+            _peak = 0
+            _remaining = len(self.file_data) - self.file_position
+            if _remaining > 0:
+                _arr = np.frombuffer(self.file_data[self.file_position:min(self.file_position + chunk_bytes, len(self.file_data))], dtype=np.int16)
+                _peak = int(np.max(np.abs(_arr))) if len(_arr) > 0 else 0
+            print(f"  [Playback] get_audio #{self._pb_log_n}: pos={self.file_position}/{len(self.file_data)} remaining={_remaining}B peak={_peak} delay={getattr(self.gateway, 'announcement_delay_active', False)}")
+
         # Check if we have enough data left
         if self.file_position >= len(self.file_data):
             # File finished
