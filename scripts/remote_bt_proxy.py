@@ -647,13 +647,31 @@ class AudioManager:
             except Exception as e:
                 print(f"[Audio] CKPD failed: {e}")
 
+    _sco_tx_count = 0
+    _sco_tx_errors = 0
     def write_sco(self, data):
         """Write TX audio data to SCO (called from AudioServer TX reader)."""
         if self._sco and self._connected:
             try:
-                self._sco.send(data)
-            except Exception:
-                pass
+                # SCO is SEQPACKET — must send in frame-sized chunks (48 bytes)
+                sent = 0
+                for i in range(0, len(data), AUDIO_FRAME_SIZE):
+                    frame = data[i:i + AUDIO_FRAME_SIZE]
+                    if len(frame) < AUDIO_FRAME_SIZE:
+                        frame += b'\x00' * (AUDIO_FRAME_SIZE - len(frame))
+                    self._sco.send(frame)
+                    sent += len(frame)
+                self._sco_tx_count += 1
+                if self._sco_tx_count <= 3 or self._sco_tx_count % 200 == 0:
+                    print(f"[Audio TX] #{self._sco_tx_count}: {len(data)}B → {sent}B in {len(data)//AUDIO_FRAME_SIZE + 1} frames")
+            except Exception as e:
+                self._sco_tx_errors += 1
+                if self._sco_tx_errors <= 3 or self._sco_tx_errors % 50 == 0:
+                    print(f"[Audio TX] SCO write error #{self._sco_tx_errors}: {e}")
+        else:
+            if not hasattr(self, '_sco_tx_noconn_logged'):
+                self._sco_tx_noconn_logged = True
+                print(f"[Audio TX] No SCO connection (sco={self._sco is not None}, conn={self._connected})")
 
     # ── private ────────────────────────────────────────────────────────────────
 
@@ -751,6 +769,7 @@ class AudioServer:
 
     def _rx_loop(self, conn, addr):
         """Read TX audio from gateway → SCO."""
+        _rx_count = 0
         try:
             conn.settimeout(1.0)
             while self._running:
@@ -758,6 +777,9 @@ class AudioServer:
                     data = conn.recv(4096)
                     if not data:
                         break
+                    _rx_count += 1
+                    if _rx_count <= 3 or _rx_count % 200 == 0:
+                        print(f"[AudioTCP RX] #{_rx_count} from {addr[0]}: {len(data)}B")
                     self._audio.write_sco(data)
                 except socket.timeout:
                     continue
