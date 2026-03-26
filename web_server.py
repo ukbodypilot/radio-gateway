@@ -995,6 +995,13 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
+                elif self.path == '/telegram':
+                    html = parent._generate_telegram_page()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                    self.end_headers()
+                    self.wfile.write(html.encode('utf-8'))
                 elif self.path == '/telegramstatus':
                     import json as json_mod, os as _os
                     data = {'enabled': False, 'bot_running': False, 'bot_username': '',
@@ -2643,6 +2650,40 @@ class WebConfigServer:
                     self.wfile.write(json_mod.dumps({'deleted': deleted}).encode('utf-8'))
                     return
 
+                elif self.path == '/telegramcmd':
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    result = {'ok': False, 'error': 'unknown command'}
+                    try:
+                        data = json_mod.loads(body)
+                        cmd = data.get('cmd', '')
+                        if cmd in ('start', 'stop', 'restart'):
+                            _r = subprocess.run(['sudo', 'systemctl', cmd, 'telegram-bot'],
+                                                capture_output=True, text=True, timeout=10)
+                            result = {'ok': _r.returncode == 0,
+                                      'output': (_r.stdout + _r.stderr).strip()}
+                        elif cmd == 'enable':
+                            _r = subprocess.run(['sudo', 'systemctl', 'enable', 'telegram-bot'],
+                                                capture_output=True, text=True, timeout=10)
+                            result = {'ok': _r.returncode == 0}
+                        elif cmd == 'disable':
+                            _r = subprocess.run(['sudo', 'systemctl', 'disable', 'telegram-bot'],
+                                                capture_output=True, text=True, timeout=10)
+                            result = {'ok': _r.returncode == 0}
+                        elif cmd == 'logs':
+                            _r = subprocess.run(['journalctl', '-u', 'telegram-bot', '--no-pager', '-n', '50'],
+                                                capture_output=True, text=True, timeout=5)
+                            result = {'ok': True, 'logs': _r.stdout}
+                        else:
+                            result = {'ok': False, 'error': f'unknown command: {cmd}'}
+                    except Exception as e:
+                        result = {'ok': False, 'error': str(e)}
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps(result).encode('utf-8'))
+                    return
+
                 elif self.path == '/open_tmux':
                     # Open local terminal attached to Claude tmux session
                     session = getattr(parent.config, 'TELEGRAM_TMUX_SESSION', 'claude-gateway') if parent.config else 'claude-gateway'
@@ -3097,10 +3138,12 @@ class WebConfigServer:
         has_d75 = getattr(self.config, 'ENABLE_D75', False)
         has_kv4p = getattr(self.config, 'ENABLE_KV4P', False)
         has_adsb = getattr(self.config, 'ENABLE_ADSB', False)
+        has_telegram = getattr(self.config, 'ENABLE_TELEGRAM', False)
         _radio_link = '<a href="/radio" target="content" onclick="setActive(this)">TH-9800</a>' if has_radio else '<a class="nav-disabled">TH-9800</a>'
         _d75_link = '<a href="/d75" target="content" onclick="setActive(this)">TH-D75</a>' if has_d75 else '<a class="nav-disabled">TH-D75</a>'
         _kv4p_link = '<a href="/kv4p" target="content" onclick="setActive(this)">KV4P</a>' if has_kv4p else '<a class="nav-disabled">KV4P</a>'
         _adsb_link = '<a href="/aircraft" target="content" onclick="setActive(this)">ADS-B</a>' if has_adsb else ''
+        _telegram_link = '<a href="/telegram" target="content" onclick="setActive(this)">Telegram</a>' if has_telegram else ''
         return f'''<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
@@ -3150,7 +3193,7 @@ class WebConfigServer:
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}<a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}{_telegram_link}<a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
   </div>
   <div class="shell-pcm">
     <button id="play-btn" onclick="toggleStream()" style="min-width:62px; text-align:center;">&#9654; MP3</button>
@@ -5309,6 +5352,202 @@ kvPoll();
 '''
         return self._wrap_html('KV4P Control', body)
 
+    def _generate_telegram_page(self):
+        """Build the Telegram bot status and control page."""
+        body = '''
+<h1 style="font-size:1.8em">Telegram Bot</h1>
+
+<style>
+.tg-panel { background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px; font-family:monospace; font-size:0.95em; }
+.tg-row { display:flex; align-items:center; gap:14px; margin-bottom:8px; flex-wrap:wrap; }
+.tg-label { color:#888; font-size:0.85em; min-width:90px; }
+.tg-val { color:#e0e0e0; }
+.tg-dot { font-size:1.2em; }
+.tg-ok { color:#2ecc71; }
+.tg-err { color:#e74c3c; }
+.tg-warn { color:#f39c12; }
+.rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
+  color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; }
+.rb:hover { background:var(--t-btn-hover); border-color:var(--t-accent); }
+.rb:active { background:var(--t-border); }
+.rb-sm { font-size:0.8em; padding:5px 10px; }
+.rb-danger { border-color:#e74c3c; }
+.rb-danger:hover { background:#5c1a1a; }
+.tg-msg { background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px 14px;
+  margin-bottom:6px; font-size:0.9em; }
+.tg-msg-in { border-left:3px solid var(--t-accent); }
+.tg-msg-out { border-left:3px solid #2ecc71; }
+.tg-msg-time { color:#888; font-size:0.8em; margin-right:8px; }
+.tg-log-box { background:#111; border:1px solid var(--t-border); border-radius:4px; padding:10px;
+  font-size:0.8em; color:#ccc; max-height:300px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; display:none; }
+</style>
+
+<!-- Status Panel -->
+<div class="tg-panel">
+  <div class="tg-row">
+    <span class="tg-label">Bot Service:</span>
+    <span id="tg-bot-dot" class="tg-dot">&#x25cf;</span>
+    <span id="tg-bot-state" class="tg-val">--</span>
+    <span style="flex:1;"></span>
+    <span id="tg-bot-user" style="color:var(--t-accent); font-size:0.9em;"></span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Claude tmux:</span>
+    <span id="tg-tmux-dot" class="tg-dot">&#x25cf;</span>
+    <span id="tg-tmux-state" class="tg-val">--</span>
+    <span style="margin-left:4px;">
+      <button class="rb rb-sm" onclick="openTmux()" title="Open terminal attached to Claude tmux session">Open tmux</button>
+    </span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Session:</span>
+    <span id="tg-session" class="tg-val">--</span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Config:</span>
+    <span id="tg-config-dot" class="tg-dot">&#x25cf;</span>
+    <span id="tg-config-state" class="tg-val">--</span>
+  </div>
+  <div id="tg-feedback" style="font-size:0.85em; min-height:18px; margin-top:4px;"></div>
+</div>
+
+<!-- Stats Panel -->
+<div class="tg-panel">
+  <h3 style="margin:0 0 10px 0; color:var(--t-accent); font-size:1em;">Activity</h3>
+  <div class="tg-row">
+    <span class="tg-label">Messages today:</span>
+    <span id="tg-msgs-today" class="tg-val" style="color:var(--t-accent); font-size:1.2em;">--</span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Last incoming:</span>
+    <span id="tg-last-in" class="tg-val">--</span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Last reply:</span>
+    <span id="tg-last-out" class="tg-val" style="color:#2ecc71;">--</span>
+  </div>
+  <div id="tg-last-msg" class="tg-msg tg-msg-in" style="display:none;">
+    <span class="tg-msg-time" id="tg-last-msg-time"></span>
+    <span id="tg-last-msg-text"></span>
+  </div>
+</div>
+
+<!-- Service Controls -->
+<div class="tg-panel">
+  <h3 style="margin:0 0 10px 0; color:var(--t-accent); font-size:1em;">Service Controls</h3>
+  <div class="tg-row">
+    <button class="rb rb-sm" onclick="tgCmd('start')">Start</button>
+    <button class="rb rb-sm" onclick="tgCmd('stop')" >Stop</button>
+    <button class="rb rb-sm" onclick="tgCmd('restart')">Restart</button>
+    <span style="color:#555;">|</span>
+    <button class="rb rb-sm" onclick="tgCmd('enable')">Enable on boot</button>
+    <button class="rb rb-sm rb-danger" onclick="tgCmd('disable')">Disable on boot</button>
+  </div>
+</div>
+
+<!-- Logs -->
+<div class="tg-panel">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1em;">Service Logs</h3>
+    <button class="rb rb-sm" onclick="tgLogs()">Load logs</button>
+    <button class="rb rb-sm" onclick="document.getElementById('tg-log-box').style.display='none'">Hide</button>
+  </div>
+  <div id="tg-log-box" class="tg-log-box"></div>
+</div>
+
+<script>
+function tgCmd(cmd) {
+  var fb = document.getElementById('tg-feedback');
+  fb.style.color = '#f39c12'; fb.textContent = cmd + '...';
+  fetch('/telegramcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:cmd})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      fb.style.color = d.ok ? '#2ecc71' : '#e74c3c';
+      fb.textContent = d.ok ? cmd + ' OK' : (d.error || 'failed');
+      setTimeout(function(){ fb.textContent=''; }, 4000);
+      tgPoll();
+    })
+    .catch(function(e){ fb.style.color='#e74c3c'; fb.textContent=String(e); });
+}
+
+function tgLogs() {
+  fetch('/telegramcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'logs'})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var box = document.getElementById('tg-log-box');
+      box.style.display = 'block';
+      box.textContent = d.logs || 'No logs available';
+      box.scrollTop = box.scrollHeight;
+    });
+}
+
+function openTmux() {
+  fetch('/open_tmux', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+}
+
+function fmtTime(ts) {
+  if (!ts) return '--';
+  try { return new Date(ts).toLocaleTimeString(); } catch(e) { return ts; }
+}
+
+function tgPoll() {
+  fetch('/telegramstatus').then(function(r){return r.json()}).then(function(d) {
+    // Bot status
+    var botDot = document.getElementById('tg-bot-dot');
+    var botState = document.getElementById('tg-bot-state');
+    botDot.className = 'tg-dot ' + (d.bot_running ? 'tg-ok' : 'tg-err');
+    botState.textContent = d.bot_running ? 'Running' : 'Stopped';
+    document.getElementById('tg-bot-user').textContent = d.bot_username || '';
+
+    // tmux status
+    var tmuxDot = document.getElementById('tg-tmux-dot');
+    var tmuxState = document.getElementById('tg-tmux-state');
+    tmuxDot.className = 'tg-dot ' + (d.tmux_active ? 'tg-ok' : 'tg-err');
+    tmuxState.textContent = d.tmux_active ? 'Active' : 'Not found';
+    document.getElementById('tg-session').textContent = d.tmux_session || '--';
+
+    // Config status
+    var cfgDot = document.getElementById('tg-config-dot');
+    var cfgState = document.getElementById('tg-config-state');
+    if (d.enabled && d.token_set) {
+      cfgDot.className = 'tg-dot tg-ok';
+      cfgState.textContent = 'Enabled, token set';
+    } else if (d.enabled && !d.token_set) {
+      cfgDot.className = 'tg-dot tg-warn';
+      cfgState.textContent = 'Enabled but no token';
+    } else if (!d.enabled && d.token_set) {
+      cfgDot.className = 'tg-dot tg-warn';
+      cfgState.textContent = 'Disabled (token set)';
+    } else {
+      cfgDot.className = 'tg-dot tg-err';
+      cfgState.textContent = 'Disabled, no token';
+    }
+
+    // Activity
+    document.getElementById('tg-msgs-today').textContent = d.messages_today != null ? d.messages_today : '--';
+    document.getElementById('tg-last-in').textContent = fmtTime(d.last_message_time);
+    document.getElementById('tg-last-out').textContent = fmtTime(d.last_reply_time);
+
+    // Last message preview
+    var msgBox = document.getElementById('tg-last-msg');
+    if (d.last_message_text) {
+      msgBox.style.display = 'block';
+      document.getElementById('tg-last-msg-time').textContent = fmtTime(d.last_message_time);
+      document.getElementById('tg-last-msg-text').textContent = d.last_message_text;
+    } else {
+      msgBox.style.display = 'none';
+    }
+  }).catch(function(){});
+}
+
+setInterval(tgPoll, 3000);
+tgPoll();
+</script>
+'''
+        return self._wrap_html('Telegram Bot', body)
+
     def _generate_aircraft_page(self):
         """Build the ADS-B aircraft map page — a full-height iframe proxying dump1090-fa."""
         t = self._get_theme()
@@ -6133,20 +6372,11 @@ pollTimer = setInterval(pollStatus, 1000);
             # Hostname
             info['hostname'] = socket.gethostname()
 
-            # Cloudflare tunnel IP
+            # Cloudflare tunnel URL for display in system status
             if self.gateway and self.gateway.cloudflare_tunnel:
-                url = self.gateway.cloudflare_tunnel.get_url() or ''
-                if url:
-                    try:
-                        host = url.replace('https://', '').replace('http://', '').split('/')[0]
-                        ip = socket.gethostbyname(host)
-                        info['tunnel_ip'] = ip
-                    except Exception:
-                        info['tunnel_ip'] = ''
-                else:
-                    info['tunnel_ip'] = ''
+                info['tunnel_url'] = self.gateway.cloudflare_tunnel.get_url() or ''
             else:
-                info['tunnel_ip'] = ''
+                info['tunnel_url'] = ''
         except Exception:
             info['ips'] = []
             info['hostname'] = ''
@@ -7156,7 +7386,7 @@ function updateSysInfo() {
       for (var i=0; i<s.ips.length; i++) {
         h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
       }
-      if (s.tunnel_ip) h += '<div class="st-item"><span class="st-label">CF:</span><span class="st-val green">'+s.tunnel_ip+'</span></div>';
+      if (s.tunnel_url) h += '<div class="st-item"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" style="color:#2ecc71; text-decoration:none;">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
       h += '</div>';
     }
     document.getElementById('sysinfo').innerHTML = h;

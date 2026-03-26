@@ -2489,8 +2489,10 @@ class RadioGateway:
 
         D75 uses explicit on/off (not toggle like TH-9800).
         No RTS switching needed — D75 doesn't use the RTS relay.
-        CRITICAL: must not block the audio thread — send PTT in a
-        background thread so the mixer keeps feeding audio.
+        CRITICAL: fire-and-forget — write bytes to socket without waiting
+        for response. Using _send_cmd would compete with the poll thread
+        for the socket lock and response parsing, causing 1-5s delays
+        that starve the audio mixer.
         """
         d75 = getattr(self, 'd75_cat', None)
         if not d75 or not d75._connected:
@@ -2499,26 +2501,19 @@ class RadioGateway:
             return
         if state_on == self._d75_ptt_on:
             return
-        # Update state immediately so audio routing starts without waiting for TCP
         self._d75_ptt_on = state_on
         if state_on:
             self._d75_tx_log_n = 0
             if self.d75_audio_source:
                 self.d75_audio_source._tx_write_count = 0
-        # Send PTT command in background to avoid blocking audio thread
-        def _send_ptt():
-            try:
-                cmd = "!ptt on" if state_on else "!ptt off"
-                resp = d75._send_cmd(cmd, timeout=2.0)
-                if resp and 'serial not connected' in str(resp).lower():
-                    self._d75_ptt_on = False
-                    self.notify("PTT failed: D75 serial not connected")
-                    return
-                print(f"  [PTT] {'KEYED' if state_on else 'UNKEYED'} D75 (resp={resp})")
-            except Exception as e:
-                print(f"\n[PTT] D75 !ptt error: {e}")
-                self.notify(f"PTT failed: {e}")
-        threading.Thread(target=_send_ptt, daemon=True, name="d75-ptt").start()
+        cmd = "!ptt on" if state_on else "!ptt off"
+        try:
+            if d75._sock:
+                d75._sock.sendall(f"{cmd}\n".encode())
+                print(f"  [PTT] {'KEYED' if state_on else 'UNKEYED'} D75 (fire-and-forget)")
+        except Exception as e:
+            print(f"\n[PTT] D75 !ptt send error: {e}")
+            self._d75_ptt_on = False
 
     _kv4p_ptt_on = False  # Track KV4P PTT state
 
