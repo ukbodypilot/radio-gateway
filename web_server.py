@@ -3198,10 +3198,11 @@ class WebConfigServer:
     align-items: center; flex-shrink: 0; font-family: monospace; font-size: 0.85em;
     min-height: 26px;
   }}
-  #shell-bars .sb {{ display: flex; gap: 4px; align-items: center; white-space: nowrap; }}
-  #shell-bars .sb-label {{ color: #888; width: 3.5em; text-align: right; }}
-  #shell-bars .sb-pct {{ display: inline-block; width: 3em; text-align: right; }}
-  #shell-bars .sb-bar {{ display: inline-block; height: 14px; border-radius: 2px; min-width: 3px; vertical-align: middle; }}
+  #shell-bars .sb {{ display: flex; gap: 4px; align-items: center; white-space: nowrap; width: 190px; }}
+  #shell-bars .sb-label {{ color: #888; width: 3.2em; text-align: right; flex-shrink: 0; }}
+  #shell-bars .sb-pct {{ width: 3.2em; text-align: right; flex-shrink: 0; }}
+  #shell-bars .sb-track {{ width: 100px; height: 14px; background: rgba(255,255,255,0.05); border-radius: 2px; flex-shrink: 0; overflow: hidden; }}
+  #shell-bars .sb-bar {{ display: block; height: 100%; border-radius: 2px; }}
   .sb-rx {{ background: #2ecc71; }} .sb-tx {{ background: #e74c3c; }}
   .sb-sdr1 {{ background: var(--t-accent); }} .sb-sdr2 {{ background: #e056a0; }}
   .sb-sv {{ background: #f1c40f; }} .sb-cl {{ background: #2ecc71; }}
@@ -3496,7 +3497,7 @@ function setWSVol(v) {{
 function _sbBar(pct, cls, ducked) {{
   var w = Math.round(Math.min(Math.max(pct, 0), 100));
   var col = ducked ? '#e74c3c' : '#2ecc71';
-  return '<span class="sb-pct" style="color:'+col+'">'+pct+'%</span><span class="sb-bar '+cls+'" style="width:'+w+'px"></span>';
+  return '<span class="sb-pct" style="color:'+col+'">'+pct+'%</span><span class="sb-track"><span class="sb-bar '+cls+'" style="width:'+w+'%"></span></span>';
 }}
 var _sbBusy = false;
 function _updateBars() {{
