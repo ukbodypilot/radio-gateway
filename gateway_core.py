@@ -2489,29 +2489,36 @@ class RadioGateway:
 
         D75 uses explicit on/off (not toggle like TH-9800).
         No RTS switching needed — D75 doesn't use the RTS relay.
+        CRITICAL: must not block the audio thread — send PTT in a
+        background thread so the mixer keeps feeding audio.
         """
         d75 = getattr(self, 'd75_cat', None)
-        if not d75:
+        if not d75 or not d75._connected:
             if state_on:
                 self.notify("PTT failed: D75 not connected")
             return
         if state_on == self._d75_ptt_on:
             return
-        try:
-            cmd = "!ptt on" if state_on else "!ptt off"
-            resp = d75.send_command(cmd)
-            if resp and 'serial not connected' in str(resp).lower():
-                self.notify("PTT failed: D75 serial not connected")
-                return
-            if resp is None:
-                self.notify("PTT failed: no response from D75")
-                return
-            self._d75_ptt_on = state_on
-            if self.config.VERBOSE_LOGGING:
-                print(f"\n[PTT] {'KEYING' if state_on else 'UNKEYING'} radio (D75 CAT)")
-        except Exception as e:
-            print(f"\n[PTT] D75 !ptt error: {e}")
-            self.notify(f"PTT failed: {e}")
+        # Update state immediately so audio routing starts without waiting for TCP
+        self._d75_ptt_on = state_on
+        if state_on:
+            self._d75_tx_log_n = 0
+            if self.d75_audio_source:
+                self.d75_audio_source._tx_write_count = 0
+        # Send PTT command in background to avoid blocking audio thread
+        def _send_ptt():
+            try:
+                cmd = "!ptt on" if state_on else "!ptt off"
+                resp = d75._send_cmd(cmd, timeout=2.0)
+                if resp and 'serial not connected' in str(resp).lower():
+                    self._d75_ptt_on = False
+                    self.notify("PTT failed: D75 serial not connected")
+                    return
+                print(f"  [PTT] {'KEYED' if state_on else 'UNKEYED'} D75 (resp={resp})")
+            except Exception as e:
+                print(f"\n[PTT] D75 !ptt error: {e}")
+                self.notify(f"PTT failed: {e}")
+        threading.Thread(target=_send_ptt, daemon=True, name="d75-ptt").start()
 
     _kv4p_ptt_on = False  # Track KV4P PTT state
 
@@ -4680,12 +4687,19 @@ class RadioGateway:
                                 # audio chunk — replace it with silence here too.
                                 # KV4P uses serial audio with no physical relay, so no
                                 # settle delay is needed — send real audio immediately.
-                                _needs_delay = self.announcement_delay_active and not _use_kv4p_tx
+                                _needs_delay = self.announcement_delay_active and not _use_kv4p_tx and not _use_d75_tx
                                 pcm = b'\x00' * len(data) if _needs_delay else data
                                 if self.config.OUTPUT_VOLUME != 1.0:
                                     arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
                                     pcm = np.clip(arr * self.config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
                                 if _use_d75_tx:
+                                    if not hasattr(self, '_d75_tx_log_n'):
+                                        self._d75_tx_log_n = 0
+                                    self._d75_tx_log_n += 1
+                                    if self._d75_tx_log_n <= 5 or self._d75_tx_log_n % 50 == 0:
+                                        _parr = np.frombuffer(pcm, dtype=np.int16)
+                                        _ppeak = int(np.max(np.abs(_parr))) if len(_parr) > 0 else 0
+                                        print(f"  [D75 TX path] #{self._d75_tx_log_n} input 48k: {len(pcm)}B peak={_ppeak} delay={_needs_delay}")
                                     self.d75_audio_source.write_tx_audio(pcm)
                                 elif _use_kv4p_tx:
                                     self.kv4p_audio_source.write_tx_audio(pcm)
