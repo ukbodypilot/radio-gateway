@@ -3818,6 +3818,7 @@ class WebMonitorSource(AudioSource):
 
     def get_audio(self, chunk_size):
         if not self.enabled or self.muted or not self.client_connected:
+            self.audio_level = max(0, int(self.audio_level * 0.7))
             return None, False
 
         cb = self._chunk_bytes
@@ -3827,6 +3828,7 @@ class WebMonitorSource(AudioSource):
                 blob = self._chunk_queue.get_nowait()
                 self._sub_buffer += blob
             except _queue_mod.Empty:
+                self.audio_level = max(0, int(self.audio_level * 0.7))
                 return None, False  # No audio — return nothing (no PTT)
 
         raw = self._sub_buffer[:cb]
@@ -3835,7 +3837,7 @@ class WebMonitorSource(AudioSource):
         # Level metering
         arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
         rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        raw_level = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60))) if rms > 0 else 0
+        raw_level = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
         self.audio_level = raw_level if raw_level > self.audio_level else int(self.audio_level * 0.7 + raw_level * 0.3)
 
         # Apply volume multiplier
