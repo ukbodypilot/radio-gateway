@@ -112,6 +112,12 @@ PTT_RELAY_BAUD = 9600
 PTT_ACTIVATION_DELAY = 0.1   # Seconds before keying PTT after audio detected
 PTT_RELEASE_DELAY = 0.5      # Seconds to hold PTT after audio stops
 
+# TX Talkback — route TX audio (TTS/CW/announcements) to local outputs
+# When False (default), TX audio goes only to the radio — local listeners
+# (speaker, Mumble, PCM/MP3 stream) hear silence or concurrent RX instead.
+# When True, TX audio is also played through local outputs for monitoring.
+TX_TALKBACK = False
+
 # Delay after PTT key-up before announcement/TTS audio starts (seconds)
 # Gives the radio time to fully key up before speech begins
 PTT_ANNOUNCEMENT_DELAY = 0.5

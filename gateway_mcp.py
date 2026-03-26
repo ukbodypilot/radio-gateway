@@ -805,6 +805,7 @@ def mixer_control(
                 'agc'          — Automatic Gain Control
                 'echo_cancel'  — Echo Cancellation
                 'rebroadcast'  — SDR-to-radio rebroadcast
+                'talkback'     — TX audio to local outputs (off = radio-only TX)
                 For 'processing' action — one of:
                 'gate'  — Noise gate
                 'hpf'   — High-pass filter
@@ -869,7 +870,7 @@ def mixer_control(
 
     if action == 'flag':
         if not flag:
-            return 'Error: flag required (vad, agc, echo_cancel, rebroadcast)'
+            return 'Error: flag required (vad, agc, echo_cancel, rebroadcast, talkback)'
         payload = {'action': 'flag', 'flag': flag.lower().strip()}
         if state is not None:
             payload['state'] = state

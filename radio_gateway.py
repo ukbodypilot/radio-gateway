@@ -134,6 +134,7 @@ class Config:
             'MUMBLE_VBR': True,
             'MUMBLE_JITTER_BUFFER': 10,
             'TX_RADIO': 'th9800',              # 'th9800', 'd75', or 'kv4p' — which radio for playback/TTS/announce TX
+            'TX_TALKBACK': False,              # When True, TX audio (TTS/CW/announce) is also sent to local outputs (speaker/Mumble/stream/PCM)
             'PTT_METHOD': 'aioc',              # 'aioc', 'relay', or 'software'
             'PTT_RELAY_DEVICE': '/dev/relay_ptt',
             'PTT_RELAY_BAUD': 9600,

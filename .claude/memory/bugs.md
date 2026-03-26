@@ -1,5 +1,67 @@
 # Bug History — Radio Gateway
 
+## Config file damage from replace_all Edit (2026-03-26)
+**Symptom:** After using Edit tool with `replace_all` to update a config value, multiple unrelated config values were changed to the wrong value.
+**Root cause:** `replace_all` replaces ALL occurrences of the old_string in the file. Config values like `False` or numeric values appeared multiple times. Replacing one changed all of them.
+**Fix:** Restored config file from backup. Updated code defaults instead of editing config directly where possible.
+**Lesson:** Never use `replace_all` on config files with repeated values. Use targeted edits with enough surrounding context to be unique.
+
+## D75 playback JS newline syntax error (2026-03-26)
+**Symptom:** D75 page JavaScript crashed on load, recording playback broken.
+**Root cause:** Python string `'\n'` was interpolated into JavaScript string literal as a literal newline, creating a syntax error (unterminated string).
+**Fix:** Used `\\n` in the Python template to produce `\n` in the JS output.
+
+## D75 PTT blocked audio thread (2026-03-26)
+**Symptom:** TX audio stuttered badly during PTT — audio thread stalled for 1-5s each time PTT state changed.
+**Root cause:** PTT used `_send_cmd()` which acquires a lock and waits for response. Audio thread called PTT, blocking itself. Also competed with poll thread for response parsing.
+**Fix:** PTT now uses fire-and-forget `_sock.sendall()` — no lock, no response wait. Safe because PTT commands have no meaningful response.
+
+## D75 TX audio stutter: burst frame delivery (2026-03-26)
+**Symptom:** TX audio played at ~10Hz stutter on the radio — bursts of audio then silence.
+**Root cause:** All SCO frames for a chunk were sent in a tight loop with no pacing. BT SCO expects real-time delivery (~3ms per 48-byte frame). Burst delivery caused the radio to play/skip/play/skip.
+**Fix:** Dedicated `_tx_loop` thread reads from a buffer and sends one frame every 3ms via `time.sleep(0.003)`.
+
+## D75 TX audio silent: SCO SEQPACKET needs 48-byte frames (2026-03-26)
+**Symptom:** TX audio sent to proxy but radio produced no sound. Proxy showed data arriving on port 9751.
+**Root cause:** SCO socket is SEQPACKET (not STREAM). Each `send()` creates one SCO packet. Sending 800 bytes in one call created one oversized packet that was silently dropped. SCO requires exactly 48-byte frames.
+**Fix:** Split incoming data into 48-byte chunks before writing to SCO socket. Each chunk becomes one valid SCO frame.
+**Lesson:** BT SCO is not a stream socket — frame boundaries matter. Always check socket type (SEQPACKET vs STREAM) when sending audio.
+
+## D75 ME field[2] dual meaning: offset vs TX freq (2026-03-26)
+**Symptom:** Loading cross-band repeater channels from memory set a bogus ~437MHz offset, making the radio transmit on wrong frequency.
+**Root cause:** ME field[2] has dual meaning: small values (<100MHz) are offset in Hz, large values (>=100MHz) are the TX frequency itself. Code passed the TX freq directly as offset.
+**Fix:** `if field2 >= 100000000: offset = abs(field2 - rx_freq)` — converts TX freq to offset.
+
+## D75 ME→FO lockout field shift (2026-03-26)
+**Symptom:** Channel load from memory produced wrong tone settings. Radio silently accepted bad FO command but tone/CTCSS was wrong.
+**Root cause:** ME has 23 fields, FO has 21. ME[14] is lockout (not present in FO). Code sent all ME fields to FO, shifting tone_idx/ctcss_idx/dcs_idx by +1 position.
+**Fix:** ME→FO conversion: `fields[1:14] + fields[15:22]` — skip ME[14] lockout and ME[22] name.
+
+## D75 SM poll 0.5s killed BT RFCOMM (2026-03-26)
+**Symptom:** D75 BT connection dropped every 30-60 seconds. Proxy log showed RFCOMM errors.
+**Root cause:** SM (signal meter) was polled every 0.5s. Combined with other status queries, this overwhelmed the BT serial link. RFCOMM has limited bandwidth and the radio's serial parser couldn't keep up.
+**Fix:** SM poll interval raised to 3s. Added exponential backoff after 3 consecutive failures (up to 30s). Init defers heavy queries (FO/SM/PC/DL/BC/BL/TN/PT) to stream loop — only ID/FV/AE on connect.
+
+## D75 reconnect handler crash: D75CATClient not imported (2026-03-26)
+**Symptom:** D75 reconnect always failed with NameError in web_server.py.
+**Root cause:** `web_server.py` reconnect handler referenced `D75CATClient` but the class was never imported (same circular import pattern as RTLAirbandManager).
+**Fix:** Lazy import `from cat_client import D75CATClient` inside the reconnect handler.
+
+## D75 close() killed poll thread reconnect loop (2026-03-26)
+**Symptom:** After BT drop, poll thread detected disconnect and tried to reconnect, but the reconnect attempt killed the poll thread itself.
+**Root cause:** Reconnect called `close()` to clean up, which called `_poll_thread.join()` — but the current thread WAS the poll thread. Thread tried to join itself → RuntimeError (or silent deadlock depending on Python version).
+**Fix:** Added `_disconnect_for_reconnect()` method that cleans up socket/state without joining the poll thread. Poll thread uses this instead of `close()`.
+
+## D75 _recv_line EOF didn't set _connected=False (2026-03-26)
+**Symptom:** After proxy TCP drop, poll thread kept running but never triggered reconnect. Gateway showed stale "connected" status.
+**Root cause:** `_recv_line()` returned `None` on EOF but didn't set `_connected = False`. Poll thread checked `_connected` to decide whether to reconnect — it was still True.
+**Fix:** `_recv_line()` now sets `self._connected = False` on empty recv (EOF).
+
+## D75 connected status showed TCP as radio-connected (2026-03-26)
+**Symptom:** Dashboard showed D75 as "connected" when only TCP to proxy was up but BT serial to radio was down.
+**Root cause:** `connected` property returned `True` if TCP socket existed, regardless of `serial_connected` state.
+**Fix:** `connected` now requires both `_sock is not None` AND `_serial_connected`. Status accurately reflects radio reachability.
+
 ## D75 tone/shift/offset wrong FO field indices (2026-03-24)
 **Symptom:** Tone display always showed "DCS ON" (false), setting tone changed mode to DV, FO SET silently rejected (resp=None), proxy crashed on tone command (gateway timeout → broken pipe).
 **Root causes (4 layered bugs, each masked by the next):**

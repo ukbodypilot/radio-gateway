@@ -1815,6 +1815,7 @@ class RadioGateway:
         # Mute controls (keyboard toggle)
         self.tx_muted = False  # Mute Mumble → Radio (press 't')
         self.rx_muted = False  # Mute Radio → Mumble (press 'r')
+        self.tx_talkback = getattr(self.config, 'TX_TALKBACK', False)  # TX audio to local outputs
         
         # Manual PTT control (keyboard toggle)
         self.manual_ptt_mode = False  # Manual PTT control (press 'p')
@@ -4552,9 +4553,12 @@ class RadioGateway:
                         if self.automation_engine and self.automation_engine.recorder.is_recording():
                             self.automation_engine.recorder.feed(data)
 
-                        # Push to WebSocket clients before any VAD/PTT routing
+                        # Push to WebSocket PCM clients.
+                        # During PTT with talkback off, defer to the PTT branch
+                        # which sends concurrent RX (not TX audio) to local outputs.
                         if self.web_config_server and self.web_config_server._ws_clients:
-                            self.web_config_server.push_ws_audio(data)
+                            if not (ptt_required and not self.tx_talkback):
+                                self.web_config_server.push_ws_audio(data)
 
                     _tr_outcome = 'mix'  # will be updated to sent/no_mumble/etc below
 
@@ -4708,28 +4712,44 @@ class RadioGateway:
                                 if self.config.VERBOSE_LOGGING:
                                     print(f"\n[EchoLink] Send error: {el_err}")
 
-                        # Forward concurrent radio RX to Mumble/stream even during
-                        # announcement playback (full-duplex monitoring).
-                        rx_for_mumble = (
-                            getattr(self.radio_source, '_rx_cache', None)
-                            if self.radio_source else rx_audio
-                        )
-                        if rx_for_mumble is not None:
+                        # Local output routing during PTT:
+                        # talkback OFF (default): local outputs get concurrent RX
+                        #   only (so user can monitor on a separate radio)
+                        # talkback ON: local outputs get TX audio (for local monitoring)
+                        if self.tx_talkback:
+                            # Talkback: send TX audio to all local outputs
+                            _local_audio = data
+                        else:
+                            # No talkback: forward concurrent radio RX (if any)
+                            _local_audio = (
+                                getattr(self.radio_source, '_rx_cache', None)
+                                if self.radio_source else rx_audio
+                            )
+                        _ws_local = _local_audio if _local_audio is not None else b'\x00' * len(data)
+                        if _local_audio is not None:
                             if (self.mumble and
                                     hasattr(self.mumble, 'sound_output') and
                                     self.mumble.sound_output is not None and
                                     getattr(self.mumble.sound_output, 'encoder_framesize', None) is not None):
                                 try:
-                                    self.mumble.sound_output.add_sound(rx_for_mumble)
+                                    self.mumble.sound_output.add_sound(_local_audio)
                                 except Exception:
                                     pass
                             if self.stream_output and self.stream_output.connected:
                                 try:
-                                    self.stream_output.send_audio(rx_for_mumble)
+                                    self.stream_output.send_audio(_local_audio)
                                 except Exception:
                                     pass
                             if self.speaker_stream and not self.speaker_muted:
-                                self._speaker_enqueue(rx_for_mumble)
+                                self._speaker_enqueue(_local_audio)
+                        if self.web_config_server and self.web_config_server._ws_clients:
+                            self.web_config_server.push_ws_audio(_ws_local)
+
+                        # Push to MP3 stream during PTT (talkback=TX audio, else concurrent RX)
+                        if self.web_config_server and self.web_config_server._stream_subscribers:
+                            _mp3_audio = data if self.tx_talkback else _local_audio
+                            if _mp3_audio is not None:
+                                self.web_config_server.push_audio(_mp3_audio)
 
                         # Send ONE frame to remote client during PTT — the mixed
                         # playback data.  Previously both rx_for_mumble AND data were
@@ -5704,6 +5724,7 @@ class RadioGateway:
             'sdr2_muted': getattr(self, 'sdr2_muted', False),
             'sdr1_duck': self.sdr_source.duck if self.sdr_source and hasattr(self.sdr_source, 'duck') else False,
             'sdr_rebroadcast': getattr(self, 'sdr_rebroadcast', False),
+            'tx_talkback': getattr(self, 'tx_talkback', False),
             'remote_muted': getattr(self, 'remote_audio_muted', False),
             'announce_muted': getattr(self, 'announce_input_muted', False),
             'speaker_muted': getattr(self, 'speaker_muted', True),
