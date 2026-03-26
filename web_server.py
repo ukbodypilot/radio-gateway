@@ -1640,6 +1640,7 @@ class WebConfigServer:
                                 'agc': getattr(gw.config, 'ENABLE_AGC', False),
                                 'echo_cancel': getattr(gw.config, 'ENABLE_ECHO_CANCELLATION', False),
                                 'rebroadcast': s.get('sdr_rebroadcast', False),
+                                'talkback': getattr(gw, 'tx_talkback', False),
                                 'manual_ptt': s.get('manual_ptt', False),
                             }, 'boost': {
                                 'd75': int(gw.d75_audio_source.audio_boost * 100) if gw.d75_audio_source and hasattr(gw.d75_audio_source, 'audio_boost') else 100,
@@ -1778,6 +1779,12 @@ class WebConfigServer:
                                     if gw.radio_source:
                                         gw.radio_source.enabled = True
                                 result = {'ok': True, 'flag': 'rebroadcast', 'enabled': gw.sdr_rebroadcast}
+                            elif flag == 'talkback':
+                                if state is None:
+                                    gw.tx_talkback = not gw.tx_talkback
+                                else:
+                                    gw.tx_talkback = bool(state)
+                                result = {'ok': True, 'flag': 'talkback', 'enabled': gw.tx_talkback}
                             else:
                                 result = {'ok': False, 'error': f'unknown flag: {flag}'}
 
@@ -3178,6 +3185,21 @@ class WebConfigServer:
   }}
   .shell-pcm button:hover {{ background: var(--t-btn-hover); }}
   #shell-frame {{ flex: 1; border: none; width: 100%; }}
+  #shell-bars {{
+    background: var(--t-panel); border-bottom: 1px solid var(--t-border);
+    padding: 4px 14px; display: flex; flex-wrap: wrap; gap: 4px 14px;
+    align-items: center; flex-shrink: 0; font-family: monospace; font-size: 0.85em;
+    min-height: 26px;
+  }}
+  #shell-bars .sb {{ display: flex; gap: 4px; align-items: center; white-space: nowrap; }}
+  #shell-bars .sb-label {{ color: #888; width: 3.5em; text-align: right; }}
+  #shell-bars .sb-pct {{ display: inline-block; width: 3em; text-align: right; }}
+  #shell-bars .sb-bar {{ display: inline-block; height: 14px; border-radius: 2px; min-width: 3px; vertical-align: middle; }}
+  .sb-rx {{ background: #2ecc71; }} .sb-tx {{ background: #e74c3c; }}
+  .sb-sdr1 {{ background: var(--t-accent); }} .sb-sdr2 {{ background: #e056a0; }}
+  .sb-sv {{ background: #f1c40f; }} .sb-cl {{ background: #2ecc71; }}
+  .sb-sp {{ background: var(--t-accent); }} .sb-an {{ background: #e74c3c; }}
+  .sb-d75 {{ background: #f39c12; }} .sb-kv4p {{ background: #1abc9c; }}
   #shell-status {{ color: #888; font-size: 0.75em; white-space: nowrap; }}
   #action-bar {{
     background: var(--t-panel); border-top: 1px solid var(--t-border);
@@ -3207,6 +3229,7 @@ class WebConfigServer:
     <span id="ws-status" style="font-size:0.75em;"></span>
   </div>
 </div>
+<div id="shell-bars"></div>
 <iframe id="shell-frame" name="content" src="/dashboard"></iframe>
 <div id="action-bar">
   <button onclick="shellCmd('@')">&#9993; Email Status</button>
@@ -3233,24 +3256,42 @@ function toggleStream() {{
   if (_playing) {{ stopStream(); }} else {{ startStream(); }}
 }}
 function startStream() {{
+  if (_audio) {{ try {{ _audio.onplaying = null; _audio.onerror = null; _audio.onended = null; _audio.pause(); _audio.src = ''; }} catch(e){{}} _audio = null; }}
+  if (_streamTimer) {{ clearInterval(_streamTimer); _streamTimer = null; }}
+
   var btn = document.getElementById('play-btn');
   var ind = document.getElementById('stream-indicator');
   var st = document.getElementById('stream-status');
+  _playing = true;
+  btn.innerHTML = '&#9724; MP3'; btn.style.color = '#f39c12'; btn.style.borderColor = '#f39c12';
+  st.innerHTML = '<span style="color:#f39c12">Buffering...</span>';
+
   _audio = new Audio('/stream');
   _audio.volume = document.getElementById('vol-slider').value / 100;
-  _audio.play().then(function() {{
+
+  _audio.onplaying = function() {{
     _playing = true;
     _streamStart = Date.now();
     btn.innerHTML = '&#9724; MP3'; btn.style.color = _T.accent; btn.style.borderColor = _T.accent;
     ind.style.display = 'inline-block';
+    st.innerHTML = '<span style="color:' + _T.accent + '">0:00</span>';
     _streamTimer = setInterval(function() {{
       var s = Math.floor((Date.now() - _streamStart) / 1000);
       st.innerHTML = '<span style="color:' + _T.accent + '">' + Math.floor(s/60) + ':' + (s%60<10?'0':'') + s%60 + '</span>';
     }}, 1000);
-  }}).catch(function() {{
-    st.innerHTML = '<span style="color:#e74c3c">Failed</span>';
+  }};
+
+  _audio.onerror = function() {{
+    st.innerHTML = '<span style="color:#e74c3c">Stream error</span>';
+    stopStream();
+  }};
+
+  _audio.onended = function() {{ stopStream(); }};
+
+  _audio.play().catch(function(e) {{
+    st.innerHTML = '<span style="color:#e74c3c">' + e.message + '</span>';
+    stopStream();
   }});
-  _audio.onerror = function() {{ stopStream(); }};
 }}
 function stopStream() {{
   if (_streamTimer) {{ clearInterval(_streamTimer); _streamTimer = null; }}
@@ -3443,6 +3484,33 @@ function stopWS() {{
 function setWSVol(v) {{
   if (_wsGain) _wsGain.gain.value = v / 100;
 }}
+
+// --- Audio level bars (always visible) ---
+function _sbBar(pct, cls, ducked) {{
+  var w = Math.round(Math.min(Math.max(pct, 0), 100));
+  var col = ducked ? '#e74c3c' : '#2ecc71';
+  return '<span class="sb-pct" style="color:'+col+'">'+pct+'%</span><span class="sb-bar '+cls+'" style="width:'+w+'px"></span>';
+}}
+var _sbBusy = false;
+function _updateBars() {{
+  if (_sbBusy) return;
+  _sbBusy = true;
+  fetch('/status').then(function(r){{return r.json()}}).then(function(s){{
+    var h = '';
+    h += '<div class="sb"><span class="sb-label">TX:</span>'+_sbBar(s.radio_tx,'sb-tx')+'</div>';
+    h += '<div class="sb"><span class="sb-label">RX:</span>'+_sbBar(s.radio_rx,'sb-rx')+'</div>';
+    if(s.speaker_enabled) h += '<div class="sb"><span class="sb-label">SP:</span>'+_sbBar(s.speaker_level,'sb-sp')+'</div>';
+    if(s.sdr1_enabled) h += '<div class="sb"><span class="sb-label">SDR1:</span>'+_sbBar(s.sdr1_level,'sb-sdr1',s.sdr1_ducked)+'</div>';
+    if(s.sdr2_enabled) h += '<div class="sb"><span class="sb-label">SDR2:</span>'+_sbBar(s.sdr2_level,'sb-sdr2',s.sdr2_ducked)+'</div>';
+    if(s.remote_enabled) h += '<div class="sb"><span class="sb-label">'+s.remote_mode+':</span>'+_sbBar(s.remote_level, s.remote_mode==='SV'?'sb-sv':'sb-cl', s.remote_mode==='CL'&&s.cl_ducked)+'</div>';
+    if(s.announce_enabled) h += '<div class="sb"><span class="sb-label">AN:</span>'+_sbBar(s.an_level,'sb-an')+'</div>';
+    if(s.d75_enabled) h += '<div class="sb"><span class="sb-label">D75:</span>'+_sbBar(s.d75_level,'sb-d75')+(s.d75_muted?' <span style="color:#e74c3c;font-weight:bold;">M</span>':'')+'</div>';
+    if(s.kv4p_enabled) h += '<div class="sb"><span class="sb-label">KV4P:</span>'+_sbBar(s.kv4p_level,'sb-kv4p')+(s.kv4p_muted?' <span style="color:#e74c3c;font-weight:bold;">M</span>':'')+'</div>';
+    document.getElementById('shell-bars').innerHTML = h;
+  }}).catch(function(){{}}).finally(function(){{_sbBusy=false}});
+}}
+setInterval(_updateBars, 1000);
+_updateBars();
 </script>
 </body></html>'''
 
@@ -6571,6 +6639,7 @@ pollTimer = setInterval(pollStatus, 1000);
     <div style="display:flex; gap:10px; align-items:flex-start;">
       <div style="display:flex; flex-direction:column; gap:3px;">
         <button onclick="sendKey('p')" id="btn-p">Manual PTT</button>
+        <button onclick="togFlag('talkback')" id="btn-talkback">TX Talkback</button>
         <button onclick="sendKey('j')" id="btn-j">Radio Power</button>
         <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
       </div>
@@ -6712,6 +6781,9 @@ function sendKey(k) {
 function togProc(source, filter) {
   fetch('/proc_toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source:source, filter:filter})});
 }
+function togFlag(flag) {
+  fetch('/mixer', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'flag', flag:flag})});
+}
 function darkiceCmd(cmd) {
   fetch('/darkicecmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
 }
@@ -6820,18 +6892,8 @@ function updateStatus() {
   var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 10000);
   fetch('/status', {signal:_ac.signal}).then(r=>r.json()).then(function(s) {
     _lostCount = 0;
-    // Audio levels — same order as console: TX RX SP SDR1 SDR2 SV/CL AN
-    var h = '<div class="st-row audio-row">';
-    h += '<div class="st-item"><span class="st-label">TX:</span>'+bar(s.radio_tx,'bar-tx')+'</div>';
-    h += '<div class="st-item"><span class="st-label">RX:</span>'+bar(s.radio_rx,'bar-rx')+'</div>';
-    if(s.speaker_enabled) h += '<div class="st-item"><span class="st-label">SP:</span>'+bar(s.speaker_level,'bar-sp')+'</div>';
-    if(s.sdr1_enabled) h += '<div class="st-item"><span class="st-label">SDR1:</span>'+bar(s.sdr1_level,'bar-sdr1',s.sdr1_ducked)+'</div>';
-    if(s.sdr2_enabled) h += '<div class="st-item"><span class="st-label">SDR2:</span>'+bar(s.sdr2_level,'bar-sdr2',s.sdr2_ducked)+'</div>';
-    if(s.remote_enabled) h += '<div class="st-item"><span class="st-label">'+s.remote_mode+':</span>'+bar(s.remote_level, s.remote_mode==='SV'?'bar-sv':'bar-cl', s.remote_mode==='CL'&&s.cl_ducked)+'</div>';
-    if(s.announce_enabled) h += '<div class="st-item"><span class="st-label">AN:</span>'+bar(s.an_level,'bar-an')+'</div>';
-    if(s.d75_enabled) h += '<div class="st-item"><span class="st-label">D75:</span>'+bar(s.d75_level,'bar-d75')+(s.d75_muted?' <span class="st-val red">M</span>':'')+'</div>';
-    if(s.kv4p_enabled) h += '<div class="st-item"><span class="st-label">KV4P:</span>'+bar(s.kv4p_level,'bar-kv4p')+(s.kv4p_muted?' <span class="st-val red">M</span>':'')+'</div>';
-    h += '</div>';
+    // Audio levels now in shell bars (always visible above iframe)
+    var h = '';
 
     h += '<div class="st-row info-row">';
     h += '<div class="st-item"><span class="st-label">Mumble:</span><span class="st-val '+(s.mumble?'green':'red')+'">'+(s.mumble?'OK':'DOWN')+'</span></div>';
@@ -6856,6 +6918,7 @@ function updateStatus() {
     if(s.sdr1_enabled && s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
     if(s.sdr1_enabled && s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
     h += '<div class="st-item"><span class="st-label">Manual PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
+    if(s.tx_talkback) h += '<div class="st-item"><span class="st-label">TX Talkback:</span><span class="st-val yellow">ON</span></div>';
     if(s.ms1_state) h += '<div class="st-item"><span class="st-label">MS1:</span><span class="st-val '+(s.ms1_state==='running'?'green':s.ms1_state==='error'?'red':'white')+'">'+(s.ms1_state==='running'?'ON':'OFF')+'</span></div>';
     if(s.ms2_state) h += '<div class="st-item"><span class="st-label">MS2:</span><span class="st-val '+(s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+'">'+(s.ms2_state==='running'?'ON':'OFF')+'</span></div>';
     if(s.cat_enabled) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
@@ -6927,6 +6990,7 @@ function updateStatus() {
     setBtn('btn-y', s.kv4p_muted, 'muted');
     setBtn('btn-v', s.vad_enabled, 'active');
     setBtn('btn-p', s.manual_ptt, 'active');
+    setBtn('btn-talkback', s.tx_talkback, 'active');
     setBtn('btn-d', s.sdr1_duck, 'active');
     setBtn('btn-b', s.sdr_rebroadcast, 'active');
     // Radio processing buttons
