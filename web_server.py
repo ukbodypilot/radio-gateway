@@ -3706,7 +3706,6 @@ fetch('/logdata?after=0')
     def _generate_radio_page(self):
         """Build the TH-9800 radio control HTML page."""
         body = '''
-<h1 style="font-size:1.1em; margin:4px 0;">TH-9800 Control</h1>
 
 <div id="cat-offline" style="display:none; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px;">
   <span id="cat-offline-msg" style="color:#e74c3c; font-weight:bold;">CAT not connected</span>
@@ -4318,7 +4317,6 @@ updateRadio();
         ctcss_opts = ''.join(f'<option value="{t}">{t} Hz</option>' for t in ctcss_tones)
         dcs_opts = ''.join(f'<option value="{t}">{t}</option>' for t in dcs_tones)
         body = '''
-<h1 style="font-size:1.1em; margin:4px 0;">TH-D75 Control</h1>
 
 <style>
 .rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
@@ -5160,7 +5158,6 @@ updateD75();
             "127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9",
             "173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"]
         body = '''
-<h1 style="font-size:1.1em; margin:4px 0;">KV4P HT Control</h1>
 
 <style>
 .rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
@@ -5416,7 +5413,6 @@ kvPoll();
     def _generate_telegram_page(self):
         """Build the Telegram bot status and control page."""
         body = '''
-<h1 style="font-size:1.1em; margin:4px 0;">Telegram Bot</h1>
 
 <style>
 .tg-panel { background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px; font-family:monospace; font-size:0.95em; }
@@ -5645,7 +5641,6 @@ tgPoll();
     def _generate_sdr_page(self):
         """Build the SDR control HTML page — RSPduo dual-tuner layout."""
         body = '''
-<h1 style="font-size:1.1em; margin:4px 0;">SDR Control — RSPduo Dual Tuner</h1>
 
 <!-- Status row: SDR1 (Master) and SDR2 (Slave) side by side -->
 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
