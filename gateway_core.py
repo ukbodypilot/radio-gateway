@@ -2502,10 +2502,6 @@ class RadioGateway:
         if state_on == self._d75_ptt_on:
             return
         self._d75_ptt_on = state_on
-        if state_on:
-            self._d75_tx_log_n = 0
-            if self.d75_audio_source:
-                self.d75_audio_source._tx_write_count = 0
         cmd = "!ptt on" if state_on else "!ptt off"
         try:
             if d75._sock:
@@ -4688,13 +4684,6 @@ class RadioGateway:
                                     arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
                                     pcm = np.clip(arr * self.config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
                                 if _use_d75_tx:
-                                    if not hasattr(self, '_d75_tx_log_n'):
-                                        self._d75_tx_log_n = 0
-                                    self._d75_tx_log_n += 1
-                                    if self._d75_tx_log_n <= 5 or self._d75_tx_log_n % 50 == 0:
-                                        _parr = np.frombuffer(pcm, dtype=np.int16)
-                                        _ppeak = int(np.max(np.abs(_parr))) if len(_parr) > 0 else 0
-                                        print(f"  [D75 TX path] #{self._d75_tx_log_n} input 48k: {len(pcm)}B peak={_ppeak} delay={_needs_delay}")
                                     self.d75_audio_source.write_tx_audio(pcm)
                                 elif _use_kv4p_tx:
                                     self.kv4p_audio_source.write_tx_audio(pcm)

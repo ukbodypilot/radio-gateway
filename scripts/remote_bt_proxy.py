@@ -698,7 +698,7 @@ class AudioManager:
                 if self._sco:
                     self._sco.send(frame)
                     _tx_count += 1
-                    if _tx_count <= 3 or _tx_count % 500 == 0:
+                    if _tx_count <= 3 or _tx_count % 2000 == 0:
                         with self._tx_buf_lock:
                             _buf_ms = len(self._tx_buf) / (8000 * 2) * 1000
                         print(f"[Audio TX] frame #{_tx_count} buf={_buf_ms:.0f}ms underruns={_tx_underrun}")
@@ -804,7 +804,6 @@ class AudioServer:
 
     def _rx_loop(self, conn, addr):
         """Read TX audio from gateway → SCO."""
-        _rx_count = 0
         try:
             conn.settimeout(1.0)
             while self._running:
@@ -812,9 +811,6 @@ class AudioServer:
                     data = conn.recv(4096)
                     if not data:
                         break
-                    _rx_count += 1
-                    if _rx_count <= 3 or _rx_count % 200 == 0:
-                        print(f"[AudioTCP RX] #{_rx_count} from {addr[0]}: {len(data)}B")
                     self._audio.write_sco(data)
                 except socket.timeout:
                     continue
