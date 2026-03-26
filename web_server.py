@@ -3185,7 +3185,7 @@ class WebConfigServer:
   .shell-nav {{ display: flex; flex-wrap: wrap; gap: 0; align-items: center; }}
   .shell-nav a {{ padding: 3px 10px; }}
   .shell-nav a + a {{ border-left: 1px solid #444; }}
-  .shell-pcm {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }}
+  .shell-pcm {{ display: inline-flex; gap: 4px; align-items: center; padding-left: 6px; border-left: 1px solid #444; margin-left: 2px; }}
   .shell-pcm button {{
     background: var(--t-btn); border: 1px solid var(--t-btn-border); color: #e0e0e0;
     border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 0.85em;
@@ -3214,17 +3214,17 @@ class WebConfigServer:
 <div id="shell-bar">
   <div class="shell-nav">
     <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}{_telegram_link}<a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
-  </div>
-  <div class="shell-pcm">
-    <button id="play-btn" onclick="toggleStream()" style="min-width:62px; text-align:center;">&#9654; MP3</button>
-    <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:50px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
-    <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
-    <span id="stream-status" style="font-size:0.75em;"></span>
-    <span style="color:var(--t-border);">|</span>
-    <button id="ws-btn" onclick="toggleWS()" style="min-width:62px; text-align:center;">&#9654; PCM</button>
-    <input id="ws-vol" type="range" min="0" max="100" value="100" style="width:50px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
-    <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
-    <span id="ws-status" style="font-size:0.75em;"></span>
+    <span class="shell-pcm">
+      <button id="play-btn" onclick="toggleStream()" style="min-width:52px; text-align:center;">&#9654; MP3</button>
+      <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
+      <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
+      <span id="stream-status" style="font-size:0.75em;"></span>
+      <span style="color:var(--t-border);">|</span>
+      <button id="ws-btn" onclick="toggleWS()" style="min-width:52px; text-align:center;">&#9654; PCM</button>
+      <input id="ws-vol" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
+      <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
+      <span id="ws-status" style="font-size:0.75em;"></span>
+    </span>
   </div>
 </div>
 <div id="shell-bars"></div>
