@@ -1151,10 +1151,7 @@ class FilePlaybackSource(AudioSource):
 
         # During the PTT announcement delay the radio is keying up.  Return silence
         # without advancing the file position so no audio is lost.
-        # Skip delay for D75/KV4P — no relay settling needed.
-        _tx_radio = str(getattr(self.gateway.config, 'TX_RADIO', 'th9800')).lower()
-        _skip_delay = _tx_radio in ('d75', 'kv4p')
-        if getattr(self.gateway, 'announcement_delay_active', False) and not _skip_delay:
+        if getattr(self.gateway, 'announcement_delay_active', False):
             return b'\x00' * chunk_bytes, True
 
         # Check if we have enough data left
