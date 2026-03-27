@@ -3519,19 +3519,11 @@ class LinkAudioSource(AudioSource):
     def setup_audio(self):
         return True
 
-    _push_count = 0
     def push_audio(self, pcm):
         """Called by GatewayLinkServer reader thread when AUDIO frame arrives."""
         self._chunk_queue.append(pcm)
-        self._push_count += 1
-        if self._push_count <= 3 or self._push_count % 500 == 0:
-            print(f"  [LINK] push_audio #{self._push_count}: {len(pcm)}B queue={len(self._chunk_queue)}")
 
-    _get_count = 0
     def get_audio(self, chunk_size):
-        self._get_count += 1
-        if self._get_count % 500 == 1:
-            print(f"  [LINK] get_audio #{self._get_count}: enabled={self.enabled} muted={self.muted} server_connected={self.server_connected} queue={len(self._chunk_queue)} sub_buf={len(self._sub_buffer)}")
         if not self.enabled or self.muted:
             self.audio_level = max(0, int(self.audio_level * 0.7))
             return None, False
