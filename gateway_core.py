@@ -4875,7 +4875,7 @@ class RadioGateway:
                 if data and len(data) >= 16:
                     _arr = np.frombuffer(data, dtype=np.int16)
                     _diffs = np.abs(np.diff(_arr.astype(np.int32)))
-                    _clicks = np.where(_diffs > 600)[0]
+                    _clicks = np.where(_diffs > 800)[0]
                     if len(_clicks) > 0:
                         _farr = _arr.astype(np.float32)
                         for _idx in _clicks:
