@@ -132,6 +132,8 @@ class GatewayLinkServer:
         self._endpoint_info = None
         self._endpoint_capabilities = {}
         self._start_time = time.monotonic()
+        self._last_endpoint_heartbeat = 0  # monotonic time of last received heartbeat
+        self._DEAD_PEER_TIMEOUT = 15.0     # seconds without heartbeat before declaring dead
 
         self._accept_thread = None
         self._reader_thread = None
@@ -272,6 +274,7 @@ class GatewayLinkServer:
                     elif ftype == P.REGISTER:
                         info = json.loads(payload)
                         self._endpoint_info = info
+                        self._last_endpoint_heartbeat = time.monotonic()
                         caps = info.get('capabilities', {})
                         if isinstance(caps, dict):
                             self._endpoint_capabilities = caps
@@ -295,8 +298,8 @@ class GatewayLinkServer:
                             except Exception as e:
                                 print(f"  [Link] ACK callback error: {e}")
                     elif ftype == P.STATUS:
-                        # Status from endpoint — just log
-                        pass
+                        # Track endpoint heartbeat for dead-peer detection
+                        self._last_endpoint_heartbeat = time.monotonic()
                 except json.JSONDecodeError as e:
                     print(f"  [Link] Bad JSON from endpoint: {e}")
                 except Exception as e:
@@ -324,7 +327,7 @@ class GatewayLinkServer:
                     pass
 
     def _heartbeat_loop(self):
-        """Send a heartbeat STATUS every 5 seconds."""
+        """Send heartbeat every 5s and check for dead peer (no heartbeat in 15s)."""
         while not self._stop.is_set():
             self._stop.wait(5.0)
             if self._stop.is_set():
@@ -332,6 +335,13 @@ class GatewayLinkServer:
             if self._client_sock is not None:
                 uptime = time.monotonic() - self._start_time
                 self.send_status({"type": "heartbeat", "uptime": round(uptime, 1)})
+                # Dead peer detection
+                if self._last_endpoint_heartbeat > 0:
+                    silence = time.monotonic() - self._last_endpoint_heartbeat
+                    if silence > self._DEAD_PEER_TIMEOUT:
+                        print(f"  [Link] Dead peer detected ({silence:.0f}s without heartbeat) — closing")
+                        self._close_client()
+                        self._last_endpoint_heartbeat = 0
 
 
 # ---------------------------------------------------------------------------
@@ -474,8 +484,21 @@ class GatewayLinkClient:
                     break
                 continue
 
+            # Start client heartbeat thread
+            hb_stop = threading.Event()
+            def _client_heartbeat():
+                while not hb_stop.is_set():
+                    hb_stop.wait(5.0)
+                    if hb_stop.is_set():
+                        break
+                    self.send_status({"type": "heartbeat"})
+            hb_thread = threading.Thread(target=_client_heartbeat,
+                                         name="LinkClientHB", daemon=True)
+            hb_thread.start()
+
             # Run reader until disconnect
             self._reader_loop(sock)
+            hb_stop.set()
 
             # Disconnected — retry
             if not self._stop.is_set():
@@ -813,7 +836,7 @@ class AIOCPlugin(AudioPlugin):
         self._pid = 0x7388
         self._ptt_channel = 3
         self._ptt_on = False
-        self._ptt_timeout = 30  # seconds — safety auto-unkey
+        self._ptt_timeout = 60  # seconds — safety auto-unkey
         self._ptt_timer = None
         self._ptt_timer_lock = threading.Lock()
 
@@ -822,7 +845,7 @@ class AIOCPlugin(AudioPlugin):
         self._vid = int(config.get('vid', '1209'), 16)
         self._pid = int(config.get('pid', '7388'), 16)
         self._ptt_channel = int(config.get('ptt_channel', 3))
-        self._ptt_timeout = int(config.get('ptt_timeout', 30))
+        self._ptt_timeout = int(config.get('ptt_timeout', 60))
 
         # Find AIOC audio device by name if not specified
         if not config.get('device'):
