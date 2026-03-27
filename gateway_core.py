@@ -4955,11 +4955,15 @@ class RadioGateway:
                 if self.link_server and self.link_server.connected:
                     try:
                         self.link_server.send_audio(data)
-                        # Meter TX level for dashboard
+                        # Meter TX level for dashboard (VAD gated)
                         _la = np.frombuffer(data, dtype=np.int16).astype(np.float32)
                         _lr = float(np.sqrt(np.mean(_la * _la))) if len(_la) > 0 else 0.0
-                        _ll = int(max(0, min(100, (20 * _math_mod.log10(_lr / 32767.0) + 60) * (100 / 60)))) if _lr > 0 else 0
-                        self._link_tx_level = _ll if _ll > getattr(self, '_link_tx_level', 0) else int(getattr(self, '_link_tx_level', 0) * 0.7 + _ll * 0.3)
+                        _ldb = 20 * _math_mod.log10(_lr / 32767.0) if _lr > 0 else -100.0
+                        if _ldb > getattr(self.config, 'VAD_THRESHOLD', -40):
+                            _ll = int(max(0, min(100, (_ldb + 60) * (100 / 60))))
+                            self._link_tx_level = _ll if _ll > getattr(self, '_link_tx_level', 0) else int(getattr(self, '_link_tx_level', 0) * 0.7 + _ll * 0.3)
+                        else:
+                            self._link_tx_level = max(0, int(getattr(self, '_link_tx_level', 0) * 0.7))
                     except Exception:
                         pass
 
