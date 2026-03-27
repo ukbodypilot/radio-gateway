@@ -4868,6 +4868,23 @@ class RadioGateway:
                         _out_disc = float(abs(int(_i16arr[0]) - _out_last_sample))
                         _out_last_sample = int(_i16arr[-1])
 
+                # Output click suppressor: detect sharp sample-to-sample jumps
+                # in the mixed output and interpolate over a 4-sample window.
+                # The mixer's additive summing can create boundary jumps larger
+                # than any individual source when waveforms combine.
+                if data and len(data) >= 16:
+                    _arr = np.frombuffer(data, dtype=np.int16)
+                    _diffs = np.abs(np.diff(_arr.astype(np.int32)))
+                    _clicks = np.where(_diffs > 800)[0]
+                    if len(_clicks) > 0:
+                        _farr = _arr.astype(np.float32)
+                        for _idx in _clicks:
+                            _lo = max(0, _idx - 2)
+                            _hi = min(len(_farr) - 1, _idx + 3)
+                            if _hi - _lo >= 2:
+                                _farr[_lo:_hi+1] = np.linspace(_farr[_lo], _farr[_hi], _hi - _lo + 1)
+                        data = np.clip(_farr, -32768, 32767).astype(np.int16).tobytes()
+
                 # Speaker output — send whatever Mumble gets (real audio or silence).
                 # The speaker's PortAudio hardware buffer (~200ms) smooths timing.
                 if self.speaker_queue and not self.speaker_muted:
