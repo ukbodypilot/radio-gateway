@@ -710,7 +710,7 @@ class AIOCPlugin(AudioPlugin):
         # Find AIOC audio device by name if not specified
         if not config.get('device'):
             config = dict(config)
-            config['device'] = 'AIOC'  # AIOC shows as "All-In-One-Cable" in ALSA
+            config['device'] = 'All-In-One'  # AIOC shows as "All-In-One-Cable" in ALSA/PyAudio
 
         # Open audio streams via parent class
         super().setup(config)
