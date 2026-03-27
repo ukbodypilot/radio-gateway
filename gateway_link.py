@@ -204,9 +204,10 @@ class GatewayLinkServer:
                 return
             try:
                 GatewayLinkProtocol.send_frame(sock, frame_type, payload)
-            except (OSError, ConnectionError) as e:
-                print(f"  [Link] Send error: {e}")
-                self._close_client()
+            except (OSError, ConnectionError):
+                # Don't close on send error — the reader thread handles disconnect.
+                # Closing here races with accept thread swapping in a new socket.
+                pass
 
     def _close_client(self):
         """Close the current client connection."""
@@ -283,8 +284,17 @@ class GatewayLinkServer:
             if not self._stop.is_set():
                 print(f"  [Link] Reader error: {e}")
         finally:
+            # Only close our own socket — _client_sock may already point to a
+            # newer connection if accept_loop replaced us.
+            with self._send_lock:
+                if self._client_sock is sock:
+                    self._client_sock = None
+                    self._endpoint_info = None
+            try:
+                sock.close()
+            except OSError:
+                pass
             print("  [Link] Endpoint disconnected")
-            self._close_client()
             if self._on_disconnect:
                 try:
                     self._on_disconnect()
