@@ -3453,25 +3453,21 @@ class RadioGateway:
                             self._link_last_status = result.get('status', result)
                     self._link_ptt_active = False
                     self._link_last_status = {}
+                    _las = self.link_audio_source
+                    def _link_on_register(info):
+                        print(f"  [Link] Endpoint registered: {info.get('name', '?')} ({info.get('plugin', '?')})")
+                        _las.server_connected = True
+                    def _link_on_disconnect():
+                        print("  [Link] Endpoint disconnected")
+                        _las.server_connected = False
                     self.link_server = GatewayLinkServer(
                         port=link_port,
                         on_audio=self.link_audio_source.push_audio,
-                        on_register=lambda info: print(f"  [Link] Endpoint registered: {info.get('name', '?')} ({info.get('plugin', '?')})"),
-                        on_disconnect=lambda: print("  [Link] Endpoint disconnected"),
+                        on_register=_link_on_register,
+                        on_disconnect=_link_on_disconnect,
                         on_ack=_link_on_ack,
                     )
                     self.link_audio_source._link_server = self.link_server
-                    # Wire connected state
-                    _orig_on_register = self.link_server._on_register
-                    def _link_on_register(info, _orig=_orig_on_register):
-                        _orig(info)
-                        self.link_audio_source.server_connected = True
-                    self.link_server._on_register = _link_on_register
-                    _orig_on_disconnect = self.link_server._on_disconnect
-                    def _link_on_disconnect(_orig=_orig_on_disconnect):
-                        _orig()
-                        self.link_audio_source.server_connected = False
-                    self.link_server._on_disconnect = _link_on_disconnect
                     self.link_server.start()
                     print(f"  Gateway Link listening on port {link_port}")
                 except Exception as e:
