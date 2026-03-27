@@ -214,6 +214,10 @@ class GatewayLinkServer:
                 except (OSError, ConnectionError):
                     pass  # reader thread handles disconnect
 
+    def send_audio_to(self, name, pcm):
+        """Send PCM audio to a specific endpoint by name."""
+        self._send_to(name, GatewayLinkProtocol.AUDIO, pcm)
+
     def send_command_to(self, name, cmd):
         """Send a command dict to a specific endpoint by name."""
         self._send_to(name, GatewayLinkProtocol.COMMAND,

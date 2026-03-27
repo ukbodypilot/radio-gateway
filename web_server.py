@@ -6759,11 +6759,19 @@ function showToast(msg, level) {
 }
 
 var _statusBusy = false;
+var _statusPollCount = 9;
 function updateStatus() {
   if (_statusBusy) return;
   _statusBusy = true;
+  _statusPollCount++;
   var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 10000);
   fetch('/status', {signal:_ac.signal}).then(r=>r.json()).then(function(s) {
+    // Poll endpoint status every 10s
+    if(s.link_enabled && s.link_endpoints && _statusPollCount % 10 === 0) {
+      for(var _ei=0; _ei<s.link_endpoints.length; _ei++) {
+        fetch('/linkcmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({endpoint:s.link_endpoints[_ei].name, cmd:'status'})}).catch(function(){});
+      }
+    }
     _lostCount = 0;
     // Audio levels now in shell bars (always visible above iframe)
     var h = '';
