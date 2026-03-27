@@ -8059,8 +8059,8 @@ function updateControls() {
         // Mute buttons
         var rxm = document.getElementById('link-rx-mute');
         var txm = document.getElementById('link-tx-mute');
-        if(rxm) { var rm = s.link_rx_muted; rxm.style.background = rm ? '#5c1a1a' : 'var(--t-btn)'; rxm.style.borderColor = rm ? '#c0392b' : 'var(--t-btn-border)'; rxm.style.color = rm ? '#ff6b6b' : '#e0e0e0'; rxm.textContent = rm ? 'RX M' : 'Mute'; }
-        if(txm) { var tm = s.link_tx_muted; txm.style.background = tm ? '#5c1a1a' : 'var(--t-btn)'; txm.style.borderColor = tm ? '#c0392b' : 'var(--t-btn-border)'; txm.style.color = tm ? '#ff6b6b' : '#e0e0e0'; txm.textContent = tm ? 'TX M' : 'Mute'; }
+        if(rxm) { var rm = s.link_rx_muted; rxm.style.background = rm ? '#5c1a1a' : 'var(--t-btn)'; rxm.style.borderColor = rm ? '#c0392b' : 'var(--t-btn-border)'; rxm.style.color = rm ? '#ff6b6b' : '#e0e0e0'; }
+        if(txm) { var tm = s.link_tx_muted; txm.style.background = tm ? '#5c1a1a' : 'var(--t-btn)'; txm.style.borderColor = tm ? '#c0392b' : 'var(--t-btn-border)'; txm.style.color = tm ? '#ff6b6b' : '#e0e0e0'; }
       } else if(s.link_enabled) {
         linkGrp.style.display = '';
         document.getElementById('link-ctrl-status').textContent = 'Disconnected';
