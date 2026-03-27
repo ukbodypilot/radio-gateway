@@ -7504,9 +7504,14 @@ updateTelegram();
                 </div>
             </div>
             <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
-                <label style="color:#888; font-size:0.8em; width:2em; text-align:right;">Vol</label>
-                <input id="link-vol" type="range" min="0" max="100" value="100" style="flex:1; accent-color:var(--t-accent);" oninput="linkVolChange(this.value)">
-                <span id="link-vol-val" style="color:#888; font-size:0.8em; width:3em;">100%</span>
+                <label style="color:#888; font-size:0.8em; width:3em; text-align:right;">RX</label>
+                <input id="link-rx-gain" type="range" min="-10" max="10" step="1" value="0" style="flex:1; accent-color:#2ecc71;" oninput="linkGain('rx_gain',this.value)">
+                <span id="link-rx-gain-val" style="color:#888; font-size:0.8em; width:3.5em;">0 dB</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+                <label style="color:#888; font-size:0.8em; width:3em; text-align:right;">TX</label>
+                <input id="link-tx-gain" type="range" min="-10" max="10" step="1" value="0" style="flex:1; accent-color:#e74c3c;" oninput="linkGain('tx_gain',this.value)">
+                <span id="link-tx-gain-val" style="color:#888; font-size:0.8em; width:3.5em;">0 dB</span>
             </div>
         </div>
     </div>
@@ -7714,9 +7719,10 @@ function linkPttToggle() {
   _linkPttState = !_linkPttState;
   linkCmd({cmd:'ptt', state:_linkPttState});
 }
-function linkVolChange(val) {
-  document.getElementById('link-vol-val').textContent = val + '%';
-  linkCmd({cmd:'volume', level:parseInt(val)});
+function linkGain(cmd, db) {
+  var label = cmd === 'rx_gain' ? 'link-rx-gain-val' : 'link-tx-gain-val';
+  document.getElementById(label).textContent = db + ' dB';
+  linkCmd({cmd: cmd, db: parseInt(db)});
 }
 function sendAIText() {
   var text = document.getElementById('ai-text').value.trim();
@@ -8029,6 +8035,20 @@ function updateControls() {
         // Audio level bars
         document.getElementById('link-rx-bar').style.width = (s.link_level||0) + '%';
         document.getElementById('link-tx-bar').style.width = (s.link_tx_level||0) + '%';
+        // Gain sliders
+        if(s.link_endpoint_status) {
+          var ls = s.link_endpoint_status;
+          var rxg = document.getElementById('link-rx-gain');
+          var txg = document.getElementById('link-tx-gain');
+          if(rxg && !rxg.matches(':active') && ls.rx_gain_db !== undefined) {
+            rxg.value = ls.rx_gain_db;
+            document.getElementById('link-rx-gain-val').textContent = ls.rx_gain_db + ' dB';
+          }
+          if(txg && !txg.matches(':active') && ls.tx_gain_db !== undefined) {
+            txg.value = ls.tx_gain_db;
+            document.getElementById('link-tx-gain-val').textContent = ls.tx_gain_db + ' dB';
+          }
+        }
       } else if(s.link_enabled) {
         linkGrp.style.display = '';
         document.getElementById('link-ctrl-status').textContent = 'Disconnected';

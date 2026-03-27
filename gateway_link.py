@@ -10,6 +10,7 @@ Frame format: [1 byte type][2 byte big-endian length][payload]
 Dependencies: stdlib only (+ pyaudio inside AudioPlugin.setup only)
 """
 
+import os
 import socket
 import struct
 import json
@@ -565,7 +566,8 @@ class RadioPlugin:
         "frequency": False,
         "ctcss": False,
         "power": False,
-        "volume": False,
+        "rx_gain": False,
+        "tx_gain": False,
         "smeter": False,
         "status": True,  # all plugins support status
     }
@@ -625,7 +627,8 @@ class AudioPlugin(RadioPlugin):
         "frequency": False,
         "ctcss": False,
         "power": False,
-        "volume": True,
+        "rx_gain": True,
+        "tx_gain": True,
         "smeter": False,
         "status": True,
     }
@@ -642,7 +645,9 @@ class AudioPlugin(RadioPlugin):
         self._in_stream = None
         self._out_stream = None
         self._device_name = ""
-        self._output_volume = 1.0  # 0.0-1.0 gain multiplier for output
+        self._rx_gain_db = 0.0
+        self._tx_gain_db = 0.0
+        self._settings_file = os.path.expanduser('~/.config/link-endpoint/settings.json')
 
     def setup(self, config):
         """Open PyAudio input + output streams.
@@ -653,6 +658,14 @@ class AudioPlugin(RadioPlugin):
             channels (int) — channel count (default 1)
         """
         import pyaudio
+
+        # Load saved gain settings
+        saved = self._load_settings()
+        if saved:
+            self._rx_gain_db = max(-10, min(10, float(saved.get('rx_gain_db', 0))))
+            self._tx_gain_db = max(-10, min(10, float(saved.get('tx_gain_db', 0))))
+            if self._rx_gain_db != 0.0 or self._tx_gain_db != 0.0:
+                print(f"  [Link] AudioPlugin: restored gains RX={self._rx_gain_db:+.1f} dB, TX={self._tx_gain_db:+.1f} dB")
 
         self._pa = pyaudio.PyAudio()
         self._device_name = config.get('device', '')
@@ -689,7 +702,8 @@ class AudioPlugin(RadioPlugin):
             self._out_stream = None
 
     def teardown(self):
-        """Close PyAudio streams and terminate."""
+        """Close PyAudio streams, save gains, and terminate."""
+        self._save_settings()
         for stream in (self._in_stream, self._out_stream):
             if stream:
                 try:
@@ -708,23 +722,25 @@ class AudioPlugin(RadioPlugin):
         print("  [Link] AudioPlugin: teardown complete")
 
     def get_audio(self):
-        """Read one 50 ms chunk from the input stream."""
+        """Read one 50 ms chunk from the input stream, applying RX gain."""
         if not self._in_stream:
             return None
         try:
             data = self._in_stream.read(self.CHUNK_FRAMES, exception_on_overflow=False)
+            if data and self._rx_gain_db != 0.0:
+                data = self._apply_volume(data, self._db_to_linear(self._rx_gain_db))
             return data
         except Exception as e:
             print(f"  [Link] AudioPlugin: read error: {e}")
             return None
 
     def put_audio(self, pcm):
-        """Write PCM audio to the output stream, applying output volume."""
+        """Write PCM audio to the output stream, applying TX gain."""
         if not self._out_stream:
             return
         try:
-            if self._output_volume != 1.0:
-                pcm = self._apply_volume(pcm, self._output_volume)
+            if self._tx_gain_db != 0.0:
+                pcm = self._apply_volume(pcm, self._db_to_linear(self._tx_gain_db))
             self._out_stream.write(pcm)
         except Exception as e:
             print(f"  [Link] AudioPlugin: write error: {e}")
@@ -732,12 +748,16 @@ class AudioPlugin(RadioPlugin):
     def execute(self, cmd):
         """Handle commands from master gateway."""
         action = cmd.get('cmd', '') if isinstance(cmd, dict) else ''
-        if action == 'volume':
-            level = cmd.get('level', 100)
-            level = max(0, min(100, int(level)))
-            self._output_volume = level / 100.0
-            print(f"  [Link] AudioPlugin: volume set to {level}%")
-            return {"ok": True, "volume": level}
+        if action == 'rx_gain':
+            self._rx_gain_db = max(-10, min(10, float(cmd.get('db', 0))))
+            self._save_settings()
+            print(f"  [Link] AudioPlugin: RX gain set to {self._rx_gain_db:+.1f} dB")
+            return {"ok": True, "rx_gain_db": self._rx_gain_db}
+        if action == 'tx_gain':
+            self._tx_gain_db = max(-10, min(10, float(cmd.get('db', 0))))
+            self._save_settings()
+            print(f"  [Link] AudioPlugin: TX gain set to {self._tx_gain_db:+.1f} dB")
+            return {"ok": True, "tx_gain_db": self._tx_gain_db}
         if action == 'status':
             return {"ok": True, "status": self.get_status()}
         return {"ok": False, "error": f"unknown command: {action}"}
@@ -749,7 +769,8 @@ class AudioPlugin(RadioPlugin):
             "rate": self.RATE,
             "input_active": self._in_stream is not None,
             "output_active": self._out_stream is not None,
-            "volume": round(self._output_volume * 100),
+            "rx_gain_db": self._rx_gain_db,
+            "tx_gain_db": self._tx_gain_db,
         }
 
     @staticmethod
@@ -769,6 +790,31 @@ class AudioPlugin(RadioPlugin):
         return _struct.pack(f'<{n_samples}h', *gained)
 
     # -- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _db_to_linear(db):
+        """Convert dB gain to linear multiplier."""
+        return 10 ** (db / 20.0)
+
+    def _save_settings(self):
+        """Save current gain settings to JSON file."""
+        try:
+            d = os.path.dirname(self._settings_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self._settings_file, 'w') as f:
+                json.dump({"rx_gain_db": self._rx_gain_db,
+                           "tx_gain_db": self._tx_gain_db}, f)
+        except Exception as e:
+            print(f"  [Link] AudioPlugin: failed to save settings: {e}")
+
+    def _load_settings(self):
+        """Load gain settings from JSON file. Returns dict or None."""
+        try:
+            with open(self._settings_file, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
 
     def _find_device(self, name):
         """Find a PyAudio device index by name substring.
@@ -824,7 +870,8 @@ class AIOCPlugin(AudioPlugin):
         "frequency": False,
         "ctcss": False,
         "power": False,
-        "volume": True,
+        "rx_gain": True,
+        "tx_gain": True,
         "smeter": False,
         "status": True,
     }
@@ -905,7 +952,7 @@ class AIOCPlugin(AudioPlugin):
                 else:
                     self._cancel_ptt_timer()
             return result
-        # volume and status handled by AudioPlugin.execute
+        # rx_gain, tx_gain, and status handled by AudioPlugin.execute
         return super().execute(cmd)
 
     def get_status(self):
