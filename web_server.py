@@ -6590,9 +6590,9 @@ pollTimer = setInterval(pollStatus, 1000);
 
 <div id="sysinfo" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:1.0em; margin-top:10px;">Loading...</div>
 
-<div id="bc-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; font-family:monospace; font-size:0.9em; margin-top:10px; display:none;">
+<div id="bc-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1em;">Broadcastify Stream</h3>
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Broadcastify Stream</h3>
     <span id="bc-status-badge" style="font-weight:bold;"></span>
   </div>
   <div class="st-row" id="bc-stats"></div>
@@ -6650,9 +6650,9 @@ pollTimer = setInterval(pollStatus, 1000);
   <div style="font-size:0.85em; color:#aaa; margin-top:4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" id="tg-last-text"></div>
 </div>
 
-<div id="link-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; font-family:monospace; font-size:0.9em; margin-top:10px; display:none;">
+<div id="link-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-    <h3 style="margin:0; color:#e67e22; font-size:1em;">Gateway Link</h3>
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Gateway Link</h3>
     <span id="link-status-badge" style="font-weight:bold;"></span>
   </div>
   <div class="st-row" id="link-info"></div>
