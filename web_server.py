@@ -6695,11 +6695,33 @@ pollTimer = setInterval(pollStatus, 1000);
 function openTmux() {
   fetch('/open_tmux', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
 }
+var _linkPttState = false;
 function linkCmd(cmd) {
-  fetch('/linkcmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cmd)})
+  return fetch('/linkcmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cmd)})
     .then(function(r){return r.json()}).then(function(d){
       if(!d.ok) console.log('Link cmd error:', d.error);
+      return d;
     }).catch(function(){});
+}
+function linkPttToggle() {
+  _linkPttState = !_linkPttState;
+  var btn = document.getElementById('link-ptt-btn');
+  if(btn) { btn.textContent = _linkPttState ? 'PTT ON' : 'PTT'; btn.style.background = _linkPttState ? 'var(--t-btn-active)' : 'var(--t-btn)'; btn.style.borderColor = _linkPttState ? 'var(--t-accent)' : 'var(--t-btn-border)'; btn.style.color = _linkPttState ? 'var(--t-accent)' : '#e0e0e0'; }
+  linkCmd({cmd:'ptt', state:_linkPttState});
+}
+function linkStatus() {
+  linkCmd({cmd:'status'}).then(function(){
+    // Status response comes via ACK — poll status in 1s to show it
+    setTimeout(function(){
+      fetch('/status').then(function(r){return r.json()}).then(function(s){
+        var info = document.getElementById('link-info');
+        if(info && s.link_ptt_active !== undefined) {
+          var extra = '<div class="st-item" style="margin-top:4px;"><span class="st-label">PTT:</span><span class="st-val '+(s.link_ptt_active?'red':'green')+'">'+(s.link_ptt_active?'ON':'OFF')+'</span></div>';
+          info.innerHTML += extra;
+        }
+      });
+    }, 500);
+  });
 }
 
 var _lastNotifSeq = 0;
@@ -6808,10 +6830,14 @@ function updateStatus() {
       document.getElementById('link-info').innerHTML = lh;
       // Show controls based on capabilities
       var caps = s.link_capabilities || {};
+      var lPtt = s.link_ptt_active;
       var lc = '';
       if(lConn) {
-        if(caps.ptt) lc += '<button onclick="linkCmd({cmd:\\'ptt\\',state:true})" style="padding:6px 14px; background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; border-radius:4px; cursor:pointer;">PTT ON</button><button onclick="linkCmd({cmd:\\'ptt\\',state:false})" style="padding:6px 14px; background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; border-radius:4px; cursor:pointer;">PTT OFF</button>';
-        if(caps.status) lc += '<button onclick="linkCmd({cmd:\\'status\\'})" style="padding:6px 14px; background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; border-radius:4px; cursor:pointer;">Status</button>';
+        if(caps.ptt) {
+          var pttStyle = lPtt ? 'background:var(--t-btn-active);border-color:var(--t-accent);color:var(--t-accent);' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
+          lc += '<button id="link-ptt-btn" onclick="linkPttToggle()" style="padding:8px 20px; border:1px solid; border-radius:4px; cursor:pointer; font-family:monospace; font-size:1em; '+pttStyle+'">'+(lPtt?'PTT ON':'PTT')+'</button>';
+        }
+        if(caps.status) lc += '<button onclick="linkStatus()" style="padding:8px 14px; background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; border-radius:4px; cursor:pointer; font-family:monospace;">Status</button>';
       }
       document.getElementById('link-controls').innerHTML = lc;
     } else {

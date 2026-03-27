@@ -3443,11 +3443,22 @@ class RadioGateway:
                         self.link_audio_source.enabled = True
                         self.link_audio_source.muted = self.link_muted
                         self.mixer.add_source(self.link_audio_source)
+                    def _link_on_ack(ack):
+                        # Track PTT state from endpoint ACKs
+                        cmd = ack.get('cmd', '')
+                        result = ack.get('result', {})
+                        if cmd == 'ptt' and isinstance(result, dict):
+                            self._link_ptt_active = result.get('ptt', False)
+                        elif cmd == 'status' and isinstance(result, dict):
+                            self._link_last_status = result
+                    self._link_ptt_active = False
+                    self._link_last_status = {}
                     self.link_server = GatewayLinkServer(
                         port=link_port,
                         on_audio=self.link_audio_source.push_audio,
                         on_register=lambda info: print(f"  [Link] Endpoint registered: {info.get('name', '?')} ({info.get('plugin', '?')})"),
                         on_disconnect=lambda: print("  [Link] Endpoint disconnected"),
+                        on_ack=_link_on_ack,
                     )
                     self.link_audio_source._link_server = self.link_server
                     # Wire connected state
@@ -5861,6 +5872,7 @@ class RadioGateway:
             'link_capabilities': self.link_server.endpoint_info.get('capabilities', {}) if self.link_server and self.link_server.endpoint_info else {},
             'link_level': self.link_audio_source.audio_level if self.link_audio_source else 0,
             'link_muted': getattr(self, 'link_muted', False),
+            'link_ptt_active': getattr(self, '_link_ptt_active', False),
             'files': file_slots,
             'playback_enabled': bool(self.playback_source),
             'tts_enabled': bool(getattr(self, 'tts_engine', None)),
