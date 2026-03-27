@@ -566,8 +566,8 @@ class GatewayLinkClient:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(10.0)
                 sock.connect((self._host, self._port))
-                sock.settimeout(None)
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                # Keep 10s timeout for both send and recv — detects cable pull
             except (OSError, ConnectionError) as e:
                 print(f"  [Link] Connect to {self._host}:{self._port} failed: {e}")
                 sock.close()
@@ -610,10 +610,10 @@ class GatewayLinkClient:
             self._reader_loop(sock)
             hb_stop.set()
             self._close()  # Clean up socket before reconnect
+            print(f"  [Link] Connection closed, stop={self._stop.is_set()}")
 
             # Disconnected — retry
             if not self._stop.is_set():
-                print(f"  [Link] Disconnected from server")
                 print(f"  [Link] Reconnecting in 5s...")
                 if self._stop.wait(5.0):
                     break
@@ -622,9 +622,8 @@ class GatewayLinkClient:
         """Read frames from the server until disconnect."""
         P = GatewayLinkProtocol
         _frame_count = 0
-        # Recv timeout detects cable-pull (no RST reaches us).
+        # Socket already has 10s timeout from _connect_loop.
         # Server heartbeat every 5s — 10s timeout means dead connection.
-        sock.settimeout(10.0)
         try:
             while not self._stop.is_set():
                 result = P.recv_frame(sock)
