@@ -847,10 +847,25 @@ class AIOCPlugin(AudioPlugin):
         self._ptt_channel = int(config.get('ptt_channel', 3))
         self._ptt_timeout = int(config.get('ptt_timeout', 60))
 
-        # Find AIOC audio device by name if not specified
+        # Find AIOC audio device by ALSA card name if not specified.
+        # PyAudio via PipeWire doesn't enumerate ALSA hardware devices,
+        # so we find the hw:N,0 device name from /proc/asound/cards.
         if not config.get('device'):
             config = dict(config)
-            config['device'] = 'All-In-One'  # AIOC shows as "All-In-One-Cable" in ALSA/PyAudio
+            aioc_hw = None
+            try:
+                with open('/proc/asound/cards') as f:
+                    for line in f:
+                        line = line.strip()
+                        if 'AllInOneCable' in line or 'All-In-One' in line:
+                            card_num = line.split()[0]
+                            aioc_hw = f'hw:{card_num},0'
+                            break
+            except Exception:
+                pass
+            config['device'] = aioc_hw or 'All-In-One'
+            if aioc_hw:
+                print(f"  [Link] AIOCPlugin: found AIOC at {aioc_hw}")
 
         # Open audio streams via parent class
         super().setup(config)
