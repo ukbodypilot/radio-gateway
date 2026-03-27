@@ -7505,12 +7505,12 @@ updateTelegram();
             </div>
             <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
                 <label style="color:#888; font-size:0.8em; width:3em; text-align:right;">RX</label>
-                <input id="link-rx-gain" type="range" min="-10" max="10" step="1" value="0" style="flex:1; accent-color:#2ecc71;" oninput="linkGain('rx_gain',this.value)">
+                <input id="link-rx-gain" type="range" min="-10" max="10" step="1" value="0" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain('rx_gain',this.value)">
                 <span id="link-rx-gain-val" style="color:#888; font-size:0.8em; width:3.5em;">0 dB</span>
             </div>
             <div style="display:flex; align-items:center; gap:6px;">
                 <label style="color:#888; font-size:0.8em; width:3em; text-align:right;">TX</label>
-                <input id="link-tx-gain" type="range" min="-10" max="10" step="1" value="0" style="flex:1; accent-color:#e74c3c;" oninput="linkGain('tx_gain',this.value)">
+                <input id="link-tx-gain" type="range" min="-10" max="10" step="1" value="0" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain('tx_gain',this.value)">
                 <span id="link-tx-gain-val" style="color:#888; font-size:0.8em; width:3.5em;">0 dB</span>
             </div>
         </div>
