@@ -526,42 +526,75 @@ No other gateway dependencies are needed.
 
 ## Development Roadmap
 
-### v1 (MVP) -- current
+### Completed
 
-- Duplex audio streaming between one endpoint and the gateway
-- AudioPlugin for generic sound cards
+**v1 — MVP** ✓
+- Framed TCP protocol (AUDIO, COMMAND, STATUS, REGISTER, ACK)
+- Duplex audio streaming
+- AudioPlugin (generic sound card via PyAudio)
 - Standalone endpoint script with auto-reconnect
-- Mixer integration (LinkAudioSource) with level metering
-- 5-frame-type protocol (AUDIO, COMMAND, STATUS, REGISTER, ACK)
+- LinkAudioSource mixer integration with level metering
 
-### v2 -- Command Execution
+**v2 — Commands & Hardware** ✓
+- PTT command with ACK response and 60s safety timeout
+- RX/TX gain commands (-10 to +10 dB, persisted on endpoint)
+- Status query with structured response
+- AIOCPlugin (audio + HID GPIO PTT via /proc/asound/cards)
+- Structured capabilities registration
 
-- Implement PTT commands (server sends `ptt` command, endpoint keys radio)
-- Implement frequency/CTCSS commands
-- Write `KV4PPlugin` as the first "real radio" plugin
-- ACK flow with error reporting
+**v3 — Multi-Endpoint** ✓
+- N simultaneous endpoint connections (dict keyed by name)
+- Dynamic LinkAudioSource creation/destruction per endpoint
+- Per-endpoint controls on controls page (PTT, RX/TX bars, gain, mute)
+- Per-endpoint status on dashboard with live endpoint state
+- Per-endpoint audio bars in shell frame
+- Gateway settings persistence (~/.config/radio-gateway/link_endpoints.json)
+- Bidirectional heartbeat (5s) with dead peer detection (15s)
+- Cable-pull resilience (10s socket timeout both sides)
 
-### v3 -- Multiple Endpoints
+**v4 — Discovery** ✓
+- mDNS auto-discovery via Avahi (gateway publishes `_radiogateway._tcp`)
+- Endpoint discovers gateway on LAN with zero config
+- Fallback to manual `--server HOST:PORT`
 
-- Support N simultaneous endpoint connections
-- Per-endpoint mixer sources (LINK1, LINK2, ...)
-- Endpoint management web UI (list, disconnect, configure)
-- Per-endpoint mute/volume/boost controls on dashboard
+### Current — Mixer Integration
 
-### v4 -- Migrate Existing Radios
+Each link endpoint gets its own `LinkAudioSource` in the broadcast-style
+additive mixer. All endpoints hear the full gateway mix (unless TX muted).
 
-- Write `D75Plugin` to replace `D75CATClient` + `remote_bt_proxy.py`
-- Write `TH9800Plugin` to replace `RadioCATClient` + `TH9800_CAT.py`
-- Write `SDRPlugin` to replace `RTLAirbandManager`
-- All radios use the same protocol; gateway becomes hardware-agnostic
+**Planned: Conditional Mixer Matrix** — routing rules for which sources
+each endpoint hears. Design TBD.
 
-### v5 -- Network Features
+### Next — Radio Plugins
 
-- Auto-discovery via mDNS/Bonjour (endpoints find the gateway automatically)
+**KV4PPlugin** — USB serial radio with frequency/CTCSS/power control
+- Wraps existing `kv4p-ht` Python package
+- Capabilities: audio_rx, audio_tx, ptt, frequency, ctcss, power, smeter
+- First plugin with full radio control commands
+- Proves the command language handles real tuning operations
+
+**D75Plugin** — Bluetooth radio (TH-D75)
+- Wraps existing `remote_bt_proxy.py` BT serial + SCO audio
+- Replaces bespoke D75CATClient + D75AudioSource + remote proxy
+- Single TCP connection replaces dual ports (9750 + 9751)
+- Complex: BT RFCOMM timing, SCO frame pacing, btstart sequencing
+
+**TH9800Plugin** — CAT serial radio (TH-9800)
+- Wraps existing `RadioCATClient` + `TH9800_CAT.py`
+- Capabilities: ptt, frequency, volume, smeter
+
+**SDRPlugin** — RTL-SDR / RSPduo receiver
+- Wraps existing `RTLAirbandManager`
+- RX only (no PTT/TX)
+- Capabilities: audio_rx, frequency, modulation
+
+### Future — Network & Mesh
+
 - TLS encryption for internet-facing links
 - Cross-internet relay via Cloudflare tunnel
 - Local plugin mode (same machine, bypass TCP for lower latency)
 - Gateway-to-gateway linking (mesh topology)
+- Endpoint deployment tooling (systemd service, auto-update)
 
 ---
 
