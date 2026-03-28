@@ -119,15 +119,31 @@ Radio-to-Mumble gateway. AIOC USB device handles radio RX/TX audio and PTT. Opti
 - **CRITICAL:** DRA818 38 tones (no 69.3 Hz) — off-by-one CTCSS with TH-9800's 39-tone list
 - **KV4P logging gated behind VERBOSE_LOGGING** (2026-03-26)
 
-## Gateway Link — Duplex Audio Protocol (2026-03-26)
-- **File:** `gateway_link.py` — protocol, server, client, plugin base, AudioPlugin
-- **Endpoint:** `tools/link_endpoint.py` — standalone, no gateway deps
+## Gateway Link v1.7.0 — Multi-Endpoint Duplex Audio Protocol (2026-03-27)
+- **File:** `gateway_link.py` — protocol, server, client, plugin base, AudioPlugin, AIOCPlugin
+- **Endpoint:** `tools/link_endpoint.py` — standalone, no gateway deps, zero-config with mDNS
 - **Protocol:** TCP framed `[type 1B][length 2B][payload]` — AUDIO/COMMAND/STATUS/REGISTER/ACK
 - **Plugin arch:** `RadioPlugin` base class → subclass per hardware type
-- **MVP:** single endpoint, duplex audio, AudioPlugin (generic sound card)
-- **Vision:** all radios become plugins; gateway is mixer + UI + protocol hub
+- **Multi-endpoint (v1.7.0):** N simultaneous connections, dict keyed by endpoint name
+  - Dynamic `LinkAudioSource` creation/destruction per endpoint
+  - Per-endpoint controls on `/controls` page (PTT button, RX/TX level bars, gain sliders, mute buttons)
+  - Per-endpoint settings persisted to `~/.config/radio-gateway/link_endpoints.json`
+- **AIOCPlugin:** finds AIOC device via `/proc/asound/cards` (not PyAudio)
+- **RX/TX gain:** dB controls (-10 to +10), persisted per endpoint
+- **RX/TX mute:** gateway-side, per-endpoint
+- **VAD-gated level bars** on controls page
+- **Command language:** `ptt`, `rx_gain`, `tx_gain`, `status` + ACK responses
+- **PTT safety timeout:** 60s auto-unkey
+- **Heartbeat:** bidirectional 5s interval, dead peer detection at 15s
+- **Cable-pull detection:** 10s socket timeout on both sides
+- **mDNS auto-discovery:** gateway publishes `_radiogateway._tcp`, endpoint discovers via `avahi-browse`
+- **Zero-config:** `python3 link_endpoint.py --name pi-aioc --plugin aioc`
 - **Config:** ENABLE_GATEWAY_LINK (default false), LINK_PORT=9700
 - **Integration:** LinkAudioSource in mixer, LINK bar (orange), status dict fields
+- **CRITICAL — /linkcmd bug:** missing `return` in handler caused config wipes on Save
+- **CRITICAL — _CONFIG_LAYOUT:** config page must include ALL sections or Save wipes unlisted ones
+- **Client deadlock fix:** `_send` calling `_close` while holding lock
+- **Reader cleanup:** only calls `on_disconnect` if it owns the entry
 - **See:** `docs/gateway_link.md` for full architecture and roadmap; `CHANGELOG.md` for release history
 
 ## MCP Server (gateway_mcp.py) — AI Control Interface (2026-03-25)
