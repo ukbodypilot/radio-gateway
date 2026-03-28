@@ -6864,12 +6864,12 @@ function updateStatus() {
           for(var k in est) {
             if(est.hasOwnProperty(k)) {
               var v = est[k];
-              var col = (v===true)?'green':(v===false)?'red':'white';
+              var col = (v===true)?'#2ecc71':(v===false)?'#e74c3c':'#e0e0e0';
               var txt = (v===true)?'Yes':(v===false)?'No':String(v);
-              eh += '<div class="st-item"><span class="st-label">'+k+':</span><span class="st-val '+col+'">'+txt+'</span></div>';
+              eh += '<span style="margin-right:12px; white-space:nowrap;"><span style="color:#888;">'+k+':</span> <span style="color:'+col+'; font-weight:bold;">'+txt+'</span></span>';
             }
           }
-          if(eh) lh += '<div style="display:grid; grid-template-columns:repeat(auto-fill, 200px); gap:4px 12px;">'+eh+'</div>';
+          if(eh) lh += '<div style="display:flex; flex-wrap:wrap; gap:2px 0; font-size:0.85em;">'+eh+'</div>';
         }
         document.getElementById('link-info').innerHTML = lh;
         document.getElementById('link-status-badge').innerHTML = '<span style="color:#2ecc71">'+eps.length+' connected</span>';
