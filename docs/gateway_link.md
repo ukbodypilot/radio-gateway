@@ -559,11 +559,16 @@ No other gateway dependencies are needed.
 
 ### Current — Mixer Integration
 
-Each link endpoint gets its own `LinkAudioSource` in the broadcast-style
-additive mixer. All endpoints hear the full gateway mix (unless TX muted).
+The gateway mixer currently treats all link endpoints the same — each
+gets its own `LinkAudioSource` feeding into the broadcast-style additive
+mixer. All endpoints hear the full gateway mix (unless TX muted).
 
-**Planned: Conditional Mixer Matrix** — routing rules for which sources
-each endpoint hears. Design TBD.
+**Planned: Conditional Mixer Matrix**
+- Per-endpoint routing: endpoint A hears endpoint B but not C
+- Source selection: choose which gateway sources an endpoint receives
+  (e.g. "pi-aioc gets SDR1+SDR2 only, not radio RX")
+- Cross-link: endpoint A's audio routed to endpoint B's TX (relay)
+- Web UI matrix editor: grid of sources × endpoints with checkboxes
 
 ### Next — Radio Plugins
 
