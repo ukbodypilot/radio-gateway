@@ -260,6 +260,9 @@ class EmailNotifier:
                 lines.append(f"Config:    {url}/config")
                 lines.append(f"Monitor:   {url}/monitor")
                 lines.append(f"Monitor App: {url}/ws_monitor")
+                # Voice-to-tmux (remote via tunnel)
+                tunnel_base = url.rstrip('/')
+                lines.append(f"Voice Tmux: {tunnel_base}/voice")
                 lines.append("")
 
         # LAN link
@@ -272,6 +275,7 @@ class EmailNotifier:
             s.close()
             lines.append(f"LAN:       http://{lan_ip}:{port}")
             lines.append(f"LAN App:   http://{lan_ip}:{port}/ws_monitor")
+            lines.append(f"LAN Voice: http://{lan_ip}:{port}/voice")
         except Exception:
             pass
         lines.append(f"Local:     http://localhost:{port}")

@@ -655,6 +655,7 @@ class WebConfigServer:
                 if not self._check_auth():
                     return
                 import json as json_mod
+                import os
 
                 if self.path == '/status':
                     # JSON status endpoint for live dashboard
@@ -1691,6 +1692,43 @@ class WebConfigServer:
                     self.send_header('Content-Type', 'text/html; charset=utf-8')
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
+
+                elif self.path == '/voice':
+                    # Voice relay page
+                    html = parent._generate_voice_page()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(html.encode('utf-8'))
+
+                elif self.path == '/voice/status':
+                    _vr_target = os.environ.get('TMUX_TARGET', 'claude-voice')
+                    result = subprocess.run(
+                        ['tmux', 'has-session', '-t', _vr_target],
+                        capture_output=True,
+                    )
+                    alive = result.returncode == 0
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps({'tmux_target': _vr_target, 'session_alive': alive}).encode())
+
+                elif self.path == '/voice/view':
+                    tmux_target = os.environ.get('TMUX_TARGET', 'claude-voice')
+                    result = subprocess.run(
+                        ['tmux', 'capture-pane', '-t', tmux_target, '-p'],
+                        capture_output=True, text=True,
+                    )
+                    if result.returncode != 0:
+                        self.send_response(503)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps({'error': f"tmux session '{tmux_target}' not found"}).encode())
+                    else:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps({'content': result.stdout}).encode())
 
             def do_POST(self):
                 if not self._check_auth():
@@ -2903,6 +2941,107 @@ class WebConfigServer:
                         parent.gateway.running = False
                     return
 
+                elif self.path == '/voice/send':
+                    import json as json_mod
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    try:
+                        data = json_mod.loads(body)
+                    except Exception:
+                        data = {}
+                    text = data.get('text', '').strip()
+                    tmux_target = os.environ.get('TMUX_TARGET', 'claude-voice')
+                    if not text:
+                        self.send_response(400)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(b'{"error":"empty text"}')
+                        return
+                    chk = subprocess.run(['tmux', 'has-session', '-t', tmux_target], capture_output=True)
+                    if chk.returncode != 0:
+                        self.send_response(503)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps({'error': f"tmux session '{tmux_target}' not found"}).encode())
+                        return
+                    subprocess.run(['tmux', 'send-keys', '-t', tmux_target, '-l', text])
+                    subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'Enter'])
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps({'ok': True, 'sent': text}).encode())
+                    return
+
+                elif self.path == '/voice/session':
+                    import json as json_mod
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    try:
+                        data = json_mod.loads(body)
+                    except Exception:
+                        data = {}
+                    action = data.get('action', '')
+                    tmux_target = 'claude-voice'
+                    result = {'ok': False}
+
+                    if action == 'start':
+                        # Create session if it doesn't exist, then launch claude
+                        has = subprocess.run(['tmux', 'has-session', '-t', tmux_target], capture_output=True)
+                        if has.returncode == 0:
+                            result = {'ok': True, 'msg': 'session already exists'}
+                        else:
+                            subprocess.run(['tmux', 'new-session', '-d', '-s', tmux_target, '-c', '/home/user'])
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, '-l', 'claude --dangerously-skip-permissions'])
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'Enter'])
+                            # Auto-confirm workspace trust prompt after startup
+                            import time; time.sleep(3)
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'Enter'])
+                            result = {'ok': True, 'msg': 'session created, claude started'}
+
+                    elif action == 'restart':
+                        # Send Ctrl+C to stop current process, wait, then start claude again
+                        has = subprocess.run(['tmux', 'has-session', '-t', tmux_target], capture_output=True)
+                        if has.returncode != 0:
+                            subprocess.run(['tmux', 'new-session', '-d', '-s', tmux_target, '-c', '/home/user'])
+                        else:
+                            # Send Ctrl+C twice to kill any running process
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'C-c', ''])
+                            import time; time.sleep(0.5)
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'C-c', ''])
+                            import time; time.sleep(1)
+                            # Clear the screen before starting fresh
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, '-l', 'clear'])
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'Enter'])
+                            import time; time.sleep(0.3)
+                        subprocess.run(['tmux', 'send-keys', '-t', tmux_target, '-l', 'claude --dangerously-skip-permissions'])
+                        subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'Enter'])
+                        # Auto-confirm workspace trust prompt after startup
+                        import time; time.sleep(3)
+                        subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'Enter'])
+                        result = {'ok': True, 'msg': 'claude restarted'}
+
+                    elif action == 'stop':
+                        has = subprocess.run(['tmux', 'has-session', '-t', tmux_target], capture_output=True)
+                        if has.returncode == 0:
+                            # Send Ctrl+C to stop Claude, clear screen, leave the shell running
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'C-c', ''])
+                            import time; time.sleep(0.5)
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'C-c', ''])
+                            import time; time.sleep(0.5)
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, '-l', 'clear'])
+                            subprocess.run(['tmux', 'send-keys', '-t', tmux_target, 'Enter'])
+                            result = {'ok': True, 'msg': 'claude stopped'}
+                        else:
+                            result = {'ok': True, 'msg': 'session not running'}
+                    else:
+                        result = {'ok': False, 'error': 'unknown action'}
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps(result).encode())
+                    return
+
                 length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(length).decode('utf-8')
                 form = urllib.parse.parse_qs(body, keep_blank_values=True)
@@ -3395,7 +3534,7 @@ class WebConfigServer:
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}{_telegram_link}<a href="/monitor" target="content" onclick="setActive(this)">Monitor</a><a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a>
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a>{_radio_link}{_d75_link}{_kv4p_link}<a href="/sdr" target="content" onclick="setActive(this)">SDR</a>{_adsb_link}{_telegram_link}<a href="/monitor" target="content" onclick="setActive(this)">Monitor</a><a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a><a href="/voice" target="content" onclick="setActive(this)">Voice</a>
     <span class="shell-pcm">
       <button id="play-btn" onclick="toggleStream()" style="min-width:52px; text-align:center;">&#9654; MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
@@ -8680,6 +8819,452 @@ setInterval(loadFiles, 10000);
 </script>
 '''
         return self._wrap_html('Recordings', body)
+
+    def _generate_voice_page(self):
+        """Build the voice relay page (served in iframe)."""
+        t = self._get_theme()
+        return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Voice Relay</title>
+<style>
+  :root {
+    --bg: ''' + t['bg'] + ''';
+    --surface: ''' + t['panel'] + ''';
+    --accent: ''' + t['accent'] + ''';
+    --primary: #e94560;
+    --text: #eee;
+    --muted: #888;
+    --success: #4ade80;
+    --error: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+  }
+
+  .main-layout {
+    display: flex;
+    gap: 1rem;
+    flex: 1;
+    min-height: 0;
+  }
+  .voice-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .tmux-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  #transcript {
+    flex: 1;
+    min-height: 120px;
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 1rem;
+    resize: vertical;
+    font-family: inherit;
+    line-height: 1.5;
+  }
+  #transcript::placeholder { color: var(--muted); }
+
+  #tmuxView {
+    flex: 1;
+    min-height: 200px;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: #0c0c0c;
+    color: #c0c0c0;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.75rem;
+    line-height: 1.3;
+    overflow: auto;
+    white-space: pre;
+    word-wrap: normal;
+  }
+  .tmux-header {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .tmux-header label { cursor: pointer; display: flex; align-items: center; gap: 0.3rem; }
+  .tmux-header input[type="checkbox"] { accent-color: var(--primary); }
+
+  .session-controls {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+  .session-controls button {
+    flex: 1;
+    padding: 0.4rem;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .session-controls button:hover { background: var(--accent); }
+  .session-controls button:disabled { opacity: 0.5; cursor: default; }
+  #stopBtn { border-color: #e94560; color: #e94560; }
+  #stopBtn:hover { background: #e94560; color: #fff; }
+  #restartBtn { border-color: #f59e0b; color: #f59e0b; }
+  #restartBtn:hover { background: #f59e0b; color: #000; }
+
+  .controls {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .controls button {
+    flex: 1;
+    min-width: 80px;
+    padding: 0.75rem;
+    border-radius: 8px;
+    border: none;
+    font-size: 1rem;
+    cursor: pointer;
+    font-weight: 600;
+    transition: opacity 0.15s;
+  }
+  .controls button:active { opacity: 0.7; }
+
+  #micBtn {
+    background: var(--accent);
+    color: var(--text);
+    position: relative;
+  }
+  #micBtn.recording {
+    background: var(--primary);
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(233,69,96,0.5); }
+    50% { box-shadow: 0 0 0 12px rgba(233,69,96,0); }
+  }
+
+  #sendBtn { background: var(--success); color: #000; }
+  #clearBtn { background: var(--accent); color: var(--text); }
+
+  .mode-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .mode-toggle label { cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
+  .mode-toggle input[type="checkbox"] { accent-color: var(--primary); }
+
+  .status-bar {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    background: var(--surface);
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-align: center;
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .status-bar.ok { color: var(--success); }
+  .status-bar.err { color: var(--error); }
+
+  .shortcuts {
+    margin-top: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.6;
+  }
+  .shortcuts kbd {
+    background: var(--accent);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: inherit;
+  }
+
+  @media (max-width: 700px) {
+    .main-layout { flex-direction: column; }
+    #tmuxView { min-height: 200px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="main-layout">
+  <div class="voice-panel">
+    <div class="controls">
+      <button id="micBtn">Mic</button>
+      <button id="sendBtn">Send</button>
+      <button id="clearBtn">Clear</button>
+    </div>
+
+    <div class="mode-toggle">
+      <label>
+        <input type="checkbox" id="autoSendToggle">
+        Auto-send after silence
+      </label>
+      <label>
+        Delay:
+        <select id="silenceDelay">
+          <option value="1500">1.5s</option>
+          <option value="2000" selected>2s</option>
+          <option value="3000">3s</option>
+          <option value="5000">5s</option>
+        </select>
+      </label>
+    </div>
+
+    <textarea id="transcript" placeholder="Transcribed text appears here. You can also type directly."></textarea>
+
+    <div class="status-bar" id="statusBar">Ready</div>
+
+    <div class="shortcuts">
+      <kbd>Ctrl+Enter</kbd> Send &nbsp;
+      <kbd>Esc</kbd> Clear &nbsp;
+      <kbd>Ctrl+M</kbd> Mic &nbsp;
+      <kbd>Ctrl+Shift+M</kbd> Auto-send
+    </div>
+  </div>
+
+  <div class="tmux-panel">
+    <div class="tmux-header">
+      <span>tmux session</span>
+      <label>
+        <input type="checkbox" id="autoScrollToggle" checked>
+        Auto-scroll
+      </label>
+    </div>
+    <div id="tmuxView">Connecting...</div>
+    <div class="session-controls">
+      <button id="startBtn" onclick="sessionAction('start')">Start tmux</button>
+      <button id="restartBtn" onclick="sessionAction('restart')">New Claude</button>
+      <button id="stopBtn" onclick="sessionAction('stop')">Stop</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const transcript   = $('transcript');
+const micBtn       = $('micBtn');
+const sendBtn      = $('sendBtn');
+const clearBtn     = $('clearBtn');
+const autoToggle   = $('autoSendToggle');
+const silenceDelay = $('silenceDelay');
+const statusBar    = $('statusBar');
+const tmuxView     = $('tmuxView');
+const autoScroll   = $('autoScrollToggle');
+
+function setStatus(msg, type) {
+  statusBar.textContent = msg;
+  statusBar.className = 'status-bar' + (type ? ' ' + type : '');
+}
+
+// Check connection on load
+(async () => {
+  try {
+    const res = await fetch('/voice/status');
+    const data = await res.json();
+    if (data.session_alive) {
+      setStatus('Connected \\u2014 tmux session "' + data.tmux_target + '" is alive', 'ok');
+    } else {
+      setStatus('tmux session "' + data.tmux_target + '" not found', 'err');
+    }
+  } catch (e) {
+    setStatus('Connection error: ' + e.message, 'err');
+  }
+})();
+
+// Send text
+async function sendText() {
+  const text = transcript.value.trim();
+  if (!text) return;
+  try {
+    const res = await fetch('/voice/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setStatus('Sent: "' + (text.length > 60 ? text.slice(0, 60) + '...' : text) + '"', 'ok');
+      transcript.value = '';
+      finalTranscript = '';
+    } else {
+      setStatus('Error: ' + (data.error || 'unknown'), 'err');
+    }
+  } catch (e) {
+    setStatus('Send failed: ' + e.message, 'err');
+  }
+}
+
+sendBtn.addEventListener('click', sendText);
+clearBtn.addEventListener('click', () => {
+  transcript.value = '';
+  finalTranscript = '';
+  setStatus('Cleared', '');
+});
+
+// Speech Recognition
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+let finalTranscript = '';
+let autoSendTimer = null;
+
+if (!SpeechRecognition) {
+  micBtn.textContent = 'No Speech API';
+  micBtn.disabled = true;
+  setStatus('Web Speech API not available in this browser', 'err');
+}
+
+function startRecognition() {
+  if (!SpeechRecognition) return;
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = (event) => {
+    let interim = '';
+    finalTranscript = '';
+    for (let i = 0; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (result.isFinal) {
+        finalTranscript += result[0].transcript;
+      } else {
+        interim += result[0].transcript;
+      }
+    }
+    transcript.value = finalTranscript + (interim ? interim : '');
+
+    if (autoToggle.checked && finalTranscript.trim()) {
+      clearTimeout(autoSendTimer);
+      autoSendTimer = setTimeout(() => {
+        if (transcript.value.trim()) sendText();
+      }, parseInt(silenceDelay.value));
+    }
+  };
+
+  recognition.onerror = (event) => {
+    if (event.error === 'no-speech') return;
+    setStatus('Speech error: ' + event.error, 'err');
+  };
+
+  recognition.onend = () => {
+    if (isRecording) {
+      try { recognition.start(); } catch(e) {}
+    }
+  };
+
+  recognition.start();
+}
+
+function toggleMic() {
+  if (!SpeechRecognition) return;
+  isRecording = !isRecording;
+  if (isRecording) {
+    micBtn.textContent = 'Mic';
+    micBtn.classList.add('recording');
+    finalTranscript = transcript.value;
+    startRecognition();
+    setStatus('Listening...', '');
+  } else {
+    micBtn.textContent = 'Mic';
+    micBtn.classList.remove('recording');
+    if (recognition) recognition.stop();
+    clearTimeout(autoSendTimer);
+    setStatus('Mic off', '');
+  }
+}
+
+micBtn.addEventListener('click', toggleMic);
+
+// tmux pane viewer
+async function pollTmuxView() {
+  try {
+    const res = await fetch('/voice/view');
+    if (!res.ok) {
+      tmuxView.textContent = '(session not available)';
+      return;
+    }
+    const data = await res.json();
+    tmuxView.textContent = data.content || '(empty)';
+    if (autoScroll.checked) {
+      tmuxView.scrollTop = tmuxView.scrollHeight;
+    }
+  } catch (e) {
+    tmuxView.textContent = '(connection error)';
+  }
+}
+
+pollTmuxView();
+setInterval(pollTmuxView, 500);
+
+// Session controls
+async function sessionAction(action) {
+  const btns = document.querySelectorAll('.session-controls button');
+  btns.forEach(b => b.disabled = true);
+  setStatus(action === 'start' ? 'Starting Claude...' : action === 'restart' ? 'Restarting Claude...' : 'Stopping...', '');
+  try {
+    const res = await fetch('/voice/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await res.json();
+    setStatus(data.msg || data.error || 'done', data.ok ? 'ok' : 'err');
+  } catch (e) {
+    setStatus('Error: ' + e.message, 'err');
+  }
+  setTimeout(() => btns.forEach(b => b.disabled = false), 2000);
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'Enter') {
+    e.preventDefault();
+    sendText();
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    transcript.value = '';
+    finalTranscript = '';
+    setStatus('Cleared', '');
+  }
+  if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
+    e.preventDefault();
+    toggleMic();
+  }
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'm') {
+    e.preventDefault();
+    autoToggle.checked = !autoToggle.checked;
+    setStatus('Auto-send: ' + (autoToggle.checked ? 'ON' : 'OFF'), '');
+  }
+});
+</script>
+</body>
+</html>'''
 
     def _generate_html(self):
         """Build the full HTML page with form inputs grouped by section.
