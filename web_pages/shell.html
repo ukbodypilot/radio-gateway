@@ -352,11 +352,11 @@ function _updateNav() {
   fetch('/status').then(function(r){return r.json()}).then(function(s) {
     var checks = {
       'nav-radio': s.cat_enabled !== false,
-      'nav-d75': s.d75_enabled === true,
-      'nav-kv4p': s.kv4p_enabled === true,
+      'nav-d75': s.d75_enabled !== false,
+      'nav-kv4p': s.kv4p_enabled !== false,
       'nav-sdr': s.sdr1_enabled !== false,
-      'nav-adsb': s.adsb_enabled === true,
-      'nav-telegram': s.telegram_enabled === true
+      'nav-adsb': s.adsb_enabled !== false,
+      'nav-telegram': s.telegram_enabled !== false
     };
     for (var id in checks) {
       var el = document.getElementById(id);
