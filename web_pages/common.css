@@ -1,0 +1,45 @@
+/* Common styles for all gateway pages — loaded from /pages/common.css */
+:root {
+  /* Theme colors injected by common.js from /theme endpoint */
+  --t-bg: #1a1a2e;
+  --t-panel: #16213e;
+  --t-border: #0f3460;
+  --t-accent: #3498db;
+  --t-btn: #1a1a3e;
+  --t-btn-border: #2a2a5e;
+  --t-btn-hover: #2a2a5e;
+  --t-btn-active: #0f3460;
+  --t-checkbox: #3498db;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  background: var(--t-bg);
+  color: #e0e0e0;
+  margin: 0;
+  padding: 20px;
+}
+
+h1 { color: var(--t-accent); margin: 0 0 20px; font-size: 1.4em; }
+h2 { color: var(--t-accent); margin: 10px 0; font-size: 1.2em; }
+a { color: var(--t-accent); }
+
+/* Reusable button styles */
+.rb {
+  background: var(--t-btn);
+  border: 1px solid var(--t-btn-border);
+  color: #e0e0e0;
+  border-radius: 4px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+.rb:hover { background: var(--t-btn-hover); }
+.rb-sm { padding: 4px 10px; font-size: 0.8em; }
+.rb-active {
+  background: var(--t-btn-active);
+  border-color: var(--t-accent);
+  color: var(--t-accent);
+}

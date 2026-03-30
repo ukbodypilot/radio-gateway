@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gateway Logs</title>
+<link rel="stylesheet" href="/pages/common.css">
+</head>
+<body>
+
+<div style="margin-bottom:8px; display:flex; gap:10px; align-items:center;">
+  <label style="color:#888; font-size:0.85em;">
+    <input type="checkbox" id="auto-scroll" checked> Auto-scroll
+  </label>
+  <label style="color:#888; font-size:0.85em;">
+    Filter: <input type="text" id="log-filter" placeholder="regex..." style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:3px; padding:2px 6px; width:200px; font-size:0.85em;">
+  </label>
+  <button class="rb rb-sm" onclick="clearLog()">Clear</button>
+  <button class="rb rb-sm" id="btn-trace" onclick="toggleTrace('audio')">Audio Trace</button>
+  <button class="rb rb-sm" id="btn-watchdog" onclick="toggleTrace('watchdog')">Watchdog Trace</button>
+  <button class="rb rb-sm" id="btn-reboot" onclick="rebootHost()" style="background:#7f0000; border-color:#c0392b; color:#ffcccc; margin-left:auto;">Reboot Host</button>
+  <span id="log-status" style="color:#888; font-size:0.8em;"></span>
+</div>
+<div id="log-box" style="background:#0a0a0a; border:1px solid var(--t-btn-border); border-radius:4px; padding:8px; height:calc(100vh - 160px); overflow-y:auto; font-family:'Courier New',monospace; font-size:0.82em; line-height:1.5; white-space:pre-wrap; word-break:break-all; color:#c0c0c0;">
+</div>
+
+<script src="/pages/common.js"></script>
+<script>
+var _seq = 0;
+
+function clearLog() {
+  document.getElementById('log-box').innerHTML = '';
+}
+
+function toggleTrace(type) {
+  fetch('/tracecmd', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'type='+type})
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var btn = document.getElementById(type==='audio'?'btn-trace':'btn-watchdog');
+      if (d.active) {
+        btn.style.background = 'var(--t-btn-active)';
+        btn.style.borderColor = 'var(--t-accent)';
+        btn.style.color = 'var(--t-accent)';
+      } else {
+        btn.style.background = '';
+        btn.style.borderColor = '';
+        btn.style.color = '';
+      }
+    });
+}
+
+function updateTraceButtons() {
+  fetch('/tracestatus').then(function(r){ return r.json(); }).then(function(d) {
+    var ab = document.getElementById('btn-trace');
+    var wb = document.getElementById('btn-watchdog');
+    if (d.audio_trace) { ab.style.background='var(--t-btn-active)'; ab.style.borderColor='var(--t-accent)'; ab.style.color='var(--t-accent)'; }
+    if (d.watchdog_trace) { wb.style.background='var(--t-btn-active)'; wb.style.borderColor='var(--t-accent)'; wb.style.color='var(--t-accent)'; }
+  }).catch(function(){});
+}
+updateTraceButtons();
+
+function pollLogs() {
+  fetch('/logdata?after=' + _seq)
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.seq) _seq = d.seq;
+      if (d.lines && d.lines.length > 0) {
+        var box = document.getElementById('log-box');
+        var filter = document.getElementById('log-filter').value;
+        var re = null;
+        try { if (filter) re = new RegExp(filter, 'i'); } catch(e) {}
+        var frag = document.createDocumentFragment();
+        for (var i = 0; i < d.lines.length; i++) {
+          if (re && !re.test(d.lines[i])) continue;
+          var div = document.createElement('div');
+          div.textContent = d.lines[i];
+          var t = d.lines[i];
+          if (t.indexOf('error') >= 0 || t.indexOf('Error') >= 0 || t.indexOf('ERROR') >= 0)
+            div.style.color = '#e74c3c';
+          else if (t.indexOf('Warning') >= 0 || t.indexOf('warning') >= 0)
+            div.style.color = '#f39c12';
+          else if (t.indexOf('[CAT]') >= 0 || t.indexOf('CAT') >= 0)
+            div.style.color = '#3498db';
+          frag.appendChild(div);
+        }
+        box.appendChild(frag);
+        while (box.childNodes.length > 5000) box.removeChild(box.firstChild);
+        if (document.getElementById('auto-scroll').checked) {
+          box.scrollTop = box.scrollHeight;
+        }
+      }
+      document.getElementById('log-status').textContent = d.lines ? d.lines.length + ' new' : '';
+      setTimeout(pollLogs, 1000);
+    })
+    .catch(function() {
+      document.getElementById('log-status').textContent = 'offline';
+      setTimeout(pollLogs, 3000);
+    });
+}
+
+function rebootHost() {
+  if (!confirm('Reboot the host machine?')) return;
+  var btn = document.getElementById('btn-reboot');
+  btn.disabled = true;
+  btn.textContent = 'Rebooting...';
+  fetch('/reboothost', {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        document.getElementById('log-status').textContent = 'Host reboot initiated';
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Reboot Host';
+        alert('Reboot failed: ' + (d.error || 'unknown error'));
+      }
+    })
+    .catch(function() {
+      document.getElementById('log-status').textContent = 'Host reboot initiated';
+    });
+}
+
+// Load initial backlog
+fetch('/logdata?after=0')
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if (d.seq) _seq = d.seq;
+    if (d.lines) {
+      var box = document.getElementById('log-box');
+      for (var i = 0; i < d.lines.length; i++) {
+        var div = document.createElement('div');
+        div.textContent = d.lines[i];
+        box.appendChild(div);
+      }
+      box.scrollTop = box.scrollHeight;
+    }
+    setTimeout(pollLogs, 1000);
+  })
+  .catch(function(){ setTimeout(pollLogs, 1000); });
+</script>
+</body>
+</html>

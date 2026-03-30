@@ -653,6 +653,50 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
+                elif self.path == '/theme':
+                    # Theme config JSON — used by static HTML pages
+                    t = parent._get_theme()
+                    gw_name = str(getattr(parent.config, 'GATEWAY_NAME', '') or '').strip()
+                    data = {**t, 'gateway_name': gw_name}
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'max-age=60')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
+
+                elif self.path.startswith('/pages/'):
+                    # Serve static HTML files from web_pages/ directory
+                    import os as _os
+                    _page_name = self.path[7:]  # strip '/pages/'
+                    if '..' in _page_name or '/' in _page_name:
+                        self.send_response(403)
+                        self.end_headers()
+                        return
+                    _page_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages')
+                    _page_path = _os.path.join(_page_dir, _page_name)
+                    if _os.path.isfile(_page_path):
+                        _ct = 'text/html; charset=utf-8'
+                        if _page_name.endswith('.css'):
+                            _ct = 'text/css'
+                        elif _page_name.endswith('.js'):
+                            _ct = 'application/javascript'
+                        try:
+                            with open(_page_path, 'rb') as _f:
+                                _body = _f.read()
+                            self.send_response(200)
+                            self.send_header('Content-Type', _ct)
+                            self.send_header('Content-Length', str(len(_body)))
+                            self.end_headers()
+                            self.wfile.write(_body)
+                        except BrokenPipeError:
+                            pass
+                    else:
+                        self.send_response(404)
+                        self.end_headers()
+
                 elif self.path == '/sysinfo':
                     # System status JSON endpoint
                     data = parent._get_sysinfo()
@@ -1471,12 +1515,19 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
                 elif self.path == '/logs':
-                    # Log viewer page
-                    html = parent._generate_logs_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                    # Log viewer — static HTML page
+                    import os as _os
+                    _lp = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'logs.html')
+                    try:
+                        with open(_lp, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/tracestatus':
                     _gw = parent.gateway
                     _ts = {'audio_trace': False, 'watchdog_trace': False}
