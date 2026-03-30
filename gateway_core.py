@@ -104,7 +104,7 @@ from audio_sources import (
     AudioSource, AudioProcessor, AIOCRadioSource, FilePlaybackSource,
     EchoLinkSource,
     RemoteAudioServer, RemoteAudioSource, D75AudioSource,
-    KV4PCATClient, KV4PAudioSource, NetworkAnnouncementSource,
+    NetworkAnnouncementSource,
     WebMicSource, WebMonitorSource, LinkAudioSource, StreamOutputSource, generate_cw_pcm,
 )
 from audio_bus import ListenBus
@@ -1864,25 +1864,12 @@ class RadioGateway:
         self._sync_d75_processor()
         return self.d75_processor.process(pcm_data)
 
-    def _sync_kv4p_processor(self):
-        """Sync KV4P-specific config flags into the KV4P AudioProcessor instance."""
-        p = self.kv4p_processor
-        p.enable_noise_gate = getattr(self.config, 'KV4P_PROC_ENABLE_NOISE_GATE', False)
-        p.gate_threshold = getattr(self.config, 'KV4P_PROC_NOISE_GATE_THRESHOLD', -40)
-        p.gate_attack = getattr(self.config, 'KV4P_PROC_NOISE_GATE_ATTACK', 0.01)
-        p.gate_release = getattr(self.config, 'KV4P_PROC_NOISE_GATE_RELEASE', 0.1)
-        p.enable_hpf = getattr(self.config, 'KV4P_PROC_ENABLE_HPF', True)
-        p.hpf_cutoff = getattr(self.config, 'KV4P_PROC_HPF_CUTOFF', 300)
-        p.enable_lpf = getattr(self.config, 'KV4P_PROC_ENABLE_LPF', False)
-        p.lpf_cutoff = getattr(self.config, 'KV4P_PROC_LPF_CUTOFF', 3000)
-        p.enable_notch = getattr(self.config, 'KV4P_PROC_ENABLE_NOTCH', False)
-        p.notch_freq = getattr(self.config, 'KV4P_PROC_NOTCH_FREQ', 1000)
-        p.notch_q = getattr(self.config, 'KV4P_PROC_NOTCH_Q', 30.0)
+    def _sync_kv4p_plugin_processor(self):
+        """Sync KV4P processing config into the KV4PPlugin's processor."""
+        if self.kv4p_plugin and self.kv4p_plugin._processor:
+            self.kv4p_plugin._sync_processor()
 
-    def process_audio_for_kv4p(self, pcm_data):
-        """Apply KV4P-specific audio processing chain."""
-        self._sync_kv4p_processor()
-        return self.kv4p_processor.process(pcm_data)
+    # process_audio_for_kv4p removed — KV4PPlugin handles processing internally
 
     def process_audio_for_mumble(self, pcm_data):
         """Apply all enabled audio processing to clean up radio audio before sending to Mumble.
@@ -3004,42 +2991,28 @@ class RadioGateway:
                     daemon=True, name="D75-retry"
                 ).start()
 
-            # Initialize KV4P HT Radio
+            # Initialize KV4P HT Radio (plugin)
+            self.kv4p_plugin = None
             if getattr(self.config, 'ENABLE_KV4P', False):
                 try:
-                    kv4p_port = str(self.config.KV4P_PORT)
-                    verbose = getattr(self.config, 'VERBOSE_LOGGING', False)
-                    print(f"Connecting to KV4P HT ({kv4p_port})...")
-                    # Create audio source FIRST so callback is ready before radio starts streaming
-                    try:
-                        self.kv4p_audio_source = KV4PAudioSource(self.config, self)
-                        if self.kv4p_audio_source.setup_audio():
-                            self.kv4p_audio_source.enabled = True
-                            self.kv4p_audio_source.muted = self.kv4p_muted
-                            self.kv4p_audio_source.duck = getattr(self.config, 'KV4P_AUDIO_DUCK', True)
-                            self.kv4p_audio_source.sdr_priority = int(getattr(self.config, 'KV4P_AUDIO_PRIORITY', 2))
-                        else:
-                            self.kv4p_audio_source = None
-                    except Exception as e:
-                        print(f"  ⚠ KV4P audio error: {e}")
-                        self.kv4p_audio_source = None
-                    self.kv4p_cat = KV4PCATClient(kv4p_port, self.config, verbose=verbose)
-                    # Wire callback BEFORE connect so no frames are missed
-                    if self.kv4p_audio_source:
-                        self.kv4p_cat.on_rx_audio = self.kv4p_audio_source.on_opus_rx
-                    if self.kv4p_cat.connect():
-                        print(f"  Connected: fw v{self.kv4p_cat._firmware_version}, {self.kv4p_cat._rf_module}")
-                        if self.kv4p_audio_source:
-                            self.mixer.add_source(self.kv4p_audio_source, bus_priority=int(getattr(self.config, 'KV4P_AUDIO_PRIORITY', 2)) + 10, duckable=getattr(self.config, 'KV4P_AUDIO_DUCK', True))
-                            print(f"  KV4P audio source added to mixer")
-                        self.kv4p_cat.start_polling()
-                        print(f"  Tuned to {self.kv4p_cat._frequency:.4f} MHz")
+                    from kv4p_plugin import KV4PPlugin
+                    print(f"Initializing KV4P plugin...")
+                    self.kv4p_plugin = KV4PPlugin()
+                    if self.kv4p_plugin.setup(self.config):
+                        self.mixer.add_source(self.kv4p_plugin, bus_priority=int(getattr(self.config, 'KV4P_AUDIO_PRIORITY', 2)) + 10, duckable=getattr(self.config, 'KV4P_AUDIO_DUCK', True))
+                        print("✓ KV4P plugin added to mixer")
                     else:
-                        print("  Failed to connect to KV4P HT")
-                        self.kv4p_cat = None
+                        print("⚠ Warning: KV4P plugin setup failed")
+                        self.kv4p_plugin = None
                 except Exception as e:
-                    print(f"  KV4P error: {e}")
-                    self.kv4p_cat = None
+                    print(f"⚠ KV4P plugin error: {e}")
+                    import traceback; traceback.print_exc()
+                    self.kv4p_plugin = None
+            # Backward compat
+            self.kv4p_audio_source = self.kv4p_plugin
+            self.kv4p_cat = self.kv4p_plugin
+            if self.kv4p_plugin and self.kv4p_plugin._processor:
+                self.kv4p_processor = self.kv4p_plugin._processor
 
             # Initialize Gateway Link (duplex audio + command protocol)
             if getattr(self.config, 'ENABLE_GATEWAY_LINK', False):
@@ -5168,7 +5141,7 @@ class RadioGateway:
                 'hpf':   'KV4P_PROC_ENABLE_HPF',
                 'lpf':   'KV4P_PROC_ENABLE_LPF',
                 'notch': 'KV4P_PROC_ENABLE_NOTCH',
-            }, '_sync_kv4p_processor'),
+            }, '_sync_kv4p_plugin_processor'),
         }
         entry = _source_map.get(source)
         if not entry:

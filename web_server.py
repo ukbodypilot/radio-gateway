@@ -782,18 +782,13 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
                 elif self.path == '/kv4pstatus':
-                    # KV4P status JSON endpoint
+                    # KV4P status JSON endpoint — served by KV4PPlugin
                     data = {'connected': False, 'kv4p_enabled': False}
                     if parent.gateway:
                         data['kv4p_enabled'] = getattr(parent.gateway.config, 'ENABLE_KV4P', False)
-                        if parent.gateway.kv4p_cat:
-                            data.update(parent.gateway.kv4p_cat.get_radio_state())
-                        if parent.gateway.kv4p_audio_source:
-                            data['audio_connected'] = parent.gateway.kv4p_audio_source.server_connected
-                            data['audio_level'] = parent.gateway.kv4p_audio_source.audio_level
-                            data['audio_boost'] = int(parent.gateway.kv4p_audio_source.audio_boost * 100)
-                        else:
-                            data['audio_connected'] = False
+                        _kv4p_p = getattr(parent.gateway, 'kv4p_plugin', None)
+                        if _kv4p_p:
+                            data.update(_kv4p_p.get_status())
                     try:
                         self.send_response(200)
                         self.send_header('Content-Type', 'application/json')
@@ -2263,206 +2258,74 @@ class WebConfigServer:
                         pass
                     return
                 elif self.path == '/kv4pcmd':
-                    # KV4P HT command endpoint
+                    # KV4P command endpoint — routed to KV4PPlugin
                     length = int(self.headers.get('Content-Length', 0))
                     body = self.rfile.read(length).decode('utf-8')
-                    result = {'ok': False}
+                    result = {'ok': False, 'error': 'KV4P plugin not available'}
                     try:
                         data = json_mod.loads(body)
-                        cmd = data.get('cmd', '')
-                        args = data.get('args', '')
-                        gw = parent.gateway
-                        if gw and gw.kv4p_cat:
-                            cat = gw.kv4p_cat
+                        _kv4p_p = getattr(parent.gateway, 'kv4p_plugin', None) if parent.gateway else None
+                        if _kv4p_p:
+                            cmd = data.get('cmd', '')
+                            args = data.get('args', '')
+                            # Map web UI command format to plugin execute format
                             if cmd == 'freq':
-                                try:
-                                    freq = float(args)
-                                    cat.set_frequency(freq)
-                                    result = {'ok': True, 'response': f'Tuned to {freq:.4f} MHz'}
-                                except (ValueError, TypeError):
-                                    result = {'ok': False, 'error': 'Invalid frequency'}
+                                result = _kv4p_p.execute({'cmd': 'freq', 'frequency': float(args)})
                             elif cmd == 'txfreq':
-                                try:
-                                    tx_freq = float(args)
-                                    cat.set_frequency(cat._frequency, tx_freq)
-                                    result = {'ok': True, 'response': f'TX freq set to {tx_freq:.4f} MHz'}
-                                except (ValueError, TypeError):
-                                    result = {'ok': False, 'error': 'Invalid frequency'}
+                                result = _kv4p_p.execute({'cmd': 'freq', 'frequency': _kv4p_p._frequency, 'tx_frequency': float(args)})
                             elif cmd == 'squelch':
-                                try:
-                                    cat.set_squelch(int(args))
-                                    result = {'ok': True, 'response': f'Squelch set to {cat._squelch}'}
-                                except (ValueError, TypeError):
-                                    result = {'ok': False, 'error': 'Invalid squelch level'}
+                                result = _kv4p_p.execute({'cmd': 'squelch', 'level': int(args)})
                             elif cmd == 'ctcss':
-                                try:
-                                    # DRA818V codes 1-38 (0=none), no 69.3 Hz
-                                    _ctcss_hz = ["67.0","71.9","74.4","77.0","79.7","82.5","85.4","88.5",
-                                        "91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0",
-                                        "127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9",
-                                        "173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"]
-                                    def _hz_to_code(s):
-                                        s = str(s).strip()
-                                        if s == '0' or s.lower() in ('none', ''):
-                                            return 0
-                                        try:
-                                            # Try as Hz string first (e.g. "103.5")
-                                            idx = _ctcss_hz.index(s)
-                                            return idx + 1  # 1-based code
-                                        except ValueError:
-                                            pass
-                                        # Try as raw integer code
-                                        return int(float(s))
-                                    parts = str(args).split()
-                                    tx = _hz_to_code(parts[0]) if len(parts) > 0 else 0
-                                    rx = _hz_to_code(parts[1]) if len(parts) > 1 else tx
-                                    cat.set_ctcss(tx=tx, rx=rx)
-                                    result = {'ok': True, 'response': f'CTCSS TX={cat._ctcss_tx} RX={cat._ctcss_rx}'}
-                                except (ValueError, TypeError, IndexError):
-                                    result = {'ok': False, 'error': 'Invalid CTCSS value'}
-                            elif cmd == 'bandwidth':
-                                wide = str(args).lower() in ('1', 'wide', 'true')
-                                cat.set_bandwidth(wide)
-                                result = {'ok': True, 'response': f'Bandwidth: {"wide" if wide else "narrow"}'}
-                            elif cmd == 'power':
-                                high = str(args).lower() in ('1', 'high', 'true', 'h')
-                                cat.set_power(high)
-                                result = {'ok': True, 'response': f'Power: {"high" if high else "low"}'}
-                            elif cmd == 'ptt':
-                                if cat._transmitting:
-                                    cat.ptt_off()
-                                else:
-                                    cat.ptt_on()
-                                result = {'ok': True, 'response': f'PTT {"ON" if cat._transmitting else "OFF"}'}
-                            elif cmd == 'smeter':
-                                enabled = str(args).lower() in ('1', 'true', 'on', '')
-                                cat.enable_smeter(enabled)
-                                result = {'ok': True, 'response': f'S-meter {"enabled" if enabled else "disabled"}'}
-                            elif cmd == 'vol':
-                                try:
-                                    pct = int(args)
-                                    pct = max(0, min(500, pct))
-                                    if gw.kv4p_audio_source:
-                                        gw.kv4p_audio_source.audio_boost = pct / 100.0
-                                    result = {'ok': True, 'response': f'boost={pct}%'}
-                                except (ValueError, TypeError):
-                                    result = {'ok': False, 'error': 'usage: vol 0-500 (percentage)'}
-                            elif cmd == 'testtone':
-                                # Toggle a continuous test tone into the audio source.
-                                # Runs in a background thread, feeding frames at real-time rate.
-                                import math as _math
-                                import struct
-                                src = gw.kv4p_audio_source
-                                if not src:
-                                    result = {'ok': False, 'error': 'KV4P audio source not initialized'}
-                                elif getattr(gw, '_kv4p_testtone_active', False):
-                                    # Stop existing tone
-                                    gw._kv4p_testtone_active = False
-                                    result = {'ok': True, 'response': 'Test tone stopped'}
-                                else:
-                                    # Start tone — generate frames matching mixer chunk size
+                                _ctcss_hz = ["67.0","71.9","74.4","77.0","79.7","82.5","85.4","88.5",
+                                    "91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0",
+                                    "127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9",
+                                    "173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"]
+                                def _hz_to_code(s):
+                                    s = str(s).strip()
+                                    if s == '0' or s.lower() in ('none', ''):
+                                        return 0
                                     try:
-                                        tone_freq = float(args) if args else 400.0
-                                    except (ValueError, TypeError):
-                                        tone_freq = 400.0
-                                    sr = gw.config.AUDIO_RATE
-                                    chunk_samples = gw.config.AUDIO_CHUNK_SIZE  # 2400 samples = 50ms
-                                    chunk_ms = chunk_samples / sr  # 0.05s
-                                    # Pre-generate one second of frames (20 frames at 50ms each)
-                                    tone_frames = []
-                                    for f_idx in range(20):
-                                        offset = f_idx * chunk_samples
-                                        tone_frames.append(struct.pack(f'<{chunk_samples}h', *[
-                                            int(_math.sin(2 * _math.pi * tone_freq * (offset + i) / sr) * 0.5 * 32767)
-                                            for i in range(chunk_samples)
-                                        ]))
-                                    import threading as _threading_mod
-                                    gw._kv4p_testtone_active = True
-                                    def _tone_loop():
-                                        idx = 0
-                                        t0 = time.monotonic()
-                                        while getattr(gw, '_kv4p_testtone_active', False):
-                                            # Clear any radio audio to prevent mixing
-                                            src._chunk_queue.clear()
-                                            src._sub_buffer = b''
-                                            # Feed tone directly into sub_buffer at exact chunk size
-                                            src._sub_buffer = tone_frames[idx % len(tone_frames)]
-                                            idx += 1
-                                            target = t0 + idx * chunk_ms
-                                            now = time.monotonic()
-                                            if target > now:
-                                                time.sleep(target - now)
-                                        gw._kv4p_testtone_active = False
-                                    _threading_mod.Thread(target=_tone_loop, daemon=True, name="KV4P-testtone").start()
-                                    result = {'ok': True, 'response': f'{tone_freq:.0f}Hz tone started — press again to stop'}
+                                        return _ctcss_hz.index(s) + 1
+                                    except ValueError:
+                                        return int(float(s))
+                                parts = str(args).split()
+                                tx = _hz_to_code(parts[0]) if len(parts) > 0 else 0
+                                rx = _hz_to_code(parts[1]) if len(parts) > 1 else tx
+                                result = _kv4p_p.execute({'cmd': 'ctcss', 'tx': tx, 'rx': rx})
+                            elif cmd == 'bandwidth':
+                                result = _kv4p_p.execute({'cmd': 'bandwidth', 'wide': str(args).lower() in ('1', 'wide', 'true')})
+                            elif cmd == 'power':
+                                result = _kv4p_p.execute({'cmd': 'power', 'high': str(args).lower() in ('1', 'high', 'true', 'h')})
+                            elif cmd == 'ptt':
+                                result = _kv4p_p.execute({'cmd': 'ptt', 'state': not _kv4p_p._transmitting})
+                            elif cmd == 'smeter':
+                                if _kv4p_p._radio:
+                                    _kv4p_p._radio.enable_smeter(str(args).lower() in ('1', 'true', 'on', ''))
+                                result = {'ok': True}
+                            elif cmd == 'vol':
+                                result = _kv4p_p.execute({'cmd': 'boost', 'value': int(args) / 100.0})
+                            elif cmd == 'testtone':
+                                result = _kv4p_p.execute({'cmd': 'testtone', 'frequency': float(args) if args else 440})
                             elif cmd == 'record':
-                                # Record get_audio output to WAV for analysis
-                                import wave as _wave
-                                import os as _os
-                                _rec_src = gw.kv4p_audio_source
-                                wav_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'tools', 'kv4p_capture.wav')
-                                if getattr(_rec_src, '_recording_file', None):
-                                    # Stop recording, finalize WAV
-                                    _rec_src._recording_file.close()
-                                    raw_path = wav_path + '.raw'
-                                    raw_size = _os.path.getsize(raw_path)
-                                    with open(raw_path, 'rb') as rf:
-                                        raw_data = rf.read()
-                                    with _wave.open(wav_path, 'w') as wf:
-                                        wf.setnchannels(1)
-                                        wf.setsampwidth(2)
-                                        wf.setframerate(48000)
-                                        wf.writeframes(raw_data)
-                                    _os.remove(raw_path)
-                                    _rec_src._recording_file = None
-                                    dur = len(raw_data) / 96000.0
-                                    result = {'ok': True, 'response': f'Saved {dur:.1f}s to {wav_path}'}
-                                else:
-                                    # Start recording
-                                    _os.makedirs(_os.path.dirname(wav_path), exist_ok=True)
-                                    raw_path = wav_path + '.raw'
-                                    _rec_src._recording_file = open(raw_path, 'wb')
-                                    result = {'ok': True, 'response': 'Recording started — send record again to stop'}
+                                result = _kv4p_p.execute({'cmd': 'capture'})
                             elif cmd == 'reconnect':
-                                try:
-                                    cat.close()
-                                    kv4p_port = str(gw.config.KV4P_PORT)
-                                    verbose = getattr(gw.config, 'VERBOSE_LOGGING', False)
-                                    gw.kv4p_cat = KV4PCATClient(kv4p_port, gw.config, verbose=verbose)
-                                    if gw.kv4p_cat.connect():
-                                        if gw.kv4p_audio_source:
-                                            gw.kv4p_cat.on_rx_audio = gw.kv4p_audio_source.on_opus_rx
-                                        gw.kv4p_cat.start_polling()
-                                        result = {'ok': True, 'response': 'Reconnected'}
-                                    else:
-                                        gw.kv4p_cat = None
-                                        result = {'ok': False, 'error': 'Reconnect failed'}
-                                except Exception as e:
-                                    result = {'ok': False, 'error': str(e)}
+                                result = _kv4p_p.execute({'cmd': 'reconnect'})
                             else:
-                                result = {'ok': False, 'error': f'Unknown command: {cmd}'}
-                        elif cmd == 'reconnect':
-                            # Reconnect even when kv4p_cat is None
+                                result = _kv4p_p.execute(data)
+                        elif data.get('cmd') == 'reconnect' and parent.gateway:
+                            # Reconnect even when plugin is None — recreate it
                             try:
-                                if gw.kv4p_cat:
-                                    try: gw.kv4p_cat.close()
-                                    except: pass
-                                kv4p_port = str(gw.config.KV4P_PORT)
-                                verbose = getattr(gw.config, 'VERBOSE_LOGGING', False)
-                                gw.kv4p_cat = KV4PCATClient(kv4p_port, gw.config, verbose=verbose)
-                                if gw.kv4p_audio_source:
-                                    gw.kv4p_cat.on_rx_audio = gw.kv4p_audio_source.on_opus_rx
-                                if gw.kv4p_cat.connect():
-                                    gw.kv4p_cat.start_polling()
+                                from kv4p_plugin import KV4PPlugin
+                                parent.gateway.kv4p_plugin = KV4PPlugin()
+                                if parent.gateway.kv4p_plugin.setup(parent.gateway.config):
+                                    parent.gateway.kv4p_audio_source = parent.gateway.kv4p_plugin
+                                    parent.gateway.kv4p_cat = parent.gateway.kv4p_plugin
                                     result = {'ok': True, 'response': 'Reconnected'}
                                 else:
-                                    gw.kv4p_cat = None
-                                    result = {'ok': False, 'error': 'Reconnect failed — check USB'}
+                                    parent.gateway.kv4p_plugin = None
+                                    result = {'ok': False, 'error': 'Reconnect failed'}
                             except Exception as e:
-                                gw.kv4p_cat = None
-                                result = {'ok': False, 'error': f'Reconnect error: {e}'}
-                        else:
-                            result = {'ok': False, 'error': 'KV4P not connected — try Reconnect'}
+                                result = {'ok': False, 'error': str(e)}
                     except Exception as e:
                         result = {'ok': False, 'error': str(e)}
                     try:
