@@ -30,8 +30,12 @@ any work on the mixer.
 - [x] Verified parity — gateway running on ListenBus, user confirmed working (2026-03-29)
 
 ## Next Steps (in order)
-8. [ ] Define RadioPlugin base class (standard interface: get_audio/put_audio/setup/teardown/get_status)
-9. [ ] Refactor SDR into SDRPlugin (RSPduo dual tuner as single plugin, internal master/slave ducking)
+8. [x] Unified RadioPlugin.get_audio signature to return (bytes, bool) tuple (2026-03-29)
+9. [x] Built SDRPlugin in sdr_plugin.py (RSPduo dual tuner, internal ducking, absorbed RTLAirbandManager) (2026-03-29)
+9a. [x] Wired into gateway_core.py (replaces ~80 lines of SDR init with ~15 lines)
+9b. [x] Wired web_server.py /sdrstatus and /sdrcmd to plugin
+9c. [x] _SDRTunerView backward compat for sdr_source/sdr2_source references
+9d. [ ] NEEDS TESTING — gateway restart required
 10. [ ] Refactor TH-9800, D75, KV4P into plugins
 11. [ ] Build SoloBus (takes a RadioPlugin)
 12. [ ] Build DuplexRepeaterBus (connects two RadioPlugins)

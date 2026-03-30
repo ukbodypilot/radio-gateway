@@ -756,13 +756,13 @@ class RadioPlugin:
         """Clean shutdown of hardware."""
         pass
 
-    def get_audio(self):
+    def get_audio(self, chunk_size=4800):
         """Read one chunk of PCM audio from hardware.
 
-        Returns bytes (48 kHz 16-bit signed LE mono, 4800 bytes = 50 ms)
-        or ``None`` if no data is available.
+        Returns (bytes_or_none, should_trigger_ptt) to match AudioSource contract.
+        Default chunk: 48 kHz 16-bit signed LE mono, 4800 bytes = 50 ms.
         """
-        return None
+        return None, False
 
     def put_audio(self, pcm):
         """Write PCM audio to hardware for playback / transmission."""
@@ -897,18 +897,18 @@ class AudioPlugin(RadioPlugin):
             self._pa = None
         print("  [Link] AudioPlugin: teardown complete")
 
-    def get_audio(self):
+    def get_audio(self, chunk_size=None):
         """Read one 50 ms chunk from the input stream, applying RX gain."""
         if not self._in_stream:
-            return None
+            return None, False
         try:
             data = self._in_stream.read(self.CHUNK_FRAMES, exception_on_overflow=False)
             if data and self._rx_gain_db != 0.0:
                 data = self._apply_volume(data, self._db_to_linear(self._rx_gain_db))
-            return data
+            return data, False
         except Exception as e:
             print(f"  [Link] AudioPlugin: read error: {e}")
-            return None
+            return None, False
 
     def put_audio(self, pcm):
         """Write PCM audio to the output stream, applying TX gain."""
