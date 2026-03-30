@@ -480,15 +480,33 @@ class CloudflareTunnel:
                                 f.write(self._url)
                         except Exception:
                             pass
+                # Validate the URL is still live — stale quick tunnels return 502/530
                 if self._url:
-                    print(f"  [Tunnel] Reusing existing cloudflared (URL: {self._url})")
+                    try:
+                        import urllib.request
+                        req = urllib.request.Request(self._url, method='HEAD')
+                        resp = urllib.request.urlopen(req, timeout=5)
+                        if resp.status < 500:
+                            print(f"  [Tunnel] Reusing existing cloudflared (URL: {self._url})")
+                            return
+                    except Exception:
+                        pass
+                    # URL is stale — kill old cloudflared and start fresh
+                    print(f"  [Tunnel] Stale tunnel URL detected — restarting cloudflared")
+                    self._url = None
+                    try:
+                        subprocess.run(['pkill', '-x', 'cloudflared'], capture_output=True, timeout=5)
+                        time.sleep(2)
+                    except Exception:
+                        pass
+                    self._adopted = False
+                    # Fall through to launch new one
                 else:
                     print(f"  [Tunnel] Reusing existing cloudflared (URL not yet cached)")
-                    # Tail log/URL file in background until URL appears
                     self._thread = threading.Thread(target=self._tail_log, daemon=True,
                                                     name="cf-tunnel")
                     self._thread.start()
-                return
+                    return
         except Exception:
             pass
 
