@@ -99,6 +99,9 @@ any work on the mixer.
 | 2026-03-30 | Web modularization | PASS | 13 pages extracted to static HTML in web_pages/ |
 | 2026-03-30 | Dead code cleanup | PASS | _generate_* methods removed (-5375 lines from web_server.py) |
 | 2026-03-30 | Nav status fields | PASS | adsb_enabled + telegram_enabled added to /status |
+| 2026-03-30 | Web dead code removal | PASS | 13 _generate_* methods removed (-5375 lines) |
+| 2026-03-30 | Routing UI | PASS | Drawflow node editor, save/load, source/bus/sink wiring |
+| 2026-03-30 | TX radio sinks | PASS | KV4P/D75/TH-9800 [TX] appear in sink column |
 
 ## Known Issues
 (none yet)
