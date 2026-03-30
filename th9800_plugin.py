@@ -299,8 +299,10 @@ class TH9800Plugin(RadioPlugin):
         """Open AIOC HID device for GPIO PTT."""
         try:
             import hid
-            vid = int(getattr(self._config, 'AIOC_VID', '0x1209'), 0)
-            pid = int(getattr(self._config, 'AIOC_PID', '0x7388'), 0)
+            _vid = getattr(self._config, 'AIOC_VID', 0x1209)
+            _pid = getattr(self._config, 'AIOC_PID', 0x7388)
+            vid = int(str(_vid), 16) if isinstance(_vid, str) else int(_vid)
+            pid = int(str(_pid), 16) if isinstance(_pid, str) else int(_pid)
             self._aioc_device = hid.Device(vid=vid, pid=pid)
             self._aioc_available = True
             print(f"  TH-9800: AIOC HID opened ({self._aioc_device.product})")
