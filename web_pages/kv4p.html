@@ -1,13 +1,49 @@
 <!DOCTYPE html>
-<html>
-<head>
+<html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>KV4P Control</title>
-<link rel="stylesheet" href="/pages/common.css">
-</head>
-<body>
-
+<title>Dell - Radio Gateway - KV4P Control</title>
+<style>
+  :root {
+    --t-bg: #1a1a2e; --t-panel: #16213e; --t-border: #0f3460;
+    --t-accent: #00d4ff; --t-btn: #0d1b2a; --t-btn-border: #1b3a5c;
+    --t-btn-hover: #1a2744; --t-btn-active: #0f3460;
+    --t-checkbox: #00d4ff;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+         background: var(--t-bg); color: #e0e0e0; margin: 0; padding: 20px; }
+  h1 { color: var(--t-accent); margin: 0 0 20px; font-size: 1.4em; }
+  h2 { color: var(--t-accent); margin: 10px 0; font-size: 1.2em; }
+  a { color: var(--t-accent); }
+  details { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px;
+            margin: 8px 0; }
+  summary { cursor: pointer; padding: 10px 14px; font-weight: bold; color: var(--t-accent);
+            font-size: 0.95em; user-select: none; }
+  summary:hover { background: var(--t-btn-hover); }
+  .fields { padding: 8px 14px 14px; }
+  .field { display: flex; align-items: center; margin: 4px 0; gap: 8px; }
+  .field label { min-width: 320px; font-size: 0.85em; color: #b0b0b0; }
+  .field input[type="text"], .field input[type="number"], .field input[type="password"], .field select {
+    flex: 1; background: var(--t-btn); border: 1px solid var(--t-btn-border); color: #e0e0e0;
+    padding: 5px 8px; border-radius: 3px; font-family: monospace; font-size: 0.85em;
+    max-width: 500px; }
+  .field input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--t-checkbox); }
+  .field .default { font-size: 0.75em; color: #ffffff; margin-left: 8px; }
+  .buttons { position: sticky; top: 0; background: var(--t-bg); padding: 10px 0;
+             z-index: 10; border-bottom: 1px solid var(--t-border); margin-bottom: 10px;
+             display: flex; gap: 10px; }
+  button { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer;
+           font-size: 0.9em; font-weight: bold; }
+  .btn-save { background: var(--t-border); color: #e0e0e0; }
+  .btn-save:hover { background: var(--t-btn-hover); }
+  .btn-restart { background: #c0392b; color: #fff; }
+  .btn-restart:hover { background: #e74c3c; }
+  .btn-exit { background: #7d3c98; color: #fff; margin-left: auto; }
+  .btn-exit:hover { background: #9b59b6; }
+</style>
+<script>var _T={bg:'#1a1a2e',panel:'#16213e',border:'#0f3460',accent:'#00d4ff',btn:'#0d1b2a',btnBorder:'#1b3a5c',btnHover:'#1a2744',btnActive:'#0f3460'}</script>
+</head><body>
 
 <style>
 .rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
@@ -137,7 +173,124 @@
       <span class="kv-label">CTCSS TX:</span><br>
       <select id="kv-ctcss-tx" class="kv-input" onfocus="_ctrlEditUntil=Date.now()+30000">
         <option value="0">None</option>
-        
-<script src="/pages/common.js"></script>
-</body>
-</html>
+        <option value="67.0">67.0 Hz</option><option value="71.9">71.9 Hz</option><option value="74.4">74.4 Hz</option><option value="77.0">77.0 Hz</option><option value="79.7">79.7 Hz</option><option value="82.5">82.5 Hz</option><option value="85.4">85.4 Hz</option><option value="88.5">88.5 Hz</option><option value="91.5">91.5 Hz</option><option value="94.8">94.8 Hz</option><option value="97.4">97.4 Hz</option><option value="100.0">100.0 Hz</option><option value="103.5">103.5 Hz</option><option value="107.2">107.2 Hz</option><option value="110.9">110.9 Hz</option><option value="114.8">114.8 Hz</option><option value="118.8">118.8 Hz</option><option value="123.0">123.0 Hz</option><option value="127.3">127.3 Hz</option><option value="131.8">131.8 Hz</option><option value="136.5">136.5 Hz</option><option value="141.3">141.3 Hz</option><option value="146.2">146.2 Hz</option><option value="151.4">151.4 Hz</option><option value="156.7">156.7 Hz</option><option value="162.2">162.2 Hz</option><option value="167.9">167.9 Hz</option><option value="173.8">173.8 Hz</option><option value="179.9">179.9 Hz</option><option value="186.2">186.2 Hz</option><option value="192.8">192.8 Hz</option><option value="203.5">203.5 Hz</option><option value="210.7">210.7 Hz</option><option value="218.1">218.1 Hz</option><option value="225.7">225.7 Hz</option><option value="233.6">233.6 Hz</option><option value="241.8">241.8 Hz</option><option value="250.3">250.3 Hz</option>
+      </select>
+    </div>
+    <div>
+      <span class="kv-label">CTCSS RX:</span><br>
+      <select id="kv-ctcss-rx" class="kv-input" onfocus="_ctrlEditUntil=Date.now()+30000">
+        <option value="0">None</option>
+        <option value="67.0">67.0 Hz</option><option value="71.9">71.9 Hz</option><option value="74.4">74.4 Hz</option><option value="77.0">77.0 Hz</option><option value="79.7">79.7 Hz</option><option value="82.5">82.5 Hz</option><option value="85.4">85.4 Hz</option><option value="88.5">88.5 Hz</option><option value="91.5">91.5 Hz</option><option value="94.8">94.8 Hz</option><option value="97.4">97.4 Hz</option><option value="100.0">100.0 Hz</option><option value="103.5">103.5 Hz</option><option value="107.2">107.2 Hz</option><option value="110.9">110.9 Hz</option><option value="114.8">114.8 Hz</option><option value="118.8">118.8 Hz</option><option value="123.0">123.0 Hz</option><option value="127.3">127.3 Hz</option><option value="131.8">131.8 Hz</option><option value="136.5">136.5 Hz</option><option value="141.3">141.3 Hz</option><option value="146.2">146.2 Hz</option><option value="151.4">151.4 Hz</option><option value="156.7">156.7 Hz</option><option value="162.2">162.2 Hz</option><option value="167.9">167.9 Hz</option><option value="173.8">173.8 Hz</option><option value="179.9">179.9 Hz</option><option value="186.2">186.2 Hz</option><option value="192.8">192.8 Hz</option><option value="203.5">203.5 Hz</option><option value="210.7">210.7 Hz</option><option value="218.1">218.1 Hz</option><option value="225.7">225.7 Hz</option><option value="233.6">233.6 Hz</option><option value="241.8">241.8 Hz</option><option value="250.3">250.3 Hz</option>
+      </select>
+    </div>
+    <button class="rb rb-sm" onclick="kvCmd('ctcss',document.getElementById('kv-ctcss-tx').value+' '+document.getElementById('kv-ctcss-rx').value)" style="align-self:flex-end;">Set CTCSS</button>
+  </div>
+</div>
+
+</div><!-- end kv-panel -->
+
+<script>
+var _ctrlEditUntil = 0;
+var _ctcss_tones = ["67.0","71.9","74.4","77.0","79.7","82.5","85.4","88.5","91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0","127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9","173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"];
+function _ctcssCode2Hz(code) {
+  // code 0 = none, code 1..N = tones[0..N-1]
+  if (!code || code <= 0) return '0';
+  var t = _ctcss_tones[code - 1];
+  return t !== undefined ? t : '0';
+}
+function kvCmd(cmd, args) {
+  var body = {cmd: cmd};
+  if (args !== undefined) body.args = String(args);
+  fetch('/kv4pcmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var fb = document.getElementById('kv-feedback');
+      if (d.ok) {
+        fb.style.color = '#2ecc71';
+        fb.textContent = d.response || 'OK';
+      } else {
+        fb.style.color = '#e74c3c';
+        fb.textContent = d.error || 'Error';
+      }
+      setTimeout(function(){ fb.textContent = ''; }, 4000);
+    });
+}
+
+function kvPoll() {
+  fetch('/kv4pstatus').then(function(r){return r.json()}).then(function(d) {
+    var offline = document.getElementById('kv-offline');
+    var panel = document.getElementById('kv-panel');
+
+    if (!d.kv4p_enabled) {
+      offline.style.display = 'block';
+      panel.style.display = 'none';
+      document.getElementById('kv-status-detail').textContent = 'KV4P disabled in config';
+      return;
+    }
+    if (!d.connected) {
+      offline.style.display = 'block';
+      panel.style.display = 'none';
+      document.getElementById('kv-status-detail').textContent = 'Not connected — check USB';
+      return;
+    }
+
+    offline.style.display = 'none';
+    panel.style.display = 'block';
+
+    // Status bar
+    document.getElementById('kv-fw').textContent = 'v' + (d.firmware_version || '?');
+    document.getElementById('kv-module').textContent = d.rf_module || '?';
+    document.getElementById('kv-audio-status').textContent = d.audio_connected ? 'Connected' : 'No codec';
+    document.getElementById('kv-tx-badge').style.display = d.transmitting ? 'inline' : 'none';
+
+    // Red background on freq display during TX
+    var kvFreqBox = document.getElementById('kv-freq-box');
+    kvFreqBox.style.background = d.transmitting ? '#5c1a1a' : '';
+    kvFreqBox.style.borderColor = d.transmitting ? '#e74c3c' : '';
+
+    // Frequency
+    var rxf = d.frequency || '0.000000';
+    document.getElementById('kv-rx-freq').textContent = parseFloat(rxf).toFixed(4);
+
+    var txf = d.tx_frequency || rxf;
+    if (txf !== rxf) {
+      document.getElementById('kv-tx-freq-row').style.display = 'flex';
+      document.getElementById('kv-tx-freq').textContent = parseFloat(txf).toFixed(4);
+    } else {
+      document.getElementById('kv-tx-freq-row').style.display = 'none';
+    }
+
+    // S-meter: raw 0-255 → S0-S9
+    var raw = d.signal || 0;
+    var s = Math.round(raw * 9 / 255);
+    var pct = Math.min(100, Math.round(raw * 100 / 255));
+    document.getElementById('kv-meter-fill').style.width = pct + '%';
+    document.getElementById('kv-meter-text').textContent = 'S' + s + ' (' + raw + ')';
+
+    // Audio level
+    var aLvl = Math.round(d.audio_level || 0);
+    document.getElementById('kv-audio-fill').style.width = Math.min(100, aLvl) + '%';
+    document.getElementById('kv-audio-text').textContent = aLvl + '%';
+
+    // Update controls — skip any field the user currently has focused
+    var _af = document.activeElement ? document.activeElement.id : '';
+    function _kvset(id, val) { if (id !== _af) document.getElementById(id).value = val; }
+    if (Date.now() > _ctrlEditUntil) {
+      _kvset('kv-squelch', d.squelch || 4);
+      document.getElementById('kv-sq-val').textContent = d.squelch || 4;
+      _kvset('kv-power', d.high_power ? 'high' : 'low');
+      _kvset('kv-bw', (d.bandwidth === 0) ? 'narrow' : 'wide');
+      _kvset('kv-ctcss-tx', _ctcssCode2Hz(d.ctcss_tx));
+      _kvset('kv-ctcss-rx', _ctcssCode2Hz(d.ctcss_rx));
+      if (d.audio_boost !== undefined) {
+        _kvset('kv-vol', d.audio_boost);
+        document.getElementById('kv-vol-val').textContent = d.audio_boost + '%';
+      }
+    }
+  }).catch(function(){});
+}
+
+setInterval(kvPoll, 1500);
+kvPoll();
+</script>
+</body></html>

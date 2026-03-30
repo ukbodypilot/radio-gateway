@@ -841,12 +841,18 @@ class WebConfigServer:
                     except BrokenPipeError:
                         pass
                 elif self.path == '/radio':
-                    # Radio control page
-                    html = parent._generate_radio_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                    import os as _os
+                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'radio.html')
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/d75memlist':
                     # D75 memory channel list — scans channels one at a time via !cat ME
                     import json as json_mod

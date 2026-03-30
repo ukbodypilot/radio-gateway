@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dell - Radio Gateway - TH-9800 Control</title>
+<style>
+  :root {
+    --t-bg: #1a1a2e; --t-panel: #16213e; --t-border: #0f3460;
+    --t-accent: #00d4ff; --t-btn: #0d1b2a; --t-btn-border: #1b3a5c;
+    --t-btn-hover: #1a2744; --t-btn-active: #0f3460;
+    --t-checkbox: #00d4ff;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+         background: var(--t-bg); color: #e0e0e0; margin: 0; padding: 20px; }
+  h1 { color: var(--t-accent); margin: 0 0 20px; font-size: 1.4em; }
+  h2 { color: var(--t-accent); margin: 10px 0; font-size: 1.2em; }
+  a { color: var(--t-accent); }
+  details { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px;
+            margin: 8px 0; }
+  summary { cursor: pointer; padding: 10px 14px; font-weight: bold; color: var(--t-accent);
+            font-size: 0.95em; user-select: none; }
+  summary:hover { background: var(--t-btn-hover); }
+  .fields { padding: 8px 14px 14px; }
+  .field { display: flex; align-items: center; margin: 4px 0; gap: 8px; }
+  .field label { min-width: 320px; font-size: 0.85em; color: #b0b0b0; }
+  .field input[type="text"], .field input[type="number"], .field input[type="password"], .field select {
+    flex: 1; background: var(--t-btn); border: 1px solid var(--t-btn-border); color: #e0e0e0;
+    padding: 5px 8px; border-radius: 3px; font-family: monospace; font-size: 0.85em;
+    max-width: 500px; }
+  .field input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--t-checkbox); }
+  .field .default { font-size: 0.75em; color: #ffffff; margin-left: 8px; }
+  .buttons { position: sticky; top: 0; background: var(--t-bg); padding: 10px 0;
+             z-index: 10; border-bottom: 1px solid var(--t-border); margin-bottom: 10px;
+             display: flex; gap: 10px; }
+  button { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer;
+           font-size: 0.9em; font-weight: bold; }
+  .btn-save { background: var(--t-border); color: #e0e0e0; }
+  .btn-save:hover { background: var(--t-btn-hover); }
+  .btn-restart { background: #c0392b; color: #fff; }
+  .btn-restart:hover { background: #e74c3c; }
+  .btn-exit { background: #7d3c98; color: #fff; margin-left: auto; }
+  .btn-exit:hover { background: #9b59b6; }
+</style>
+<script>var _T={bg:'#1a1a2e',panel:'#16213e',border:'#0f3460',accent:'#00d4ff',btn:'#0d1b2a',btnBorder:'#1b3a5c',btnHover:'#1a2744',btnActive:'#0f3460'}</script>
+</head><body>
+
+<div id="cat-offline" style="display:none; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px;">
+  <span id="cat-offline-msg" style="color:#e74c3c; font-weight:bold;">CAT not connected</span>
+  <button id="cat-connect-btn" onclick="catConnect()" class="rb" style="margin-left:14px;">Connect</button>
+  <span id="cat-connect-status" style="color:#888; margin-left:10px; font-size:0.9em;"></span>
+</div>
+
+<div id="radio-panel" style="display:none;">
+
+<!-- Connection + RTS Control -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+  <span style="color:#888; font-size:0.85em;">TCP:</span>
+  <button onclick="catDisconnect()" class="rb rb-sm" style="background:#c0392b; border-color:#e74c3c;">Disconnect</button>
+  <button onclick="catReconnect()" class="rb rb-sm">Reconnect</button>
+  <span style="color:#333;">|</span>
+  <span style="color:#888; font-size:0.85em;">Serial:</span>
+  <span id="serial-state" style="font-size:0.85em; color:#888; display:inline-block; width:110px; text-align:center;">—</span>
+  <button onclick="serialDisconnect()" class="rb rb-sm" style="background:#c0392b; border-color:#e74c3c;">Disconnect</button>
+  <button onclick="serialConnect()" class="rb rb-sm">Connect</button>
+  <button onclick="setupRadio()" class="rb rb-sm" style="background:#2c3e50; border-color:#34495e;">Setup</button>
+  <button id="radio-power-btn" onclick="radioPower()" class="rb rb-sm" style="background:#8e44ad; border-color:#9b59b6; display:none;">Radio Power</button>
+  <span style="color:#333;">|</span>
+  <span style="color:#888; font-size:0.85em;">RTS TX:</span>
+  <span id="rts-state" style="font-weight:bold;">—</span>
+  <button onclick="catCmd('TOGGLE_RTS')" class="rb rb-sm">Toggle RTS</button>
+</div>
+
+<!-- Two-column VFO display -->
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:14px; margin-bottom:14px;">
+
+  <!-- LEFT VFO -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">LEFT VFO</span>
+      <span id="l-main" class="icon-badge" style="display:none;">MAIN</span>
+    </div>
+
+    <!-- Icons row -->
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; font-size:0.8em;">
+      <span id="l-enc" class="icon-off">ENC</span>
+      <span id="l-dec" class="icon-off">DEC</span>
+      <span id="l-pos" class="icon-off">+</span>
+      <span id="l-neg" class="icon-off">-</span>
+      <span id="l-tx" class="icon-off">TX</span>
+      <span id="l-pref" class="icon-off">PREF</span>
+      <span id="l-skip" class="icon-off">SKIP</span>
+      <span id="l-dcs" class="icon-off">DCS</span>
+      <span id="l-mute" class="icon-off">MUTE</span>
+      <span id="l-mt" class="icon-off">MT</span>
+      <span id="l-busy" class="icon-off">BUSY</span>
+      <span id="l-am" class="icon-off">AM</span>
+    </div>
+
+    <!-- Channel & Frequency display -->
+    <div id="l-freq-box" style="background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace; transition:background 0.2s, border-color 0.2s;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span style="color:#888; font-size:0.85em;">CH: <span id="l-ch" style="color:#2ecc71;">—</span></span>
+        <span id="l-power" style="color:#f39c12; font-size:0.85em;">—</span>
+      </div>
+      <div id="l-freq" style="color:#2ecc71; font-size:1.8em; text-align:center; letter-spacing:2px; margin:6px 0;">———</div>
+    </div>
+
+    <!-- Signal meter -->
+    <div style="margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em;">S:</span>
+        <div style="flex:1; background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:3px; height:18px; position:relative; overflow:hidden;">
+          <div id="l-sig-bar" style="height:100%; background:#2ecc71; width:0%; transition:width 0.3s;"></div>
+          <span id="l-sig-text" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.75em; color:#fff; font-weight:bold;">S0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dial controls -->
+    <div style="display:flex; gap:6px; justify-content:center; margin-bottom:8px;">
+      <button class="rb" onclick="catCmd('L_DIAL_LEFT')">&#9664; Down</button>
+      <button class="rb" onclick="catCmd('L_DIAL_PRESS')">SEL</button>
+      <button class="rb" onclick="catCmd('L_DIAL_RIGHT')">Up &#9654;</button>
+    </div>
+
+    <!-- Volume & Squelch sliders -->
+    <div style="margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">VOL</span>
+        <input id="l-vol" type="range" min="0" max="100" value="25" style="flex:1; accent-color:var(--t-accent);" oninput="catVol('LEFT',this.value)">
+        <span id="l-vol-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">SQ</span>
+        <input id="l-sq" type="range" min="0" max="100" value="25" style="flex:1; accent-color:#f39c12;" oninput="catVol('LEFT_SQ',this.value)">
+        <span id="l-sq-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+    </div>
+
+    <!-- Function buttons -->
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+      <button class="rb" onclick="catCmd('L_LOW')">LOW</button>
+      <button class="rb" onclick="catCmd('L_VM')">V/M</button>
+      <button class="rb" onclick="catCmd('L_HM')">HM</button>
+      <button class="rb" onclick="catCmd('L_SCN')">SCN</button>
+    </div>
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-top:4px; opacity:0.7;">
+      <button class="rb rb-sm" onclick="catCmd('L_LOW_HOLD')">LOW2</button>
+      <button class="rb rb-sm" onclick="catCmd('L_VM_HOLD')">V/M2</button>
+      <button class="rb rb-sm" onclick="catCmd('L_HM_HOLD')">HM2</button>
+      <button class="rb rb-sm" onclick="catCmd('L_SCN_HOLD')">SCN2</button>
+    </div>
+  </div>
+
+  <!-- RIGHT VFO -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">RIGHT VFO</span>
+      <span id="r-main" class="icon-badge" style="display:none;">MAIN</span>
+    </div>
+
+    <!-- Icons row -->
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; font-size:0.8em;">
+      <span id="r-enc" class="icon-off">ENC</span>
+      <span id="r-dec" class="icon-off">DEC</span>
+      <span id="r-pos" class="icon-off">+</span>
+      <span id="r-neg" class="icon-off">-</span>
+      <span id="r-tx" class="icon-off">TX</span>
+      <span id="r-pref" class="icon-off">PREF</span>
+      <span id="r-skip" class="icon-off">SKIP</span>
+      <span id="r-dcs" class="icon-off">DCS</span>
+      <span id="r-mute" class="icon-off">MUTE</span>
+      <span id="r-mt" class="icon-off">MT</span>
+      <span id="r-busy" class="icon-off">BUSY</span>
+      <span id="r-am" class="icon-off">AM</span>
+    </div>
+
+    <!-- Channel & Frequency display -->
+    <div id="r-freq-box" style="background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px; margin-bottom:10px; font-family:monospace; transition:background 0.2s, border-color 0.2s;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span style="color:#888; font-size:0.85em;">CH: <span id="r-ch" style="color:#2ecc71;">—</span></span>
+        <span id="r-power" style="color:#f39c12; font-size:0.85em;">—</span>
+      </div>
+      <div id="r-freq" style="color:#2ecc71; font-size:1.8em; text-align:center; letter-spacing:2px; margin:6px 0;">———</div>
+    </div>
+
+    <!-- Signal meter -->
+    <div style="margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em;">S:</span>
+        <div style="flex:1; background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:3px; height:18px; position:relative; overflow:hidden;">
+          <div id="r-sig-bar" style="height:100%; background:#2ecc71; width:0%; transition:width 0.3s;"></div>
+          <span id="r-sig-text" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.75em; color:#fff; font-weight:bold;">S0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dial controls -->
+    <div style="display:flex; gap:6px; justify-content:center; margin-bottom:8px;">
+      <button class="rb" onclick="catCmd('R_DIAL_LEFT')">&#9664; Down</button>
+      <button class="rb" onclick="catCmd('R_DIAL_PRESS')">SEL</button>
+      <button class="rb" onclick="catCmd('R_DIAL_RIGHT')">Up &#9654;</button>
+    </div>
+
+    <!-- Volume & Squelch sliders -->
+    <div style="margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">VOL</span>
+        <input id="r-vol" type="range" min="0" max="100" value="25" style="flex:1; accent-color:var(--t-accent);" oninput="catVol('RIGHT',this.value)">
+        <span id="r-vol-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#888; font-size:0.85em; min-width:30px;">SQ</span>
+        <input id="r-sq" type="range" min="0" max="100" value="25" style="flex:1; accent-color:#f39c12;" oninput="catVol('RIGHT_SQ',this.value)">
+        <span id="r-sq-val" style="color:#ccc; font-family:monospace; font-size:0.85em; min-width:3em;">25</span>
+      </div>
+    </div>
+
+    <!-- Function buttons -->
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+      <button class="rb" onclick="catCmd('R_LOW')">LOW</button>
+      <button class="rb" onclick="catCmd('R_VM')">V/M</button>
+      <button class="rb" onclick="catCmd('R_HM')">HM</button>
+      <button class="rb" onclick="catCmd('R_SCN')">SCN</button>
+    </div>
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-top:4px; opacity:0.7;">
+      <button class="rb rb-sm" onclick="catCmd('R_LOW_HOLD')">LOW2</button>
+      <button class="rb rb-sm" onclick="catCmd('R_VM_HOLD')">V/M2</button>
+      <button class="rb rb-sm" onclick="catCmd('R_HM_HOLD')">HM2</button>
+      <button class="rb rb-sm" onclick="catCmd('R_SCN_HOLD')">SCN2</button>
+    </div>
+  </div>
+</div>
+
+<!-- Common controls: Menu/SET + Single VFO | PTT -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px;">
+    <div style="color:var(--t-accent); font-weight:bold; margin-bottom:8px;">Menu / SET</div>
+    <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+      <button class="rb" onclick="catCmd('N_SET')">SET</button>
+      <button class="rb" onclick="catCmd('N_SET_HOLD')">SET (Hold)</button>
+      <button class="rb" onclick="catCmd('L_SET_VFO')">VFO&#8594;L</button>
+      <button class="rb" onclick="catCmd('R_SET_VFO')">VFO&#8594;R</button>
+      <button class="rb" onclick="catCmd('L_VOLUME_HOLD')">Single VFO</button>
+    </div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; font-size:0.85em;">
+      <span id="c-apo" class="icon-off">APO</span>
+      <span id="c-lock" class="icon-off">LOCK</span>
+      <span id="c-set" class="icon-off">SET</span>
+      <span id="c-key2" class="icon-off">KEY2</span>
+    </div>
+  </div>
+
+  <!-- PTT -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px;">
+    <div style="color:var(--t-accent); font-weight:bold; margin-bottom:8px;">PTT</div>
+    <div style="display:flex; gap:18px; align-items:flex-start; justify-content:center;">
+      <div style="display:flex; flex-direction:column; align-items:center;">
+        <div style="height:10px;"></div>
+        <button id="ptt-btn" class="rb" style="width:80px; height:80px; font-size:1.4em; font-weight:bold; border-radius:50%;"
+          onclick="togglePTT()">PTT</button>
+        <span style="color:#888; font-size:0.75em; margin-top:6px;">Toggle TX</span>
+      </div>
+      <div style="display:flex; flex-direction:column; align-items:center;">
+        <div id="mic-level" style="width:80px; height:6px; background:var(--t-btn); border-radius:3px; margin-bottom:4px; overflow:hidden;">
+          <div id="mic-level-bar" style="height:100%; width:0%; background:#2ecc71; transition:width 0.1s;"></div>
+        </div>
+        <button id="mic-ptt-btn" class="rb" style="width:80px; height:80px; font-size:1.4em; font-weight:bold; border-radius:50%; background:#1a3a1a; border-color:#2ecc71;"
+          onclick="micPTTToggle()">MIC<br>PTT</button>
+        <span id="mic-status" style="color:#888; font-size:0.75em; margin-top:6px;">Ready</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Hyper Memories + Mic Keypad + P1-P4/UP/DOWN -->
+<div style="display:grid; grid-template-columns:auto 1fr auto; gap:14px; margin-bottom:14px;">
+
+  <!-- Hyper Memories -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+    <div style="color:var(--t-accent); font-weight:bold; margin-bottom:8px;">Hyper Memories</div>
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+      <button class="rb" onclick="catCmd('HYPER_A')">A</button>
+      <button class="rb" onclick="catCmd('HYPER_B')">B</button>
+      <button class="rb" onclick="catCmd('HYPER_C')">C</button>
+      <button class="rb" onclick="catCmd('HYPER_D')">D</button>
+      <button class="rb" onclick="catCmd('HYPER_E')">E</button>
+      <button class="rb" onclick="catCmd('HYPER_F')">F</button>
+    </div>
+  </div>
+
+  <!-- Mic Keypad (number grid only) -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+    <div style="color:var(--t-accent); font-weight:bold; margin-bottom:8px;">Mic Keypad</div>
+    <div style="display:grid; grid-template-columns:repeat(4, 50px); gap:6px; justify-content:center;">
+      <button class="rb" onclick="catCmd('MIC_1')">1</button>
+      <button class="rb" onclick="catCmd('MIC_2')">2</button>
+      <button class="rb" onclick="catCmd('MIC_3')">3</button>
+      <button class="rb" onclick="catCmd('MIC_A')">A</button>
+
+      <button class="rb" onclick="catCmd('MIC_4')">4</button>
+      <button class="rb" onclick="catCmd('MIC_5')">5</button>
+      <button class="rb" onclick="catCmd('MIC_6')">6</button>
+      <button class="rb" onclick="catCmd('MIC_B')">B</button>
+
+      <button class="rb" onclick="catCmd('MIC_7')">7</button>
+      <button class="rb" onclick="catCmd('MIC_8')">8</button>
+      <button class="rb" onclick="catCmd('MIC_9')">9</button>
+      <button class="rb" onclick="catCmd('MIC_C')">C</button>
+
+      <button class="rb" onclick="catCmd('MIC_STAR')">*</button>
+      <button class="rb" onclick="catCmd('MIC_0')">0</button>
+      <button class="rb" onclick="catCmd('MIC_POUND')">#</button>
+      <button class="rb" onclick="catCmd('MIC_D')">D</button>
+    </div>
+  </div>
+
+  <!-- Mic Controls -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+    <div style="color:var(--t-accent); font-weight:bold; margin-bottom:8px;">Mic Controls</div>
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+      <button class="rb" onclick="catCmd('MIC_P1')">P1</button>
+      <button class="rb" onclick="catCmd('MIC_P2')">P2</button>
+      <button class="rb" onclick="catCmd('MIC_P3')">P3</button>
+      <button class="rb" onclick="catCmd('MIC_P4')">P4</button>
+      <button class="rb" onclick="catCmd('MIC_UP')">&#9650; UP</button>
+      <button class="rb" onclick="catCmd('MIC_DOWN')">&#9660; DN</button>
+    </div>
+  </div>
+
+</div>
+
+</div><!-- /radio-panel -->
+
+<style>
+  .rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
+        color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; min-width:44px; }
+  .rb:hover { background:var(--t-btn-hover); border-color:var(--t-accent); }
+  .rb:active { background:var(--t-border); }
+  .rb-sm { font-size:0.8em; padding:5px 10px; }
+  .icon-off { padding:2px 6px; border-radius:3px; background:var(--t-btn); color:#555; border:1px solid var(--t-btn-border); }
+  .icon-on { padding:2px 6px; border-radius:3px; background:#c0392b; color:#fff; border:1px solid #e74c3c; }
+  .icon-badge { padding:2px 8px; border-radius:3px; background:#c0392b; color:#fff; font-size:0.85em; font-weight:bold; }
+</style>
+
+<script>
+var _volTimer = {};
+
+var _pttActive = false;
+
+function showError(msg) {
+  var el = document.getElementById('cmd-error');
+  if (!el) { el = document.createElement('div'); el.id='cmd-error';
+    el.style.cssText='position:fixed;top:0;left:0;right:0;padding:8px;background:#c0392b;color:#fff;text-align:center;font-weight:bold;z-index:9999;cursor:pointer';
+    el.onclick=function(){el.style.display='none'};
+    document.body.appendChild(el); }
+  el.textContent = msg; el.style.display = 'block';
+  setTimeout(function(){ el.style.display='none'; }, 5000);
+}
+
+function radioPower() {
+  fetch('/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:'j'})});
+}
+
+function catCmd(cmd) {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:cmd})})
+    .then(function(r){return r.json()}).then(function(d) {
+      if (!d.ok && d.error) showError(d.error === 'serial not connected' ?
+        'Serial not connected — press Connect first' : d.error);
+    }).catch(function(){});
+}
+
+function togglePTT() {
+  var btn = document.getElementById('ptt-btn');
+  catCmd('MIC_PTT');
+  _pttActive = !_pttActive;
+  if (_pttActive) {
+    btn.style.background = '#c0392b';
+    btn.style.borderColor = '#e74c3c';
+    btn.style.color = '#fff';
+  } else {
+    btn.style.background = _T.btn;
+    btn.style.borderColor = _T.btnBorder;
+    btn.style.color = '#e0e0e0';
+  }
+}
+
+// --- Browser Mic PTT ---
+var _micWs = null;
+var _micStream = null;
+var _micCtx = null;
+var _micWorklet = null;
+var _micActive = false;
+
+function micPTTToggle() {
+  if (_micActive) {
+    micPTTCleanup();
+    return;
+  }
+  _micActive = true;
+  var btn = document.getElementById('mic-ptt-btn');
+  var st = document.getElementById('mic-status');
+  btn.style.background = '#c0392b';
+  btn.style.borderColor = '#e74c3c';
+  btn.style.color = '#fff';
+  st.textContent = 'Connecting...';
+  st.style.color = '#f39c12';
+
+  navigator.mediaDevices.getUserMedia({
+    audio: {sampleRate:48000, channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:true}
+  }).then(function(stream) {
+    _micStream = stream;
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    _micWs = new WebSocket(proto + '//' + location.host + '/ws_mic');
+    _micWs.binaryType = 'arraybuffer';
+    _micWs.onopen = function() {
+      st.textContent = 'TX — click to stop';
+      st.style.color = '#e74c3c';
+      _micCtx = new AudioContext({sampleRate: 48000});
+      var source = _micCtx.createMediaStreamSource(stream);
+      var proc = _micCtx.createScriptProcessor(2048, 1, 1);
+      proc.onaudioprocess = function(e) {
+        if (!_micWs || _micWs.readyState !== 1) return;
+        var f32 = e.inputBuffer.getChannelData(0);
+        var buf = new ArrayBuffer(f32.length * 2);
+        var i16 = new Int16Array(buf);
+        for (var i = 0; i < f32.length; i++) {
+          var s = Math.max(-1, Math.min(1, f32[i]));
+          i16[i] = s < 0 ? s * 32768 : s * 32767;
+        }
+        _micWs.send(buf);
+        var peak = 0;
+        for (var i = 0; i < f32.length; i++) {
+          var a = Math.abs(f32[i]);
+          if (a > peak) peak = a;
+        }
+        var pct = Math.min(100, Math.round(peak * 100));
+        document.getElementById('mic-level-bar').style.width = pct + '%';
+      };
+      source.connect(proc);
+      proc.connect(_micCtx.destination);
+      _micWorklet = proc;
+    };
+    _micWs.onerror = function() {
+      st.textContent = 'Error';
+      st.style.color = '#e74c3c';
+      micPTTCleanup();
+    };
+    _micWs.onclose = function() {
+      micPTTCleanup();
+    };
+  }).catch(function(e) {
+    st.textContent = 'Mic denied';
+    st.style.color = '#e74c3c';
+    _micActive = false;
+    btn.style.background = '#1a3a1a';
+    btn.style.borderColor = '#2ecc71';
+    btn.style.color = '#e0e0e0';
+  });
+}
+
+function micPTTCleanup() {
+  _micActive = false;
+  if (_micWorklet) { _micWorklet.disconnect(); _micWorklet = null; }
+  if (_micCtx) { _micCtx.close().catch(function(){}); _micCtx = null; }
+  if (_micStream) { _micStream.getTracks().forEach(function(t){t.stop();}); _micStream = null; }
+  if (_micWs) { try { _micWs.close(); } catch(e){} _micWs = null; }
+  var btn = document.getElementById('mic-ptt-btn');
+  btn.style.background = '#1a3a1a';
+  btn.style.borderColor = '#2ecc71';
+  btn.style.color = '#e0e0e0';
+  document.getElementById('mic-level-bar').style.width = '0%';
+  var st = document.getElementById('mic-status');
+  st.textContent = 'Ready';
+  st.style.color = '#888';
+}
+
+function catConnect() {
+  var btn = document.getElementById('cat-connect-btn');
+  var st = document.getElementById('cat-connect-status');
+  btn.disabled = true; btn.textContent = 'Connecting...';
+  st.textContent = '';
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'CAT_RECONNECT'})})
+    .then(function(r){return r.json()}).then(function(d) {
+      btn.disabled = false; btn.textContent = 'Connect';
+      if (!d.ok) st.textContent = d.error || 'Failed';
+    }).catch(function(){ btn.disabled = false; btn.textContent = 'Connect'; });
+}
+
+function catDisconnect() {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'CAT_DISCONNECT'})});
+}
+
+function catReconnect() {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'CAT_RECONNECT'})});
+}
+
+function serialDisconnect() {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'SERIAL_DISCONNECT'})});
+}
+
+function serialConnect() {
+  var el = document.getElementById('serial-state');
+  el.textContent = 'connecting'; el.style.color = '#f39c12';
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'SERIAL_CONNECT'})});
+}
+
+function setupRadio() {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'SETUP_RADIO'})})
+    .then(function(r){return r.json()}).then(function(d) {
+      if (!d.ok) showError(d.status || 'setup failed');
+    });
+}
+
+function catVol(target, value) {
+  // Update display immediately
+  var id = target.replace('_SQ','').toLowerCase().charAt(0);
+  var isSq = target.indexOf('_SQ') >= 0;
+  document.getElementById(id + (isSq ? '-sq-val' : '-vol-val')).textContent = value;
+  // Debounce: send after 100ms of no change
+  clearTimeout(_volTimer[target]);
+  _volTimer[target] = setTimeout(function() {
+    var cmd = isSq ? 'SQ_' + target.replace('_SQ','') : 'VOL_' + target;
+    fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cmd:cmd, value:parseInt(value)})})
+      .then(function(r){return r.json()}).then(function(d) {
+        if (!d.ok && d.error) showError(d.error === 'serial not connected' ?
+          'Serial not connected — press Connect first' : d.error);
+      }).catch(function(){});
+  }, 100);
+}
+
+function fmtFreq(s) {
+  if (!s || s.indexOf('\u2014') >= 0) return s;
+  // Strip existing periods/spaces, keep only digits
+  var d = s.replace(/[^0-9]/g, '');
+  if (d.length > 3) return d.slice(0, d.length - 3) + '.' + d.slice(d.length - 3);
+  return s;
+}
+
+function setIcon(id, on) {
+  var el = document.getElementById(id);
+  if (el) el.className = on ? 'icon-on' : 'icon-off';
+}
+
+var _radioBusy = false;
+function updateRadio() {
+  if (_radioBusy) return;
+  _radioBusy = true;
+  fetch('/catstatus').then(function(r){return r.json()}).then(function(d) {
+    if (!d.connected) {
+      document.getElementById('cat-offline').style.display = 'block';
+      document.getElementById('radio-panel').style.display = 'none';
+      return;
+    }
+    document.getElementById('cat-offline').style.display = 'none';
+    document.getElementById('radio-panel').style.display = 'block';
+
+    // Serial state
+    var sel = document.getElementById('serial-state');
+    if (d.serial_connected) { sel.textContent = 'connected'; sel.style.color = '#2ecc71'; }
+    else { sel.textContent = 'disconnected'; sel.style.color = '#e74c3c'; }
+
+    // RTS
+    var rts = document.getElementById('rts-state');
+    if (d.rts_usb === true) { rts.textContent = 'USB Controlled'; rts.style.color = '#2ecc71'; }
+    else if (d.rts_usb === false) { rts.textContent = 'Radio Controlled'; rts.style.color = '#e74c3c'; }
+    else { rts.textContent = 'Unknown'; rts.style.color = '#888'; }
+
+    // LEFT VFO
+    var L = d.left;
+    document.getElementById('l-freq').textContent = fmtFreq(L.display) || '\u2014\u2014\u2014';
+    document.getElementById('l-ch').textContent = L.channel || '\u2014';
+    document.getElementById('l-power').textContent = L.power ? 'PWR: ' + L.power : '';
+    document.getElementById('l-sig-bar').style.width = (L.signal / 9 * 100) + '%';
+    document.getElementById('l-sig-text').textContent = 'S' + L.signal;
+    document.getElementById('l-main').style.display = (L.icons && L.icons.MAIN) ? 'inline' : 'none';
+    var li = L.icons || {};
+    setIcon('l-enc', li.ENC); setIcon('l-dec', li.DEC); setIcon('l-pos', li.POS);
+    setIcon('l-neg', li.NEG); setIcon('l-tx', li.TX); setIcon('l-pref', li.PREF);
+    setIcon('l-skip', li.SKIP); setIcon('l-dcs', li.DCS); setIcon('l-mute', li.MUTE);
+    setIcon('l-mt', li.MT); setIcon('l-busy', li.BUSY); setIcon('l-am', li.AM);
+
+    // PTT indication — red background on freq display when TX active
+    var lBox = document.getElementById('l-freq-box');
+    if (li.TX) { lBox.style.background = '#5c1a1a'; lBox.style.borderColor = '#e74c3c'; }
+    else { lBox.style.background = _T.btn; lBox.style.borderColor = _T.btnBorder; }
+
+    // RIGHT VFO
+    var R = d.right;
+    document.getElementById('r-freq').textContent = fmtFreq(R.display) || '\u2014\u2014\u2014';
+    document.getElementById('r-ch').textContent = R.channel || '\u2014';
+    document.getElementById('r-power').textContent = R.power ? 'PWR: ' + R.power : '';
+    document.getElementById('r-sig-bar').style.width = (R.signal / 9 * 100) + '%';
+    document.getElementById('r-sig-text').textContent = 'S' + R.signal;
+    document.getElementById('r-main').style.display = (R.icons && R.icons.MAIN) ? 'inline' : 'none';
+    var ri = R.icons || {};
+    setIcon('r-enc', ri.ENC); setIcon('r-dec', ri.DEC); setIcon('r-pos', ri.POS);
+    setIcon('r-neg', ri.NEG); setIcon('r-tx', ri.TX); setIcon('r-pref', ri.PREF);
+    setIcon('r-skip', ri.SKIP); setIcon('r-dcs', ri.DCS); setIcon('r-mute', ri.MUTE);
+    setIcon('r-mt', ri.MT); setIcon('r-busy', ri.BUSY); setIcon('r-am', ri.AM);
+
+    // PTT indication — red background on freq display when TX active
+    var rBox = document.getElementById('r-freq-box');
+    if (ri.TX) { rBox.style.background = '#5c1a1a'; rBox.style.borderColor = '#e74c3c'; }
+    else { rBox.style.background = _T.btn; rBox.style.borderColor = _T.btnBorder; }
+
+    // Common icons
+    var ci = d.common || {};
+    setIcon('c-apo', ci.APO); setIcon('c-lock', ci.LOCK);
+    setIcon('c-set', ci.SET); setIcon('c-key2', ci.KEY2);
+
+    // Sync volume sliders from actual radio state
+    if (d.volume) {
+      var lv=document.getElementById('l-vol'), rv=document.getElementById('r-vol');
+      var lvt=document.getElementById('l-vol-val'), rvt=document.getElementById('r-vol-val');
+      if (lv && d.volume.left >= 0 && !lv.matches(':active')) { lv.value=d.volume.left; if(lvt) lvt.textContent=d.volume.left; }
+      if (rv && d.volume.right >= 0 && !rv.matches(':active')) { rv.value=d.volume.right; if(rvt) rvt.textContent=d.volume.right; }
+    }
+
+  }).catch(function(){}).finally(function(){ _radioBusy=false; });
+}
+
+setInterval(updateRadio, 1000);
+updateRadio();
+</script>
+</body></html>
