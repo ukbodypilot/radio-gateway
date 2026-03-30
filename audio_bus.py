@@ -838,10 +838,206 @@ class DuplexRepeaterBus(AudioBus):
 
 
 class SimplexRepeaterBus(AudioBus):
-    """Half-duplex store-and-forward between two radios."""
+    """Half-duplex store-and-forward between two radios.
+
+    Only one direction active at a time:
+    1. Side A receives → audio buffers
+    2. A's signal drops → tail timer expires → buffer plays out on B's TX
+    3. Then reverses: B receives → buffers → plays out on A's TX
+
+    State machine:
+      IDLE     → A or B has signal → RECEIVING_A or RECEIVING_B
+      RECEIVING_A → A signal drops → TAIL_A (wait for tail timer)
+      TAIL_A   → tail expires → PLAYING_B (transmit buffer on B)
+      PLAYING_B → buffer empty → IDLE
+      (mirror for B→A direction)
+
+    Configurable tail timer (how long to wait after RX before TX).
+    Optional courtesy tone between RX and TX (not yet implemented).
+    """
+
+    # States
+    IDLE = 'idle'
+    RECEIVING_A = 'rx_a'
+    RECEIVING_B = 'rx_b'
+    TAIL_A = 'tail_a'       # A stopped, waiting before TX on B
+    TAIL_B = 'tail_b'       # B stopped, waiting before TX on A
+    PLAYING_B = 'play_b'    # Playing buffered A audio on B's TX
+    PLAYING_A = 'play_a'    # Playing buffered B audio on A's TX
 
     def __init__(self, name, config):
         super().__init__(name, 'simplex_repeater', config)
+        self._side_a = None
+        self._side_b = None
+        self._state = self.IDLE
+        self._signal_threshold = float(getattr(config, 'SDR_SIGNAL_THRESHOLD', -60.0))
+        self._tail_time = float(getattr(config, 'SIMPLEX_TAIL_TIME', 1.0))
+        self._tail_expire = 0.0
+        self._buffer = []           # list of PCM chunks
+        self._buffer_pos = 0        # playback position in buffer
+        self._max_buffer_secs = float(getattr(config, 'SIMPLEX_MAX_BUFFER', 30.0))
+        self._max_buffer_chunks = 0  # set in first tick
+        self._ptt_active_a = False
+        self._ptt_active_b = False
+        self.call_count = 0
+
+    def set_side_a(self, radio_plugin):
+        self._side_a = radio_plugin
+
+    def set_side_b(self, radio_plugin):
+        self._side_b = radio_plugin
 
     def tick(self, chunk_size):
-        raise NotImplementedError("SimplexRepeaterBus not yet implemented")
+        """Process one audio cycle through the simplex state machine."""
+        self.call_count += 1
+        current_time = time.monotonic()
+        active_sources = []
+
+        if self._max_buffer_chunks == 0:
+            # ~20 chunks/sec at 50ms each
+            self._max_buffer_chunks = int(self._max_buffer_secs * 20)
+
+        # Get RX audio from both sides (always drain to avoid stale buffers)
+        a_rx, _a_ptt = self._side_a.get_audio(chunk_size) if self._side_a else (None, False)
+        b_rx, _b_ptt = self._side_b.get_audio(chunk_size) if self._side_b else (None, False)
+
+        a_has_signal = check_signal_instant(a_rx, self._signal_threshold) if a_rx else False
+        b_has_signal = check_signal_instant(b_rx, self._signal_threshold) if b_rx else False
+
+        if a_rx is not None:
+            active_sources.append(self._side_a.name if self._side_a else 'A')
+        if b_rx is not None:
+            active_sources.append(self._side_b.name if self._side_b else 'B')
+
+        playback_audio = None  # audio being played out this tick
+
+        # ── State machine ──
+        if self._state == self.IDLE:
+            if a_has_signal:
+                self._state = self.RECEIVING_A
+                self._buffer = []
+                self._buffer.append(a_rx)
+            elif b_has_signal:
+                self._state = self.RECEIVING_B
+                self._buffer = []
+                self._buffer.append(b_rx)
+
+        elif self._state == self.RECEIVING_A:
+            if a_has_signal:
+                if len(self._buffer) < self._max_buffer_chunks:
+                    self._buffer.append(a_rx)
+            else:
+                # Signal dropped — start tail timer
+                self._state = self.TAIL_A
+                self._tail_expire = current_time + self._tail_time
+
+        elif self._state == self.TAIL_A:
+            if a_has_signal:
+                # Signal came back — resume receiving
+                self._state = self.RECEIVING_A
+                if a_rx and len(self._buffer) < self._max_buffer_chunks:
+                    self._buffer.append(a_rx)
+            elif current_time >= self._tail_expire:
+                # Tail expired — start playing on B
+                self._state = self.PLAYING_B
+                self._buffer_pos = 0
+                # Key B's PTT
+                self._ptt_active_b = True
+                if self._side_b:
+                    if hasattr(self._side_b, 'execute'):
+                        self._side_b.execute({'cmd': 'ptt', 'state': True})
+                    elif hasattr(self._side_b, 'ptt_on'):
+                        self._side_b.ptt_on()
+
+        elif self._state == self.PLAYING_B:
+            if self._buffer_pos < len(self._buffer):
+                pcm = self._buffer[self._buffer_pos]
+                self._buffer_pos += 1
+                if self._side_b:
+                    if hasattr(self._side_b, 'put_audio'):
+                        self._side_b.put_audio(pcm)
+                    elif hasattr(self._side_b, 'write_tx_audio'):
+                        self._side_b.write_tx_audio(pcm)
+                playback_audio = pcm
+            else:
+                # Buffer exhausted — unkey B, return to idle
+                self._ptt_active_b = False
+                if self._side_b:
+                    if hasattr(self._side_b, 'execute'):
+                        self._side_b.execute({'cmd': 'ptt', 'state': False})
+                    elif hasattr(self._side_b, 'ptt_off'):
+                        self._side_b.ptt_off()
+                self._buffer = []
+                self._state = self.IDLE
+
+        elif self._state == self.RECEIVING_B:
+            if b_has_signal:
+                if len(self._buffer) < self._max_buffer_chunks:
+                    self._buffer.append(b_rx)
+            else:
+                self._state = self.TAIL_B
+                self._tail_expire = current_time + self._tail_time
+
+        elif self._state == self.TAIL_B:
+            if b_has_signal:
+                self._state = self.RECEIVING_B
+                if b_rx and len(self._buffer) < self._max_buffer_chunks:
+                    self._buffer.append(b_rx)
+            elif current_time >= self._tail_expire:
+                self._state = self.PLAYING_A
+                self._buffer_pos = 0
+                self._ptt_active_a = True
+                if self._side_a:
+                    if hasattr(self._side_a, 'execute'):
+                        self._side_a.execute({'cmd': 'ptt', 'state': True})
+                    elif hasattr(self._side_a, 'ptt_on'):
+                        self._side_a.ptt_on()
+
+        elif self._state == self.PLAYING_A:
+            if self._buffer_pos < len(self._buffer):
+                pcm = self._buffer[self._buffer_pos]
+                self._buffer_pos += 1
+                if self._side_a:
+                    if hasattr(self._side_a, 'put_audio'):
+                        self._side_a.put_audio(pcm)
+                    elif hasattr(self._side_a, 'write_tx_audio'):
+                        self._side_a.write_tx_audio(pcm)
+                playback_audio = pcm
+            else:
+                self._ptt_active_a = False
+                if self._side_a:
+                    if hasattr(self._side_a, 'execute'):
+                        self._side_a.execute({'cmd': 'ptt', 'state': False})
+                    elif hasattr(self._side_a, 'ptt_off'):
+                        self._side_a.ptt_off()
+                self._buffer = []
+                self._state = self.IDLE
+
+        # ── Build output ──
+        # Sinks get whatever is currently active (RX or playback)
+        sink_audio = playback_audio or a_rx or b_rx
+        audio_dict = {sink: sink_audio for sink in self.sink_names}
+        if not self.sink_names:
+            audio_dict['_default'] = sink_audio
+
+        a_name = self._side_a.name if self._side_a else 'A'
+        b_name = self._side_b.name if self._side_b else 'B'
+
+        return BusOutput(
+            audio=audio_dict,
+            ptt={
+                a_name: self._ptt_active_a,
+                b_name: self._ptt_active_b,
+            },
+            active_sources=active_sources,
+            ducked_sources=[],
+            status={
+                'state': self._state,
+                'buffer_chunks': len(self._buffer),
+                'buffer_pos': self._buffer_pos,
+                'a_signal': a_has_signal,
+                'b_signal': b_has_signal,
+                'a_ptt': self._ptt_active_a,
+                'b_ptt': self._ptt_active_b,
+            },
+        )
