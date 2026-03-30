@@ -9,11 +9,15 @@ without modifying the AIOC-entangled main loop.
 """
 
 import json
+import math
 import os
 import threading
 import time
 
+import numpy as np
+
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus
+from audio_sources import AudioProcessor
 
 
 class BusManager:
@@ -170,12 +174,28 @@ class BusManager:
             return gw.web_monitor_source
         return None
 
+    def _apply_processing(self, audio, bus_id):
+        """Apply audio processing (gate/HPF/LPF/notch) based on bus config."""
+        if audio is None:
+            return None
+        proc = self._bus_processors.get(bus_id)
+        if proc:
+            return proc.process(audio)
+        return audio
+
     def _deliver_audio(self, bus_output, bus_id):
-        """Deliver a bus's audio output to sinks."""
+        """Deliver a bus's audio output to connected sinks."""
         gw = self.gateway
         for sink_id, audio in bus_output.audio.items():
             if audio is None:
                 continue
+
+            # Apply per-bus processing
+            audio = self._apply_processing(audio, bus_id)
+            if audio is None:
+                continue
+
+            # Passive sinks
             if sink_id == 'mumble' and gw.mumble:
                 try:
                     gw.mumble.sound_output.add_sound(audio)
@@ -188,6 +208,16 @@ class BusManager:
                     gw.stream_output.send_audio(audio)
                 except Exception:
                     pass
+            elif sink_id == 'recording':
+                pass  # TODO: recording sink
+
+            # Radio TX sinks
+            elif sink_id == 'kv4p_tx' and gw.kv4p_plugin:
+                gw.kv4p_plugin.put_audio(audio)
+            elif sink_id == 'd75_tx' and gw.d75_plugin:
+                gw.d75_plugin.put_audio(audio)
+            elif sink_id == 'aioc_tx' and getattr(gw, 'th9800_plugin', None):
+                gw.th9800_plugin.put_audio(audio)
 
     def _tick_loop(self):
         """Main bus tick loop — runs all non-primary busses."""
