@@ -6,13 +6,12 @@
 <title>Audio Routing</title>
 <link rel="stylesheet" href="/pages/common.css">
 <style>
-  body { padding: 10px; overflow: hidden; }
+  body { padding: 10px; }
 
   .routing-container {
     display: flex;
-    gap: 0;
-    height: calc(100vh - 20px);
-    position: relative;
+    gap: 12px;
+    min-height: calc(100vh - 40px);
   }
 
   .column {
@@ -20,20 +19,18 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    z-index: 2;
     min-width: 0;
-    padding: 0 8px;
-    overflow-y: auto;
   }
 
   .column-label {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: #888;
     text-align: center;
     text-transform: uppercase;
     letter-spacing: 1px;
     margin-bottom: 4px;
-    flex-shrink: 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--t-border);
   }
 
   .card {
@@ -41,32 +38,11 @@
     border: 1px solid var(--t-border);
     border-radius: 6px;
     padding: 8px 10px;
-    font-size: 0.75rem;
-    position: relative;
-    flex-shrink: 0;
+    font-size: 0.78rem;
   }
   .card .name { font-weight: 600; }
   .card .type { font-size: 0.65rem; color: #888; }
-  .card .detail { font-size: 0.6rem; color: #666; margin-top: 2px; }
   .card.disabled { opacity: 0.4; }
-
-  /* Connection dots */
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    border: 2px solid var(--t-accent);
-    background: var(--t-bg);
-    cursor: pointer;
-    z-index: 3;
-  }
-  .dot:hover { background: var(--t-accent); }
-  .dot.connected { background: var(--t-accent); }
-  .dot-r { right: -6px; }
-  .dot-l { left: -6px; }
 
   /* Bus cards */
   .bus-card {
@@ -74,11 +50,15 @@
     border: 2px solid var(--t-border);
     border-radius: 8px;
     padding: 10px;
-    font-size: 0.75rem;
-    position: relative;
-    flex-shrink: 0;
+    font-size: 0.78rem;
   }
-  .bus-card .name { font-weight: 700; font-size: 0.85rem; }
+  .bus-card .bus-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .bus-card .name { font-weight: 700; font-size: 0.9rem; }
   .badge {
     display: inline-block;
     font-size: 0.55rem;
@@ -93,51 +73,86 @@
   .badge-duplex { background: #2ecc71; color: #000; }
   .badge-simplex { background: #e74c3c; color: #fff; }
 
-  /* SVG wires */
-  .wire-svg {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    z-index: 1;
-    pointer-events: none;
+  /* Connection tags inside bus cards */
+  .conn-section {
+    margin: 4px 0;
+    font-size: 0.7rem;
   }
-  .wire-svg line {
-    stroke: var(--t-accent);
-    stroke-width: 1.5;
-    opacity: 0.4;
+  .conn-label { color: #888; font-size: 0.65rem; }
+  .conn-tag {
+    display: inline-block;
+    background: var(--t-btn);
+    border: 1px solid var(--t-btn-border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    margin: 2px 2px;
+    font-size: 0.7rem;
+    cursor: pointer;
   }
-  .wire-svg line.active { opacity: 0.8; stroke-width: 2; }
+  .conn-tag:hover { border-color: #e74c3c; color: #e74c3c; text-decoration: line-through; }
+  .conn-tag .x { color: #e74c3c; margin-left: 4px; font-weight: bold; }
+
+  /* Add dropdowns */
+  .add-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .add-row select {
+    flex: 1;
+    background: var(--t-btn);
+    border: 1px solid var(--t-btn-border);
+    color: #e0e0e0;
+    border-radius: 3px;
+    padding: 3px 4px;
+    font-size: 0.7rem;
+  }
+  .add-row button {
+    background: var(--t-accent);
+    border: none;
+    color: #fff;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+
+  .btn-delete {
+    background: none;
+    border: 1px solid #e74c3c;
+    color: #e74c3c;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 0.65rem;
+    cursor: pointer;
+  }
+  .btn-delete:hover { background: #e74c3c; color: #fff; }
 
   /* Add bus button */
   .add-bus-btn {
     background: var(--t-btn);
     border: 2px dashed var(--t-border);
     border-radius: 8px;
-    padding: 10px;
+    padding: 12px;
     text-align: center;
     color: #888;
     cursor: pointer;
     font-size: 0.8rem;
-    flex-shrink: 0;
   }
   .add-bus-btn:hover { border-color: var(--t-accent); color: var(--t-accent); }
 
-  /* Mobile: stack columns */
+  /* Mobile: stack */
   @media (max-width: 600px) {
-    .routing-container { flex-direction: column; height: auto; overflow-y: auto; }
-    .wire-svg { display: none; }
-    .dot { display: none; }
-    .column { overflow-y: visible; }
+    .routing-container { flex-direction: column; }
   }
 
-  /* Status bar */
-  .routing-status {
+  .status-bar {
     position: fixed;
     bottom: 0; left: 0; right: 0;
     background: var(--t-panel);
     border-top: 1px solid var(--t-border);
     padding: 4px 12px;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: #888;
     z-index: 10;
   }
@@ -145,55 +160,46 @@
 </head>
 <body>
 
-<div class="routing-container" id="routing">
-  <svg class="wire-svg" id="wireSvg"></svg>
-
+<div class="routing-container">
   <!-- Sources column -->
-  <div class="column" id="col-sources">
-    <div class="column-label">Sources</div>
+  <div class="column">
+    <div class="column-label">Sources (RX / Input)</div>
     <div id="source-cards"></div>
   </div>
 
   <!-- Busses column -->
-  <div class="column" id="col-busses">
+  <div class="column">
     <div class="column-label">Busses</div>
     <div id="bus-cards"></div>
     <div class="add-bus-btn" onclick="showAddBus()">+ Add Bus</div>
   </div>
 
   <!-- Sinks column -->
-  <div class="column" id="col-sinks">
-    <div class="column-label">Sinks</div>
+  <div class="column">
+    <div class="column-label">Sinks / Destinations (TX)</div>
     <div id="sink-cards"></div>
   </div>
 </div>
 
-<div class="routing-status" id="statusBar">Loading...</div>
+<div class="status-bar" id="statusBar">Loading...</div>
 
 <script src="/pages/common.js"></script>
 <script>
 var _state = { sources: [], busses: [], sinks: [], connections: [] };
-var _connecting = null; // {type: 'source'|'bus'|'sink', id: '...'}
 
-function setStatus(msg) {
-  document.getElementById('statusBar').textContent = msg;
-}
+function setStatus(msg) { document.getElementById('statusBar').textContent = msg; }
 
-// Fetch routing state from backend
 function loadRouting() {
   fetch('/routing/status')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       _state = d;
       render();
-      setStatus('Connected');
+      setStatus('Connected — ' + d.sources.length + ' sources, ' + d.busses.length + ' busses, ' + d.sinks.length + ' sinks');
     })
-    .catch(function(e) {
-      setStatus('Error: ' + e.message);
-    });
+    .catch(function(e) { setStatus('Error: ' + e.message); });
 }
 
-// Send routing command
 function routingCmd(cmd, data) {
   data = data || {};
   data.cmd = cmd;
@@ -201,28 +207,21 @@ function routingCmd(cmd, data) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(data)
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    if (d.ok) {
-      loadRouting();
-    } else {
-      setStatus('Error: ' + (d.error || 'unknown'));
-    }
-    return d;
-  });
+  }).then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) loadRouting();
+      else setStatus('Error: ' + (d.error || 'unknown'));
+      return d;
+    });
 }
 
-// Render the three columns
 function render() {
   renderSources();
   renderBusses();
   renderSinks();
-  setTimeout(drawWires, 50);
 }
 
 function renderSources() {
-  var container = document.getElementById('source-cards');
   var html = '';
   for (var i = 0; i < _state.sources.length; i++) {
     var s = _state.sources[i];
@@ -231,123 +230,102 @@ function renderSources() {
     if (s.can_rx) caps.push('RX');
     if (s.can_tx) caps.push('TX');
     if (s.can_ptt) caps.push('PTT');
-    html += '<div class="card' + cls + '" data-id="src-' + s.id + '" data-col="source">'
-      + '<span class="dot dot-r" data-src="' + s.id + '" onclick="startConnect(\'source\',\'' + s.id + '\')"></span>'
-      + '<div class="name">' + s.name + '</div>'
-      + '<div class="type">' + caps.join(' / ') + '</div>'
-      + '</div>';
+    // Check which busses this source is connected to
+    var connected = [];
+    for (var j = 0; j < _state.connections.length; j++) {
+      var c = _state.connections[j];
+      if (c.type === 'source-bus' && c.from === s.id) connected.push(c.to);
+    }
+    var connHtml = '';
+    if (connected.length > 0) {
+      connHtml = '<div style="margin-top:3px;">';
+      for (var k = 0; k < connected.length; k++) {
+        connHtml += '<span class="conn-tag" onclick="routingCmd(\'disconnect\',{source:\'' + s.id + '\',bus:\'' + connected[k] + '\'})">' + connected[k] + '<span class="x">x</span></span>';
+      }
+      connHtml += '</div>';
+    }
+    html += '<div class="card' + cls + '"><div class="name">' + s.name + '</div><div class="type">' + caps.join(' / ') + '</div>' + connHtml + '</div>';
   }
-  container.innerHTML = html;
+  document.getElementById('source-cards').innerHTML = html;
 }
 
 function renderBusses() {
-  var container = document.getElementById('bus-cards');
   var html = '';
   for (var i = 0; i < _state.busses.length; i++) {
     var b = _state.busses[i];
     var badge = '<span class="badge badge-' + b.type + '">' + b.type + '</span>';
-    var detail = '';
-    if (b.sources && b.sources.length > 0) {
-      detail += '<div class="detail">In: ' + b.sources.join(', ') + '</div>';
+
+    // Source connections
+    var srcTags = '';
+    var bSources = b.sources || [];
+    for (var j = 0; j < bSources.length; j++) {
+      srcTags += '<span class="conn-tag" onclick="routingCmd(\'disconnect\',{source:\'' + bSources[j] + '\',bus:\'' + b.id + '\'})">' + bSources[j] + '<span class="x">x</span></span>';
     }
-    if (b.sinks && b.sinks.length > 0) {
-      detail += '<div class="detail">Out: ' + b.sinks.join(', ') + '</div>';
+
+    // Sink connections
+    var sinkTags = '';
+    var bSinks = b.sinks || [];
+    for (var j = 0; j < bSinks.length; j++) {
+      sinkTags += '<span class="conn-tag" onclick="routingCmd(\'disconnect\',{bus:\'' + b.id + '\',sink:\'' + bSinks[j] + '\'})">' + bSinks[j] + '<span class="x">x</span></span>';
     }
-    html += '<div class="bus-card" data-id="bus-' + b.id + '" data-col="bus">'
-      + '<span class="dot dot-l" data-bus-in="' + b.id + '" onclick="startConnect(\'bus-in\',\'' + b.id + '\')"></span>'
-      + '<span class="dot dot-r" data-bus-out="' + b.id + '" onclick="startConnect(\'bus-out\',\'' + b.id + '\')"></span>'
-      + '<div class="name">' + b.name + badge + '</div>'
-      + detail
-      + '<div style="margin-top:4px;"><button class="rb rb-sm" onclick="deleteBus(\'' + b.id + '\')" style="font-size:0.6rem;padding:2px 6px;color:#e74c3c;border-color:#e74c3c;">Remove</button></div>'
+
+    // Available sources not yet connected
+    var availSrc = '<option value="">+ source...</option>';
+    for (var j = 0; j < _state.sources.length; j++) {
+      var s = _state.sources[j];
+      if (bSources.indexOf(s.id) < 0) {
+        availSrc += '<option value="' + s.id + '">' + s.name + '</option>';
+      }
+    }
+
+    // Available sinks not yet connected
+    var availSink = '<option value="">+ sink...</option>';
+    for (var j = 0; j < _state.sinks.length; j++) {
+      var s = _state.sinks[j];
+      if (bSinks.indexOf(s.id) < 0) {
+        availSink += '<option value="' + s.id + '">' + s.name + '</option>';
+      }
+    }
+
+    html += '<div class="bus-card">'
+      + '<div class="bus-header"><div><span class="name">' + b.name + '</span>' + badge + '</div>'
+      + '<button class="btn-delete" onclick="deleteBus(\'' + b.id + '\')">Remove</button></div>'
+      + '<div class="conn-section"><span class="conn-label">Sources:</span> ' + (srcTags || '<span style="color:#555">none</span>') + '</div>'
+      + '<div class="add-row"><select onchange="if(this.value)routingCmd(\'connect\',{source:this.value,bus:\'' + b.id + '\'})">' + availSrc + '</select></div>'
+      + '<div class="conn-section" style="margin-top:6px;"><span class="conn-label">Sinks:</span> ' + (sinkTags || '<span style="color:#555">none</span>') + '</div>'
+      + '<div class="add-row"><select onchange="if(this.value)routingCmd(\'connect\',{bus:\'' + b.id + '\',sink:this.value})">' + availSink + '</select></div>'
       + '</div>';
   }
-  container.innerHTML = html;
+  document.getElementById('bus-cards').innerHTML = html;
 }
 
 function renderSinks() {
-  var container = document.getElementById('sink-cards');
   var html = '';
   for (var i = 0; i < _state.sinks.length; i++) {
     var s = _state.sinks[i];
     var cls = s.enabled ? '' : ' disabled';
-    html += '<div class="card' + cls + '" data-id="sink-' + s.id + '" data-col="sink">'
-      + '<span class="dot dot-l" data-sink="' + s.id + '" onclick="startConnect(\'sink\',\'' + s.id + '\')"></span>'
-      + '<div class="name">' + s.name + '</div>'
-      + '<div class="type">' + (s.type || '') + '</div>'
-      + '</div>';
+    var connected = [];
+    for (var j = 0; j < _state.connections.length; j++) {
+      var c = _state.connections[j];
+      if (c.type === 'bus-sink' && c.to === s.id) connected.push(c.from);
+    }
+    var connHtml = '';
+    if (connected.length > 0) {
+      connHtml = '<div style="margin-top:3px;">';
+      for (var k = 0; k < connected.length; k++) {
+        connHtml += '<span class="conn-tag" onclick="routingCmd(\'disconnect\',{bus:\'' + connected[k] + '\',sink:\'' + s.id + '\'})">' + connected[k] + '<span class="x">x</span></span>';
+      }
+      connHtml += '</div>';
+    }
+    html += '<div class="card' + cls + '"><div class="name">' + s.name + '</div><div class="type">' + (s.type || '') + '</div>' + connHtml + '</div>';
   }
-  container.innerHTML = html;
+  document.getElementById('sink-cards').innerHTML = html;
 }
 
-// Wire drawing
-function drawWires() {
-  var svg = document.getElementById('wireSvg');
-  var container = document.getElementById('routing');
-  svg.setAttribute('width', container.offsetWidth);
-  svg.setAttribute('height', container.offsetHeight);
-  svg.innerHTML = '';
-
-  var cRect = container.getBoundingClientRect();
-
-  for (var i = 0; i < _state.connections.length; i++) {
-    var c = _state.connections[i];
-    var fromEl, toEl;
-
-    if (c.type === 'source-bus') {
-      fromEl = document.querySelector('[data-src="' + c.from + '"]');
-      toEl = document.querySelector('[data-bus-in="' + c.to + '"]');
-    } else if (c.type === 'bus-sink') {
-      fromEl = document.querySelector('[data-bus-out="' + c.from + '"]');
-      toEl = document.querySelector('[data-sink="' + c.to + '"]');
-    }
-
-    if (fromEl && toEl) {
-      var fRect = fromEl.getBoundingClientRect();
-      var tRect = toEl.getBoundingClientRect();
-      var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', fRect.left + fRect.width/2 - cRect.left);
-      line.setAttribute('y1', fRect.top + fRect.height/2 - cRect.top);
-      line.setAttribute('x2', tRect.left + tRect.width/2 - cRect.left);
-      line.setAttribute('y2', tRect.top + tRect.height/2 - cRect.top);
-      line.classList.add('active');
-      svg.appendChild(line);
-
-      fromEl.classList.add('connected');
-      toEl.classList.add('connected');
-    }
-  }
-}
-
-// Connection interaction
-function startConnect(type, id) {
-  if (!_connecting) {
-    _connecting = {type: type, id: id};
-    setStatus('Click destination to connect ' + id + '...');
-  } else {
-    // Complete the connection
-    var from = _connecting;
-    var to = {type: type, id: id};
-    _connecting = null;
-
-    if (from.type === 'source' && (to.type === 'bus-in')) {
-      routingCmd('connect', {source: from.id, bus: to.id});
-    } else if (from.type === 'bus-out' && to.type === 'sink') {
-      routingCmd('connect', {bus: from.id, sink: to.id});
-    } else if (to.type === 'source' && from.type === 'bus-in') {
-      routingCmd('connect', {source: to.id, bus: from.id});
-    } else if (to.type === 'bus-out' && from.type === 'sink') {
-      routingCmd('connect', {bus: to.id, sink: from.id});
-    } else {
-      setStatus('Invalid connection — source→bus or bus→sink only');
-    }
-  }
-}
-
-// Add bus dialog
 function showAddBus() {
   var name = prompt('Bus name:');
   if (!name) return;
-  var type = prompt('Bus type (listen, solo, duplex, simplex):', 'listen');
+  var type = prompt('Type (listen, solo, duplex, simplex):', 'listen');
   if (!type) return;
   routingCmd('add_bus', {name: name, type: type});
 }
@@ -357,9 +335,7 @@ function deleteBus(id) {
   routingCmd('delete_bus', {id: id});
 }
 
-// Initial load
 loadRouting();
-window.addEventListener('resize', function() { setTimeout(drawWires, 100); });
 setInterval(loadRouting, 5000);
 </script>
 </body>
