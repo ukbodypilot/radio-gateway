@@ -726,25 +726,14 @@ class RadioGateway:
             return True  # On error, allow transmission
         
     def set_ptt_state(self, state_on):
-        """Control PTT via configured method (aioc, relay, or software).
-
-        TX_RADIO selects which radio to key:
-          - 'th9800' (default): uses PTT_METHOD (aioc/relay/software via TH-9800 CAT)
-          - 'd75': uses D75 CAT !ptt (software PTT via D75 CAT client)
-        """
+        """Control PTT — routes to the configured TX radio plugin."""
         tx_radio = str(getattr(self.config, 'TX_RADIO', 'th9800')).lower()
-        if tx_radio == 'd75':
-            self._ptt_d75(state_on)
-        elif tx_radio == 'kv4p':
-            self._ptt_kv4p(state_on)
-        else:
-            method = str(getattr(self.config, 'PTT_METHOD', 'aioc')).lower()
-            if method == 'relay':
-                self._ptt_relay(state_on)
-            elif method == 'software':
-                self._ptt_software(state_on)
-            else:
-                self._ptt_aioc(state_on)
+        if tx_radio == 'd75' and self.d75_plugin:
+            self.d75_plugin.execute({'cmd': 'ptt', 'state': state_on})
+        elif tx_radio == 'kv4p' and self.kv4p_plugin:
+            self.kv4p_plugin.execute({'cmd': 'ptt', 'state': state_on})
+        elif self.th9800_plugin:
+            self.th9800_plugin.execute({'cmd': 'ptt', 'state': state_on})
         self.ptt_active = state_on
 
     def _ptt_aioc(self, state_on):
@@ -1226,57 +1215,8 @@ class RadioGateway:
         if self.config.VERBOSE_LOGGING:
             print("Initializing audio...")
         
-        # Find AIOC device
-        input_idx, output_idx = self.find_aioc_audio_device()
-        
-        if input_idx is None or output_idx is None:
-            print("✗ Could not find AIOC audio device")
-            if self.config.AIOC_INPUT_DEVICE < 0 or self.config.AIOC_OUTPUT_DEVICE < 0:
-                print("  Using default audio device instead")
-        
-        # Suppress ALSA warnings during PyAudio initialization if not verbose
-        if not self.config.VERBOSE_LOGGING:
-            import os
-            # Hardcode fd 2 — sys.stderr may be LogWriter (fileno→stdout)
-            saved_stderr = os.dup(2)
-            try:
-                devnull = os.open(os.devnull, os.O_WRONLY)
-                os.dup2(devnull, 2)
-                os.close(devnull)
-                self.pyaudio_instance = pyaudio.PyAudio()
-            finally:
-                os.dup2(saved_stderr, 2)
-                os.close(saved_stderr)
-        else:
-            self.pyaudio_instance = pyaudio.PyAudio()
-        
-        # Determine format based on bit depth
-        if self.config.AUDIO_BITS == 16:
-            audio_format = pyaudio.paInt16
-        elif self.config.AUDIO_BITS == 24:
-            audio_format = pyaudio.paInt24
-        elif self.config.AUDIO_BITS == 32:
-            audio_format = pyaudio.paInt32
-        else:
-            audio_format = pyaudio.paInt16
-        
         try:
-            # Output stream (Mumble → AIOC → Radio)
-            self.output_stream = self.pyaudio_instance.open(
-                format=audio_format,
-                channels=self.config.AUDIO_CHANNELS,
-                rate=self.config.AUDIO_RATE,
-                output=True,
-                output_device_index=output_idx,
-                frames_per_buffer=self.config.AUDIO_CHUNK_SIZE * 2  # 2x buffer for smooth playback
-            )
-            if self.config.VERBOSE_LOGGING:
-                latency_ms = (self.config.AUDIO_CHUNK_SIZE * 2 / self.config.AUDIO_RATE) * 1000
-                print(f"✓ Audio output configured ({latency_ms:.1f}ms buffer)")
-            else:
-                print("✓ Audio configured")
-            
-            # Initialize SDR plugin BEFORE AIOC/PyAudio — rtl_airband subprocess
+            # Initialize SDR plugin BEFORE TH-9800/PyAudio — rtl_airband subprocess
             # forks must happen before PortAudio initializes (Pa_Initialize is not
             # fork-safe and will SIGSEGV if a fork happens after init).
             self.sdr_plugin = None
@@ -1288,63 +1228,47 @@ class RadioGateway:
                     if self.sdr_plugin.setup(self.config):
                         self.mixer.add_source(self.sdr_plugin, bus_priority=11, duckable=getattr(self.config, 'SDR_DUCK', True))
                         print("✓ SDR plugin added to mixer")
-                        print(f"  Press 's' to mute/unmute SDR1, 'x' for SDR2")
                     else:
-                        print("⚠ Warning: SDR plugin setup failed")
                         self.sdr_plugin = None
                 except Exception as sdr_err:
-                    print(f"⚠ Warning: Could not initialize SDR plugin: {sdr_err}")
-                    import traceback; traceback.print_exc()
+                    print(f"⚠ Warning: SDR plugin: {sdr_err}")
                     self.sdr_plugin = None
 
             if self.sdr_plugin:
                 self.sdr_processor = self.sdr_plugin._processor1
                 self.sdr2_processor = self.sdr_plugin._processor2
-            else:
-                pass
 
-            # Initialize radio source — PortAudio callback mode.
-            # MUST be after SDR plugin init (rtl_airband forks are not fork-safe
-            # after Pa_Initialize).
-            if self.aioc_available:
-                try:
-                    self.radio_source = AIOCRadioSource(self.config, self)
-                    self.mixer.add_source(self.radio_source, bus_priority=1, duckable=False)
-                    if self.config.VERBOSE_LOGGING:
-                        print("✓ Radio audio source added to mixer")
-                except Exception as source_err:
-                    print(f"⚠ Warning: Could not initialize radio source: {source_err}")
-                    print("  Continuing without radio audio")
-                    self.radio_source = None
+            # Initialize TH-9800 plugin (AIOC + CAT + relays + audio streams)
+            self.th9800_plugin = None
+            try:
+                from th9800_plugin import TH9800Plugin
+                print("Initializing TH-9800 plugin...")
+                self.th9800_plugin = TH9800Plugin()
+                if self.th9800_plugin.setup(self.config):
+                    self.mixer.add_source(self.th9800_plugin, bus_priority=1, duckable=False)
+                    print("✓ TH-9800 plugin added to mixer")
+                else:
+                    print("⚠ TH-9800 plugin setup failed")
+                    self.th9800_plugin = None
+            except Exception as e:
+                print(f"⚠ TH-9800 plugin error: {e}")
+                import traceback; traceback.print_exc()
+                self.th9800_plugin = None
+
+            # Backward compat: expose plugin internals for code that still uses them
+            if self.th9800_plugin:
+                self.radio_source = self.th9800_plugin
+                self.pyaudio_instance = self.th9800_plugin._pyaudio
+                self.input_stream = self.th9800_plugin._input_stream
+                self.output_stream = self.th9800_plugin._output_stream
+                self.aioc_device = self.th9800_plugin._aioc_device
+                self.aioc_available = self.th9800_plugin._aioc_available
+                self.cat_client = self.th9800_plugin._cat_client
+                self.radio_processor = self.th9800_plugin._processor
             else:
-                print("  Radio audio: DISABLED (AIOC not available)")
                 self.radio_source = None
 
-            # Input stream (Radio → AIOC → Mumble).
-            # frames_per_buffer=4×AUDIO_CHUNK_SIZE sets the ALSA period to 200ms.
-            # _audio_callback queues each 200ms blob; get_audio() pre-buffers 3
-            # blobs (600ms cushion) then slices into 50ms sub-chunks.
-            aioc_callback = self.radio_source._audio_callback if self.radio_source else None
-            self.input_stream = self.pyaudio_instance.open(
-                format=audio_format,
-                channels=self.config.AUDIO_CHANNELS,
-                rate=self.config.AUDIO_RATE,
-                input=True,
-                input_device_index=input_idx,
-                frames_per_buffer=self.config.AUDIO_CHUNK_SIZE * 4,
-                stream_callback=aioc_callback
-            )
-
-            # Start the stream explicitly
-            if not self.input_stream.is_active():
-                self.input_stream.start_stream()
-
-            # Initialize stream age
             self.stream_age = time.time()
-
-            if self.config.VERBOSE_LOGGING:
-                mode = "callback" if aioc_callback else "blocking"
-                print(f"✓ Audio input configured ({mode} mode)")
 
             self.open_speaker_output()
 
@@ -1471,97 +1395,13 @@ class RadioGateway:
                     print(f"⚠ Warning: Could not initialize web monitor source: {e}")
                     self.web_monitor_source = None
 
-            # Initialize relay controllers
-            if getattr(self.config, 'ENABLE_RELAY_RADIO', False):
-                try:
-                    dev = self.config.RELAY_RADIO_DEVICE
-                    print(f"Initializing radio power relay ({dev})...")
-                    self.relay_radio = RelayController(dev, self.config.RELAY_RADIO_BAUD)
-                    if self.relay_radio.open():
-                        self.relay_radio.set_state(False)  # Ensure relay off on startup
-                        print(f"  Relay radio: ready (press 'j' to pulse power button)")
-                    else:
-                        self.relay_radio = None
-                except Exception as e:
-                    print(f"  Warning: Could not initialize radio relay: {e}")
-                    self.relay_radio = None
+            # Relay controllers now owned by TH9800Plugin
+            if self.th9800_plugin:
+                self.relay_radio = self.th9800_plugin._relay_radio
+                self.relay_ptt = self.th9800_plugin._relay_ptt
+                self.relay_charger = self.th9800_plugin._relay_charger
 
-            if getattr(self.config, 'ENABLE_RELAY_CHARGER', False):
-                try:
-                    charger_control = str(getattr(self.config, 'RELAY_CHARGER_CONTROL', 'gpio')).lower()
-                    if charger_control == 'gpio':
-                        gpio_pin = int(getattr(self.config, 'CHARGER_RELAY_GPIO', 23))
-                        print(f"Initializing charger relay (GPIO {gpio_pin})...")
-                        self.relay_charger = GPIORelayController(gpio_pin)
-                    else:
-                        dev = self.config.RELAY_CHARGER_DEVICE
-                        print(f"Initializing charger relay ({dev})...")
-                        self.relay_charger = RelayController(dev, self.config.RELAY_CHARGER_BAUD)
-                    if self.relay_charger.open():
-                        # Parse schedule times
-                        on_str = str(self.config.RELAY_CHARGER_ON_TIME)
-                        off_str = str(self.config.RELAY_CHARGER_OFF_TIME)
-                        oh, om = int(on_str.split(':')[0]), int(on_str.split(':')[1])
-                        fh, fm = int(off_str.split(':')[0]), int(off_str.split(':')[1])
-                        self._charger_on_time = (oh, om)
-                        self._charger_off_time = (fh, fm)
-                        # Set initial state based on current time
-                        should_be_on = self._charger_should_be_on()
-                        self.relay_charger.set_state(should_be_on)
-                        self.relay_charger_on = should_be_on
-                        state_str = "CHARGING" if should_be_on else "DRAINING"
-                        print(f"  Charger relay: {state_str} (schedule {on_str}-{off_str})")
-                    else:
-                        self.relay_charger = None
-                except Exception as e:
-                    print(f"  Warning: Could not initialize charger relay: {e}")
-                    self.relay_charger = None
-
-            # Initialize PTT relay (when PTT_METHOD = relay)
-            ptt_method = str(getattr(self.config, 'PTT_METHOD', 'aioc')).lower()
-            if ptt_method == 'relay':
-                try:
-                    dev = self.config.PTT_RELAY_DEVICE
-                    print(f"Initializing PTT relay ({dev})...")
-                    self.relay_ptt = RelayController(dev, self.config.PTT_RELAY_BAUD)
-                    if self.relay_ptt.open():
-                        self.relay_ptt.set_state(False)  # Ensure PTT released on startup
-                        print(f"  PTT relay: ready")
-                    else:
-                        print(f"  PTT relay: FAILED to open — PTT will not work!")
-                        self.relay_ptt = None
-                except Exception as e:
-                    print(f"  Warning: Could not initialize PTT relay: {e}")
-                    self.relay_ptt = None
-
-            # Initialize TH-9800 CAT control
-            if getattr(self.config, 'ENABLE_CAT_CONTROL', False):
-                try:
-                    host = self.config.CAT_HOST
-                    port = int(self.config.CAT_PORT)
-                    password = str(self.config.CAT_PASSWORD)
-                    verbose = getattr(self.config, 'VERBOSE_LOGGING', False)
-                    print(f"Connecting to TH-9800 CAT server ({host}:{port})...")
-                    self.cat_client = RadioCATClient(host, port, password, verbose=verbose)
-                    if self.cat_client.connect():
-                        print("  Connected to CAT server")
-                        # Serial connect deferred to end of startup (see below)
-                        # Pre-set volume from config so dashboard sliders show
-                        # correct values even if setup_radio is disabled or fails
-                        left_vol = getattr(self.config, 'CAT_LEFT_VOLUME', -1)
-                        right_vol = getattr(self.config, 'CAT_RIGHT_VOLUME', -1)
-                        if int(left_vol) != -1:
-                            self.cat_client._volume[self.cat_client.LEFT] = int(left_vol)
-                        if int(right_vol) != -1:
-                            self.cat_client._volume[self.cat_client.RIGHT] = int(right_vol)
-                        # Start background drain (setup_radio runs later, near end of init)
-                        self.cat_client.start_background_drain()
-                    else:
-                        print("  Failed to connect to CAT server")
-                        self.cat_client = None
-                except Exception as e:
-                    print(f"  CAT control error: {e}")
-                    self.cat_client = None
+            # CAT client now owned by TH9800Plugin (backward compat alias set above)
 
             # Initialize D75 (plugin)
             self.d75_plugin = None
