@@ -142,6 +142,10 @@
     color: #fff;
     border-color: var(--t-accent);
   }
+  .proc-btn.out-btn.on {
+    background: #2ecc71;
+    border-color: #27ae60;
+  }
 
   /* Wider nodes to fit controls */
   .drawflow .drawflow-node { min-width: 180px; }
@@ -282,10 +286,14 @@ function rebuildEditor() {
     var proc = b.processing || {};
     var html = '<div class="box">' + b.type + ' bus'
       + '<div class="proc-buttons">'
-      + '<button class="proc-btn' + (proc.gate ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'gate\')" id="proc-' + b.id + '-gate">G</button>'
-      + '<button class="proc-btn' + (proc.hpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'hpf\')" id="proc-' + b.id + '-hpf">H</button>'
-      + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf">L</button>'
-      + '<button class="proc-btn' + (proc.notch ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'notch\')" id="proc-' + b.id + '-notch">N</button>'
+      + '<button class="proc-btn' + (proc.gate ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'gate\')" id="proc-' + b.id + '-gate" title="Noise Gate">G</button>'
+      + '<button class="proc-btn' + (proc.hpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'hpf\')" id="proc-' + b.id + '-hpf" title="High Pass Filter">H</button>'
+      + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
+      + '<button class="proc-btn' + (proc.notch ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'notch\')" id="proc-' + b.id + '-notch" title="Notch Filter">N</button>'
+      + '<span style="margin-left:6px;border-left:1px solid #555;padding-left:6px;"></span>'
+      + '<button class="proc-btn out-btn' + (proc.pcm !== false ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
+      + '<button class="proc-btn out-btn' + (proc.mp3 !== false ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'
+      + '<button class="proc-btn out-btn' + (proc.vad ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'vad\')" id="proc-' + b.id + '-vad" title="VAD gate">V</button>'
       + '</div>'
       + '</div>';
     var pos = savedPositions[b.id] || {x: xBus, y: yBus};

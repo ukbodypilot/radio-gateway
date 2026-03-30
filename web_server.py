@@ -3572,7 +3572,7 @@ class WebConfigServer:
         elif cmd == 'toggle_proc':
             bus_id = data.get('bus', '')
             filt = data.get('filter', '')
-            if filt not in ('gate', 'hpf', 'lpf', 'notch'):
+            if filt not in ('gate', 'hpf', 'lpf', 'notch', 'pcm', 'mp3', 'vad'):
                 return {'ok': False, 'error': f'invalid filter: {filt}'}
             for b in busses:
                 if b['id'] == bus_id:
