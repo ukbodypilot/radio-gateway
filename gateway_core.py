@@ -114,48 +114,47 @@ from smart_announce import SmartAnnouncementManager
 from web_server import WebConfigServer
 
 class _SDRTunerView:
-    """Thin backward-compat wrapper exposing per-tuner attributes from SDRPlugin."""
+    """Backward-compat proxy exposing per-tuner attributes from SDRPlugin.
+
+    Proxies attribute access to the underlying _TunerCapture so that existing
+    code accessing sdr_source._chunk_queue, ._prebuffering, ._watchdog_restarts
+    etc. continues to work. Plugin-level attributes (duck, sdr_priority) come
+    from the plugin.
+    """
     def __init__(self, plugin, tuner=1):
-        self._plugin = plugin
-        self._capture = plugin._tuner1 if tuner == 1 else plugin._tuner2
+        object.__setattr__(self, '_plugin', plugin)
+        object.__setattr__(self, '_capture', plugin._tuner1 if tuner == 1 else plugin._tuner2)
 
-    @property
-    def audio_level(self):
-        return self._capture.audio_level if self._capture else 0
+    def __getattr__(self, name):
+        # Plugin-level attributes
+        if name in ('duck', 'sdr_priority', 'ptt_control', 'priority', 'volume'):
+            return getattr(self._plugin, name)
+        # Capture-level attributes
+        cap = self._capture
+        if cap is not None:
+            try:
+                return getattr(cap, name)
+            except AttributeError:
+                pass
+        # Safe defaults for common attributes when capture is None
+        _defaults = {
+            'audio_level': 0, 'muted': True, 'enabled': False,
+            'input_stream': False, '_chunk_queue': type('Q', (), {'qsize': lambda s: 0})(),
+            '_sub_buffer': b'', '_prebuffering': False, '_watchdog_restarts': 0,
+            '_watchdog_gave_up': False, '_watchdog_stage': 0, '_recovering': False,
+            '_serve_discontinuity': 0.0, '_sub_buffer_after': 0,
+            '_cb_overflow_count': 0, '_cb_drop_count': 0, '_last_blocked_ms': 0.0,
+            '_blob_bytes': 0, '_plc_total': 0,
+        }
+        if name in _defaults:
+            return _defaults[name]
+        raise AttributeError(f"_SDRTunerView has no attribute '{name}'")
 
-    @property
-    def muted(self):
-        return self._capture.muted if self._capture else True
-
-    @muted.setter
-    def muted(self, val):
-        if self._capture:
-            self._capture.muted = val
-
-    @property
-    def enabled(self):
-        return self._capture is not None and self._capture.enabled
-
-    @enabled.setter
-    def enabled(self, val):
-        if self._capture:
-            self._capture.enabled = val
-
-    @property
-    def input_stream(self):
-        return self._capture.active if self._capture else False
-
-    @property
-    def duck(self):
-        return self._plugin.duck
-
-    @duck.setter
-    def duck(self, val):
-        self._plugin.duck = val
-
-    @property
-    def sdr_priority(self):
-        return self._plugin.sdr_priority
+    def __setattr__(self, name, val):
+        if name in ('duck', 'sdr_priority'):
+            setattr(self._plugin, name, val)
+        elif self._capture is not None:
+            setattr(self._capture, name, val)
 
 
 class DDNSUpdater:
