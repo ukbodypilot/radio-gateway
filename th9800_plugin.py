@@ -119,14 +119,15 @@ class TH9800Plugin(RadioPlugin):
         # Initialize AIOC HID device
         self._init_aioc()
 
-        # Initialize PyAudio and audio streams
+        # Create AIOCRadioSource BEFORE opening streams — the input stream
+        # needs the source's callback for PortAudio delivery
+        self._radio_source = AIOCRadioSource(config, self._create_source_gateway_shim())
+
+        # Initialize PyAudio and audio streams (uses radio_source callback)
         if not self._init_audio_streams():
             print("  TH-9800: audio stream init failed")
             return False
-
-        # Create AIOCRadioSource for RX
-        self._radio_source = AIOCRadioSource(config, self._create_source_gateway_shim())
-        print("  TH-9800: RX source created")
+        print("  TH-9800: RX source + audio streams ready")
 
         # Initialize CAT client
         self._init_cat()

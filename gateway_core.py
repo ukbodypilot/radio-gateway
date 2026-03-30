@@ -2558,35 +2558,7 @@ class RadioGateway:
                     self.set_ptt_state(pending_ptt)
                     self._ptt_change_time = time.monotonic()  # Tell get_audio to fade in next chunk
 
-                # ── AIOC stream health management ────────────────────────────────
-                # These checks are AIOC-specific and must NOT block SDR audio.
-                # The mixer runs unconditionally below so SDR always reaches Mumble.
-                if self.input_stream and not self.restarting_stream:
-                    current_time = time.time()
-                    time_since_creation = current_time - self.stream_age
-                    time_since_vad_active = current_time - self.last_vox_active_time if hasattr(self, 'last_vox_active_time') else 999
-
-                    # Proactive AIOC restart (optional feature, brief gap acceptable)
-                    if (self.config.ENABLE_STREAM_HEALTH and
-                            self.config.STREAM_RESTART_INTERVAL > 0 and
-                            time_since_creation > self.config.STREAM_RESTART_INTERVAL):
-                        if not self.vad_active and time_since_vad_active > self.config.STREAM_RESTART_IDLE_TIME:
-                            if self.config.VERBOSE_LOGGING:
-                                print(f"\n[Maintenance] Proactive stream restart (age: {time_since_creation:.0f}s, idle: {time_since_vad_active:.0f}s)")
-                            self.restart_audio_input()
-                            self.stream_age = time.time()
-                            time.sleep(0.2)
-                            continue
-
-                    # AIOC stream inactive: restart it but do NOT raise or skip the
-                    # mixer.  AIOCRadioSource.get_audio() returns None while
-                    # restarting_stream is True, so only SDR audio flows until AIOC
-                    # recovers — which is exactly what the user wants.
-                    if not self.input_stream.is_active():
-                        if self.config.VERBOSE_LOGGING:
-                            print("\n[Diagnostic] AIOC stream inactive, restarting...")
-                        self.restart_audio_input()
-                        # Fall through — SDR still runs below
+                # AIOC stream health now handled by TH9800Plugin.check_watchdog()
 
                 # Safety: clear announcement delay if its timer has expired.
                 # This handles the case where stop_playback() is called during
@@ -2889,8 +2861,8 @@ class RadioGateway:
                         _tr_outcome = 'vad_gate'
                         continue
 
-                elif self.input_stream and not self.restarting_stream:
-                    # Fallback: direct AIOC read only (no mixer / no SDR)
+                elif False:
+                    # Fallback AIOC path disabled — TH9800Plugin handles audio
                     try:
                         data = self.input_stream.read(
                             self.config.AUDIO_CHUNK_SIZE,
