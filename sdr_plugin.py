@@ -424,6 +424,20 @@ class SDRPlugin(RadioPlugin):
             self._master_sink, self._slave_sink = sink1, sink2
             self._master_proc, self._slave_proc = self._processor1, self._processor2
 
+        # Start rtl_airband if not already running
+        try:
+            _chk = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
+            _already_running = _chk.returncode == 0
+        except Exception:
+            _already_running = False
+        if _already_running:
+            print("  rtl_airband already running (adopted)")
+        else:
+            print("  Starting rtl_airband processes...")
+            _start_result = self._restart_rtl_airband()
+            if not _start_result.get('ok'):
+                print(f"  Warning: rtl_airband start issue: {_start_result.get('error', 'unknown')}")
+
         # Create tuner captures
         enable_sdr1 = getattr(config, 'ENABLE_SDR', True)
         enable_sdr2 = getattr(config, 'ENABLE_SDR2', False)
