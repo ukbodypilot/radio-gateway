@@ -187,12 +187,23 @@ class TH9800Plugin(RadioPlugin):
 
     # -- Standard plugin interface --
 
+    _get_audio_count = 0
+    _get_audio_got = 0
+
     def get_audio(self, chunk_size=None):
         """Get RX audio from AIOC via AIOCRadioSource."""
+        self._get_audio_count += 1
         if not self.enabled or self.muted or not self._radio_source:
             return None, False
         chunk_size = chunk_size or self._config.AUDIO_CHUNK_SIZE
         audio, ptt = self._radio_source.get_audio(chunk_size)
+        if audio is not None:
+            self._get_audio_got += 1
+        if self._get_audio_count % 200 == 0:
+            q = self._radio_source._chunk_queue.qsize() if hasattr(self._radio_source, '_chunk_queue') else '?'
+            sb = len(self._radio_source._sub_buffer) if hasattr(self._radio_source, '_sub_buffer') else '?'
+            pb = self._radio_source._prebuffering if hasattr(self._radio_source, '_prebuffering') else '?'
+            print(f"  [TH9800] get_audio #{self._get_audio_count}: got={self._get_audio_got} q={q} sb={sb} prebuf={pb}")
         if audio is not None:
             # Update level from the audio we got
             try:
