@@ -573,6 +573,14 @@ class KV4PPlugin(RadioPlugin):
         time.sleep(0.2)
         self._radio.tune(group)
 
+    def ptt_on(self):
+        """Backward compat: key the transmitter."""
+        self._set_ptt(True)
+
+    def ptt_off(self):
+        """Backward compat: unkey the transmitter."""
+        self._set_ptt(False)
+
     def _set_ptt(self, state_on):
         """Key/unkey the transmitter."""
         if not self._radio:
