@@ -600,22 +600,68 @@ class SDRPlugin(RadioPlugin):
         d['master_ducking_slave'] = self._master_has_signal_hyst
         return d
 
-    # -- Backward compat for gateway_core status bar --
+    # -- Per-tuner accessors --
+
+    def get_tuner(self, n):
+        """Get tuner 1 or 2. Returns _TunerCapture or None."""
+        return self._tuner1 if n == 1 else self._tuner2
+
+    @property
+    def tuner1_level(self):
+        return self._tuner1.audio_level if self._tuner1 else 0
+
+    @property
+    def tuner2_level(self):
+        return self._tuner2.audio_level if self._tuner2 else 0
+
+    @property
+    def tuner1_muted(self):
+        return self._tuner1.muted if self._tuner1 else True
+
+    @tuner1_muted.setter
+    def tuner1_muted(self, val):
+        if self._tuner1:
+            self._tuner1.muted = val
+
+    @property
+    def tuner2_muted(self):
+        return self._tuner2.muted if self._tuner2 else True
+
+    @tuner2_muted.setter
+    def tuner2_muted(self, val):
+        if self._tuner2:
+            self._tuner2.muted = val
+
+    @property
+    def tuner1_enabled(self):
+        return self._tuner1 is not None and self._tuner1.enabled
+
+    @property
+    def tuner2_enabled(self):
+        return self._tuner2 is not None and self._tuner2.enabled
 
     @property
     def input_stream(self):
-        """Truthy if any tuner is active (gateway_core checks this)."""
+        """Truthy if any tuner is active."""
         return (self._tuner1 and self._tuner1.active) or (self._tuner2 and self._tuner2.active)
 
     @property
     def muted(self):
-        """SDR1 muted state (backward compat)."""
+        """SDR1 muted state."""
         return self._tuner1.muted if self._tuner1 else True
 
     @muted.setter
     def muted(self, val):
         if self._tuner1:
             self._tuner1.muted = val
+
+    def check_watchdog(self):
+        """No-op — PipeWire tuners don't need ALSA watchdog."""
+        pass
+
+    def cleanup(self):
+        """Clean up both tuners."""
+        self.teardown()
 
     # -- Internal: master/slave hysteresis --
 

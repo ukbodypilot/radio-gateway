@@ -1808,7 +1808,7 @@ class WebConfigServer:
                             }, 'volume': s.get('volume', 1.0),
                             'duck': {
                                 'sdr1': s.get('sdr1_duck', False),
-                                'sdr2': gw.sdr2_source.duck if gw.sdr2_source and hasattr(gw.sdr2_source, 'duck') else False,
+                                'sdr2': gw.sdr_plugin.duck if gw.sdr_plugin else False,
                                 'd75': gw.d75_plugin.duck if gw.d75_plugin and hasattr(gw.d75_plugin, 'duck') else False,
                                 'kv4p': gw.kv4p_plugin.duck if gw.kv4p_plugin and hasattr(gw.kv4p_plugin, 'duck') else False,
                                 'remote': gw.remote_audio_source.duck if gw.remote_audio_source and hasattr(gw.remote_audio_source, 'duck') else False,
@@ -1839,8 +1839,8 @@ class WebConfigServer:
                             _mute_map = {
                                 'tx':       ('tx_muted', None),
                                 'rx':       ('rx_muted', None),
-                                'sdr1':     ('sdr_muted', 'sdr_source'),
-                                'sdr2':     ('sdr2_muted', 'sdr2_source'),
+                                'sdr1':     ('sdr_muted', 'sdr_plugin'),
+                                'sdr2':     ('sdr2_muted', 'sdr_plugin'),
                                 'd75':      ('d75_muted', 'd75_plugin'),
                                 'kv4p':     ('kv4p_muted', 'kv4p_plugin'),
                                 'remote':   ('remote_audio_muted', 'remote_audio_source'),
@@ -1908,7 +1908,7 @@ class WebConfigServer:
                             # Enable/disable duck on a source
                             state = data.get('state')  # true/false or omit for toggle
                             _duck_map = {
-                                'sdr1': 'sdr_source', 'sdr2': 'sdr2_source',
+                                'sdr1': 'sdr_plugin', 'sdr2': 'sdr_plugin',
                                 'd75': 'd75_plugin', 'kv4p': 'kv4p_plugin',
                                 'remote': 'remote_audio_source',
                             }
