@@ -113,56 +113,6 @@ from cat_client import RadioCATClient, D75CATClient
 from smart_announce import SmartAnnouncementManager
 from web_server import WebConfigServer
 
-class _SDRTunerView:
-    """Thin backward-compat wrapper exposing per-tuner attributes from SDRPlugin.
-
-    Lets existing code like `self.sdr_source.audio_level` and `self.sdr2_source.muted`
-    work without changing every reference. Routes to the correct tuner inside the plugin.
-    """
-    def __init__(self, plugin, tuner=1):
-        self._plugin = plugin
-        self._tuner = tuner  # 1 or 2
-        self._capture = plugin._tuner1 if tuner == 1 else plugin._tuner2
-
-    @property
-    def audio_level(self):
-        return self._capture.audio_level if self._capture else 0
-
-    @property
-    def muted(self):
-        return self._capture.muted if self._capture else True
-
-    @muted.setter
-    def muted(self, val):
-        if self._capture:
-            self._capture.muted = val
-
-    @property
-    def enabled(self):
-        return self._capture is not None and self._capture.enabled
-
-    @enabled.setter
-    def enabled(self, val):
-        if self._capture:
-            self._capture.enabled = val
-
-    @property
-    def input_stream(self):
-        return self._capture.active if self._capture else False
-
-    @property
-    def duck(self):
-        return self._plugin.duck
-
-    @duck.setter
-    def duck(self, val):
-        self._plugin.duck = val
-
-    @property
-    def sdr_priority(self):
-        return self._plugin.sdr_priority
-
-
 class DDNSUpdater:
     """Dynamic DNS updater (No-IP compatible protocol).
 
@@ -3112,32 +3062,87 @@ class RadioGateway:
             else:
                 print("  Text-to-speech: DISABLED (set ENABLE_TTS = true to enable)")
             
-            # Initialize SDR plugin (RSPduo dual tuner as single source)
-            self.sdr_plugin = None
-            if self.config.ENABLE_SDR or getattr(self.config, 'ENABLE_SDR2', False):
-                try:
-                    from sdr_plugin import SDRPlugin
-                    print("Initializing SDR plugin (RSPduo dual tuner)...")
-                    self.sdr_plugin = SDRPlugin()
-                    if self.sdr_plugin.setup(self.config):
-                        self.mixer.add_source(self.sdr_plugin, bus_priority=11, duckable=getattr(self.config, 'SDR_DUCK', True))
-                        print("✓ SDR plugin added to mixer")
-                        print(f"  Press 's' to mute/unmute SDR1, 'x' for SDR2")
-                    else:
-                        print("⚠ Warning: SDR plugin setup failed")
-                        self.sdr_plugin = None
-                except Exception as sdr_err:
-                    print(f"⚠ Warning: Could not initialize SDR plugin: {sdr_err}")
-                    import traceback; traceback.print_exc()
-                    self.sdr_plugin = None
+            # Derive numeric SDR mixer priorities from SDR_PRIORITY_ORDER
+            _sdr_order = getattr(self.config, 'SDR_PRIORITY_ORDER', 'sdr1')
+            if _sdr_order == 'sdr2':
+                _sdr1_mix_pri, _sdr2_mix_pri = 2, 1
+            elif _sdr_order == 'equal':
+                _sdr1_mix_pri, _sdr2_mix_pri = 1, 1
+            else:  # 'sdr1' default
+                _sdr1_mix_pri, _sdr2_mix_pri = 1, 2
 
-            # Backward compat: thin views so sdr_source.audio_level / .muted / .enabled work
-            if self.sdr_plugin:
-                self.sdr_source = _SDRTunerView(self.sdr_plugin, tuner=1)
-                self.sdr2_source = _SDRTunerView(self.sdr_plugin, tuner=2)
+            # Initialize SDR1 source if enabled
+            if self.config.ENABLE_SDR:
+                try:
+                    print("Initializing SDR1 audio source...")
+                    _sdr1_cls = PipeWireSDRSource if self.config.SDR_DEVICE_NAME.startswith(('pw:', 'pipewire:')) else SDRSource
+                    self.sdr_source = _sdr1_cls(self.config, self, name="SDR1", sdr_priority=_sdr1_mix_pri)
+                    if self.sdr_source.setup_audio():
+                        # Set initial state from config
+                        self.sdr_source.enabled = True
+                        self.sdr_source.duck = self.config.SDR_DUCK
+                        self.sdr_source.mix_ratio = self.config.SDR_MIX_RATIO
+                        self.sdr_source.sdr_priority = _sdr1_mix_pri
+                        self.mixer.add_source(self.sdr_source, bus_priority=_sdr1_mix_pri + 10, duckable=self.config.SDR_DUCK)
+                        print("✓ SDR1 audio source added to mixer")
+                        print(f"  Device: {self.config.SDR_DEVICE_NAME}")
+                        print(f"  Priority order: {_sdr_order} (SDR1 mixer pri={_sdr1_mix_pri})")
+                        if self.config.SDR_DUCK:
+                            print(f"  Ducking: ENABLED (SDR silenced when higher priority audio active)")
+                        else:
+                            print(f"  Ducking: DISABLED (SDR mixed at {self.config.SDR_MIX_RATIO:.1f}x ratio)")
+                        print(f"  Press 's' to mute/unmute SDR1")
+                    else:
+                        print("⚠ Warning: Could not initialize SDR1 audio")
+                        self.sdr_source = None
+                except Exception as sdr_err:
+                    print(f"⚠ Warning: Could not initialize SDR1 source: {sdr_err}")
+                    self.sdr_source = None
             else:
                 self.sdr_source = None
+                if self.config.VERBOSE_LOGGING:
+                    print("  SDR1 audio: DISABLED (set ENABLE_SDR = true to enable)")
+
+            # Initialize SDR2 source if enabled
+            if self.config.ENABLE_SDR2:
+                try:
+                    print("Initializing SDR2 audio source...")
+                    _sdr2_cls = PipeWireSDRSource if self.config.SDR2_DEVICE_NAME.startswith(('pw:', 'pipewire:')) else SDRSource
+                    self.sdr2_source = _sdr2_cls(self.config, self, name="SDR2", sdr_priority=_sdr2_mix_pri)
+                    if self.sdr2_source.setup_audio():
+                        # Set initial state from config
+                        self.sdr2_source.enabled = True
+                        self.sdr2_source.duck = self.config.SDR2_DUCK
+                        self.sdr2_source.mix_ratio = self.config.SDR2_MIX_RATIO
+                        self.sdr2_source.sdr_priority = _sdr2_mix_pri
+                        self.mixer.add_source(self.sdr2_source, bus_priority=_sdr2_mix_pri + 10, duckable=self.config.SDR2_DUCK)
+                        print("✓ SDR2 audio source added to mixer")
+                        print(f"  Device: {self.config.SDR2_DEVICE_NAME}")
+                        print(f"  Priority order: {_sdr_order} (SDR2 mixer pri={_sdr2_mix_pri})")
+                        if self.config.SDR2_DUCK:
+                            print(f"  Ducking: ENABLED (SDR silenced when higher priority audio active)")
+                        else:
+                            print(f"  Ducking: DISABLED (SDR mixed at {self.config.SDR2_MIX_RATIO:.1f}x ratio)")
+                        print(f"  Press 'x' to mute/unmute SDR2")
+                    else:
+                        print("⚠ Warning: Could not initialize SDR2 audio")
+                        print(f"  Device {self.config.SDR2_DEVICE_NAME} not found or already in use")
+                        print(f"  Try: arecord -l | grep Loopback")
+                        print(f"  SDR2 will show as disabled in status bar")
+                        # Keep the source object but disable it so status bar shows
+                        self.sdr2_source.enabled = False
+                except Exception as sdr2_err:
+                    print(f"⚠ Warning: Could not initialize SDR2 source: {sdr2_err}")
+                    # Create disabled source object so status bar still shows it
+                    try:
+                        self.sdr2_source = _sdr2_cls(self.config, self, name="SDR2", sdr_priority=_sdr2_mix_pri)
+                        self.sdr2_source.enabled = False
+                    except:
+                        self.sdr2_source = None
+            else:
                 self.sdr2_source = None
+                if self.config.VERBOSE_LOGGING:
+                    print("  SDR2 audio: DISABLED (set ENABLE_SDR2 = true to enable)")
 
             # Initialize Remote Audio Link
             remote_role = getattr(self.config, 'REMOTE_AUDIO_ROLE', 'disabled').lower().strip("'\"")

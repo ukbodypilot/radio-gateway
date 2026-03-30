@@ -287,7 +287,7 @@ def main():
 
     try:
         while not shutdown_requested.is_set():
-            pcm, _ptt = plugin.get_audio()
+            pcm = plugin.get_audio()
             if pcm and client.connected:
                 if use_gain:
                     pcm = apply_gain(pcm, args.gain)

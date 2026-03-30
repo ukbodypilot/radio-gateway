@@ -580,8 +580,23 @@ class WebConfigServer:
         password = str(getattr(self.config, 'WEB_CONFIG_PASSWORD', '') or '')
         parent = self
 
-        # SDR manager: use gateway's sdr_plugin (set after gateway init)
-        self.sdr_manager = None  # will be set to gateway.sdr_plugin
+        # Initialize SDR manager if rtl_airband is available
+        if shutil.which('rtl_airband'):
+            try:
+                from gateway_core import RTLAirbandManager
+                self.sdr_manager = RTLAirbandManager(os.path.dirname(
+                    getattr(self.config, '_config_path', '') or os.path.join(os.path.dirname(__file__), 'gateway_config.txt')))
+            except Exception as e:
+                print(f"  [SDR] Manager init failed: {e}")
+                self.sdr_manager = None
+
+            # Auto-start internal SDR if configured
+            if self.sdr_manager and getattr(self.config, 'SDR_INTERNAL_AUTOSTART', False):
+                try:
+                    result = self.sdr_manager.apply_settings()
+                    print(f"  [SDR] Autostart: {'OK' if result.get('ok') else result.get('error', 'failed')}")
+                except Exception as e:
+                    print(f"  [SDR] Autostart failed: {e}")
 
         # Initialize USB/IP manager
         if getattr(self.config, 'ENABLE_USBIP', False):
@@ -936,13 +951,24 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
                 elif self.path == '/sdrstatus':
-                    # SDR status JSON endpoint — served by SDRPlugin
+                    # SDR status JSON endpoint
                     data = {}
-                    _sdr_p = getattr(parent.gateway, 'sdr_plugin', None) if parent.gateway else None
-                    if _sdr_p:
-                        data = _sdr_p.get_status()
+                    if parent.sdr_manager:
+                        data = parent.sdr_manager.get_status()
                     else:
-                        data = {'error': 'SDR plugin not available', 'process_alive': False}
+                        data = {'error': 'SDR manager not available', 'process_alive': False}
+                    # Add SDR audio levels from gateway sources
+                    if parent.gateway:
+                        try:
+                            src = getattr(parent.gateway, 'sdr_source', None)
+                            data['audio_level'] = src.audio_level if src and hasattr(src, 'audio_level') else 0
+                        except Exception:
+                            data['audio_level'] = 0
+                        try:
+                            src2 = getattr(parent.gateway, 'sdr2_source', None)
+                            data['audio_level2'] = src2.audio_level if src2 and hasattr(src2, 'audio_level') else 0
+                        except Exception:
+                            data['audio_level2'] = 0
                     try:
                         self.send_response(200)
                         self.send_header('Content-Type', 'application/json')
@@ -2644,15 +2670,28 @@ class WebConfigServer:
                         pass
                     return
                 elif self.path == '/sdrcmd':
-                    # SDR command endpoint — routed to SDRPlugin
+                    # SDR command endpoint
                     length = int(self.headers.get('Content-Length', 0))
                     body = self.rfile.read(length).decode('utf-8')
-                    result = {'ok': False, 'error': 'SDR plugin not available'}
+                    result = {'ok': False, 'error': 'SDR manager not available'}
                     try:
                         data = json_mod.loads(body)
-                        _sdr_p = getattr(parent.gateway, 'sdr_plugin', None) if parent.gateway else None
-                        if _sdr_p:
-                            result = _sdr_p.execute(data)
+                        cmd = data.get('cmd', '')
+                        mgr = parent.sdr_manager
+                        if mgr:
+                            if cmd == 'tune':
+                                result = mgr.apply_settings(**{k: v for k, v in data.items() if k != 'cmd'})
+                            elif cmd == 'restart':
+                                try:
+                                    mgr._restart_process()
+                                    result = {'ok': True}
+                                except Exception as e:
+                                    result = {'ok': False, 'error': str(e)}
+                            elif cmd == 'stop':
+                                mgr.stop()
+                                result = {'ok': True}
+                            else:
+                                result = {'ok': False, 'error': f'Unknown command: {cmd}'}
                     except Exception as e:
                         result = {'ok': False, 'error': str(e)}
                     try:
