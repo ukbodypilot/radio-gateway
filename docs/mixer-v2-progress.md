@@ -79,6 +79,9 @@ any work on the mixer.
 | 2026-03-29 | SDRPlugin audio | PASS | SDR1 levels 60-73%, audio heard by user |
 | 2026-03-29 | SDRPlugin + web UI | PASS | No crash when opening web UI (was SIGABRT) |
 | 2026-03-29 | SDRPlugin stability | PASS | 150+ seconds stable with web UI polling |
+| 2026-03-29 | SDR tuning (retune SDR2) | PASS | Retuned to 147.435, audio received |
+| 2026-03-29 | SDR mute/unmute | PASS | SDR2 unmute via /sdrcmd worked |
+| 2026-03-29 | Dead code cleanup | PASS | 1315 lines removed, gateway stable |
 
 ## Known Issues
 (none yet)
