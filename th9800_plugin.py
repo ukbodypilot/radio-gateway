@@ -395,50 +395,50 @@ class TH9800Plugin(RadioPlugin):
     def _rx_reader_loop(self):
         """Read audio from AIOC input stream in a blocking loop.
 
-        Simpler than PortAudio callback — just read, process, queue.
-        Runs in a daemon thread at ~50ms per read (AUDIO_CHUNK_SIZE samples).
+        Reads 4× chunk_size (200ms) per call to match AIOC USB delivery,
+        then slices into individual chunks and queues each one.
+        This keeps the queue buffered ahead of the mixer's 50ms tick.
         """
         chunk_size = self._config.AUDIO_CHUNK_SIZE
+        chunk_bytes = chunk_size * 2  # 16-bit mono
+        read_size = chunk_size * 4  # 200ms block (matches AIOC USB period)
 
-        _read_count = 0
         while self._rx_running:
             if not self._input_stream or self._restarting_stream:
                 time.sleep(0.05)
                 continue
             try:
-                data = self._input_stream.read(chunk_size, exception_on_overflow=False)
-                _read_count += 1
-                if _read_count <= 3 or _read_count % 500 == 0:
-                    rms = 0
-                    if data:
-                        arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-                        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0
-                    print(f"  [TH9800-RX] read #{_read_count}: {len(data) if data else 0} bytes, rms={rms:.0f}, q={self._rx_queue.qsize()}")
+                data = self._input_stream.read(read_size, exception_on_overflow=False)
                 if not data:
                     continue
 
-                # Apply audio processing (gate/HPF/LPF/notch)
-                if self._processor:
-                    self._sync_processor()
-                    data = self._processor.process(data)
+                # Slice 200ms block into 4 × 50ms chunks
+                for offset in range(0, len(data), chunk_bytes):
+                    chunk = data[offset:offset + chunk_bytes]
+                    if len(chunk) < chunk_bytes:
+                        break
 
-                # Queue for get_audio()
-                try:
-                    self._rx_queue.put_nowait(data)
-                except _queue_mod.Full:
+                    # Apply audio processing
+                    if self._processor:
+                        chunk = self._processor.process(chunk)
+
+                    # Queue for get_audio()
                     try:
-                        self._rx_queue.get_nowait()
-                    except _queue_mod.Empty:
-                        pass
-                    try:
-                        self._rx_queue.put_nowait(data)
+                        self._rx_queue.put_nowait(chunk)
                     except _queue_mod.Full:
-                        pass
+                        try:
+                            self._rx_queue.get_nowait()
+                        except _queue_mod.Empty:
+                            pass
+                        try:
+                            self._rx_queue.put_nowait(chunk)
+                        except _queue_mod.Full:
+                            pass
 
             except IOError as e:
-                if e.errno == -9981:  # Input overflow
+                if hasattr(e, 'errno') and e.errno == -9981:
                     try:
-                        self._input_stream.read(chunk_size * 2, exception_on_overflow=False)
+                        self._input_stream.read(read_size, exception_on_overflow=False)
                     except Exception:
                         pass
                 else:
