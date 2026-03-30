@@ -102,6 +102,10 @@ any work on the mixer.
 | 2026-03-30 | Web dead code removal | PASS | 13 _generate_* methods removed (-5375 lines) |
 | 2026-03-30 | Routing UI | PASS | Drawflow node editor, save/load, source/bus/sink wiring |
 | 2026-03-30 | TX radio sinks | PASS | KV4P/D75/TH-9800 [TX] appear in sink column |
+| 2026-03-30 | BusManager | PASS | Runs routing-configured busses alongside main loop |
+| 2026-03-30 | SoloBus live audio | PASS | File Playback → Solo Bus → KV4P TX over the air |
+| 2026-03-30 | Routing levels | PASS | RX/TX levels separated, all sources report levels |
+| 2026-03-30 | Drawflow level bars | PASS | Live level bars in source/sink nodes |
 
 ## Known Issues
 (none yet)
