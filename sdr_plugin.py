@@ -424,7 +424,7 @@ class SDRPlugin(RadioPlugin):
             self._master_sink, self._slave_sink = sink1, sink2
             self._master_proc, self._slave_proc = self._processor1, self._processor2
 
-        # Start rtl_airband if not already running
+        # Start rtl_airband if not already running (lightweight — no sdrplay restart)
         try:
             _chk = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
             _already_running = _chk.returncode == 0
@@ -434,9 +434,12 @@ class SDRPlugin(RadioPlugin):
             print("  rtl_airband already running (adopted)")
         else:
             print("  Starting rtl_airband processes...")
-            _start_result = self._restart_rtl_airband()
-            if not _start_result.get('ok'):
-                print(f"  Warning: rtl_airband start issue: {_start_result.get('error', 'unknown')}")
+            try:
+                self._write_config()
+                self._write_config_sdr2()
+                self._start_rtl_airband_only()
+            except Exception as e:
+                print(f"  Warning: rtl_airband start issue: {e}")
 
         # Create tuner captures
         enable_sdr1 = getattr(config, 'ENABLE_SDR', True)
@@ -873,6 +876,38 @@ devices:
             return {'ok': True}
         except Exception as e:
             return {'ok': False, 'error': str(e)}
+
+    def _start_rtl_airband_only(self):
+        """Start rtl_airband processes without restarting sdrplay API service.
+
+        Used during initial setup — assumes sdrplay_apiService is already running.
+        The heavy _restart_rtl_airband() (which kills sdrplay API) is only for
+        explicit tune/restart commands from the UI.
+        """
+        # Start SDR1 (Master)
+        subprocess.run(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
+                       capture_output=True, timeout=10)
+        alive = False
+        for _ in range(5):
+            time.sleep(1)
+            chk = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
+            if chk.returncode == 0:
+                alive = True
+                break
+        if not alive:
+            print("  Warning: rtl_airband (SDR1) failed to start")
+            return
+
+        # Start SDR2 (Slave) — must start after Master
+        time.sleep(3)
+        if os.path.exists(self.CONFIG_PATH_SDR2):
+            subprocess.run(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SDR2],
+                           capture_output=True, timeout=10)
+            time.sleep(2)
+            chk2 = subprocess.run(['pgrep', '-c', 'rtl_airband'], capture_output=True, timeout=2)
+            count = int(chk2.stdout.decode().strip()) if chk2.returncode == 0 else 0
+            if count < 2:
+                print("  Warning: rtl_airband (SDR2) failed to start")
 
     def _stop_rtl_airband(self):
         """Stop all rtl_airband processes."""
