@@ -35,7 +35,7 @@ any work on the mixer.
 9a. [x] Wired into gateway_core.py (replaces ~80 lines of SDR init with ~15 lines)
 9b. [x] Wired web_server.py /sdrstatus and /sdrcmd to plugin
 9c. [x] _SDRTunerView backward compat for sdr_source/sdr2_source references
-9d. [ ] NEEDS TESTING — gateway restart required
+9d. [!] REVERTED — SIGSEGV in Pa_Initialize (libportaudio) when web UI polls. Native thread-safety crash. sdr_plugin.py kept but not wired in. Need to investigate PyAudio race condition before re-enabling.
 10. [ ] Refactor TH-9800, D75, KV4P into plugins
 11. [ ] Build SoloBus (takes a RadioPlugin)
 12. [ ] Build DuplexRepeaterBus (connects two RadioPlugins)
