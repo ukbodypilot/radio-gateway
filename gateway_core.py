@@ -1292,35 +1292,21 @@ class USBIPManager:
 # RTLAirbandManager removed — absorbed into SDRPlugin in sdr_plugin.py
 
 
-class StatusBarWriter:
-    """Wraps sys.stdout so that any print() clears the status bar first.
+class LogWriter:
+    """Wraps sys.stdout to capture all output into a ring buffer for the web log viewer.
 
-    The status monitor loop calls draw_status() to paint the bar on the
-    last terminal line.  When any other thread calls print() (which goes
-    through write()), this wrapper:
-      1. Clears the current status bar line (\r + spaces + \r)
-      2. Writes the log text (which scrolls the terminal up)
-      3. Lets the next draw_status() tick repaint the bar below
-
-    In headless mode, the status bar is suppressed but all output is still
-    captured in the ring buffer and written to the log file.
+    Timestamps each line and stores in a deque. No terminal status bar —
+    all status display is via the web UI.
     """
 
-    def __init__(self, original, headless=False, buffer_lines=2000, log_file=None):
+    def __init__(self, original, buffer_lines=2000, log_file=None, **_kwargs):
         self._orig = original
         self._lock = threading.Lock()
-        self._last_status = ""   # last status bar text (for redraw)
-        self._bar_drawn = False  # True when status bar is on screen
-        self._bar_lines = 1     # how many lines the status bar occupies
-        self._at_line_start = True  # track whether next write starts a new line
-        self._headless = headless
-        # Ring buffer for web log viewer
+        self._at_line_start = True
         import collections
         self._log_buffer = collections.deque(maxlen=buffer_lines)
-        self._log_seq = 0  # monotonic sequence number for polling
-        # Rolling log file
-        self._log_file = log_file  # file object (set up externally)
-        # Forward all attributes that print() and other code might check
+        self._log_seq = 0
+        self._log_file = log_file
         for attr in ('encoding', 'errors', 'mode', 'name', 'newlines',
                      'fileno', 'isatty', 'readable', 'seekable', 'writable'):
             if hasattr(original, attr):
@@ -1362,26 +1348,6 @@ class StatusBarWriter:
 
     def write(self, text):
         with self._lock:
-            if not self._headless and self._bar_drawn and text and text != '\n':
-                # Clear status bar lines before printing log text
-                try:
-                    import shutil as _sh
-                    cols = _sh.get_terminal_size().columns
-                except Exception:
-                    cols = 120
-                blank = ' ' * cols
-                if self._bar_lines == 3:
-                    self._orig.write(f"\n\n\r{blank}\r\033[A\r{blank}\r\033[A\r{blank}\r")
-                elif self._bar_lines == 2:
-                    self._orig.write(f"\n\r{blank}\r\033[A\r{blank}\r")
-                else:
-                    self._orig.write(f"\r{blank}\r")
-                self._bar_drawn = False
-                # Strip leading \n — it was only there to push past the old
-                # status bar; the wrapper now clears the bar instead.
-                if text.startswith('\n'):
-                    text = text[1:]
-            # Prepend system time at the start of each new line
             if text:
                 import datetime as _dt
                 lines = text.split('\n')
@@ -1399,47 +1365,12 @@ class StatusBarWriter:
                         else:
                             out_parts.append(line)
                         self._at_line_start = False
-                # If text ended with \n, next write starts a new line
                 if text.endswith('\n'):
                     self._at_line_start = True
-                if not self._headless:
-                    self._orig.write(''.join(out_parts))
+                self._orig.write(''.join(out_parts))
             else:
-                if not self._headless:
-                    self._orig.write(text)
+                self._orig.write(text)
         return len(text)
-
-    def draw_status(self, status_line, line2=None, line3=None):
-        """Called by the status monitor to paint the bar (no newline).
-
-        Supports up to 3 lines.  The cursor is left on line 1 so that
-        the next draw_status or write() can overwrite cleanly.
-        In headless mode or when there is no terminal, the status bar is
-        suppressed (web dashboard shows status instead).
-        """
-        if self._headless:
-            self._last_status = status_line
-            return
-        # No terminal attached — suppress status bar to avoid polluting logs
-        try:
-            if not self._orig.isatty():
-                self._last_status = status_line
-                return
-        except Exception:
-            pass
-        with self._lock:
-            if line3 and line2:
-                self._orig.write(f"\r{status_line}\n\r{line2}\n\r{line3}\033[2A\r")
-                self._bar_lines = 3
-            elif line2:
-                self._orig.write(f"\r{status_line}\n\r{line2}\033[A\r")
-                self._bar_lines = 2
-            else:
-                self._orig.write(f"\r{status_line}")
-                self._bar_lines = 1
-            self._orig.flush()
-            self._last_status = status_line
-            self._bar_drawn = True
 
     def flush(self):
         self._orig.flush()
@@ -1694,54 +1625,6 @@ class RadioGateway:
         else:
             self.sv_audio_level = int(self.sv_audio_level * 0.7 + current * 0.3)
 
-    def format_level_bar(self, level, muted=False, ducked=False, color='green'):
-        """Format audio level as a visual bar (0-100 scale) with optional color
-        
-        Args:
-            level: Audio level 0-100
-            muted: Whether this channel is muted
-            ducked: Whether this channel is being ducked (SDR only)
-            color: 'green' for RX, 'red' for TX, 'cyan' for SDR
-        
-        Returns a fixed-width string (same width regardless of muted/ducked/normal state)
-        """
-        # ANSI color codes
-        YELLOW = '\033[93m'
-        GREEN = '\033[92m'
-        RED = '\033[91m'
-        CYAN = '\033[96m'
-        MAGENTA = '\033[95m'
-        WHITE = '\033[97m'
-        RESET = '\033[0m'
-        
-        # Choose bar color
-        if color == 'red':
-            bar_color = RED
-        elif color == 'cyan':
-            bar_color = CYAN
-        elif color == 'magenta':
-            bar_color = MAGENTA
-        elif color == 'yellow':
-            bar_color = YELLOW
-        else:
-            bar_color = GREEN
-        
-        # All return paths have EXACTLY the same visible character width:
-        # 4 chars (% value) + space + 6-char bar = 11 visible characters total
-
-        # Show MUTE if muted (fixed width, colored)
-        if muted:
-            return f"{bar_color}M   {RESET} {bar_color}-MUTE-{RESET}"
-
-        # Create a 6-character bar graph
-        bar_length = 6
-        filled = int((level / 100.0) * bar_length)
-        bar = '█' * filled + '-' * (bar_length - filled)
-
-        # % value to the LEFT of the bar: RED when ducked, GREEN when passing
-        pct_color = RED if ducked else GREEN
-        return f"{pct_color}{level:3d}%{RESET} {bar_color}{bar}{RESET}"
-    
     def apply_highpass_filter(self, pcm_data):
         """Apply high-pass filter to remove low-frequency rumble"""
         try:
@@ -2358,7 +2241,7 @@ class RadioGateway:
 
         # Only suppress if not verbose
         if not self.config.VERBOSE_LOGGING:
-            # Hardcode fd 2 — sys.stderr may be StatusBarWriter (fileno→stdout)
+            # Hardcode fd 2 — sys.stderr may be LogWriter (fileno→stdout)
             saved_stderr = os.dup(2)
             try:
                 devnull = os.open(os.devnull, os.O_WRONLY)
@@ -2535,7 +2418,7 @@ class RadioGateway:
         # Suppress ALSA warnings during PyAudio initialization if not verbose
         if not self.config.VERBOSE_LOGGING:
             import os
-            # Hardcode fd 2 — sys.stderr may be StatusBarWriter (fileno→stdout)
+            # Hardcode fd 2 — sys.stderr may be LogWriter (fileno→stdout)
             saved_stderr = os.dup(2)
             try:
                 devnull = os.open(os.devnull, os.O_WRONLY)
@@ -4740,7 +4623,7 @@ class RadioGateway:
         import sys
         import os as restart_os
 
-        # Use the original stderr fd (may have been redirected by StatusBarWriter)
+        # Use the original stderr fd (may have been redirected by LogWriter)
         _orig_stderr = getattr(self, '_orig_stderr', sys.stderr)
         stderr_fd = _orig_stderr.fileno() if hasattr(_orig_stderr, 'fileno') else 2
         saved_stderr_fd = restart_os.dup(stderr_fd)
@@ -4929,85 +4812,6 @@ class RadioGateway:
             if self.config.VERBOSE_LOGGING:
                 print(f"  ✗ Failed to restart PyAudio: {type(e).__name__}: {e}")
     
-    def keyboard_listener_loop(self):
-        """Listen for keyboard input to toggle mute states"""
-        # In headless mode, all controls come from web UI — skip terminal input
-        if getattr(self.config, 'HEADLESS_MODE', False):
-            print("  Headless mode — keyboard controls disabled (use web UI)")
-            return
-
-        import sys
-        import tty
-        import termios
-
-        # Note: Priority scheduling removed - system manages all threads
-
-        # Save terminal settings
-        try:
-            old_settings = termios.tcgetattr(sys.stdin)
-        except:
-            # Not running in a terminal, can't capture keyboard
-            if self.config.VERBOSE_LOGGING:
-                print("  [Warning] Keyboard controls not available (not in terminal)")
-            return
-
-        # Store on instance so cleanup() can restore if this daemon thread is killed
-        self._terminal_settings = old_settings
-
-        try:
-            # Set terminal to raw mode for character-by-character input
-            tty.setcbreak(sys.stdin.fileno())
-            
-            while self.running:
-                # Check if input is available (non-blocking)
-                if select.select([sys.stdin], [], [], 0.1)[0]:
-                    char = sys.stdin.read(1).lower()
-
-                    # Keys handled locally (need terminal access)
-                    if char == 'i':
-                        self._trace_recording = not self._trace_recording
-                        if self._trace_recording:
-                            self._audio_trace.clear()
-                            self._spk_trace.clear()
-                            self._trace_events.clear()
-                            self._audio_trace_t0 = time.monotonic()
-                            print(f"\n[Trace] Recording STARTED (press 'i' again to stop)")
-                        else:
-                            print(f"\n[Trace] Recording STOPPED ({len(self._audio_trace)} ticks captured)")
-                        self._trace_events.append((time.monotonic(), 'trace', 'on' if self._trace_recording else 'off'))
-
-                    elif char == 'u':
-                        self._watchdog_active = not self._watchdog_active
-                        if self._watchdog_active:
-                            self._watchdog_t0 = time.monotonic()
-                            self._watchdog_thread = threading.Thread(
-                                target=self._watchdog_trace_loop, daemon=True)
-                            self._watchdog_thread.start()
-                            print(f"\n[Watchdog] Trace STARTED — sampling every 5s, flushing to tools/watchdog_trace.txt every 60s")
-                        else:
-                            print(f"\n[Watchdog] Trace STOPPED")
-
-                    elif char == 'z':
-                        writer = getattr(sys.stdout, '_orig', sys.stdout)
-                        writer.write("\033[2J\033[H")
-                        writer.flush()
-                        if hasattr(sys.stdout, '_bar_drawn'):
-                            sys.stdout._bar_drawn = False
-                        self._print_banner()
-
-                    else:
-                        # All other keys go through shared handler
-                        self.handle_key(char)
-
-                time.sleep(0.05)
-
-        finally:
-            # Restore terminal settings
-            try:
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-            except:
-                pass
-
     def handle_proc_toggle(self, source, filt, state=None):
         """Toggle or set a processing filter for a specific source.
         Called from the /proc_toggle and /mixer API endpoints.
@@ -5464,328 +5268,13 @@ class RadioGateway:
                     if self.tx_audio_level < 3:
                         self.tx_audio_level = 0
                 
-                # Check audio transmit status
+                # Check audio health — restart if stalled
                 time_since_last_capture = current_time - self.last_audio_capture_time
-                
-                # ANSI color codes
-                YELLOW = '\033[93m'
-                GREEN = '\033[92m'
-                RED = '\033[91m'
-                ORANGE = '\033[33m'
-                WHITE = '\033[97m'
-                GRAY = '\033[90m'
-                CYAN = '\033[96m'
-                MAGENTA = '\033[95m'
-                BLUE = '\033[94m'
-                RESET = '\033[0m'
-                
-                # Format status with color-coded symbols (fixed width for alignment)
-                if self.audio_capture_active and time_since_last_capture < 2.0:
-                    status_label = "  "  # padding to keep fixed width
-                    status_symbol = f"{GREEN}✓{RESET}"
-                elif time_since_last_capture < 10.0:
-                    status_label = "  "
-                    status_symbol = f"{ORANGE}⚠{RESET}"
-                else:
-                    status_label = "  "
-                    status_symbol = f"{RED}✗{RESET}"
-                    # Attempt recovery only if AIOC is expected
-                    if self.aioc_available:
-                        if self.config.VERBOSE_LOGGING:
-                            print(f"\n{WHITE}{status_label}:{RESET} {status_symbol}")
-                            print("  Attempting to restart audio input...")
-                        self.restart_audio_input()
-                        continue
-                
-                # Print status
-                # Status symbols with colors
-                mumble_status = f"{GREEN}✓{RESET}" if self.mumble else f"{RED}✗{RESET}"
-                # PTT method tag for status label
-                _ptt_m = str(getattr(self.config, 'PTT_METHOD', 'aioc')).lower()
-                _ptt_tag = {'aioc': '', 'relay': 'R', 'software': 'S'}.get(_ptt_m, '?')
-                _ptt_label = f"PTT{_ptt_tag}" if _ptt_tag else "PTT"
-                # PTT status: Always 4 chars wide for alignment
-                if self.manual_ptt_mode:
-                    ptt_status = f"{YELLOW}M-{GREEN}ON{RESET}" if self.ptt_active else f"{YELLOW}M-{GRAY}--{RESET}"
-                elif self._rebroadcast_ptt_active:
-                    ptt_status = f"{CYAN}B-{GREEN}ON{RESET}" if self.ptt_active else f"{CYAN}B-{GRAY}--{RESET}"
-                else:
-                    # Pad normal mode to 4 chars to match manual mode width
-                    ptt_status = f"  {GREEN}ON{RESET}" if self.ptt_active else f"  {GRAY}--{RESET}"
-                
-                # VAD status: Always 2 chars wide for alignment
-                if not self.config.ENABLE_VAD:
-                    vad_status = f"{RED}✗ {RESET}"  # VAD disabled (red X + space) - 2 chars
-                elif self.vad_active:
-                    vad_status = f"{GREEN}🔊{RESET}"  # VAD active (green speaker) - 2 chars (emoji width)
-                else:
-                    vad_status = f"{GRAY}--{RESET}"  # VAD silent (gray) - 2 chars
-                
-                # Format audio levels with bar graphs
-                # Note: From radio's perspective:
-                #   - rx_audio_level = Mumble → Radio (Radio TX) - RED
-                #   - tx_audio_level = Radio → Mumble (Radio RX) - GREEN
-                radio_tx_bar = self.format_level_bar(self.rx_audio_level, muted=self.tx_muted, color='red')
-                
-                # RX bar: Show 0% if VAD is blocking (not actually transmitting to Mumble)
-                # Only show level when VAD is active (actually sending to Mumble)
-                if self.config.ENABLE_VAD and not self.vad_active:
-                    radio_rx_bar = self.format_level_bar(0, muted=self.rx_muted, color='green')  # Not transmitting = 0%
-                else:
-                    radio_rx_bar = self.format_level_bar(self.tx_audio_level, muted=self.rx_muted, color='green')
-                
-                # SDR bar: Show SDR audio level (CYAN color)
-                # Calculate once so it is always defined regardless of which SDR sources are present
-                global_muted = self.tx_muted and self.rx_muted
-
-                # Determine SDR label color based on rebroadcast state
-                if self.sdr_rebroadcast:
-                    sdr_label_color = RED if self._rebroadcast_sending else GREEN
-                else:
-                    sdr_label_color = WHITE
-
-                sdr_bar = ""
-                if self.sdr_source:
-                    # Always read current level directly from source
-                    # Don't cache in self.sdr_audio_level to prevent freezing
-                    if hasattr(self.sdr_source, 'audio_level'):
-                        current_sdr_level = self.sdr_source.audio_level
-                    else:
-                        current_sdr_level = 0
-
-                    # Determine display state
-                    # Discard when individually muted OR globally muted
-                    sdr_muted = self.sdr_muted or global_muted
-                    # Only show DUCK when SDR has actual signal; silence on an idle
-                    # loopback looks the same as "ducked signal" but means nothing.
-                    sdr_ducked = self.sdr_ducked if not sdr_muted and current_sdr_level > 0 else False
-                    
-                    # Format: SDR1: (no mode indicator here - it goes in proc_flags)
-                    sdr_bar = f" {sdr_label_color}SDR1:{RESET}" + self.format_level_bar(current_sdr_level, muted=sdr_muted, ducked=sdr_ducked, color='cyan')
-                    sdr_bar += f"{RED}P{RESET}" if self.sdr_source._prebuffering else " "
-                    if self.sdr_source._watchdog_restarts > 0:
-                        sdr_bar += f"{YELLOW}W{self.sdr_source._watchdog_restarts}{RESET}"
-
-                # SDR2 bar: Show SDR2 audio level (MAGENTA color for differentiation)
-                sdr2_bar = ""
-                if self.sdr2_source and self.sdr2_source.enabled:
-                    # Always read current level directly from source
-                    if hasattr(self.sdr2_source, 'audio_level'):
-                        current_sdr2_level = self.sdr2_source.audio_level
-                    else:
-                        current_sdr2_level = 0
-                    
-                    # Determine display state
-                    sdr2_muted = self.sdr2_muted or global_muted
-                    sdr2_ducked = self.sdr2_ducked if not sdr2_muted and current_sdr2_level > 0 else False
-                    
-                    # Format: SDR2: with magenta color
-                    sdr2_bar = f" {sdr_label_color}SDR2:{RESET}" + self.format_level_bar(current_sdr2_level, muted=sdr2_muted, ducked=sdr2_ducked, color='magenta')
-                    sdr2_bar += f"{RED}P{RESET}" if self.sdr2_source._prebuffering else " "
-                    if self.sdr2_source._watchdog_restarts > 0:
-                        sdr2_bar += f"{YELLOW}W{self.sdr2_source._watchdog_restarts}{RESET}"
-
-                # Remote audio bar (server: SV with tx level; client: CL with rx level)
-                remote_bar = ""
-                if self.remote_audio_server:
-                    # This machine is the server — show audio level being sent to client
-                    sv_level = self.sv_audio_level if self.remote_audio_server.connected else 0
-                    # Decay toward zero so the bar doesn't stick when no audio is sent
-                    if self.sv_audio_level > 0:
-                        self.sv_audio_level = int(self.sv_audio_level * 0.7)
-                    remote_bar = f" {WHITE}SV:{RESET}" + self.format_level_bar(sv_level, color='yellow')
-                elif self.remote_audio_source:
-                    # This machine is the client — show audio level received from server
-                    current_cl_level = getattr(self.remote_audio_source, 'audio_level', 0)
-                    cl_muted = self.remote_audio_muted or global_muted
-                    cl_ducked = self.remote_audio_ducked if not cl_muted and current_cl_level > 0 else False
-                    remote_bar = f" {WHITE}CL:{RESET}" + self.format_level_bar(current_cl_level, muted=cl_muted, ducked=cl_ducked, color='green')
-
-                # D75 audio bar
-                d75_bar = ""
-                if self.d75_audio_source:
-                    d75_level = getattr(self.d75_audio_source, 'audio_level', 0)
-                    d75_m = self.d75_muted or global_muted
-                    d75_bar = f" {WHITE}D75:{RESET}" + self.format_level_bar(d75_level, muted=d75_m, color='yellow')
-
-                # Announcement input bar (AN: — red like TX, shown when enabled)
-                annin_bar = ""
-                if self.announce_input_source:
-                    an_level = getattr(self.announce_input_source, 'audio_level', 0)
-                    an_connected = getattr(self.announce_input_source, 'client_connected', False)
-                    an_muted = self.announce_input_muted or global_muted
-                    annin_bar = f" {WHITE}AN:{RESET}" + self.format_level_bar(
-                        an_level if an_connected else 0, muted=an_muted, color='red'
-                    )
-
-                # Add diagnostics if there have been restarts (fixed width: always 6 chars like " R:123" or "      ")
-                # This prevents the status line from jumping when restarts occur
-                if self.stream_restart_count > 0:
-                    diag = f" {WHITE}R:{YELLOW}{self.stream_restart_count}{RESET}"
-                else:
-                    diag = "      "  # 6 spaces to match " R:XX" width
-                # DarkIce restart count
-                if self._darkice_restart_count > 0:
-                    diag += f" {WHITE}S:{YELLOW}{self._darkice_restart_count}{RESET}"
-                
-                # Show VAD level in dB if enabled (white label, yellow numbers, fixed width: always 6 chars like " -100dB" or "      ")
-                vad_info = f" {YELLOW}{self.vad_envelope:4.0f}{RESET}{WHITE}dB{RESET}" if self.config.ENABLE_VAD else "       "
-                
-                # Show RX volume (white label, yellow number, always 3 chars for number)
-                vol_info = f" {WHITE}Vol:{YELLOW}{self.config.INPUT_VOLUME:3.1f}{RESET}{WHITE}x{RESET}"
-                
-                # Show audio processing status (compact single-letter flags)
-                # This now appears AFTER file status, so width changes don't matter
-                proc_flags = []
-                if self.config.ENABLE_NOISE_GATE: proc_flags.append("N")
-                if self.config.ENABLE_HIGHPASS_FILTER: proc_flags.append("F")
-                if self.config.ENABLE_AGC: proc_flags.append("G")
-                if self.config.ENABLE_ECHO_CANCELLATION: proc_flags.append("E")
-                if not self.config.ENABLE_STREAM_HEALTH: proc_flags.append("X")  # X shows stream health is OFF
-                # D flag: SDR ducking enabled (only show if SDR is present)
-                if self.sdr_source and hasattr(self.sdr_source, 'duck') and self.sdr_source.duck:
-                    proc_flags.append("D")
-                
-                # Only show brackets if there are flags (saves space)
-                proc_info = f" {WHITE}[{YELLOW}{','.join(proc_flags)}{WHITE}]{RESET}" if proc_flags else ""
-                
-                # Speaker output indicator
-                sp_bar = ""
-                if self.config.ENABLE_SPEAKER_OUTPUT and self.speaker_stream:
-                    sp_bar = f" {WHITE}SP:{RESET}" + self.format_level_bar(
-                        self.speaker_audio_level, muted=self.speaker_muted, color='cyan'
-                    )
-
-                # Relay status indicators (fixed width, only shown when enabled)
-                relay_bar = ""
-                if self.relay_radio:
-                    if self._relay_radio_pressing:
-                        relay_bar += f" {RED}PWRB{RESET}"
-                    else:
-                        relay_bar += f" {WHITE}PWRB{RESET}"
-                if self.relay_charger:
-                    manual_tag = "*" if self._charger_manual else ""
-                    if self.relay_charger_on:
-                        relay_bar += f" {WHITE}CHG:{GREEN}CHRGE{manual_tag}{RESET}"
-                    else:
-                        relay_bar += f" {WHITE}CHG:{RED}DRAIN{manual_tag}{RESET}"
-
-                # CAT control status indicator
-                cat_bar = ""
-                if self.cat_client:
-                    if time.monotonic() - self.cat_client._last_activity < 1.0:
-                        cat_bar = f" {RED}CAT{RESET}"
-                    else:
-                        cat_bar = f" {GREEN}CAT{RESET}"
-                elif getattr(self.config, 'ENABLE_CAT_CONTROL', False):
-                    cat_bar = f" {WHITE}CAT{RESET}"
-
-                # Mumble Server status indicators
-                msrv_bar = ""
-                for _ms_inst, _ms_label in [(self.mumble_server_1, 'MS1'), (self.mumble_server_2, 'MS2')]:
-                    if _ms_inst and _ms_inst.is_enabled():
-                        _ms_state = _ms_inst.state
-                        if _ms_state == MumbleServerManager.STATE_RUNNING:
-                            msrv_bar += f" {GREEN}{_ms_label}{RESET}"
-                        elif _ms_state == MumbleServerManager.STATE_ERROR:
-                            msrv_bar += f" {RED}{_ms_label}{RESET}"
-                        else:
-                            msrv_bar += f" {WHITE}{_ms_label}{RESET}"
-
-                # Line 1: audio indicators + file slots
-                _file_bar = ""
-                if self.playback_source:
-                    _file_bar = f" {self.playback_source.get_file_status_string()}"
-                status_line = f"{status_symbol} {WHITE}M:{RESET}{mumble_status} {WHITE}{_ptt_label}:{RESET}{ptt_status} {WHITE}VAD:{RESET}{vad_status}{vad_info} {WHITE}TX:{RESET}{radio_tx_bar} {WHITE}RX:{RESET}{radio_rx_bar}{sp_bar}{sdr_bar}{sdr2_bar}{remote_bar}{d75_bar}{annin_bar}{_file_bar}     "
-
-                # Line 2: uptime, files, relays, CAT, servers, vol, proc, diag, smart countdowns
-                def _fmt_hms(secs):
-                    d, rem = divmod(int(secs), 86400)
-                    h, rem = divmod(rem, 3600)
-                    m, s = divmod(rem, 60)
-                    return f"{d}d {h:02d}:{m:02d}:{s:02d}"
-
-                uptime_s = current_time - self.start_time
-                line2_parts = [f"{WHITE}UP:{CYAN}{_fmt_hms(uptime_s)}{RESET}"]
-
-                if self.smart_announce:
-                    for sa_id, sa_rem, sa_mode in self.smart_announce.get_countdowns():
-                        if sa_mode == 'manual':
-                            line2_parts.append(f"{WHITE}S{sa_id}:{MAGENTA}Manual{RESET}")
-                        else:
-                            line2_parts.append(f"{WHITE}S{sa_id}:{MAGENTA}{_fmt_hms(sa_rem)}{RESET}")
-
-                if self.web_config_server:
-                    _web_port = getattr(self.config, 'WEB_CONFIG_PORT', 8080)
-                    _https_val = str(getattr(self.config, 'WEB_CONFIG_HTTPS', 'false')).lower().strip()
-                    _web_s = 'S' if _https_val not in ('false', '0', 'no', '') else ''
-                    line2_parts.append(f"{WHITE}WEB{_web_s}:{GREEN}{_web_port}{RESET}")
-
-                if self.automation_engine:
-                    _ae = self.automation_engine
-                    _ae_task = _ae._current_task
-                    if _ae_task:
-                        line2_parts.append(f"{WHITE}AUTO:{YELLOW}{_ae_task}{RESET}")
-                    elif _ae.recorder.is_recording():
-                        line2_parts.append(f"{WHITE}AUTO:{RED}REC{RESET}")
-                    else:
-                        line2_parts.append(f"{WHITE}AUTO:{GREEN}OK{RESET}")
-
-                # Line 3: network info (DNS IP + Cloudflare tunnel URL)
-                line3_parts = []
-                if self.ddns_updater:
-                    _dns_st = self.ddns_updater.get_status()
-                    _dns_color = YELLOW if self.ddns_updater._last_status in ('good', 'nochg') else (RED if self.ddns_updater._last_status else YELLOW)
-                    _dns_host = str(getattr(self.config, 'DDNS_HOSTNAME', '') or '')
-                    line3_parts.append(f"{WHITE}DNS:{_dns_color}{_dns_host} → {_dns_st}{RESET}")
-
-                if self.cloudflare_tunnel:
-                    _cf_url = self.cloudflare_tunnel.get_url()
-                    if _cf_url:
-                        line3_parts.append(f"{WHITE}CF:{YELLOW}{_cf_url}{RESET}")
-                    else:
-                        line3_parts.append(f"{WHITE}CF:{YELLOW}starting...{RESET}")
-
-                line2_tail = f"{relay_bar}{cat_bar}{msrv_bar}{vol_info}{proc_info}{diag}"
-                if line2_tail.strip():
-                    line2_parts.append(line2_tail.strip())
-
-                status_line2 = "  ".join(line2_parts) + "     "
-                status_line3 = "  ".join(line3_parts) + "     " if line3_parts else None
-
-                # Truncate all lines to terminal width to prevent line wrapping
-                try:
-                    import shutil as _shutil
-                    _term_cols = _shutil.get_terminal_size().columns
-                    import re as _re
-
-                    def _truncate_ansi(s, maxw):
-                        vlen = len(_re.sub(r'\033\[[0-9;]*m', '', s))
-                        if vlen <= maxw:
-                            return s
-                        out = []
-                        vc = 0
-                        i = 0
-                        while i < len(s) and vc < maxw:
-                            if s[i] == '\033':
-                                j = s.find('m', i)
-                                if j != -1:
-                                    out.append(s[i:j+1])
-                                    i = j + 1
-                                    continue
-                            out.append(s[i])
-                            vc += 1
-                            i += 1
-                        return ''.join(out) + RESET
-
-                    status_line = _truncate_ansi(status_line, _term_cols - 1)
-                    status_line2 = _truncate_ansi(status_line2, _term_cols - 1)
-                    if status_line3:
-                        status_line3 = _truncate_ansi(status_line3, _term_cols - 1)
-                except Exception:
-                    pass
-
-                self._status_writer.draw_status(status_line, line2=status_line2, line3=status_line3)
+                if time_since_last_capture > 10.0 and self.aioc_available:
+                    if self.config.VERBOSE_LOGGING:
+                        print(f"  Audio capture stalled ({int(time_since_last_capture)}s) — restarting...")
+                    self.restart_audio_input()
+                    continue
             
             # Always check for stuck audio (even if status reporting is disabled)
             elif status_check_interval == 0:
@@ -5883,113 +5372,6 @@ class RadioGateway:
                 pass  # trace deque itself failed — don't let that kill us
             time.sleep(1)
 
-    def _print_banner(self):
-        """Print the Gateway Active banner, status info, and keyboard controls."""
-        mumble_ok = getattr(self, '_mumble_ok', True)
-        print()
-        print("=" * 60)
-        if self.secondary_mode:
-            print("Gateway Active! (SECONDARY / STANDBY MODE)")
-            print("  Mumble: DISABLED — username already connected on primary")
-            print("  DarkIce: DISABLED — Broadcastify feed already live on primary")
-            print("  Radio RX/TX and SDR sources still active locally.")
-        elif not mumble_ok:
-            print("Gateway Active! (MUMBLE OFFLINE)")
-            print("  Mumble: DISABLED — server unreachable")
-            print("  Radio RX/TX and SDR sources still active locally.")
-        else:
-            print("Gateway Active!")
-            print("  Mumble → AIOC output → Radio TX (auto PTT)")
-            print("  Radio RX → AIOC input → Mumble (VOX)")
-
-        # Show audio processing status
-        processing_enabled = []
-        if self.config.ENABLE_HIGHPASS_FILTER:
-            processing_enabled.append(f"HPF@{self.config.HIGHPASS_CUTOFF_FREQ}Hz")
-        if self.config.ENABLE_NOISE_GATE:
-            processing_enabled.append(f"Gate@{self.config.NOISE_GATE_THRESHOLD}dB")
-
-        if processing_enabled:
-            print(f"  Audio Processing: {', '.join(processing_enabled)}")
-
-        # Show VAD status
-        if self.config.ENABLE_VAD:
-            print(f"  Voice Activity Detection: ON (threshold: {self.config.VAD_THRESHOLD}dB)")
-            print(f"    → Only sends audio to Mumble when radio signal detected")
-        else:
-            print(f"  Voice Activity Detection: OFF (continuous transmission)")
-
-        # Show stream health management
-        if self.config.ENABLE_STREAM_HEALTH and self.config.STREAM_RESTART_INTERVAL > 0:
-            print(f"  Stream Health: Auto-restart every {self.config.STREAM_RESTART_INTERVAL}s (when idle {self.config.STREAM_RESTART_IDLE_TIME}s+)")
-        else:
-            print(f"  Stream Health: DISABLED (may experience -9999 errors if streams get stuck)")
-
-        # Show SDR watchdog status
-        if self.sdr_source and self.sdr_source.enabled:
-            wt = self.config.SDR_WATCHDOG_TIMEOUT
-            wm = self.config.SDR_WATCHDOG_MAX_RESTARTS
-            mp = self.config.SDR_WATCHDOG_MODPROBE
-            print(f"  SDR1 Watchdog: {wt}s timeout, {wm} max restarts, modprobe={'ON' if mp else 'OFF'}")
-        if self.sdr2_source and self.sdr2_source.enabled:
-            wt = self.config.SDR2_WATCHDOG_TIMEOUT
-            wm = self.config.SDR2_WATCHDOG_MAX_RESTARTS
-            mp = self.config.SDR2_WATCHDOG_MODPROBE
-            print(f"  SDR2 Watchdog: {wt}s timeout, {wm} max restarts, modprobe={'ON' if mp else 'OFF'}")
-
-        # Show Mumble Server status
-        for _ms, _ms_num in [(getattr(self, 'mumble_server_1', None), 1),
-                              (getattr(self, 'mumble_server_2', None), 2)]:
-            if _ms and _ms.is_enabled():
-                state, port = _ms.get_status()
-                if state == MumbleServerManager.STATE_RUNNING:
-                    print(f"  Mumble Server {_ms_num}: RUNNING on port {port}")
-                elif state == MumbleServerManager.STATE_ERROR:
-                    print(f"  Mumble Server {_ms_num}: ERROR — {_ms.error_msg}")
-                elif state == MumbleServerManager.STATE_CONFIGURED:
-                    print(f"  Mumble Server {_ms_num}: configured (port {port})")
-                else:
-                    print(f"  Mumble Server {_ms_num}: {state}")
-
-        # Print file mapping if playback is enabled
-        if self.config.ENABLE_PLAYBACK and hasattr(self, 'playback_source') and self.playback_source:
-            print()  # Blank line
-            self.playback_source.print_file_mapping()
-            print()  # Blank line before keyboard controls
-
-        print("Press Ctrl+C to exit")
-        print("Keyboard Controls:")
-        print("  Mute:  't'=TX  'r'=RX  'm'=Global  's'=SDR1  'x'=SDR2  'c'=Remote  'a'=Announce  'o'=Speaker  'w'=D75  'y'=KV4P")
-        print("  Audio: 'v'=VAD toggle  ','=Vol-  '.'=Vol+")
-        print("  Proc:  'n'=Gate  'f'=HPF  'g'=AGC")
-        print("  SDR:   'd'=SDR1 Duck toggle  'b'=SDR Rebroadcast toggle")
-        print("  PTT:   'p'=Manual PTT toggle")
-        print("  Play:  '1-9'=Announcements  '0'=StationID  '-'=Stop")
-        print("  Net:   'k'=Reset remote audio connection")
-        print("  Relay: 'j'=Radio power button  'h'=Charger toggle  'l'=Send CAT config")
-        print("  Smart: '['=Smart#1  ']'=Smart#2  '\\'=Smart#3")
-        print("  Trace: 'i'=Start/stop audio trace  'u'=Start/stop watchdog trace")
-        print("  Misc:  'q'=Restart gateway  'z'=Clear and reprint console")
-        print("=" * 60)
-        print()
-
-        # Print status line legend (only in verbose mode)
-        if self.config.VERBOSE_LOGGING:
-            print("Status Line Legend:")
-            print("  [✓/⚠/✗]  = Audio capture status (active/idle/stopped)")
-            print("  M:✓/✗    = Mumble connected/disconnected")
-            print("  PTT:ON/M-ON/B-ON/-- = Push-to-talk (auto/manual-on/rebroadcast/off)")
-            print("  VAD:✗/🔊/-- = VAD disabled/active/silent (dB = current level)")
-            print("  TX:[bar] = Mumble → Radio audio level")
-            print("  RX:[bar] = Radio → Mumble audio level")
-            print("  SDR1:[bar] = SDR1 receiver audio level (cyan)")
-            print("  SDR2:[bar] = SDR2 receiver audio level (magenta)")
-            print("  Vol:X.Xx = RX volume multiplier (Radio → Mumble gain)")
-            print("  1234567890 = File status (green=loaded, red=playing, white=empty)")
-            print("  [N,F,G,D] = Processing: N=NoiseGate F=HPF G=AGC D=SDR1Duck")
-            print("  R:n      = Stream restart count (only if >0)")
-            print()
-
     def run(self):
         """Main application"""
         # Set up rolling log file (daily rotation, keeps LOG_FILE_DAYS days)
@@ -6029,10 +5411,9 @@ class RadioGateway:
                 pass
 
         # Install stdout/stderr wrapper early so ALL messages get timestamps
-        headless = getattr(self.config, 'HEADLESS_MODE', False)
         buf_lines = int(getattr(self.config, 'LOG_BUFFER_LINES', 2000))
-        self._status_writer = StatusBarWriter(
-            sys.stdout, headless=headless, buffer_lines=buf_lines, log_file=log_file
+        self._status_writer = LogWriter(
+            sys.stdout, buffer_lines=buf_lines, log_file=log_file
         )
         sys.stdout = self._status_writer
         self._orig_stderr = sys.stderr
@@ -6074,10 +5455,8 @@ class RadioGateway:
             print("\n  ⚠ Mumble connection failed — continuing without Mumble.")
             print("  Radio audio, SDR, and other features will still work.")
 
-        self._print_banner()
-
         # Redirect OS-level fd 2 (C stderr) through a pipe that feeds back
-        # into the StatusBarWriter.  This catches output from external
+        # into the LogWriter.  This catches output from external
         # processes (murmurd, Mumble GUI Qt warnings) that share our terminal.
         try:
             self._stderr_pipe_r, self._stderr_pipe_w = os.pipe()
@@ -6111,11 +5490,6 @@ class RadioGateway:
         # Start status monitor thread (handles PTT timeout and status reporting)
         self._status_thread = threading.Thread(target=self.status_monitor_loop, daemon=True)
         self._status_thread.start()
-
-        # Start keyboard listener thread
-        self._keyboard_thread = threading.Thread(target=self.keyboard_listener_loop, daemon=True)
-        self._keyboard_thread.start()
-
 
         # Start Automation Engine if enabled
         if getattr(self.config, 'ENABLE_AUTOMATION', False):
