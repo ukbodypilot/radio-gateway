@@ -91,6 +91,10 @@ any work on the mixer.
 | 2026-03-29 | D75Plugin audio RX | PASS | Audio confirmed working (BT range issue, not code) |
 | 2026-03-29 | All 3 plugins stable | PASS | SDR+KV4P+D75 running simultaneously |
 | 2026-03-29 | Dead code cleanup | PASS | D75AudioSource + D75CATClient removed (618 lines) |
+| 2026-03-30 | Console removal | PASS | StatusBar, keyboard, ANSI display removed (649 lines) |
+| 2026-03-30 | SoloBus | PASS | Built and smoke tested |
+| 2026-03-30 | DuplexRepeaterBus | PASS | Built and smoke tested (full duplex cross-link) |
+| 2026-03-30 | SimplexRepeaterBus | PASS | Built and smoke tested (store-and-forward) |
 
 ## Known Issues
 (none yet)
