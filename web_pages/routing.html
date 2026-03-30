@@ -7,12 +7,11 @@
 <link rel="stylesheet" href="/pages/common.css">
 <link rel="stylesheet" href="/pages/drawflow.min.css">
 <style>
-  body { padding: 0; margin: 0; overflow: auto; }
+  body { padding: 0; margin: 0; overflow: hidden; }
 
   #drawflow {
     width: 100%;
-    min-height: calc(100vh - 36px);
-    height: auto;
+    height: calc(100vh - 36px);
     background: var(--t-bg);
   }
 
@@ -212,13 +211,13 @@ function rebuildEditor() {
   editor.clear();
   _nodeMap = {};
 
-  var ySource = 50;
-  var yBus = 50;
-  var ySink = 50;
+  var ySource = 20;
+  var yBus = 20;
+  var ySink = 20;
   var xSource = 50;
   var xBus = 350;
   var xSink = 650;
-  var spacing = 100;
+  var spacing = 75;
 
   // Add source nodes (output only — right side)
   for (var i = 0; i < _state.sources.length; i++) {
