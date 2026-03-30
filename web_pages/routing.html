@@ -7,11 +7,12 @@
 <link rel="stylesheet" href="/pages/common.css">
 <link rel="stylesheet" href="/pages/drawflow.min.css">
 <style>
-  body { padding: 0; margin: 0; overflow: hidden; }
+  body { padding: 0; margin: 0; overflow: auto; }
 
   #drawflow {
     width: 100%;
-    height: calc(100vh - 36px);
+    min-height: calc(100vh - 36px);
+    height: auto;
     background: var(--t-bg);
   }
 
