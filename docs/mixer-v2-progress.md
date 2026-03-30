@@ -82,6 +82,10 @@ any work on the mixer.
 | 2026-03-29 | SDR tuning (retune SDR2) | PASS | Retuned to 147.435, audio received |
 | 2026-03-29 | SDR mute/unmute | PASS | SDR2 unmute via /sdrcmd worked |
 | 2026-03-29 | Dead code cleanup | PASS | 1315 lines removed, gateway stable |
+| 2026-03-29 | KV4PPlugin startup | PASS | Connected, fw v15, SA818_VHF, 146.400 MHz |
+| 2026-03-29 | KV4PPlugin + web UI | PASS | /kv4pstatus returns full status, no crash |
+| 2026-03-29 | KV4PPlugin stability | PASS | 150s stable with SDR + KV4P + Mumble |
+| 2026-03-29 | KV4PPlugin PTT | PASS | Playback triggered PTT, audio transmitted OTA |
 
 ## Known Issues
 (none yet)
