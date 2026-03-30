@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard</title>
+<link rel="stylesheet" href="/pages/common.css">
+</head>
+<body>
+
+
+<div id="status">Loading...</div>
+<div id="toast-container" style="position:fixed;top:10px;right:10px;z-index:9999;max-width:400px;"></div>
+
+<div id="sysinfo" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:1.0em; margin-top:10px;">Loading...</div>
+
+<div id="bc-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Broadcastify Stream</h3>
+    <span id="bc-status-badge" style="font-weight:bold;"></span>
+  </div>
+  <div class="st-row" id="bc-stats"></div>
+</div>
+
+<div id="automation-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Automation Engine</h3>
+    <div id="auto-header-status" style="font-size:0.85em;"></div>
+  </div>
+  <div id="auto-current" style="margin-bottom:8px; padding:8px; background:rgba(0,0,0,0.2); border-radius:4px; display:none;">
+    <div style="color:var(--t-accent); font-weight:bold; margin-bottom:4px;">Now Running</div>
+    <div id="auto-current-detail"></div>
+  </div>
+  <div id="auto-tasks" style="margin-bottom:8px;"></div>
+  <details id="auto-history-details" style="background:transparent; border:none; margin:0;">
+    <summary style="padding:4px 0; color:var(--t-accent); font-size:0.95em;">Recent History</summary>
+    <div id="auto-history" style="max-height:300px; overflow-y:auto; font-size:0.85em; margin-top:4px;"></div>
+  </details>
+</div>
+
+<div id="adsb-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">ADS-B Aircraft Tracking</h3>
+    <a href="/aircraft" target="content" onclick="setActive(document.querySelector('.shell-nav a[href=\\'/aircraft\\']'))"
+       style="font-size:0.85em; color:var(--t-accent); text-decoration:none;">&rarr; Open Map</a>
+  </div>
+  <div class="st-row" style="margin-bottom:8px;">
+    <div class="st-item"><span class="st-label">dump1090-fa:</span><span id="adsb-svc-d1090" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Web:</span><span id="adsb-svc-web" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">fr24feed:</span><span id="adsb-svc-fr24" class="st-val">&#x25cf;</span></div>
+  </div>
+  <div class="st-row">
+    <div class="st-item"><span class="st-label">Aircraft:</span><span id="adsb-aircraft" class="st-val cyan">--</span></div>
+    <div class="st-item"><span class="st-label">Messages:</span><span id="adsb-messages" class="st-val white">--</span></div>
+    <div class="st-item"><span class="st-label">Rate:</span><span id="adsb-rate" class="st-val green">--</span><span class="st-label"> msg/s</span></div>
+  </div>
+</div>
+
+<div id="tg-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Telegram Bot</h3>
+    <span id="tg-bot-name" style="font-size:0.85em; color:#aaa;"></span>
+  </div>
+  <div class="st-row" style="margin-bottom:8px;">
+    <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val">&#x25cf;</span> <button onclick="openTmux()" style="font-size:0.75em; padding:2px 8px; margin-left:4px; cursor:pointer; background:var(--t-border); color:#fff; border:1px solid #555; border-radius:3px;" title="Open terminal attached to Claude tmux session">Open</button></div>
+    <div class="st-item"><span class="st-label">Session:</span><span id="tg-session" class="st-val white">--</span></div>
+  </div>
+  <div class="st-row" style="margin-bottom:6px;">
+    <div class="st-item"><span class="st-label">Today:</span><span id="tg-msgs-today" class="st-val cyan">--</span><span class="st-label"> msgs</span></div>
+    <div class="st-item"><span class="st-label">Last in:</span><span id="tg-last-in" class="st-val white">--</span></div>
+    <div class="st-item"><span class="st-label">Last out:</span><span id="tg-last-out" class="st-val green">--</span></div>
+  </div>
+  <div style="font-size:0.85em; color:#aaa; margin-top:4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" id="tg-last-text"></div>
+</div>
+
+<div id="link-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Gateway Link</h3>
+    <span id="link-status-badge" style="font-weight:bold;"></span>
+  </div>
+  <div id="link-info"></div>
+</div>
+
+<div id="usbip-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">USB/IP Remote Devices</h3>
+    <span id="usbip-server-label" style="font-size:0.85em; color:#aaa;"></span>
+  </div>
+  <div id="usbip-status-row" class="st-row" style="margin-bottom:8px;">
+    <div class="st-item"><span class="st-label">Server:</span><span id="usbip-server-dot" class="st-val">&#x25cf;</span></div>
+  </div>
+  <div id="usbip-devices-list" style="margin-top:6px; font-size:0.9em; color:#ccc;">No devices</div>
+</div>
+
+<style>
+  #status { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: 10px; font-family: monospace; font-size: 1.0em; }
+  .st-row { display: grid; grid-template-columns: repeat(auto-fill, 240px); gap: 10px 16px; margin: 8px 0; }
+  .st-item { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+  .st-label { color: #888; display: inline-block; width: 5.5em; text-align: right; margin-right: 16px; flex-shrink: 0; }
+  .st-val { font-weight: bold; }
+  .bar { display: inline-block; height: 18px; border-radius: 3px; min-width: 4px; vertical-align: middle; }
+  .bar-rx { background: #2ecc71; } .bar-tx { background: #e74c3c; }
+  .bar-sdr1 { background: var(--t-accent); } .bar-sdr2 { background: #e056a0; }
+  .bar-sv { background: #f1c40f; } .bar-cl { background: #2ecc71; }
+  .bar-sp { background: var(--t-accent); } .bar-an { background: #e74c3c; }
+  .bar-d75 { background: #f39c12; }
+  .bar-kv4p { background: #1abc9c; }
+  .bar-pct { display: inline-block; width: 3.5em; text-align: right; color: #ccc; }
+  .green { color: #2ecc71; } .red { color: #e74c3c; } .yellow { color: #f39c12; }
+  @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+  .cyan { color: var(--t-accent); } .white { color: #e0e0e0; }
+  input[type="range"] { accent-color: var(--t-accent); }
+  .tgl input { accent-color: var(--t-accent); }
+</style>
+
+<script>
+function openTmux() {
+  fetch('/open_tmux', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+}
+
+var _lastNotifSeq = 0;
+function showToast(msg, level) {
+  var c = document.getElementById('toast-container');
+  if (!c) return;
+  var colors = {error:'#e74c3c',warning:'#f39c12',info:'#3498db'};
+  var d = document.createElement('div');
+  d.style.cssText = 'background:'+(colors[level]||colors.error)+';color:#fff;padding:10px 16px;margin-bottom:6px;border-radius:6px;font-size:0.9em;font-family:monospace;opacity:1;transition:opacity 0.5s;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+  d.textContent = msg;
+  d.onclick = function(){ d.style.opacity='0'; setTimeout(function(){ d.remove(); }, 500); };
+  c.appendChild(d);
+  setTimeout(function(){ d.style.opacity='0'; setTimeout(function(){ d.remove(); }, 500); }, 8000);
+}
+
+var _statusBusy = false;
+var _statusPollCount = 9;
+function updateStatus() {
+  if (_statusBusy) return;
+  _statusBusy = true;
+  _statusPollCount++;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 10000);
+  fetch('/status', {signal:_ac.signal}).then(r=>r.json()).then(function(s) {
+    // Poll endpoint status every 10s
+    if(s.link_enabled && s.link_endpoints && _statusPollCount % 10 === 0) {
+      for(var _ei=0; _ei<s.link_endpoints.length; _ei++) {
+        fetch('/linkcmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({endpoint:s.link_endpoints[_ei].name, cmd:'status'})}).catch(function(){});
+      }
+    }
+    _lostCount = 0;
+    // Audio levels now in shell bars (always visible above iframe)
+    var h = '';
+
+    h += '<div class="st-row info-row">';
+    h += '<div class="st-item"><span class="st-label">Mumble:</span><span class="st-val '+(s.mumble?'green':'red')+'">'+(s.mumble?'OK':'DOWN')+'</span></div>';
+    h += '<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(s.ptt_active?'red':'green')+'">'+(s.ptt_active?'ON':'off')+'</span> <span class="st-label">('+s.ptt_method+')</span></div>';
+    h += '<div class="st-item"><span class="st-label">VAD:</span><span class="st-val '+(s.vad_enabled?'green':'red')+'">'+(s.vad_enabled?'ON':'off')+'</span> <span class="st-val yellow">'+s.vad_db+'dB</span></div>';
+    h += '<div class="st-item"><span class="st-label">Vol:</span><span class="st-val yellow">'+s.volume+'x</span></div>';
+    if(s.radio_proc && s.radio_proc.length) h += '<div class="st-item"><span class="st-label">Radio:</span><span class="st-val yellow">['+s.radio_proc.join(',')+']</span></div>';
+    if(s.sdr_proc && s.sdr_proc.length) h += '<div class="st-item"><span class="st-label">SDR:</span><span class="st-val cyan">['+s.sdr_proc.join(',')+']</span></div>';
+    if(s.d75_proc && s.d75_proc.length) h += '<div class="st-item"><span class="st-label">D75:</span><span class="st-val yellow">['+s.d75_proc.join(',')+']</span></div>';
+    if(s.kv4p_proc && s.kv4p_proc.length) h += '<div class="st-item"><span class="st-label">KV4P:</span><span class="st-val yellow">['+s.kv4p_proc.join(',')+']</span></div>';
+    var mutes = [];
+    if(s.tx_muted) mutes.push('TX');
+    if(s.rx_muted) mutes.push('RX');
+    if(s.sdr1_muted) mutes.push('SDR1');
+    if(s.sdr2_muted) mutes.push('SDR2');
+    if(s.remote_muted) mutes.push('Remote');
+    if(s.announce_muted) mutes.push('Announce');
+    if(s.speaker_muted && s.speaker_enabled) mutes.push('Speaker');
+    if(s.d75_muted) mutes.push('D75');
+    if(s.kv4p_muted) mutes.push('KV4P');
+    h += '<div class="st-item"><span class="st-label">Muted:</span><span class="st-val '+(mutes.length?'red':'green')+'">'+(mutes.length?mutes.join(', '):'None')+'</span></div>';
+    if(s.sdr1_enabled && s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
+    if(s.sdr1_enabled && s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
+    h += '<div class="st-item"><span class="st-label">Manual PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
+    if(s.tx_talkback) h += '<div class="st-item"><span class="st-label">TX Talkback:</span><span class="st-val yellow">ON</span></div>';
+    if(s.ms1_state) h += '<div class="st-item"><span class="st-label">MS1:</span><span class="st-val '+(s.ms1_state==='running'?'green':s.ms1_state==='error'?'red':'white')+'">'+(s.ms1_state==='running'?'ON':'OFF')+'</span></div>';
+    if(s.ms2_state) h += '<div class="st-item"><span class="st-label">MS2:</span><span class="st-val '+(s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+'">'+(s.ms2_state==='running'?'ON':'OFF')+'</span></div>';
+    if(s.cat_enabled) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
+    if(s.d75_enabled) { var _d75a = s.d75_mode==='bluetooth' ? (s.d75_audio_connected?' <span class="st-val green">BT Audio</span>':' <span class="st-val red">No BT Audio</span>') : ' <span class="st-val yellow">USB/AIOC</span>'; h += '<div class="st-item"><span class="st-label">D75:</span><span class="st-val '+(s.d75_connected?'green':'red')+'">'+(s.d75_connected?'ON':'OFF')+'</span>'+_d75a+'</div>'; }
+    if(s.relay_radio_enabled) h += '<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
+    h += '</div>';
+
+    // Timers row: uptime + smart announce countdowns
+    h += '<div class="st-row timer-row">';
+    h += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val cyan">'+s.uptime+'</span></div>';
+    for(var i=0;i<s.smart_countdowns.length;i++) {
+      var sc=s.smart_countdowns[i];
+      var scClr=sc.mode==='manual'?'cyan':'yellow';
+      h += '<div class="st-item"><span class="st-label">Smart#'+sc.id+':</span><span class="st-val '+scClr+'">'+sc.remaining+'</span></div>';
+    }
+    if(s.ddns) h += '<div class="st-item"><span class="st-label">DDNS:</span><span class="st-val green">'+s.ddns+'</span></div>';
+    if(s.charger) h += '<div class="st-item"><span class="st-label">Charger:</span><span class="st-val '+(s.charger.startsWith("CHARGING")?'green':'red')+'">'+s.charger+'</span></div>';
+    if(s.cat_reliability && s.cat_reliability.sent) { var r=s.cat_reliability; var missClr=r.missed>0?'red':'green'; h += '<div class="st-item"><span class="st-label">CMD:</span><span class="st-val green">'+r.sent+'</span>/<span class="st-val '+missClr+'">'+r.missed+' miss</span></div>'; }
+    if(s.cat_reliability && s.cat_reliability.last_miss) { h += '<div class="st-item"><span class="st-val red" style="font-size:11px">'+s.cat_reliability.last_miss+'</span></div>'; }
+    // Broadcastify panel (separate div)
+    var bcPanel = document.getElementById('bc-panel');
+    if(s.streaming_enabled) {
+      bcPanel.style.display = '';
+      var bcRun = s.darkice_running;
+      var ds = s.darkice_stats || {};
+      var conn = ds.connected;
+      var stClr = bcRun&&conn?'green':bcRun?'yellow':'red';
+      var stTxt = bcRun?(conn?'LIVE':'NO CONN'):'OFF';
+      document.getElementById('bc-status-badge').innerHTML = '<span style="color:'+stClr+'">'+stTxt+'</span>';
+      var bh = '';
+      if(ds.uptime) { var u=ds.uptime; var uh=Math.floor(u/3600); var um=Math.floor((u%3600)/60); var us=u%60; bh += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+uh+'h '+('0'+um).slice(-2)+'m '+('0'+us).slice(-2)+'s</span></div>'; }
+      if(ds.bytes_sent) { var kb=ds.bytes_sent/1024; var mb=kb/1024; bh += '<div class="st-item"><span class="st-label">Sent:</span><span class="st-val cyan">'+(mb>=1?mb.toFixed(1)+' MB':kb.toFixed(0)+' KB')+'</span></div>'; }
+      if(ds.send_rate) bh += '<div class="st-item"><span class="st-label">Rate:</span><span class="st-val cyan">'+ds.send_rate+'</span></div>';
+      if(ds.rtt) bh += '<div class="st-item"><span class="st-label">RTT:</span><span class="st-val '+(ds.rtt<100?'green':ds.rtt<500?'yellow':'red')+'">'+ds.rtt.toFixed(0)+'ms</span></div>';
+      bh += '<div class="st-item"><span class="st-label">Pipe:</span><span class="st-val '+(s.stream_pipe_ok?'green':'red')+'">'+(s.stream_pipe_ok?'OK':'ERR')+'</span></div>';
+      bh += '<div class="st-item"><span class="st-label">Health:</span><span class="st-val '+(s.stream_health?'green':'red')+'">'+(s.stream_health?'ON':'off')+'</span></div>';
+      bh += '<div class="st-item"><span class="st-label">PID:</span><span class="st-val white">'+(s.darkice_pid||'—')+'</span></div>';
+      var rTot = (s.darkice_restarts||0) + (s.stream_restarts||0);
+      if(rTot > 0) bh += '<div class="st-item"><span class="st-label">Restarts:</span><span class="st-val yellow">'+(s.darkice_restarts||0)+'d/'+(s.stream_restarts||0)+'s</span></div>';
+      document.getElementById('bc-stats').innerHTML = bh;
+    } else {
+      bcPanel.style.display = 'none';
+    }
+    h += '</div>';
+
+    // Gateway Link panel
+    var linkPanel = document.getElementById('link-panel');
+    if(s.link_enabled) {
+      var eps = s.link_endpoints || [];
+      if(eps.length > 0) {
+        linkPanel.style.display = '';
+        var lh = '';
+        for(var i=0; i<eps.length; i++) {
+          var le = eps[i];
+          if(i > 0) lh += '<div style="border-top:1px solid var(--t-border); margin-top:8px; padding-top:8px;"></div>';
+          lh += '<div style="display:flex; justify-content:space-between; margin-bottom:4px;">';
+          lh += '<span class="st-val white">'+le.name+'</span>';
+          lh += '<span class="st-val cyan">'+le.plugin+'</span>';
+          lh += '</div>';
+          var est = le.endpoint_status || {};
+          var eh = '';
+          for(var k in est) {
+            if(est.hasOwnProperty(k)) {
+              var v = est[k];
+              var col = (v===true)?'green':(v===false)?'red':'white';
+              var txt = (v===true)?'Yes':(v===false)?'No':String(v);
+              eh += '<div class="st-item"><span class="st-label">'+k+':</span><span class="st-val '+col+'">'+txt+'</span></div>';
+            }
+          }
+          if(eh) lh += '<div class="st-row">'+eh+'</div>';
+        }
+        document.getElementById('link-info').innerHTML = lh;
+        document.getElementById('link-status-badge').innerHTML = '<span style="color:#2ecc71">'+eps.length+' connected</span>';
+      } else {
+        linkPanel.style.display = '';
+        document.getElementById('link-info').innerHTML = '';
+        document.getElementById('link-status-badge').innerHTML = '<span style="color:#888">No endpoints</span>';
+      }
+    } else {
+      linkPanel.style.display = 'none';
+    }
+
+    document.getElementById('status').innerHTML = h;
+
+    // Sync radio volume sliders with actual values from CAT
+    if(s.cat_vol) {
+      var lv=document.getElementById('l-vol'), rv=document.getElementById('r-vol');
+      var lvt=document.getElementById('l-vol-val'), rvt=document.getElementById('r-vol-val');
+      if(lv && !lv.matches(':active')) { lv.value=s.cat_vol.left; if(lvt) lvt.textContent=s.cat_vol.left; }
+      if(rv && !rv.matches(':active')) { rv.value=s.cat_vol.right; if(rvt) rvt.textContent=s.cat_vol.right; }
+    }
+    // Show new notifications as toasts
+    if (s.notifications && s.notifications.length) {
+      for (var i=0; i<s.notifications.length; i++) {
+        var n = s.notifications[i];
+        if (n.seq > _lastNotifSeq) {
+          _lastNotifSeq = n.seq;
+          showToast(n.msg, n.level);
+        }
+      }
+    }
+  }).catch(function(){ _lostCount++; if(_lostCount>=5){_lost=true; document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>';} }).finally(function(){ _statusBusy=false; });
+}
+
+var _lost = false;
+var _lostCount = 0;
+setInterval(function() {
+  if(_lost) {
+    fetch('/status').then(function(r){ if(r.ok){ _lost=false; _lostCount=0; window.location.reload(); } }).catch(function(){});
+  } else {
+    updateStatus();
+  }
+}, 1000);
+updateStatus();
+
+var _audio = null;
+var _playing = false;
+var _streamTimer = null;
+var _streamStart = 0;
+
+function toggleStream() {
+  if (_playing) {
+    stopStream();
+  } else {
+    startStream();
+  }
+}
+
+function startStream() {
+  // Kill any existing audio first to prevent orphaned streams
+  if (_audio) {
+    _audio.onplaying = null;
+    _audio.onerror = null;
+    _audio.onended = null;
+    _audio.pause();
+    _audio.src = '';
+    _audio = null;
+  }
+  if (_streamTimer) { clearInterval(_streamTimer); _streamTimer = null; }
+
+  var btn = document.getElementById('play-btn');
+  var ind = document.getElementById('stream-indicator');
+  var st = document.getElementById('stream-status');
+  _playing = true;  // Set immediately to prevent double-click restart
+  btn.innerHTML = '&#9724; MP3';
+  btn.style.color = '#f39c12';
+  btn.style.borderColor = '#f39c12';
+  st.innerHTML = '<span style="color:#f39c12">Buffering...</span>';
+
+  _audio = new Audio('/stream');
+  _audio.volume = document.getElementById('vol-slider').value / 100;
+
+  _audio.onplaying = function() {
+    _playing = true;
+    _streamStart = Date.now();
+    btn.innerHTML = '&#9724; MP3';
+    btn.style.color = '#2ecc71';
+    btn.style.borderColor = '#2ecc71';
+    ind.style.display = 'inline-block';
+    st.innerHTML = '<span style="color:#2ecc71">0:00</span> <span style="color:#666">96kbps</span>';
+    _streamTimer = setInterval(function() {
+      var secs = Math.floor((Date.now() - _streamStart) / 1000);
+      var m = Math.floor(secs / 60);
+      var s = secs % 60;
+      var t = m + ':' + (s < 10 ? '0' : '') + s;
+      st.innerHTML = '<span style="color:#2ecc71">' + t + '</span> <span style="color:#666">96kbps</span>';
+    }, 1000);
+  };
+
+  _audio.onerror = function() {
+    st.innerHTML = '<span style="color:#e74c3c">Stream error</span>';
+    stopStream();
+  };
+
+  _audio.onended = function() { stopStream(); };
+
+  _audio.play().catch(function(e) {
+    st.innerHTML = '<span style="color:#e74c3c">Error: ' + e.message + '</span>';
+    stopStream();
+  });
+}
+
+function stopStream() {
+  if (_streamTimer) { clearInterval(_streamTimer); _streamTimer = null; }
+  if (_audio) {
+    _audio.pause();
+    _audio.src = '';
+    _audio = null;
+  }
+  _playing = false;
+  document.getElementById('play-btn').innerHTML = '&#9654; MP3';
+  document.getElementById('play-btn').style.color = '#e0e0e0';
+  document.getElementById('play-btn').style.borderColor = _T.btnBorder;
+  document.getElementById('stream-indicator').style.display = 'none';
+  document.getElementById('stream-status').innerHTML = '';
+}
+
+function setVolume(v) {
+  if (_audio) _audio.volume = v / 100;
+}
+
+// --- Low-latency WebSocket PCM player ---
+var _ws = null;
+var _wsCtx = null;
+var _wsGain = null;
+var _wsPlaying = false;
+var _wsTimer = null;
+var _wsStart = 0;
+var _wsBytes = 0;
+var _wsWorklet = null;
+var _wakeLock = null;
+
+function toggleWS() {
+  if (_wsPlaying) { stopWS(); } else { startWS(); }
+}
+
+function startWS() {
+  var btn = document.getElementById('ws-btn');
+  var ind = document.getElementById('ws-indicator');
+  var st = document.getElementById('ws-status');
+  btn.innerHTML = '&#9724; PCM';
+  btn.style.color = '#f39c12';
+  btn.style.borderColor = '#f39c12';
+  st.innerHTML = '<span style="color:#f39c12">Connecting...</span>';
+
+  // Prevent double-click race
+  if (_wsCtx) { stopWS(); return; }
+
+  try {
+    _wsCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
+    console.log('[WS-Audio] AudioContext created, state:', _wsCtx.state, 'requested: 48000, actual sampleRate:', _wsCtx.sampleRate);
+    if (_wsCtx.sampleRate !== 48000) console.warn('[WS-Audio] SAMPLE RATE MISMATCH — audio may play at wrong speed!');
+  } catch(e) {
+    st.innerHTML = '<span style="color:#e74c3c">No AudioContext</span>';
+    btn.innerHTML = '&#9654; PCM';
+    btn.style.color = '#e0e0e0';
+    return;
+  }
+
+  // Resume AudioContext (browsers require user gesture)
+  if (_wsCtx.state === 'suspended') {
+    _wsCtx.resume().then(function() { console.log('[WS-Audio] AudioContext resumed'); });
+  }
+
+  // Create gain node for volume control
+  _wsGain = _wsCtx.createGain();
+  _wsGain.gain.value = document.getElementById('ws-vol').value / 100;
+  _wsGain.connect(_wsCtx.destination);
+
+  // PCM ring buffer shared between WS onmessage and audio output
+  var _pcmBuf = [];
+  var _pcmPos = 0;
+  var _pcmTotal = 0;
+  var _pcmReady = false;
+
+  function _drainPCM(output) {
+    var w = 0, need = output.length;
+    // Pre-buffer 50ms (2400 samples at 48kHz) before starting playback
+    if (!_pcmReady) {
+      if (_pcmTotal < 2400) { for (w = 0; w < need; w++) output[w] = 0; return; }
+      _pcmReady = true;
+    }
+    // Cap buffer at 200ms (9600 samples) — skip ahead if falling behind
+    while (_pcmTotal > 9600 && _pcmBuf.length > 1) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
+    while (w < need) {
+      if (!_pcmBuf.length) { for (; w < need; w++) output[w] = 0; break; }
+      var cur = _pcmBuf[0], avail = cur.length - _pcmPos;
+      var take = Math.min(avail, need - w);
+      for (var j = 0; j < take; j++) output[w++] = cur[_pcmPos++];
+      if (_pcmPos >= cur.length) { _pcmTotal -= cur.length; _pcmBuf.shift(); _pcmPos = 0; }
+    }
+  }
+
+  function _connectWS() {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    _ws = new WebSocket(proto + '//' + location.host + '/ws_audio');
+    _ws.binaryType = 'arraybuffer';
+
+    _ws.onopen = function() {
+      console.log('[WS-Audio] WebSocket connected');
+      _wsPlaying = true;
+      _wsStart = Date.now();
+      _wsBytes = 0;
+      if (navigator.wakeLock) { navigator.wakeLock.request('screen').then(function(wl) { _wakeLock = wl; }).catch(function(){}); }
+      btn.innerHTML = '&#9724; PCM';
+      btn.style.color = _T.accent;
+      btn.style.borderColor = _T.accent;
+      ind.style.display = 'inline-block';
+      st.innerHTML = '<span style="color:var(--t-accent)">0:00</span>';
+      _wsTimer = setInterval(function() {
+        var secs = Math.floor((Date.now() - _wsStart) / 1000);
+        var m = Math.floor(secs / 60);
+        var s = secs % 60;
+        var t = m + ':' + (s < 10 ? '0' : '') + s;
+        var kb = (_wsBytes / 1024).toFixed(0);
+        var unit = 'KB';
+        if (_wsBytes >= 1048576) { kb = (_wsBytes / 1048576).toFixed(1); unit = 'MB'; }
+        var kbps = secs > 0 ? ((_wsBytes * 8 / secs / 1000).toFixed(0) + 'kbps') : '';
+        st.innerHTML = '<span style="color:var(--t-accent)">' + t + '</span> <span style="color:#666">' + kb + unit + (kbps ? ' ' + kbps : '') + '</span>';
+      }, 1000);
+    };
+
+    // Resample ratio: server sends 48kHz, AudioContext may run at different rate
+    var _srcRate = 48000;
+    var _dstRate = _wsCtx.sampleRate;
+    var _resample = (_dstRate !== _srcRate);
+    if (_resample) console.log('[WS-Audio] Resampling', _srcRate, '→', _dstRate);
+
+    _ws.onmessage = function(ev) {
+      if (ev.data instanceof ArrayBuffer) {
+        _wsBytes += ev.data.byteLength;
+        var int16 = new Int16Array(ev.data);
+        var float32 = new Float32Array(int16.length);
+        for (var i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
+        // Resample if AudioContext rate differs from source
+        if (_resample) {
+          var ratio = _srcRate / _dstRate;
+          var outLen = Math.round(float32.length / ratio);
+          var resampled = new Float32Array(outLen);
+          for (var i = 0; i < outLen; i++) {
+            var srcIdx = i * ratio;
+            var idx0 = Math.floor(srcIdx);
+            var frac = srcIdx - idx0;
+            var s0 = float32[idx0] || 0;
+            var s1 = float32[Math.min(idx0 + 1, float32.length - 1)] || 0;
+            resampled[i] = s0 + frac * (s1 - s0);
+          }
+          float32 = resampled;
+        }
+        if (_wsWorklet && _wsWorklet.port) {
+          _wsWorklet.port.postMessage(float32);
+        } else {
+          _pcmBuf.push(float32);
+          _pcmTotal += float32.length;
+          // Cap buffer to ~200ms to prevent buildup
+          while (_pcmBuf.length > 4) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
+        }
+      }
+    };
+
+    _ws.onerror = function(ev) {
+      console.log('[WS-Audio] WebSocket error:', ev);
+      st.innerHTML = '<span style="color:#e74c3c">WS error</span>';
+      stopWS();
+    };
+
+    _ws.onclose = function(ev) {
+      console.log('[WS-Audio] WebSocket closed, code:', ev.code, 'reason:', ev.reason);
+      if (_wsPlaying) stopWS();
+    };
+  }
+
+  // Try AudioWorklet first (requires secure context), fall back to ScriptProcessor
+  if (_wsCtx.audioWorklet) {
+    var workletCode = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[];this.p=0;this.tot=0;this.ready=false;this.port.onmessage=e=>{this.b.push(e.data);this.tot+=e.data.length;if(!this.ready&&this.tot>=2400)this.ready=true;if(this.tot>9600){while(this.tot>2400&&this.b.length>1){this.tot-=this.b[0].length;this.b.shift()}this.p=0}}}process(i,o){var c=o[0][0];if(!c)return true;var n=c.length,w=0;if(!this.ready){for(w=0;w<n;w++)c[w]=0;return true}while(w<n){if(!this.b.length){for(;w<n;w++)c[w]=0;break}var r=this.b[0],a=r.length-this.p,t=Math.min(a,n-w);for(var j=0;j<t;j++)c[w++]=r[this.p++];if(this.p>=r.length){this.b.shift();this.p=0;this.tot-=r.length}}return true}}registerProcessor("p",P)';
+    var blob = new Blob([workletCode], {type: 'application/javascript'});
+    var blobURL = URL.createObjectURL(blob);
+    _wsCtx.audioWorklet.addModule(blobURL).then(function() {
+      URL.revokeObjectURL(blobURL);
+      console.log('[WS-Audio] AudioWorklet loaded OK');
+      _wsWorklet = new AudioWorkletNode(_wsCtx, 'p', {outputChannelCount:[1], numberOfOutputs:1});
+      _wsWorklet.connect(_wsGain);
+      _connectWS();
+    }).catch(function(e) {
+      // AudioWorklet failed — use ScriptProcessor fallback
+      URL.revokeObjectURL(blobURL);
+      console.log('[WS-Audio] AudioWorklet failed:', e.message, '— using ScriptProcessor');
+      var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
+      sp.onaudioprocess = function(ev) { _drainPCM(ev.outputBuffer.getChannelData(0)); };
+      sp.connect(_wsGain);
+      _wsWorklet = sp;  // store for cleanup
+      _connectWS();
+    });
+  } else {
+    // No AudioWorklet at all — ScriptProcessor
+    var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
+    sp.onaudioprocess = function(ev) { _drainPCM(ev.outputBuffer.getChannelData(0)); };
+    sp.connect(_wsGain);
+    _wsWorklet = sp;
+    _connectWS();
+  }
+}
+
+function stopWS() {
+  if (_wsTimer) { clearInterval(_wsTimer); _wsTimer = null; }
+  if (_ws) { try { _ws.close(); } catch(e){} _ws = null; }
+  if (_wsWorklet) { try { _wsWorklet.disconnect(); } catch(e){} _wsWorklet = null; }
+  if (_wsGain) { try { _wsGain.disconnect(); } catch(e){} _wsGain = null; }
+  if (_wsCtx) { try { _wsCtx.close(); } catch(e){} _wsCtx = null; }
+  _wsPlaying = false;
+  if (_wakeLock) { try { _wakeLock.release(); } catch(e){} _wakeLock = null; }
+  document.getElementById('ws-btn').innerHTML = '&#9654; PCM';
+  document.getElementById('ws-btn').style.color = '#e0e0e0';
+  document.getElementById('ws-btn').style.borderColor = _T.btnBorder;
+  document.getElementById('ws-indicator').style.display = 'none';
+  document.getElementById('ws-status').innerHTML = '';
+  _wsBytes = 0;
+}
+
+function setWSVol(v) {
+  if (_wsGain) _wsGain.gain.value = v / 100;
+}
+
+// --- System Status ---
+function fmtBytes(b) {
+  if (b >= 1048576) return (b/1048576).toFixed(1) + ' MB/s';
+  if (b >= 1024) return (b/1024).toFixed(1) + ' KB/s';
+  return b + ' B/s';
+}
+function sysBar(pct, color) {
+  var c = pct > 80 ? '#e74c3c' : pct > 60 ? '#f39c12' : (color || '#2ecc71');
+  var w = Math.round(Math.min(Math.max(pct, 0), 100));
+  var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
+  return '<span class="bar-pct">'+p+'%</span><span class="bar" style="width:'+w+'px;background:'+c+'"></span>';
+}
+var _sysinfoBusy = false;
+function updateSysInfo() {
+  if (_sysinfoBusy) return;
+  _sysinfoBusy = true;
+  var _ac2 = new AbortController(); setTimeout(function(){_ac2.abort();}, 5000);
+  fetch('/sysinfo', {signal:_ac2.signal}).then(function(r){return r.json()}).then(function(s) {
+    var h = '<div class="st-row">';
+    h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(s.cpu_pct)+'</div>';
+    h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val cyan">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
+    h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, _T.accent)+'<span class="st-label">'+s.mem_used_mb+'/'+s.mem_total_mb+'MB</span></div>';
+    if (s.swap_total_mb > 0) {
+      var swPct = Math.round(100*s.swap_used_mb/s.swap_total_mb);
+      h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, '#e056a0')+'<span class="st-label">'+s.swap_used_mb+'/'+s.swap_total_mb+'MB</span></div>';
+    }
+    h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, '#f1c40f')+'<span class="st-label">'+s.disk_used_gb+'/'+s.disk_total_gb+'GB</span></div>';
+    h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green">R:'+fmtBytes(s.disk_read_bps)+'</span> <span class="st-val yellow">W:'+fmtBytes(s.disk_write_bps)+'</span></div>';
+    h += '</div>';
+    h += '<div class="st-row">';
+    h += '<div class="st-item"><span class="st-label">Net:</span><span class="st-val green">RX:'+fmtBytes(s.net_rx_bps)+'</span> <span class="st-val cyan">TX:'+fmtBytes(s.net_tx_bps)+'</span></div>';
+    h += '<div class="st-item"><span class="st-label">TCP:</span><span class="st-val white">'+s.tcp_connections+'</span></div>';
+    if (s.temps && s.temps.length) {
+      for (var i=0; i<s.temps.length; i++) {
+        var t = s.temps[i];
+        var tc = t.temp > 80 ? 'red' : t.temp > 60 ? 'yellow' : 'green';
+        h += '<div class="st-item"><span class="st-label">'+t.label+':</span><span class="st-val '+tc+'">'+t.temp+'&deg;C</span></div>';
+      }
+    }
+    h += '</div>';
+    if (s.ips && s.ips.length) {
+      h += '<div class="st-row">';
+      if (s.gateway_name) h += '<div class="st-item"><span class="st-label">Name:</span><span class="st-val white">'+s.gateway_name+'</span></div>';
+      if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val cyan">'+s.hostname+'</span></div>';
+      for (var i=0; i<s.ips.length; i++) {
+        h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
+      }
+      if (s.tunnel_url) h += '<div class="st-item"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" style="color:#2ecc71; text-decoration:none;">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
+      h += '</div>';
+    }
+    document.getElementById('sysinfo').innerHTML = h;
+  }).catch(function(){}).finally(function(){ _sysinfoBusy=false; });
+}
+setInterval(updateSysInfo, 2000);
+updateSysInfo();
+
+// --- Automation Engine ---
+var _autoBusy = false, _autoHistBusy = false;
+function updateAutomation() {
+  if (_autoBusy) return;
+  _autoBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/automationstatus', {signal:_ac.signal}).then(r=>r.json()).then(function(a) {
+    var panel = document.getElementById('automation-panel');
+    if (!a.enabled) { panel.style.display='none'; return; }
+    panel.style.display='';
+
+    // Header status
+    var hdr = '<span class="'+(a.running?'green':'red')+'">'+(a.running?'Running':'Stopped')+'</span>';
+    hdr += ' &mdash; '+a.tasks.length+' tasks, '+a.repeater_count+' repeaters';
+    if (a.radios.length) hdr += ', radios: '+a.radios.join(', ');
+    else hdr += ', <span class="red">no radios</span>';
+    if (a.recording) hdr += ' &mdash; <span class="red" style="animation:blink 1s infinite">REC</span>';
+    document.getElementById('auto-header-status').innerHTML = hdr;
+
+    // Current task
+    var curDiv = document.getElementById('auto-current');
+    var curDetail = document.getElementById('auto-current-detail');
+    if (a.current_task) {
+      curDiv.style.display = '';
+      var ct = null;
+      for (var i=0; i<a.tasks.length; i++) { if (a.tasks[i].name===a.current_task) { ct=a.tasks[i]; break; } }
+      var d = '<span style="color:#fff">'+a.current_task+'</span>';
+      if (ct) d += ' &mdash; <span class="yellow">'+ct.action+'</span> on <span class="cyan">'+ct.radio+'</span>';
+      if (a.recording) d += ' <span class="red">[RECORDING]</span>';
+      curDetail.innerHTML = d;
+    } else {
+      curDiv.style.display = 'none';
+    }
+
+    // Task queue
+    var t = '<table style="width:100%; border-collapse:collapse; font-size:0.9em;">';
+    t += '<tr style="color:#888; text-align:left;"><th style="padding:2px 8px;">Task</th><th style="padding:2px 8px;">Action</th><th style="padding:2px 8px;">Radio</th><th style="padding:2px 8px;">Next</th><th style="padding:2px 8px;">Last</th></tr>';
+    for (var i=0; i<a.tasks.length; i++) {
+      var tk = a.tasks[i];
+      var active = (tk.name === a.current_task);
+      var row_style = active ? 'background:rgba(46,204,113,0.15);' : '';
+      var next = tk.schedule_type==='interval' ? fmtSecs(tk.next_run_secs) : ('at '+tk.at+(tk.last_run_date?' (done)':''));
+      var last = tk.last_run_ago !== null ? fmtSecs(tk.last_run_ago)+' ago' : '--';
+      t += '<tr style="'+row_style+'">';
+      t += '<td style="padding:2px 8px; color:#fff;">'+(active?'&#9654; ':'')+tk.name+'</td>';
+      t += '<td style="padding:2px 8px; color:#f39c12;">'+tk.action+'</td>';
+      t += '<td style="padding:2px 8px; color:var(--t-accent);">'+tk.radio+'</td>';
+      t += '<td style="padding:2px 8px;">'+next+'</td>';
+      t += '<td style="padding:2px 8px; color:#888;">'+last+'</td>';
+      t += '</tr>';
+    }
+    t += '</table>';
+    document.getElementById('auto-tasks').innerHTML = t;
+  }).catch(function(){}).finally(function(){ _autoBusy=false; });
+}
+function updateAutoHistory() {
+  if (_autoHistBusy) return;
+  _autoHistBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/automationhistory', {signal:_ac.signal}).then(r=>r.json()).then(function(hist) {
+    if (!hist.length) { document.getElementById('auto-history').innerHTML='<span style="color:#888;">No completed tasks yet</span>'; return; }
+    var h = '<table style="width:100%; border-collapse:collapse;">';
+    h += '<tr style="color:#888; text-align:left;"><th style="padding:2px 6px;">Time</th><th style="padding:2px 6px;">Task</th><th style="padding:2px 6px;">Radio</th><th style="padding:2px 6px;">Duration</th><th style="padding:2px 6px;">Result</th></tr>';
+    for (var i=0; i<Math.min(hist.length,20); i++) {
+      var e = hist[i];
+      var res = '';
+      if (e.result) {
+        if (e.result.error) res = '<span class="red">ERR: '+e.result.error+'</span>';
+        else if (e.result.frequency) {
+          res = e.result.frequency+' MHz';
+          if (e.result.recording) res += ' <span class="green">recorded</span>';
+          if (e.result.signal && e.result.signal.has_signal) res += ' <span class="green">signal</span>';
+        }
+        else if (e.result.scanned) res = e.result.scanned+' scanned, '+e.result.active+' active';
+        else if (e.result.text) res = 'TTS: '+e.result.text.substring(0,30)+'...';
+      }
+      h += '<tr><td style="padding:2px 6px; color:#888;">'+e.time+'</td>';
+      h += '<td style="padding:2px 6px; color:#fff;">'+e.task+'</td>';
+      h += '<td style="padding:2px 6px; color:var(--t-accent);">'+e.radio+'</td>';
+      h += '<td style="padding:2px 6px;">'+e.elapsed+'s</td>';
+      h += '<td style="padding:2px 6px;">'+res+'</td></tr>';
+    }
+    h += '</table>';
+    document.getElementById('auto-history').innerHTML = h;
+  }).catch(function(){}).finally(function(){ _autoHistBusy=false; });
+}
+function fmtSecs(s) {
+  if (s===null||s===undefined) return '--';
+  if (s<60) return s+'s';
+  if (s<3600) return Math.floor(s/60)+'m '+Math.floor(s%60)+'s';
+  return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';
+}
+setInterval(updateAutomation, 2000);
+setInterval(updateAutoHistory, 5000);
+updateAutomation();
+updateAutoHistory();
+
+// --- ADS-B Status ---
+var _adsbBusy = false;
+function updateAdsb() {
+  if (_adsbBusy) return;
+  _adsbBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/adsbstatus', {signal:_ac.signal}).then(function(r){return r.json();}).then(function(d) {
+    var panel = document.getElementById('adsb-panel');
+    if (!d.enabled) { panel.style.display='none'; return; }
+    panel.style.display='';
+    function svcDot(el, ok) {
+      el.textContent = '\u25cf';
+      el.style.color = ok ? '#2ecc71' : '#e74c3c';
+      el.title = ok ? 'running' : 'stopped';
+    }
+    svcDot(document.getElementById('adsb-svc-d1090'), d.dump1090);
+    svcDot(document.getElementById('adsb-svc-web'), d.web);
+    svcDot(document.getElementById('adsb-svc-fr24'), d.fr24feed);
+    document.getElementById('adsb-aircraft').textContent = d.aircraft;
+    document.getElementById('adsb-messages').textContent = d.messages.toLocaleString();
+    document.getElementById('adsb-rate').textContent = d.messages_rate > 0 ? d.messages_rate.toFixed(1) : '0.0';
+  }).catch(function(){}).finally(function(){ _adsbBusy=false; });
+}
+setInterval(updateAdsb, 3000);
+updateAdsb();
+
+// --- USB/IP Status ---
+var _usbipBusy = false;
+function updateUsbip() {
+  if (_usbipBusy) return;
+  _usbipBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/usbipstatus', {signal:_ac.signal}).then(function(r){return r.json();}).then(function(d) {
+    var panel = document.getElementById('usbip-panel');
+    if (!d.enabled) { panel.style.display='none'; return; }
+    panel.style.display='';
+    document.getElementById('usbip-server-label').textContent = d.server || '';
+    var dot = document.getElementById('usbip-server-dot');
+    dot.textContent = '\u25cf';
+    dot.style.color = d.server_reachable ? '#2ecc71' : '#e74c3c';
+    dot.title = d.server_reachable ? 'reachable' : (d.last_error || 'unreachable');
+    var list = document.getElementById('usbip-devices-list');
+    if (!d.devices || d.devices.length === 0) {
+      list.textContent = d.server_reachable ? 'No exported devices' : 'Server unreachable';
+    } else {
+      list.innerHTML = d.devices.map(function(dev) {
+        var dot = '<span style="color:' + (dev.attached ? '#2ecc71' : '#e74c3c') + '">&#x25cf;</span>';
+        var status = dev.attached ? 'attached' : 'not attached';
+        return dot + ' <b>' + dev.bus_id + '</b> &nbsp;' + dev.description + ' <span style="color:#888;font-size:0.85em;">(' + status + ')</span>';
+      }).join('<br>');
+    }
+  }).catch(function(){}).finally(function(){ _usbipBusy=false; });
+}
+setInterval(updateUsbip, 10000);
+updateUsbip();
+
+// --- Telegram Bot Status ---
+var _tgBusy = false;
+function updateTelegram() {
+  if (_tgBusy) return;
+  _tgBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
+  fetch('/telegramstatus', {signal:_ac.signal}).then(function(r){return r.json();}).then(function(d) {
+    var panel = document.getElementById('tg-panel');
+    if (!d.enabled) { panel.style.display='none'; return; }
+    panel.style.display='';
+    function dot(id, ok, title) {
+      var el = document.getElementById(id);
+      el.textContent = '\u25cf';
+      el.style.color = ok ? '#2ecc71' : '#e74c3c';
+      el.title = title || (ok ? 'ok' : 'offline');
+    }
+    dot('tg-dot-bot', d.bot_running, d.bot_running ? 'bot running' : 'bot not running');
+    dot('tg-dot-tmux', d.tmux_active, d.tmux_active ? 'session active' : 'session not found');
+    document.getElementById('tg-bot-name').textContent = d.bot_username || '';
+    document.getElementById('tg-session').textContent = d.tmux_session || '--';
+    document.getElementById('tg-msgs-today').textContent = d.messages_today != null ? d.messages_today : '--';
+    function fmtTime(ts) {
+      if (!ts) return '--';
+      try { return new Date(ts).toLocaleTimeString(); } catch(e) { return ts.slice(11,19) || '--'; }
+    }
+    document.getElementById('tg-last-in').textContent = fmtTime(d.last_message_time);
+    document.getElementById('tg-last-out').textContent = fmtTime(d.last_reply_time);
+    document.getElementById('tg-last-text').textContent = d.last_message_text ? '\u00bb ' + d.last_message_text : '';
+  }).catch(function(){}).finally(function(){ _tgBusy=false; });
+}
+setInterval(updateTelegram, 5000);
+updateTelegram();
+
+</script>
+
+<script src="/pages/common.js"></script>
+</body>
+</html>

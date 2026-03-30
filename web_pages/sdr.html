@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDR Control</title>
+<link rel="stylesheet" href="/pages/common.css">
+</head>
+<body>
+
+
+<!-- Status row: SDR1 (Master) and SDR2 (Slave) side by side -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+  <!-- SDR1 status -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span style="color:#00aaff; font-weight:bold; font-size:0.85em;">TUNER 1 (Master)</span>
+      <span id="sdr-proc-badge" style="padding:2px 8px; border-radius:4px; font-weight:bold; font-size:0.8em;">--</span>
+      <span id="sdr-freq-display" style="font-size:1.6em; font-weight:bold; color:#00ff88; font-family:monospace;">---.--- MHz</span>
+      <span id="sdr-mod-badge" style="padding:2px 8px; border-radius:4px; background:var(--t-border); color:var(--t-accent); font-weight:bold; font-size:0.85em;">--</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+      <span style="color:#888; font-size:0.8em; min-width:55px;">Audio</span>
+      <div style="flex:1; background:var(--t-btn); border-radius:3px; height:14px; overflow:hidden;">
+        <div id="sdr-audio-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#00ff88,#ffcc00,#ff4444); transition:width 0.3s;"></div>
+      </div>
+      <span id="sdr-audio-val" style="color:#888; font-size:0.8em; min-width:30px; text-align:right;">0</span>
+    </div>
+  </div>
+  <!-- SDR2 status -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span style="color:#ff8800; font-weight:bold; font-size:0.85em;">TUNER 2 (Slave)</span>
+      <span id="sdr2-proc-badge" style="padding:2px 8px; border-radius:4px; font-weight:bold; font-size:0.8em;">--</span>
+      <span id="sdr2-freq-display" style="font-size:1.6em; font-weight:bold; color:#00ff88; font-family:monospace;">---.--- MHz</span>
+      <span id="sdr2-mod-badge" style="padding:2px 8px; border-radius:4px; background:var(--t-border); color:var(--t-accent); font-weight:bold; font-size:0.85em;">--</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+      <span style="color:#888; font-size:0.8em; min-width:55px;">Audio</span>
+      <div style="flex:1; background:var(--t-btn); border-radius:3px; height:14px; overflow:hidden;">
+        <div id="sdr2-audio-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#ff8800,#ffcc00,#ff4444); transition:width 0.3s;"></div>
+      </div>
+      <span id="sdr2-audio-val" style="color:#888; font-size:0.8em; min-width:30px; text-align:right;">0</span>
+    </div>
+  </div>
+</div>
+
+<!-- Shared settings (full width) — parameters that are linked between both tuners -->
+<div style="background:var(--t-panel); border:2px solid #555; border-radius:6px; padding:12px 16px; margin-bottom:10px;">
+  <h3 style="color:#aaa; margin:0 0 10px; font-size:0.9em; text-transform:uppercase; letter-spacing:1px;">Shared Settings <span style="font-size:0.8em; color:#666; font-weight:normal;">(apply to both tuners)</span></h3>
+  <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em;">Sample Rate</label>
+      <select id="sdr-sr" class="si" title="Both tuners use the same ADC clock — max 2.0 MHz in Master/Slave mode">
+        <option value="0.5">500 kHz</option>
+        <option value="1.0">1.0 MHz</option>
+        <option value="1.536">1.536 MHz</option>
+        <option value="2.0" selected>2.0 MHz (max)</option>
+      </select>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em;">Correction (ppm)</label>
+      <input type="number" id="sdr-correction" step="0.1" min="-100" max="100" value="0" class="si" style="width:75px;" title="Frequency calibration — applies to Tuner 1 (Master)">
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em;">Antenna (T1)</label>
+      <select id="sdr-ant" class="si">
+        <option value="Tuner 1 50 ohm">Tuner 1 50 ohm</option>
+        <option value="Tuner 1 Hi-Z">Tuner 1 Hi-Z</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<!-- Dual-column tuner controls -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+
+<!-- ===== SDR1 (Tuner 1 — Master) ===== -->
+<div>
+  <h2 style="color:#00aaff; font-size:1em; margin:0 0 8px; padding:6px 10px; background:rgba(0,170,255,0.1); border-left:3px solid #00aaff; border-radius:3px;">SDR1 — Tuner 1 (Master)</h2>
+
+  <!-- SDR1: Frequency -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Frequency</h3>
+    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+      <input type="number" id="sdr-freq" step="0.00125" min="0.001" max="2000" value="446.760"
+             style="flex:1; background:var(--t-btn); border:1px solid var(--t-btn-border); color:#00ff88; padding:6px; border-radius:4px; font-family:monospace; font-size:1.2em; text-align:center;">
+      <span style="color:#b0b0b0;">MHz</span>
+    </div>
+    <div style="display:flex; gap:4px; flex-wrap:wrap;">
+      <button class="sb" onclick="stepFreq(-0.025)">-25k</button>
+      <button class="sb" onclick="stepFreq(-0.0125)">-12.5k</button>
+      <button class="sb" onclick="stepFreq(-0.00625)">-6.25k</button>
+      <button class="sb" onclick="stepFreq(0.00625)">+6.25k</button>
+      <button class="sb" onclick="stepFreq(0.0125)">+12.5k</button>
+      <button class="sb" onclick="stepFreq(0.025)">+25k</button>
+    </div>
+  </div>
+
+  <!-- SDR1: Modulation & Options -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Demodulation</h3>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Mode</label>
+      <select id="sdr-mod" class="si"><option value="nfm">NFM</option><option value="am">AM</option></select>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">NFM Tau</label>
+      <select id="sdr-tau" class="si">
+        <option value="0">Off</option><option value="50">50 µs</option><option value="75">75 µs</option>
+        <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="1000">1000 µs</option>
+      </select>
+    </div>
+    <label class="tgl"><input type="checkbox" id="sdr-continuous" checked> Continuous output</label>
+  </div>
+
+  <!-- SDR1: Gain -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Gain</h3>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Mode</label>
+      <select id="sdr-gain-mode" class="si" onchange="toggleGainSliders()">
+        <option value="agc">AGC (Auto)</option><option value="manual">Manual</option>
+      </select>
+    </div>
+    <div id="agc-settings">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Setpoint</label>
+        <input type="range" id="sdr-agc-sp" min="-72" max="0" value="-30" style="flex:1;"
+               oninput="document.getElementById('agc-sp-val').textContent=this.value+' dB'">
+        <span id="agc-sp-val" style="color:#b0b0b0; font-size:0.85em; min-width:50px;">-30 dB</span>
+      </div>
+    </div>
+    <div id="manual-gain-settings" style="display:none;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">RF (RFGR)</label>
+        <input type="range" id="sdr-rfgr" min="0" max="9" value="4" style="flex:1;"
+               oninput="document.getElementById('rfgr-val').textContent=this.value">
+        <span id="rfgr-val" style="color:#b0b0b0; font-size:0.85em; min-width:25px;">4</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">IF (IFGR)</label>
+        <input type="range" id="sdr-ifgr" min="20" max="59" value="40" style="flex:1;"
+               oninput="document.getElementById('ifgr-val').textContent=this.value">
+        <span id="ifgr-val" style="color:#b0b0b0; font-size:0.85em; min-width:25px;">40</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SDR1: Squelch & Device Options -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Squelch &amp; Device</h3>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Squelch</label>
+      <input type="range" id="sdr-squelch" min="-60" max="0" value="0" style="flex:1;"
+             oninput="document.getElementById('sq-val').textContent=this.value==0?'Auto':this.value+' dBFS'">
+      <span id="sq-val" style="color:#b0b0b0; font-size:0.85em; min-width:60px;">Auto</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+      <label class="tgl"><input type="checkbox" id="sdr-biast"> Bias-T</label>
+      <label class="tgl"><input type="checkbox" id="sdr-rfnotch"> RF Notch</label>
+      <label class="tgl"><input type="checkbox" id="sdr-dabnotch"> DAB Notch</label>
+      <label class="tgl"><input type="checkbox" id="sdr-iqcorr" checked> IQ Correction</label>
+      <label class="tgl"><input type="checkbox" id="sdr-extref"> External Ref</label>
+    </div>
+  </div>
+
+  <!-- SDR1: Audio Filters -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Audio Filters</h3>
+    <div style="display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:6px 8px;">
+      <label style="color:#b0b0b0; font-size:0.83em;">Amp</label>
+      <input type="number" id="sdr-ampfactor" step="0.1" min="0" max="10" value="1.0" class="si">
+      <span style="color:#666; font-size:0.75em;">×</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">HPF</label>
+      <input type="number" id="sdr-highpass" step="10" min="0" max="1000" value="100" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">LPF</label>
+      <input type="number" id="sdr-lowpass" step="100" min="500" max="8000" value="2500" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">Ch BW</label>
+      <input type="number" id="sdr-chbw" step="1000" min="0" max="25000" value="0" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">Notch</label>
+      <input type="number" id="sdr-notch" step="1" min="0" max="5000" value="0" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">Notch Q</label>
+      <input type="number" id="sdr-notchq" step="1" min="1" max="100" value="10" class="si">
+      <span style="color:#666; font-size:0.75em;"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SDR2 (Tuner 2 — Slave) ===== -->
+<div>
+  <h2 style="color:#ff8800; font-size:1em; margin:0 0 8px; padding:6px 10px; background:rgba(255,136,0,0.1); border-left:3px solid #ff8800; border-radius:3px;">SDR2 — Tuner 2 (Slave)</h2>
+
+  <!-- SDR2: Frequency -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Frequency</h3>
+    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+      <input type="number" id="sdr2-freq" step="0.00125" min="0.001" max="2000" value="462.550"
+             style="flex:1; background:var(--t-btn); border:1px solid var(--t-btn-border); color:#ff9944; padding:6px; border-radius:4px; font-family:monospace; font-size:1.2em; text-align:center;">
+      <span style="color:#b0b0b0;">MHz</span>
+    </div>
+    <div style="display:flex; gap:4px; flex-wrap:wrap;">
+      <button class="sb" onclick="stepFreq2(-0.025)">-25k</button>
+      <button class="sb" onclick="stepFreq2(-0.0125)">-12.5k</button>
+      <button class="sb" onclick="stepFreq2(-0.00625)">-6.25k</button>
+      <button class="sb" onclick="stepFreq2(0.00625)">+6.25k</button>
+      <button class="sb" onclick="stepFreq2(0.0125)">+12.5k</button>
+      <button class="sb" onclick="stepFreq2(0.025)">+25k</button>
+    </div>
+  </div>
+
+  <!-- SDR2: Modulation & Options -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Demodulation</h3>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Mode</label>
+      <select id="sdr2-mod" class="si"><option value="nfm">NFM</option><option value="am">AM</option></select>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">NFM Tau</label>
+      <select id="sdr2-tau" class="si">
+        <option value="0">Off</option><option value="50">50 µs</option><option value="75">75 µs</option>
+        <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="1000">1000 µs</option>
+      </select>
+    </div>
+    <label class="tgl"><input type="checkbox" id="sdr2-continuous" checked> Continuous output</label>
+  </div>
+
+  <!-- SDR2: Gain -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Gain</h3>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Mode</label>
+      <select id="sdr2-gain-mode" class="si" onchange="toggleGainSliders2()">
+        <option value="agc">AGC (Auto)</option><option value="manual">Manual</option>
+      </select>
+    </div>
+    <div id="agc-settings2">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Setpoint</label>
+        <input type="range" id="sdr2-agc-sp" min="-72" max="0" value="-30" style="flex:1;"
+               oninput="document.getElementById('agc-sp2-val').textContent=this.value+' dB'">
+        <span id="agc-sp2-val" style="color:#b0b0b0; font-size:0.85em; min-width:50px;">-30 dB</span>
+      </div>
+    </div>
+    <div id="manual-gain-settings2" style="display:none;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">RF (RFGR)</label>
+        <input type="range" id="sdr2-rfgr" min="0" max="9" value="4" style="flex:1;"
+               oninput="document.getElementById('rfgr2-val').textContent=this.value">
+        <span id="rfgr2-val" style="color:#b0b0b0; font-size:0.85em; min-width:25px;">4</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">IF (IFGR)</label>
+        <input type="range" id="sdr2-ifgr" min="20" max="59" value="40" style="flex:1;"
+               oninput="document.getElementById('ifgr2-val').textContent=this.value">
+        <span id="ifgr2-val" style="color:#b0b0b0; font-size:0.85em; min-width:25px;">40</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SDR2: Squelch -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:8px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Squelch</h3>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <label style="color:#b0b0b0; font-size:0.85em; min-width:70px;">Squelch</label>
+      <input type="range" id="sdr2-squelch" min="-60" max="0" value="0" style="flex:1;"
+             oninput="document.getElementById('sq2-val').textContent=this.value==0?'Auto':this.value+' dBFS'">
+      <span id="sq2-val" style="color:#b0b0b0; font-size:0.85em; min-width:60px;">Auto</span>
+    </div>
+  </div>
+
+  <!-- SDR2: Audio Filters -->
+  <div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px;">
+    <h3 style="color:var(--t-accent); margin:0 0 8px; font-size:0.9em;">Audio Filters</h3>
+    <div style="display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:6px 8px;">
+      <label style="color:#b0b0b0; font-size:0.83em;">Amp</label>
+      <input type="number" id="sdr2-ampfactor" step="0.1" min="0" max="10" value="1.0" class="si">
+      <span style="color:#666; font-size:0.75em;">×</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">HPF</label>
+      <input type="number" id="sdr2-highpass" step="10" min="0" max="1000" value="100" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">LPF</label>
+      <input type="number" id="sdr2-lowpass" step="100" min="500" max="8000" value="2500" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">Ch BW</label>
+      <input type="number" id="sdr2-chbw" step="1000" min="0" max="25000" value="0" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">Notch</label>
+      <input type="number" id="sdr2-notch" step="1" min="0" max="5000" value="0" class="si">
+      <span style="color:#666; font-size:0.75em;">Hz</span>
+      <label style="color:#b0b0b0; font-size:0.83em;">Notch Q</label>
+      <input type="number" id="sdr2-notchq" step="1" min="1" max="100" value="10" class="si">
+      <span style="color:#666; font-size:0.75em;"></span>
+    </div>
+  </div>
+</div>
+
+</div><!-- end dual-column grid -->
+
+<!-- Apply & Stop — full width -->
+<div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:12px; margin-bottom:10px;">
+  <div style="font-size:0.8em; color:#888; margin-bottom:8px;">
+    Restart sequence: SDR1 Master starts first — SDR2 Slave waits until Master is streaming (~3s). Total restart ~12s.
+  </div>
+  <div style="display:flex; gap:10px;">
+    <button id="sdr-apply-btn" onclick="applySettings()"
+            style="flex:1; padding:12px; background:#27ae60; color:#fff; border:none; border-radius:6px; font-size:1.1em; font-weight:bold; cursor:pointer;">
+      Apply &amp; Restart Both Tuners
+    </button>
+    <button id="sdr-stop-btn" onclick="sdrCmd('stop')"
+            style="padding:12px 22px; background:#c0392b; color:#fff; border:none; border-radius:6px; font-size:1.1em; font-weight:bold; cursor:pointer;">
+      Stop Both
+    </button>
+  </div>
+  <div id="sdr-apply-status" style="color:#888; font-size:0.9em; margin-top:8px; min-height:1.2em;"></div>
+</div>
+
+
+<style>
+  .sb { padding:6px 12px; background:var(--t-border); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; cursor:pointer; font-size:0.85em; }
+  .sb:hover { background:#1a4a7a; }
+  .sb:active { background:#27ae60; }
+  .si { background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; padding:6px 8px; border-radius:4px; font-size:0.9em; width:100%; }
+  .tgl { display:flex; align-items:center; gap:6px; color:#b0b0b0; font-size:0.85em; padding:3px 0; cursor:pointer; }
+  .tgl input { width:16px; height:16px; accent-color:var(--t-accent); }
+</style>
+
+<script>
+var pollTimer = null;
+var initialLoad = true;
+
+function toggleGainSliders() {
+  var mode = document.getElementById('sdr-gain-mode').value;
+  document.getElementById('agc-settings').style.display = mode === 'agc' ? '' : 'none';
+  document.getElementById('manual-gain-settings').style.display = mode === 'manual' ? '' : 'none';
+}
+
+function toggleGainSliders2() {
+  var mode = document.getElementById('sdr2-gain-mode').value;
+  document.getElementById('agc-settings2').style.display = mode === 'agc' ? '' : 'none';
+  document.getElementById('manual-gain-settings2').style.display = mode === 'manual' ? '' : 'none';
+}
+
+function stepFreq(delta) {
+  var el = document.getElementById('sdr-freq');
+  el.value = Math.max(0.001, Math.min(2000, parseFloat(el.value) + delta)).toFixed(5).replace(/0+$/, '').replace(/\\.$/, '');
+}
+
+function stepFreq2(delta) {
+  var el = document.getElementById('sdr2-freq');
+  el.value = Math.max(0.001, Math.min(2000, parseFloat(el.value) + delta)).toFixed(5).replace(/0+$/, '').replace(/\\.$/, '');
+}
+
+function setSelectByValue(id, val) {
+  var sel = document.getElementById(id);
+  var best = -1, bestDiff = 1e9;
+  for (var i = 0; i < sel.options.length; i++) {
+    var diff = Math.abs(parseFloat(sel.options[i].value) - parseFloat(val));
+    if (diff < bestDiff) { bestDiff = diff; best = i; }
+  }
+  if (best >= 0) sel.selectedIndex = best;
+}
+
+function gatherSettings() {
+  return {
+    // SDR1
+    frequency: parseFloat(document.getElementById('sdr-freq').value),
+    modulation: document.getElementById('sdr-mod').value,
+    gain_mode: document.getElementById('sdr-gain-mode').value,
+    rfgr: parseInt(document.getElementById('sdr-rfgr').value),
+    ifgr: parseInt(document.getElementById('sdr-ifgr').value),
+    agc_setpoint: parseInt(document.getElementById('sdr-agc-sp').value),
+    squelch_threshold: parseInt(document.getElementById('sdr-squelch').value),
+    tau: parseInt(document.getElementById('sdr-tau').value),
+    ampfactor: parseFloat(document.getElementById('sdr-ampfactor').value),
+    lowpass: parseInt(document.getElementById('sdr-lowpass').value),
+    highpass: parseInt(document.getElementById('sdr-highpass').value),
+    notch: parseFloat(document.getElementById('sdr-notch').value),
+    notch_q: parseFloat(document.getElementById('sdr-notchq').value),
+    channel_bw: parseFloat(document.getElementById('sdr-chbw').value),
+    bias_t: document.getElementById('sdr-biast').checked,
+    rf_notch: document.getElementById('sdr-rfnotch').checked,
+    dab_notch: document.getElementById('sdr-dabnotch').checked,
+    iq_correction: document.getElementById('sdr-iqcorr').checked,
+    external_ref: document.getElementById('sdr-extref').checked,
+    continuous: document.getElementById('sdr-continuous').checked,
+    // Shared
+    sample_rate: parseFloat(document.getElementById('sdr-sr').value),
+    antenna: document.getElementById('sdr-ant').value,
+    correction: parseFloat(document.getElementById('sdr-correction').value),
+    // SDR2
+    frequency2: parseFloat(document.getElementById('sdr2-freq').value),
+    modulation2: document.getElementById('sdr2-mod').value,
+    gain_mode2: document.getElementById('sdr2-gain-mode').value,
+    rfgr2: parseInt(document.getElementById('sdr2-rfgr').value),
+    ifgr2: parseInt(document.getElementById('sdr2-ifgr').value),
+    agc_setpoint2: parseInt(document.getElementById('sdr2-agc-sp').value),
+    squelch_threshold2: parseInt(document.getElementById('sdr2-squelch').value),
+    tau2: parseInt(document.getElementById('sdr2-tau').value),
+    ampfactor2: parseFloat(document.getElementById('sdr2-ampfactor').value),
+    lowpass2: parseInt(document.getElementById('sdr2-lowpass').value),
+    highpass2: parseInt(document.getElementById('sdr2-highpass').value),
+    notch2: parseFloat(document.getElementById('sdr2-notch').value),
+    notch_q2: parseFloat(document.getElementById('sdr2-notchq').value),
+    channel_bw2: parseFloat(document.getElementById('sdr2-chbw').value),
+    continuous2: document.getElementById('sdr2-continuous').checked,
+  };
+}
+
+function loadSettingsToUI(d) {
+  // SDR1
+  if (d.frequency !== undefined) document.getElementById('sdr-freq').value = d.frequency;
+  if (d.modulation) document.getElementById('sdr-mod').value = d.modulation;
+  if (d.gain_mode) { document.getElementById('sdr-gain-mode').value = d.gain_mode; toggleGainSliders(); }
+  if (d.rfgr !== undefined) { document.getElementById('sdr-rfgr').value = d.rfgr; document.getElementById('rfgr-val').textContent = d.rfgr; }
+  if (d.ifgr !== undefined) { document.getElementById('sdr-ifgr').value = d.ifgr; document.getElementById('ifgr-val').textContent = d.ifgr; }
+  if (d.agc_setpoint !== undefined) { document.getElementById('sdr-agc-sp').value = d.agc_setpoint; document.getElementById('agc-sp-val').textContent = d.agc_setpoint + ' dB'; }
+  if (d.squelch_threshold !== undefined) { document.getElementById('sdr-squelch').value = d.squelch_threshold; document.getElementById('sq-val').textContent = d.squelch_threshold == 0 ? 'Auto' : d.squelch_threshold + ' dBFS'; }
+  if (d.tau !== undefined) setSelectByValue('sdr-tau', d.tau);
+  if (d.ampfactor !== undefined) document.getElementById('sdr-ampfactor').value = d.ampfactor;
+  if (d.lowpass !== undefined) document.getElementById('sdr-lowpass').value = d.lowpass;
+  if (d.highpass !== undefined) document.getElementById('sdr-highpass').value = d.highpass;
+  if (d.notch !== undefined) document.getElementById('sdr-notch').value = d.notch;
+  if (d.notch_q !== undefined) document.getElementById('sdr-notchq').value = d.notch_q;
+  if (d.channel_bw !== undefined) document.getElementById('sdr-chbw').value = d.channel_bw;
+  if (d.bias_t !== undefined) document.getElementById('sdr-biast').checked = d.bias_t;
+  if (d.rf_notch !== undefined) document.getElementById('sdr-rfnotch').checked = d.rf_notch;
+  if (d.dab_notch !== undefined) document.getElementById('sdr-dabnotch').checked = d.dab_notch;
+  if (d.iq_correction !== undefined) document.getElementById('sdr-iqcorr').checked = d.iq_correction;
+  if (d.external_ref !== undefined) document.getElementById('sdr-extref').checked = d.external_ref;
+  if (d.continuous !== undefined) document.getElementById('sdr-continuous').checked = d.continuous;
+  // Shared
+  if (d.sample_rate !== undefined) setSelectByValue('sdr-sr', d.sample_rate);
+  if (d.antenna) document.getElementById('sdr-ant').value = d.antenna;
+  if (d.correction !== undefined) document.getElementById('sdr-correction').value = d.correction;
+  // SDR2
+  if (d.frequency2 !== undefined) document.getElementById('sdr2-freq').value = d.frequency2;
+  if (d.modulation2) document.getElementById('sdr2-mod').value = d.modulation2;
+  if (d.gain_mode2) { document.getElementById('sdr2-gain-mode').value = d.gain_mode2; toggleGainSliders2(); }
+  if (d.rfgr2 !== undefined) { document.getElementById('sdr2-rfgr').value = d.rfgr2; document.getElementById('rfgr2-val').textContent = d.rfgr2; }
+  if (d.ifgr2 !== undefined) { document.getElementById('sdr2-ifgr').value = d.ifgr2; document.getElementById('ifgr2-val').textContent = d.ifgr2; }
+  if (d.agc_setpoint2 !== undefined) { document.getElementById('sdr2-agc-sp').value = d.agc_setpoint2; document.getElementById('agc-sp2-val').textContent = d.agc_setpoint2 + ' dB'; }
+  if (d.squelch_threshold2 !== undefined) { document.getElementById('sdr2-squelch').value = d.squelch_threshold2; document.getElementById('sq2-val').textContent = d.squelch_threshold2 == 0 ? 'Auto' : d.squelch_threshold2 + ' dBFS'; }
+  if (d.tau2 !== undefined) setSelectByValue('sdr2-tau', d.tau2);
+  if (d.ampfactor2 !== undefined) document.getElementById('sdr2-ampfactor').value = d.ampfactor2;
+  if (d.lowpass2 !== undefined) document.getElementById('sdr2-lowpass').value = d.lowpass2;
+  if (d.highpass2 !== undefined) document.getElementById('sdr2-highpass').value = d.highpass2;
+  if (d.notch2 !== undefined) document.getElementById('sdr2-notch').value = d.notch2;
+  if (d.notch_q2 !== undefined) document.getElementById('sdr2-notchq').value = d.notch_q2;
+  if (d.channel_bw2 !== undefined) document.getElementById('sdr2-chbw').value = d.channel_bw2;
+  if (d.continuous2 !== undefined) document.getElementById('sdr2-continuous').checked = d.continuous2;
+}
+
+function applySettings() {
+  var btn = document.getElementById('sdr-apply-btn');
+  var status = document.getElementById('sdr-apply-status');
+  btn.disabled = true;
+  btn.textContent = 'Restarting...';
+  status.textContent = 'Starting SDR1 Master... then SDR2 Slave (~12s total)';
+  status.style.color = '#ffcc00';
+  var settings = gatherSettings();
+  settings.cmd = 'tune';
+  fetch('/sdrcmd', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      btn.disabled = false;
+      btn.textContent = 'Apply & Restart Both Tuners';
+      if (d.ok) {
+        status.textContent = 'Both tuners restarted successfully';
+        status.style.color = '#00ff88';
+        initialLoad = true;
+      } else {
+        status.textContent = 'Error: ' + (d.error || 'unknown');
+        status.style.color = '#ff4444';
+      }
+      setTimeout(function() { status.textContent = ''; }, 6000);
+    })
+    .catch(function(e) {
+      btn.disabled = false;
+      btn.textContent = 'Apply & Restart Both Tuners';
+      status.textContent = 'Network error';
+      status.style.color = '#ff4444';
+    });
+}
+
+function sdrCmd(cmd) {
+  var status = document.getElementById('sdr-apply-status');
+  fetch('/sdrcmd', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({cmd: cmd}) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      status.textContent = d.ok ? cmd + ' OK' : 'Error: ' + (d.error || '');
+      status.style.color = d.ok ? '#00ff88' : '#ff4444';
+      setTimeout(function() { status.textContent = ''; }, 3000);
+    });
+}
+
+
+var _sdrBusy = false;
+function pollStatus() {
+  if (_sdrBusy) return;
+  _sdrBusy = true;
+  fetch('/sdrstatus')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      // SDR1 status
+      var badge = document.getElementById('sdr-proc-badge');
+      if (d.process_alive) {
+        badge.textContent = 'RUNNING'; badge.style.background = '#27ae60'; badge.style.color = '#fff';
+        document.getElementById('sdr-freq-display').textContent = parseFloat(d.frequency).toFixed(3) + ' MHz';
+        document.getElementById('sdr-freq-display').style.color = '#00ff88';
+        document.getElementById('sdr-mod-badge').textContent = (d.modulation || '--').toUpperCase();
+      } else {
+        badge.textContent = 'STOPPED'; badge.style.background = '#c0392b'; badge.style.color = '#fff';
+        document.getElementById('sdr-freq-display').textContent = '---.--- MHz';
+        document.getElementById('sdr-freq-display').style.color = '#555';
+        document.getElementById('sdr-mod-badge').textContent = '--';
+      }
+      // SDR2 status (process_alive covers both — both start/stop together)
+      var badge2 = document.getElementById('sdr2-proc-badge');
+      if (d.process_alive) {
+        badge2.textContent = 'RUNNING'; badge2.style.background = '#27ae60'; badge2.style.color = '#fff';
+        document.getElementById('sdr2-freq-display').textContent = parseFloat(d.frequency2 || 0).toFixed(3) + ' MHz';
+        document.getElementById('sdr2-freq-display').style.color = '#ff9944';
+        document.getElementById('sdr2-mod-badge').textContent = (d.modulation2 || '--').toUpperCase();
+      } else {
+        badge2.textContent = 'STOPPED'; badge2.style.background = '#c0392b'; badge2.style.color = '#fff';
+        document.getElementById('sdr2-freq-display').textContent = '---.--- MHz';
+        document.getElementById('sdr2-freq-display').style.color = '#555';
+        document.getElementById('sdr2-mod-badge').textContent = '--';
+      }
+      // Stop button state
+      var stopBtn = document.getElementById('sdr-stop-btn');
+      stopBtn.disabled = !d.process_alive;
+      stopBtn.style.opacity = d.process_alive ? '1' : '0.4';
+      // Audio levels
+      var lvl = d.process_alive ? (d.audio_level || 0) : 0;
+      var pct = Math.min(100, Math.max(0, Math.round(lvl)));
+      document.getElementById('sdr-audio-bar').style.width = pct + '%';
+      document.getElementById('sdr-audio-val').textContent = pct + '%';
+      // SDR2 audio level
+      var lvl2 = d.process_alive ? (d.audio_level2 || 0) : 0;
+      var pct2 = Math.min(100, Math.max(0, Math.round(lvl2)));
+      document.getElementById('sdr2-audio-bar').style.width = pct2 + '%';
+      document.getElementById('sdr2-audio-val').textContent = pct2 + '%';
+      // Load current settings into form only on first load
+      if (initialLoad) {
+        loadSettingsToUI(d);
+        initialLoad = false;
+      }
+    })
+    .catch(function() {}).finally(function(){ _sdrBusy=false; });
+}
+
+// Initial poll and start timer
+pollStatus();
+pollTimer = setInterval(pollStatus, 1000);
+</script>
+
+<script src="/pages/common.js"></script>
+</body>
+</html>

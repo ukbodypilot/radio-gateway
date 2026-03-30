@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings</title>
+<link rel="stylesheet" href="/pages/common.css">
+</head>
+<body>
+
+
+<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px;">
+  <div>
+    <label style="color:#888; font-size:0.85em;">Radio</label><br>
+    <select id="f-radio" onchange="applyFilter()" style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace;">
+      <option value="">All</option>
+    </select>
+  </div>
+  <div>
+    <label style="color:#888; font-size:0.85em;">Date</label><br>
+    <select id="f-date" onchange="applyFilter()" style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace;">
+      <option value="">All</option>
+    </select>
+  </div>
+  <div>
+    <label style="color:#888; font-size:0.85em;">Frequency</label><br>
+    <select id="f-freq" onchange="applyFilter()" style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace;">
+      <option value="">All</option>
+    </select>
+  </div>
+  <div style="margin-left:auto; display:flex; gap:6px;">
+    <button onclick="selectAll()" class="rb">Select All</button>
+    <button onclick="selectNone()" class="rb">Select None</button>
+    <button onclick="downloadSelected()" class="rb" style="background:#1a5c3a;">Download Selected</button>
+    <button onclick="deleteSelected()" class="rb" style="background:#5c1a1a;">Delete Selected</button>
+    <button onclick="if(confirm('Delete ALL recordings?'))deleteAll()" class="rb" style="background:#8b0000;">Delete All</button>
+  </div>
+</div>
+
+<div id="rec-summary" style="color:#888; font-size:0.9em; margin-bottom:8px;"></div>
+
+<div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; overflow:hidden;">
+  <table id="rec-table" style="width:100%; border-collapse:collapse; font-family:monospace; font-size:0.9em;">
+    <thead>
+      <tr style="background:rgba(0,0,0,0.3); text-align:left;">
+        <th style="padding:8px 10px; width:30px;"><input type="checkbox" id="check-all" onchange="toggleAll(this.checked)" style="accent-color:var(--t-accent);"></th>
+        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('name')">Filename</th>
+        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('radio')">Radio</th>
+        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('freq')">Freq</th>
+        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('date')">Date</th>
+        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('time')">Time</th>
+        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('size')">Size</th>
+        <th style="padding:8px 10px;">Play</th>
+      </tr>
+    </thead>
+    <tbody id="rec-body"></tbody>
+  </table>
+</div>
+<div id="rec-empty" style="display:none; text-align:center; color:#888; padding:40px; font-size:1.1em;">No recordings found</div>
+
+<div id="player-bar" style="display:none; position:fixed; bottom:0; left:0; right:0; background:var(--t-panel); border-top:2px solid var(--t-accent); padding:10px 16px; z-index:999; font-family:monospace;">
+  <div style="display:flex; align-items:center; gap:12px;">
+    <button onclick="playerPause()" id="pp-btn" class="rb" style="padding:6px 12px; min-width:50px;">Pause</button>
+    <button onclick="playerStop()" class="rb" style="padding:6px 12px; background:#5c1a1a;">Stop</button>
+    <span id="player-time" style="color:#e0e0e0; min-width:100px;">0:00 / 0:00</span>
+    <input type="range" id="player-seek" min="0" max="1000" value="0" step="1" style="flex:1; accent-color:var(--t-accent); cursor:pointer;">
+    <span style="color:#888; font-size:0.85em;">Vol</span>
+    <input type="range" id="player-vol" min="0" max="100" value="100" style="width:80px; accent-color:var(--t-accent);" oninput="playerVol(this.value)">
+    <span id="player-name" style="color:var(--t-accent); font-size:0.85em; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+  </div>
+  <audio id="audio-player"></audio>
+</div>
+
+<style>
+  .rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px;
+    background:var(--t-btn); color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.9em; }
+  .rb:hover { background:var(--t-btn-hover); }
+  #rec-table tbody tr:hover { background:rgba(255,255,255,0.05); }
+  #rec-table tbody tr.playing { background:rgba(46,204,113,0.15); }
+  #rec-table td { padding:6px 10px; border-top:1px solid var(--t-border); }
+</style>
+
+<script>
+var _allFiles = [], _filtered = [], _sortKey = 'name', _sortAsc = false, _playingFile = '';
+
+function loadFiles() {
+  fetch('/recordingslist').then(r=>r.json()).then(function(files) {
+    _allFiles = files;
+    buildFilters();
+    applyFilter();
+  });
+}
+
+function buildFilters() {
+  var radios = {}, dates = {}, freqs = {};
+  _allFiles.forEach(function(f) {
+    if (f.radio) radios[f.radio] = 1;
+    if (f.date) dates[f.date] = 1;
+    if (f.freq) freqs[f.freq] = 1;
+  });
+  fillSelect('f-radio', Object.keys(radios).sort());
+  fillSelect('f-date', Object.keys(dates).sort().reverse());
+  fillSelect('f-freq', Object.keys(freqs).sort());
+}
+
+function fillSelect(id, vals) {
+  var sel = document.getElementById(id);
+  var cur = sel.value;
+  while (sel.options.length > 1) sel.remove(1);
+  vals.forEach(function(v) {
+    var o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    sel.appendChild(o);
+  });
+  sel.value = cur;
+}
+
+function applyFilter() {
+  var r = document.getElementById('f-radio').value;
+  var d = document.getElementById('f-date').value;
+  var q = document.getElementById('f-freq').value;
+  _filtered = _allFiles.filter(function(f) {
+    if (r && f.radio !== r) return false;
+    if (d && f.date !== d) return false;
+    if (q && f.freq !== q) return false;
+    return true;
+  });
+  doSort();
+  render();
+}
+
+function sortBy(key) {
+  if (_sortKey === key) _sortAsc = !_sortAsc;
+  else { _sortKey = key; _sortAsc = true; }
+  doSort();
+  render();
+}
+
+function doSort() {
+  _filtered.sort(function(a, b) {
+    var va = a[_sortKey] || '', vb = b[_sortKey] || '';
+    if (_sortKey === 'size') { va = a.size; vb = b.size; }
+    if (va < vb) return _sortAsc ? -1 : 1;
+    if (va > vb) return _sortAsc ? 1 : -1;
+    return 0;
+  });
+}
+
+function render() {
+  var tbody = document.getElementById('rec-body');
+  var empty = document.getElementById('rec-empty');
+  var summary = document.getElementById('rec-summary');
+  if (!_filtered.length) {
+    tbody.innerHTML = '';
+    empty.style.display = '';
+    summary.textContent = _allFiles.length ? 'No files match filter' : 'No recordings';
+    return;
+  }
+  empty.style.display = 'none';
+  var totalSize = 0;
+  _filtered.forEach(function(f) { totalSize += f.size; });
+  summary.textContent = _filtered.length + ' file' + (_filtered.length !== 1 ? 's' : '') +
+    ' (' + fmtSize(totalSize) + ')' +
+    (_filtered.length < _allFiles.length ? ' of ' + _allFiles.length + ' total' : '');
+
+  var h = '';
+  _filtered.forEach(function(f) {
+    var isPlaying = (_playingFile === f.name);
+    h += '<tr class="' + (isPlaying ? 'playing' : '') + '">';
+    h += '<td><input type="checkbox" class="f-check" data-name="' + f.name + '" style="accent-color:var(--t-accent);"></td>';
+    h += '<td style="color:#e0e0e0;">' + f.name + '</td>';
+    h += '<td style="color:var(--t-accent);">' + f.radio + '</td>';
+    h += '<td style="color:#f39c12;">' + f.freq + '</td>';
+    h += '<td>' + f.date + '</td>';
+    h += '<td>' + f.time + '</td>';
+    h += '<td style="text-align:right;">' + fmtSize(f.size) + '</td>';
+    h += '<td>';
+    if (f.ext === 'mp3' || f.ext === 'wav') {
+      if (isPlaying) {
+        h += '<button onclick="stopPlay()" class="rb" style="padding:4px 8px; background:#5c1a1a;">Stop</button>';
+      } else {
+        h += '<button onclick="playFile(\\'' + f.name + '\\')" class="rb" style="padding:4px 8px;">Play</button>';
+      }
+    }
+    h += '</td></tr>';
+  });
+  tbody.innerHTML = h;
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+function toggleAll(checked) {
+  document.querySelectorAll('.f-check').forEach(function(c) { c.checked = checked; });
+}
+function selectAll() { toggleAll(true); document.getElementById('check-all').checked = true; }
+function selectNone() { toggleAll(false); document.getElementById('check-all').checked = false; }
+
+function getSelected() {
+  var sel = [];
+  document.querySelectorAll('.f-check:checked').forEach(function(c) { sel.push(c.dataset.name); });
+  return sel;
+}
+
+function downloadSelected() {
+  var sel = getSelected();
+  if (!sel.length) { alert('No files selected'); return; }
+  sel.forEach(function(fname) {
+    var a = document.createElement('a');
+    a.href = '/recordingsdownload?file=' + encodeURIComponent(fname);
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  });
+}
+
+function deleteSelected() {
+  var sel = getSelected();
+  if (!sel.length) { alert('No files selected'); return; }
+  if (!confirm('Delete ' + sel.length + ' file(s)?')) return;
+  fetch('/recordingsdelete', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({files:sel})}).then(r=>r.json()).then(function(d) {
+    loadFiles();
+  });
+}
+
+function deleteAll() {
+  fetch('/recordingsdelete', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({delete_all:true})}).then(r=>r.json()).then(function(d) {
+    loadFiles();
+  });
+}
+
+function playFile(fname) {
+  var player = document.getElementById('audio-player');
+  var bar = document.getElementById('player-bar');
+  player.src = '/recordingsdownload?file=' + encodeURIComponent(fname);
+  player.play();
+  _playingFile = fname;
+  bar.style.display = '';
+  document.getElementById('player-name').textContent = fname;
+  document.getElementById('pp-btn').textContent = 'Pause';
+  render();
+  player.onended = function() { playerStop(); };
+}
+
+function playerPause() {
+  var player = document.getElementById('audio-player');
+  if (player.paused) {
+    player.play();
+    document.getElementById('pp-btn').textContent = 'Pause';
+  } else {
+    player.pause();
+    document.getElementById('pp-btn').textContent = 'Play';
+  }
+}
+
+function playerStop() {
+  var player = document.getElementById('audio-player');
+  player.pause();
+  player.src = '';
+  _playingFile = '';
+  document.getElementById('player-bar').style.display = 'none';
+  render();
+}
+
+function playerVol(val) {
+  document.getElementById('audio-player').volume = val / 100;
+}
+
+function fmtTime(s) {
+  if (!s || isNaN(s)) return '0:00';
+  var m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+(function() {
+  var player = document.getElementById('audio-player');
+  var seek = document.getElementById('player-seek');
+  var dragging = false;
+
+  // Update slider and time display from audio position (only when not dragging)
+  player.addEventListener('timeupdate', function() {
+    if (dragging) return;
+    if (player.duration) {
+      seek.value = (player.currentTime / player.duration) * 1000;
+    }
+    document.getElementById('player-time').textContent = fmtTime(player.currentTime) + ' / ' + fmtTime(player.duration);
+  });
+
+  // User starts dragging — stop updating slider from audio
+  seek.addEventListener('mousedown', function() { dragging = true; });
+  seek.addEventListener('touchstart', function() { dragging = true; });
+
+  // User releases — apply the new position
+  seek.addEventListener('mouseup', function() {
+    if (player.duration) player.currentTime = player.duration * seek.value / 1000;
+    dragging = false;
+  });
+  seek.addEventListener('touchend', function() {
+    if (player.duration) player.currentTime = player.duration * seek.value / 1000;
+    dragging = false;
+  });
+
+  // Also handle click (no drag, just a single click on the track)
+  seek.addEventListener('change', function() {
+    if (player.duration) player.currentTime = player.duration * seek.value / 1000;
+    dragging = false;
+  });
+})();
+
+loadFiles();
+setInterval(loadFiles, 10000);
+</script>
+
+<script src="/pages/common.js"></script>
+</body>
+</html>

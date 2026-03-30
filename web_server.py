@@ -724,28 +724,21 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
-                elif self.path == '/d75':
-                    # D75 radio control page
-                    html = parent._generate_d75_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
-                elif self.path == '/controls':
-                    html = parent._generate_controls_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
-                elif self.path == '/monitor':
-                    html = parent._generate_monitor_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                elif self.path in ('/d75', '/controls', '/monitor'):
+                    import os as _os
+                    _fname = {'/d75': 'd75.html', '/controls': 'controls.html', '/monitor': 'monitor.html'}
+                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', _fname[self.path])
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/monitor-apk':
                     import os
                     apk_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'room-monitor.apk')
@@ -819,12 +812,18 @@ class WebConfigServer:
                     except BrokenPipeError:
                         pass
                 elif self.path == '/kv4p':
-                    # KV4P HT radio control page
-                    html = parent._generate_kv4p_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                    import os as _os
+                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'kv4p.html')
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/kv4pstatus':
                     # KV4P status JSON endpoint — served by KV4PPlugin
                     data = {'connected': False, 'kv4p_enabled': False}
@@ -968,12 +967,18 @@ class WebConfigServer:
                     except BrokenPipeError:
                         pass
                 elif self.path == '/sdr':
-                    # SDR control page
-                    html = parent._generate_sdr_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                    import os as _os
+                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'sdr.html')
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/sdrstatus':
                     # SDR status JSON endpoint — served by SDRPlugin
                     data = {}
@@ -1050,12 +1055,18 @@ class WebConfigServer:
                     except BrokenPipeError:
                         pass
                 elif self.path == '/telegram':
-                    html = parent._generate_telegram_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                    import os as _os
+                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'telegram.html')
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/telegramstatus':
                     import json as json_mod, os as _os
                     data = {'enabled': False, 'bot_running': False, 'bot_username': '',
@@ -1508,12 +1519,18 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
                 elif self.path == '/dashboard':
-                    # Live status dashboard (loaded in iframe)
-                    html = parent._generate_dashboard()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                    import os as _os
+                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'dashboard.html')
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/logs':
                     # Log viewer — static HTML page
                     import os as _os
@@ -1562,12 +1579,18 @@ class WebConfigServer:
                     except BrokenPipeError:
                         pass
                 elif self.path == '/recordings':
-                    # Recording manager page
-                    html = parent._generate_recordings_page()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.end_headers()
-                    self.wfile.write(html.encode('utf-8'))
+                    import os as _os
+                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'recordings.html')
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
                 elif self.path == '/recordingslist':
                     # JSON list of recording files
                     import json as json_mod

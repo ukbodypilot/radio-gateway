@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram Bot</title>
+<link rel="stylesheet" href="/pages/common.css">
+</head>
+<body>
+
+
+<style>
+.tg-panel { background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px; font-family:monospace; font-size:0.95em; }
+.tg-row { display:flex; align-items:center; gap:14px; margin-bottom:8px; flex-wrap:wrap; }
+.tg-label { color:#888; font-size:0.85em; min-width:90px; }
+.tg-val { color:#e0e0e0; }
+.tg-dot { font-size:1.2em; }
+.tg-ok { color:#2ecc71; }
+.tg-err { color:#e74c3c; }
+.tg-warn { color:#f39c12; }
+.rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
+  color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; }
+.rb:hover { background:var(--t-btn-hover); border-color:var(--t-accent); }
+.rb:active { background:var(--t-border); }
+.rb-sm { font-size:0.8em; padding:5px 10px; }
+.rb-danger { border-color:#e74c3c; }
+.rb-danger:hover { background:#5c1a1a; }
+.tg-msg { background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px 14px;
+  margin-bottom:6px; font-size:0.9em; }
+.tg-msg-in { border-left:3px solid var(--t-accent); }
+.tg-msg-out { border-left:3px solid #2ecc71; }
+.tg-msg-time { color:#888; font-size:0.8em; margin-right:8px; }
+.tg-log-box { background:#111; border:1px solid var(--t-border); border-radius:4px; padding:10px;
+  font-size:0.8em; color:#ccc; max-height:300px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; display:none; }
+</style>
+
+<!-- Status Panel -->
+<div class="tg-panel">
+  <div class="tg-row">
+    <span class="tg-label">Bot Service:</span>
+    <span id="tg-bot-dot" class="tg-dot">&#x25cf;</span>
+    <span id="tg-bot-state" class="tg-val">--</span>
+    <span style="flex:1;"></span>
+    <span id="tg-bot-user" style="color:var(--t-accent); font-size:0.9em;"></span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Claude tmux:</span>
+    <span id="tg-tmux-dot" class="tg-dot">&#x25cf;</span>
+    <span id="tg-tmux-state" class="tg-val">--</span>
+    <span style="margin-left:4px;">
+      <button class="rb rb-sm" onclick="openTmux()" title="Open terminal attached to Claude tmux session">Open tmux</button>
+    </span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Session:</span>
+    <span id="tg-session" class="tg-val">--</span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Config:</span>
+    <span id="tg-config-dot" class="tg-dot">&#x25cf;</span>
+    <span id="tg-config-state" class="tg-val">--</span>
+  </div>
+  <div id="tg-feedback" style="font-size:0.85em; min-height:18px; margin-top:4px;"></div>
+</div>
+
+<!-- Stats Panel -->
+<div class="tg-panel">
+  <h3 style="margin:0 0 10px 0; color:var(--t-accent); font-size:1em;">Activity</h3>
+  <div class="tg-row">
+    <span class="tg-label">Messages today:</span>
+    <span id="tg-msgs-today" class="tg-val" style="color:var(--t-accent); font-size:1.2em;">--</span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Last incoming:</span>
+    <span id="tg-last-in" class="tg-val">--</span>
+  </div>
+  <div class="tg-row">
+    <span class="tg-label">Last reply:</span>
+    <span id="tg-last-out" class="tg-val" style="color:#2ecc71;">--</span>
+  </div>
+  <div id="tg-last-msg" class="tg-msg tg-msg-in" style="display:none;">
+    <span class="tg-msg-time" id="tg-last-msg-time"></span>
+    <span id="tg-last-msg-text"></span>
+  </div>
+</div>
+
+<!-- Service Controls -->
+<div class="tg-panel">
+  <h3 style="margin:0 0 10px 0; color:var(--t-accent); font-size:1em;">Service Controls</h3>
+  <div class="tg-row">
+    <button class="rb rb-sm" onclick="tgCmd('start')">Start</button>
+    <button class="rb rb-sm" onclick="tgCmd('stop')" >Stop</button>
+    <button class="rb rb-sm" onclick="tgCmd('restart')">Restart</button>
+    <span style="color:#555;">|</span>
+    <button class="rb rb-sm" onclick="tgCmd('enable')">Enable on boot</button>
+    <button class="rb rb-sm rb-danger" onclick="tgCmd('disable')">Disable on boot</button>
+  </div>
+</div>
+
+<!-- Logs -->
+<div class="tg-panel">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1em;">Service Logs</h3>
+    <button class="rb rb-sm" onclick="tgLogs()">Load logs</button>
+    <button class="rb rb-sm" onclick="document.getElementById('tg-log-box').style.display='none'">Hide</button>
+  </div>
+  <div id="tg-log-box" class="tg-log-box"></div>
+</div>
+
+<script>
+function tgCmd(cmd) {
+  var fb = document.getElementById('tg-feedback');
+  fb.style.color = '#f39c12'; fb.textContent = cmd + '...';
+  fetch('/telegramcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:cmd})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      fb.style.color = d.ok ? '#2ecc71' : '#e74c3c';
+      fb.textContent = d.ok ? cmd + ' OK' : (d.error || 'failed');
+      setTimeout(function(){ fb.textContent=''; }, 4000);
+      tgPoll();
+    })
+    .catch(function(e){ fb.style.color='#e74c3c'; fb.textContent=String(e); });
+}
+
+function tgLogs() {
+  fetch('/telegramcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'logs'})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var box = document.getElementById('tg-log-box');
+      box.style.display = 'block';
+      box.textContent = d.logs || 'No logs available';
+      box.scrollTop = box.scrollHeight;
+    });
+}
+
+function openTmux() {
+  fetch('/open_tmux', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+}
+
+function fmtTime(ts) {
+  if (!ts) return '--';
+  try { return new Date(ts).toLocaleTimeString(); } catch(e) { return ts; }
+}
+
+function tgPoll() {
+  fetch('/telegramstatus').then(function(r){return r.json()}).then(function(d) {
+    // Bot status
+    var botDot = document.getElementById('tg-bot-dot');
+    var botState = document.getElementById('tg-bot-state');
+    botDot.className = 'tg-dot ' + (d.bot_running ? 'tg-ok' : 'tg-err');
+    botState.textContent = d.bot_running ? 'Running' : 'Stopped';
+    document.getElementById('tg-bot-user').textContent = d.bot_username || '';
+
+    // tmux status
+    var tmuxDot = document.getElementById('tg-tmux-dot');
+    var tmuxState = document.getElementById('tg-tmux-state');
+    tmuxDot.className = 'tg-dot ' + (d.tmux_active ? 'tg-ok' : 'tg-err');
+    tmuxState.textContent = d.tmux_active ? 'Active' : 'Not found';
+    document.getElementById('tg-session').textContent = d.tmux_session || '--';
+
+    // Config status
+    var cfgDot = document.getElementById('tg-config-dot');
+    var cfgState = document.getElementById('tg-config-state');
+    if (d.enabled && d.token_set) {
+      cfgDot.className = 'tg-dot tg-ok';
+      cfgState.textContent = 'Enabled, token set';
+    } else if (d.enabled && !d.token_set) {
+      cfgDot.className = 'tg-dot tg-warn';
+      cfgState.textContent = 'Enabled but no token';
+    } else if (!d.enabled && d.token_set) {
+      cfgDot.className = 'tg-dot tg-warn';
+      cfgState.textContent = 'Disabled (token set)';
+    } else {
+      cfgDot.className = 'tg-dot tg-err';
+      cfgState.textContent = 'Disabled, no token';
+    }
+
+    // Activity
+    document.getElementById('tg-msgs-today').textContent = d.messages_today != null ? d.messages_today : '--';
+    document.getElementById('tg-last-in').textContent = fmtTime(d.last_message_time);
+    document.getElementById('tg-last-out').textContent = fmtTime(d.last_reply_time);
+
+    // Last message preview
+    var msgBox = document.getElementById('tg-last-msg');
+    if (d.last_message_text) {
+      msgBox.style.display = 'block';
+      document.getElementById('tg-last-msg-time').textContent = fmtTime(d.last_message_time);
+      document.getElementById('tg-last-msg-text').textContent = d.last_message_text;
+    } else {
+      msgBox.style.display = 'none';
+    }
+  }).catch(function(){});
+}
+
+setInterval(tgPoll, 3000);
+tgPoll();
+</script>
+
+<script src="/pages/common.js"></script>
+</body>
+</html>

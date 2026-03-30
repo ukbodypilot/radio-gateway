@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Controls</title>
+<link rel="stylesheet" href="/pages/common.css">
+</head>
+<body>
+
+
+<div class="controls">
+  <div class="ctrl-group" id="mute-group">
+    <h3>Mute Controls</h3>
+    <button onclick="sendKey('m')" id="btn-m">Global</button>
+    <button onclick="sendKey('r')" id="btn-r">RX</button>
+    <button onclick="sendKey('t')" id="btn-t">TX</button>
+    <button onclick="sendKey('w')" id="btn-w">D75</button>
+    <button onclick="sendKey('y')" id="btn-y">KV4P</button>
+    <button onclick="sendKey('s')" id="btn-s">SDR1</button>
+    <button onclick="sendKey('x')" id="btn-x">SDR2</button>
+    <button onclick="sendKey('c')" id="btn-c">Remote</button>
+    <button onclick="sendKey('a')" id="btn-a">Announce</button>
+    <button onclick="sendKey('o')" id="btn-o">Speaker</button>
+  </div>
+  <div class="ctrl-group" id="radio-proc-group">
+    <h3>Radio Processing</h3>
+    <button onclick="togProc('radio','gate')" id="btn-rp-gate">Gate</button>
+    <button onclick="togProc('radio','hpf')" id="btn-rp-hpf">HPF</button>
+    <button onclick="togProc('radio','lpf')" id="btn-rp-lpf">LPF</button>
+    <button onclick="togProc('radio','notch')" id="btn-rp-notch">Notch</button>
+  </div>
+  <div class="ctrl-group" id="audio-group">
+    <h3>Audio</h3>
+    <button onclick="sendKey('v')" id="btn-v">VAD Toggle</button>
+    <button onclick="sendKey(',')">,  Vol-</button>
+    <button onclick="sendKey('.')">. Vol+</button>
+  </div>
+  <div class="ctrl-group" id="sdr-proc-group">
+    <h3>SDR Processing</h3>
+    <button onclick="togProc('sdr','gate')" id="btn-sp-gate">Gate</button>
+    <button onclick="togProc('sdr','hpf')" id="btn-sp-hpf">HPF</button>
+    <button onclick="togProc('sdr','lpf')" id="btn-sp-lpf">LPF</button>
+    <button onclick="togProc('sdr','notch')" id="btn-sp-notch">Notch</button>
+  </div>
+  <div class="ctrl-group" id="d75-proc-group">
+    <h3>D75 Processing</h3>
+    <button onclick="togProc('d75','gate')" id="btn-dp-gate">Gate</button>
+    <button onclick="togProc('d75','hpf')" id="btn-dp-hpf">HPF</button>
+    <button onclick="togProc('d75','lpf')" id="btn-dp-lpf">LPF</button>
+    <button onclick="togProc('d75','notch')" id="btn-dp-notch">Notch</button>
+  </div>
+  <div class="ctrl-group" id="kv4p-proc-group">
+    <h3>KV4P Processing</h3>
+    <button onclick="togProc('kv4p','gate')" id="btn-kp-gate">Gate</button>
+    <button onclick="togProc('kv4p','hpf')" id="btn-kp-hpf">HPF</button>
+    <button onclick="togProc('kv4p','lpf')" id="btn-kp-lpf">LPF</button>
+    <button onclick="togProc('kv4p','notch')" id="btn-kp-notch">Notch</button>
+  </div>
+  <div class="ctrl-group" id="sdr-ctrl-group">
+    <h3>SDR</h3>
+    <button onclick="sendKey('d')" id="btn-d">Duck Toggle</button>
+    <button onclick="sendKey('b')" id="btn-b">Rebroadcast</button>
+  </div>
+  <div id="link-ctrl-container"></div>
+</div>
+
+<div id="playback-section" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start;">
+  <div class="ctrl-group" style="min-width:0; display:inline-block;" id="playback-group">
+    <h3 style="margin:0 0 10px; color:var(--t-accent); font-size:1.1em;">Playback</h3>
+    <div style="display:flex; gap:18px; flex-wrap:nowrap;">
+      <div>
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:3px;">
+          <button onclick="sendKey('1')" id="btn-f1">1</button>
+          <button onclick="sendKey('2')" id="btn-f2">2</button>
+          <button onclick="sendKey('3')" id="btn-f3">3</button>
+          <button onclick="sendKey('4')" id="btn-f4">4</button>
+          <button onclick="sendKey('5')" id="btn-f5">5</button>
+          <button onclick="sendKey('6')" id="btn-f6">6</button>
+          <button onclick="sendKey('7')" id="btn-f7">7</button>
+          <button onclick="sendKey('8')" id="btn-f8">8</button>
+          <button onclick="sendKey('9')" id="btn-f9">9</button>
+          <button onclick="sendKey('0')" id="btn-f0">ID</button>
+          <button onclick="sendKey('-')">Stop</button>
+          <button onclick="refreshSounds()" title="Refresh random sounds">&#x21bb;</button>
+        </div>
+      </div>
+      <div style="margin-left:6px; margin-right:6px;">
+        <div id="playback-status" style="font-family:monospace; font-size:0.85em;">Loading...</div>
+      </div>
+    </div>
+  </div>
+  <div class="ctrl-group bottom-btns" style="min-width:0;" id="smart-announce-group">
+    <h3>Smart Announce</h3>
+    <div style="display:flex; flex-direction:column; gap:3px; margin-bottom:6px;">
+      <button onclick="sendKey('[')">Smart #1</button>
+      <button onclick="sendKey(']')">Smart #2</button>
+      <button onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
+    </div>
+    <div id="smart-status" style="font-family:monospace; font-size:0.85em; color:#888;">Idle</div>
+  </div>
+  <div class="ctrl-group bottom-btns" style="min-width:0;" id="broadcastify-group">
+    <h3>Broadcastify</h3>
+    <div style="display:flex; flex-direction:column; gap:3px;">
+      <button onclick="darkiceCmd('start')" id="btn-bc-start">Start</button>
+      <button onclick="darkiceCmd('stop')" id="btn-bc-stop">Stop</button>
+      <button onclick="darkiceCmd('restart')" id="btn-bc-restart">Restart</button>
+    </div>
+    <div style="margin-top:8px;">
+      <span id="bc-status" style="font-family:monospace; font-size:0.85em;">...</span>
+    </div>
+  </div>
+  <div class="ctrl-group bottom-btns" style="width:fit-content;" id="ptt-relay-group">
+    <h3>PTT</h3>
+    <div style="display:flex; gap:10px; align-items:flex-start;">
+      <div style="display:flex; flex-direction:column; gap:3px;">
+        <button onclick="sendKey('p')" id="btn-p">Manual PTT</button>
+        <button onclick="togFlag('talkback')" id="btn-talkback">TX Talkback</button>
+        <button onclick="sendKey('j')" id="btn-j">Radio Power</button>
+        <button onclick="sendKey('h')" id="btn-h">Charger Toggle</button>
+      </div>
+      <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+        <div style="display:flex; align-items:center; gap:6px; width:100%;">
+          <label style="color:#888; font-size:0.8em; white-space:nowrap;">Radio</label>
+          <select id="webmic-radio" onchange="setWebTxRadio(this.value)"
+            style="flex:1; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:3px 5px; font-size:0.85em;">
+            <option value="th9800">TH9800</option>
+            <option value="d75">D75</option>
+            <option value="kv4p">KV4P</option>
+          </select>
+        </div>
+        <div id="db-mic-level" style="width:70px; height:5px; background:var(--t-btn); border-radius:3px; overflow:hidden;">
+          <div id="db-mic-level-bar" style="height:100%; width:0%; background:#2ecc71; transition:width 0.1s;"></div>
+        </div>
+        <button id="db-mic-ptt-btn" style="width:70px; height:70px; font-size:1.1em; font-weight:bold; border-radius:50%; background:#1a3a1a; border:2px solid #2ecc71; color:#e0e0e0; cursor:pointer;"
+          onclick="dbMicPTTToggle()">MIC<br>PTT</button>
+        <span id="db-mic-status" style="color:#888; font-size:0.75em;">Ready</span>
+      </div>
+    </div>
+  </div>
+  <div class="ctrl-group" style="min-width:300px; width:300px;" id="aitext-group">
+    <h3>Text to AI</h3>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <textarea id="ai-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter prompt for AI to research and speak..."></textarea>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap; width:4em;">Top text</label>
+        <input id="ai-top" type="text" value="QST" style="flex:1; min-width:0; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+      </div>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap; width:4em;">Tail</label>
+        <input id="ai-tail" type="text" value="Callsign" style="flex:1; min-width:0; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+      </div>
+      <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Secs</label>
+        <input id="ai-secs" type="number" value="30" min="5" max="120" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Voice</label>
+        <select id="ai-voice" style="flex:1; min-width:90px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+          <option value="1">US English</option>
+          <option value="2">British</option>
+          <option value="3">Australian</option>
+          <option value="4">Indian</option>
+          <option value="5">South African</option>
+          <option value="6">Canadian</option>
+          <option value="7">Irish</option>
+          <option value="8">French</option>
+          <option value="9">German</option>
+        </select>
+      </div>
+      <button onclick="sendAIText()" id="btn-ai-send" style="width:100%;">Send to AI</button>
+    </div>
+    <div id="ai-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+  </div>
+  <div class="ctrl-group" style="min-width:220px; width:220px;" id="cw-group">
+    <h3>Text to CW</h3>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <textarea id="cw-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter text for CW..."></textarea>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <label style="color:#888; font-size:0.8em; white-space:nowrap; width:3em;">WPM</label>
+        <input id="cw-wpm" type="number" min="5" max="60" value="20" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:3px 5px; font-size:0.9em;">
+      </div>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <label style="color:#888; font-size:0.8em; white-space:nowrap; width:3em;">Freq</label>
+        <input id="cw-freq" type="number" min="200" max="1200" value="600" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:3px 5px; font-size:0.9em;">
+        <span style="color:#888; font-size:0.8em;">Hz</span>
+      </div>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <label style="color:#888; font-size:0.8em; white-space:nowrap; width:3em;">Vol</label>
+        <input id="cw-vol" type="number" min="0.1" max="2.0" step="0.1" value="1.0" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:3px 5px; font-size:0.9em;">
+      </div>
+      <button onclick="sendCW()" id="btn-cw-send" style="width:100%;">Send CW</button>
+    </div>
+    <div id="cw-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+  </div>
+  <div class="ctrl-group" style="min-width:280px; width:280px;" id="tts-group">
+    <h3>Text to Speech</h3>
+    <div style="display:flex; flex-direction:column; gap:3px;">
+      <textarea id="tts-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter text to speak..."></textarea>
+      <div style="display:flex; gap:3px; align-items:center;">
+        <select id="tts-voice" style="flex:1; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em;">
+          <option value="1">US English</option>
+          <option value="2">British</option>
+          <option value="3">Australian</option>
+          <option value="4">Indian</option>
+          <option value="5">South African</option>
+          <option value="6">Canadian</option>
+          <option value="7">Irish</option>
+          <option value="8">French</option>
+          <option value="9">German</option>
+        </select>
+        <button onclick="sendTTS()" id="btn-tts-send" style="flex:1;">Send</button>
+      </div>
+    </div>
+    <div id="tts-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+  </div>
+</div>
+
+<style>
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .ctrl-group { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: 10px; min-width: 220px; }
+  .ctrl-group h3 { margin: 0 0 10px; color: var(--t-accent); font-size: 1.1em; }
+  .ctrl-group button { padding: 10px 18px; margin: 3px; border: 1px solid var(--t-btn-border); border-radius: 4px;
+    background: var(--t-btn); color: #e0e0e0; cursor: pointer; font-family: monospace; font-size: 1.05em; }
+  .ctrl-group button:hover { background: var(--t-btn-hover); }
+  .ctrl-group button:active { background: var(--t-btn-active); }
+  .ctrl-group button.active { background: var(--t-btn-active); border-color: var(--t-accent); color: var(--t-accent); }
+  .ctrl-group button.muted { background: #5c1a1a; border-color: #c0392b; color: #ff6b6b; }
+  #status { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: 10px; font-family: monospace; font-size: 1.0em; }
+  .st-row { display: grid; grid-template-columns: repeat(auto-fill, 240px); gap: 10px 16px; margin: 8px 0; }
+  .st-item { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+  .st-label { color: #888; display: inline-block; width: 5.5em; text-align: right; margin-right: 16px; flex-shrink: 0; }
+  .st-val { font-weight: bold; }
+  .bar { display: inline-block; height: 18px; border-radius: 3px; min-width: 4px; vertical-align: middle; }
+  .bar-pct { display: inline-block; width: 3.5em; text-align: right; color: #ccc; }
+  .green { color: #2ecc71; } .red { color: #e74c3c; } .yellow { color: #f39c12; }
+  .cyan { color: var(--t-accent); } .white { color: #e0e0e0; }
+  #playback-section button { margin: 0; }
+  .bottom-btns { min-width: 160px; width: 160px; }
+  .bottom-btns button { width: 100%; box-sizing: border-box; }
+  .pb-slot { display: block; margin: 1px 0; white-space: nowrap; }
+  .pb-key { font-weight: bold; display: inline-block; width: 1.5em; }
+</style>
+
+<script>
+function sendKey(k) {
+  fetch('/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:k})});
+  if(document.activeElement) document.activeElement.blur();
+}
+function togProc(source, filter) {
+  fetch('/proc_toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source:source, filter:filter})});
+}
+function togFlag(flag) {
+  fetch('/mixer', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'flag', flag:flag})});
+}
+function darkiceCmd(cmd) {
+  fetch('/darkicecmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+}
+function openTmux() {
+  fetch('/open_tmux', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+}
+window._lastLinkEndpoints = [];
+function linkCmd(endpoint, cmd) {
+  cmd.endpoint = endpoint;
+  return fetch('/linkcmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cmd)})
+    .then(function(r){return r.json()}).catch(function(){return {};});
+}
+function linkPttToggle(endpoint) {
+  var eps = window._lastLinkEndpoints || [];
+  var current = false;
+  for(var i=0; i<eps.length; i++) { if(eps[i].name === endpoint) { current = eps[i].ptt_active; break; } }
+  linkCmd(endpoint, {cmd:'ptt', state:!current});
+}
+function linkGain(endpoint, cmd, db) {
+  linkCmd(endpoint, {cmd: cmd, db: parseInt(db)});
+}
+function linkMuteToggle(endpoint, dir) {
+  fetch('/mixer', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'toggle', source:'link_'+dir+':'+endpoint})}).catch(function(){});
+}
+function sendAIText() {
+  var text = document.getElementById('ai-text').value.trim();
+  if (!text) return;
+  var btn = document.getElementById('btn-ai-send');
+  var st = document.getElementById('ai-status');
+  btn.disabled = true;
+  st.textContent = 'Submitted \\u2014 processing...';
+  st.style.color = '#f1c40f';
+  var payload = {
+    text: text,
+    target_secs: parseInt(document.getElementById('ai-secs').value) || 30,
+    voice: parseInt(document.getElementById('ai-voice').value) || 1,
+    top_text: document.getElementById('ai-top').value.trim(),
+    tail_text: document.getElementById('ai-tail').value.trim(),
+  };
+  fetch('/aitext', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok) { st.textContent = 'Running \\u2014 check Smart Announce status'; st.style.color = '#2ecc71'; }
+      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      btn.disabled = false;
+      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 15000);
+    })
+    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+  if(document.activeElement) document.activeElement.blur();
+}
+function sendCW() {
+  var text = document.getElementById('cw-text').value.trim();
+  if (!text) return;
+  var btn = document.getElementById('btn-cw-send');
+  var st = document.getElementById('cw-status');
+  var wpm  = parseFloat(document.getElementById('cw-wpm').value)  || 20;
+  var freq = parseFloat(document.getElementById('cw-freq').value) || 600;
+  var vol  = parseFloat(document.getElementById('cw-vol').value)  || 1.0;
+  btn.disabled = true;
+  st.textContent = 'Sending...';
+  st.style.color = '#f1c40f';
+  fetch('/cw', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:text, wpm:wpm, freq:freq, vol:vol})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok) { st.textContent = 'Sent \\u2014 playing'; st.style.color = '#2ecc71'; }
+      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      btn.disabled = false;
+      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 5000);
+    })
+    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+  if(document.activeElement) document.activeElement.blur();
+}
+function sendTTS() {
+  var text = document.getElementById('tts-text').value.trim();
+  if (!text) return;
+  var voice = document.getElementById('tts-voice').value;
+  var btn = document.getElementById('btn-tts-send');
+  var st = document.getElementById('tts-status');
+  btn.disabled = true;
+  st.textContent = 'Generating...';
+  st.style.color = '#f1c40f';
+  fetch('/tts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:text, voice:parseInt(voice)})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok) { st.textContent = 'Sent \\u2014 playing'; st.style.color = '#2ecc71'; }
+      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      btn.disabled = false;
+      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 5000);
+    })
+    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+  if(document.activeElement) document.activeElement.blur();
+}
+function refreshSounds() {
+  fetch('/refreshsounds', {method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    if(d.ok) { var n=d.count; alert('Refreshed ' + n + ' sound' + (n!=1?'s':'')); }
+  });
+}
+
+function bar(pct, cls, ducked) {
+  var w = Math.round(Math.min(Math.max(pct, 0), 100));
+  var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
+  var pctCol = ducked ? '#e74c3c' : '#2ecc71';
+  return '<span class="bar-pct" style="color:'+pctCol+'">'+p+'%</span><span class="bar '+cls+'" style="width:'+w+'px"></span>';
+}
+
+function setWebTxRadio(radio) {
+  fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cmd:'SET_TX_RADIO', radio:radio})}).catch(function(){});
+}
+
+var _dbMicWs=null, _dbMicStream=null, _dbMicCtx=null, _dbMicProc=null, _dbMicActive=false;
+
+function dbMicPTTToggle() {
+  if (_dbMicActive) { dbMicCleanup(); return; }
+  _dbMicActive = true;
+  var btn=document.getElementById('db-mic-ptt-btn'), st=document.getElementById('db-mic-status');
+  btn.style.background='#c0392b'; btn.style.borderColor='#e74c3c'; btn.style.color='#fff';
+  st.textContent='Connecting...'; st.style.color='#f39c12';
+  navigator.mediaDevices.getUserMedia(
+    {audio:{sampleRate:48000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}}
+  ).then(function(stream) {
+    _dbMicStream = stream;
+    var proto = location.protocol==='https:' ? 'wss:' : 'ws:';
+    _dbMicWs = new WebSocket(proto+'//'+location.host+'/ws_mic');
+    _dbMicWs.binaryType = 'arraybuffer';
+    _dbMicWs.onopen = function() {
+      st.textContent='TX \\u2014 click to stop'; st.style.color='#e74c3c';
+      _dbMicCtx = new AudioContext({sampleRate:48000});
+      var src = _dbMicCtx.createMediaStreamSource(stream);
+      var proc = _dbMicCtx.createScriptProcessor(2048,1,1);
+      proc.onaudioprocess = function(e) {
+        if (!_dbMicWs || _dbMicWs.readyState!==1) return;
+        var f32=e.inputBuffer.getChannelData(0), buf=new ArrayBuffer(f32.length*2), i16=new Int16Array(buf), peak=0;
+        for (var i=0;i<f32.length;i++) { var s=Math.max(-1,Math.min(1,f32[i])); i16[i]=s<0?s*32768:s*32767; if(Math.abs(f32[i])>peak)peak=Math.abs(f32[i]); }
+        _dbMicWs.send(buf);
+        document.getElementById('db-mic-level-bar').style.width=Math.min(100,Math.round(peak*100))+'%';
+      };
+      src.connect(proc); proc.connect(_dbMicCtx.destination); _dbMicProc=proc;
+    };
+    _dbMicWs.onerror=function(){dbMicCleanup();};
+    _dbMicWs.onclose=function(){dbMicCleanup();};
+  }).catch(function(){
+    _dbMicActive=false;
+    document.getElementById('db-mic-ptt-btn').style.background='#1a3a1a';
+    document.getElementById('db-mic-ptt-btn').style.borderColor='#2ecc71';
+    document.getElementById('db-mic-status').textContent='Mic denied';
+    document.getElementById('db-mic-status').style.color='#e74c3c';
+  });
+}
+
+function dbMicCleanup() {
+  _dbMicActive=false;
+  if(_dbMicProc){_dbMicProc.disconnect();_dbMicProc=null;}
+  if(_dbMicCtx){_dbMicCtx.close().catch(function(){});_dbMicCtx=null;}
+  if(_dbMicStream){_dbMicStream.getTracks().forEach(function(t){t.stop();});_dbMicStream=null;}
+  if(_dbMicWs){try{_dbMicWs.close();}catch(e){}  _dbMicWs=null;}
+  var btn=document.getElementById('db-mic-ptt-btn');
+  btn.style.background='#1a3a1a'; btn.style.borderColor='#2ecc71'; btn.style.color='#e0e0e0';
+  document.getElementById('db-mic-level-bar').style.width='0%';
+  document.getElementById('db-mic-status').textContent='Ready';
+  document.getElementById('db-mic-status').style.color='#888';
+}
+
+// Initialise radio dropdown from config TX_RADIO
+fetch('/catcmd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'GET_TX_RADIO'})})
+  .then(function(r){return r.json();}).then(function(d){
+    if(d.ok && d.radio){var s=document.getElementById('webmic-radio');if(s)s.value=d.radio;}
+  }).catch(function(){});
+
+// --- Status polling for button states ---
+var _ctrlBusy = false;
+function updateControls() {
+  if (_ctrlBusy) return;
+  _ctrlBusy = true;
+  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 10000);
+  fetch('/status', {signal:_ac.signal}).then(r=>r.json()).then(function(s) {
+    // Update button states
+    function setBtn(id, active, cls) { var b=document.getElementById(id); if(b) { b.className=active?(cls||'active'):''; } }
+    setBtn('btn-t', s.tx_muted, 'muted');
+    setBtn('btn-r', s.rx_muted, 'muted');
+    setBtn('btn-m', s.tx_muted && s.rx_muted, 'muted');
+    setBtn('btn-s', s.sdr1_muted, 'muted');
+    setBtn('btn-x', s.sdr2_muted, 'muted');
+    setBtn('btn-c', s.remote_muted, 'muted');
+    setBtn('btn-a', s.announce_muted, 'muted');
+    setBtn('btn-o', s.speaker_muted, 'muted');
+    setBtn('btn-w', s.d75_muted, 'muted');
+    setBtn('btn-y', s.kv4p_muted, 'muted');
+    setBtn('btn-v', s.vad_enabled, 'active');
+    setBtn('btn-p', s.manual_ptt, 'active');
+    setBtn('btn-talkback', s.tx_talkback, 'active');
+    setBtn('btn-d', s.sdr1_duck, 'active');
+    setBtn('btn-b', s.sdr_rebroadcast, 'active');
+    // Radio processing buttons
+    if(s.radio_proc) {
+      setBtn('btn-rp-gate', s.radio_proc.indexOf('Gate')>=0, 'active');
+      setBtn('btn-rp-hpf', s.radio_proc.indexOf('HPF')>=0, 'active');
+      setBtn('btn-rp-lpf', s.radio_proc.indexOf('LPF')>=0, 'active');
+      setBtn('btn-rp-notch', s.radio_proc.indexOf('Notch')>=0, 'active');
+    }
+    // SDR processing buttons
+    if(s.sdr_proc) {
+      setBtn('btn-sp-gate', s.sdr_proc.indexOf('Gate')>=0, 'active');
+      setBtn('btn-sp-hpf', s.sdr_proc.indexOf('HPF')>=0, 'active');
+      setBtn('btn-sp-lpf', s.sdr_proc.indexOf('LPF')>=0, 'active');
+      setBtn('btn-sp-notch', s.sdr_proc.indexOf('Notch')>=0, 'active');
+    }
+    // D75 processing buttons
+    if(s.d75_proc) {
+      setBtn('btn-dp-gate', s.d75_proc.indexOf('Gate')>=0, 'active');
+      setBtn('btn-dp-hpf', s.d75_proc.indexOf('HPF')>=0, 'active');
+      setBtn('btn-dp-lpf', s.d75_proc.indexOf('LPF')>=0, 'active');
+      setBtn('btn-dp-notch', s.d75_proc.indexOf('Notch')>=0, 'active');
+    }
+    // KV4P processing buttons
+    if(s.kv4p_proc) {
+      setBtn('btn-kp-gate', s.kv4p_proc.indexOf('Gate')>=0, 'active');
+      setBtn('btn-kp-hpf', s.kv4p_proc.indexOf('HPF')>=0, 'active');
+      setBtn('btn-kp-lpf', s.kv4p_proc.indexOf('LPF')>=0, 'active');
+      setBtn('btn-kp-notch', s.kv4p_proc.indexOf('Notch')>=0, 'active');
+    }
+    // Smart announce activity status
+    var smSt = document.getElementById('smart-status');
+    if(smSt && s.smart_activity) {
+      var parts = [];
+      for(var sk in s.smart_activity) {
+        if(sk === '0') continue;
+        var sv = s.smart_activity[sk];
+        var sClr = sv==='Done'?'green':sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped')?'red':'yellow';
+        parts.push('<span class="'+sClr+'">#'+sk+': '+sv+'</span>');
+      }
+      smSt.innerHTML = parts.length ? parts.join(' ') : '<span style="color:#888">Idle</span>';
+    }
+    // Smart announce countdowns
+    if(s.smart_countdowns) {
+      var cdDiv = document.getElementById('smart-countdowns');
+      if(cdDiv) {
+        var cdh = '';
+        for(var i=0;i<s.smart_countdowns.length;i++) {
+          var sc=s.smart_countdowns[i];
+          var scClr=sc.mode==='manual'?'cyan':'yellow';
+          cdh += '<span class="'+scClr+'">#'+sc.id+': '+sc.remaining+'</span> ';
+        }
+        cdDiv.innerHTML = cdh || '';
+      }
+    }
+    // Playback file slots
+    var pbDiv = document.getElementById('playback-status');
+    if(pbDiv && s.files) {
+      var ph = '';
+      var order = ['1','2','3','4','5','6','7','8','9','0'];
+      for(var fi=0;fi<order.length;fi++) {
+        var fk = order[fi];
+        var f = s.files[fk];
+        if(!f || !f.loaded) continue;
+        var fClr = f.playing?'red':'green';
+        var fName = f.name.length > 28 ? f.name.substring(0,28)+'...' : f.name;
+        ph += '<div class="pb-slot"><span class="pb-key '+(f.playing?'red':'cyan')+'">'+(fk==='0'?'ID':fk)+'</span> <span class="'+fClr+'">'+fName+'</span>'+(f.playing?' <span class="red">&#9654; Playing</span>':'')+'</div>';
+      }
+      pbDiv.innerHTML = ph || '<span class="white">No files loaded</span>';
+    }
+    // Playback button states
+    if(s.files) {
+      for(var fk in s.files) {
+        var fb = document.getElementById('btn-f'+fk);
+        if(fb) {
+          var fi = s.files[fk];
+          if(fi.playing) { fb.className='muted'; }
+          else if(fi.loaded) { fb.className=''; }
+          else { fb.className=''; fb.style.opacity='0.4'; }
+          if(fi.name) fb.title=fi.name;
+        }
+      }
+    }
+    // Hide/show sections based on enabled state
+    function showIf(id, cond) { var e=document.getElementById(id); if(e) e.style.display=cond?'':'none'; }
+    var hasSDR = s.sdr1_enabled || s.sdr2_enabled;
+    showIf('sdr-proc-group', hasSDR);
+    showIf('sdr-ctrl-group', hasSDR);
+    showIf('playback-group', s.playback_enabled);
+    showIf('smart-announce-group', s.smart_announce_enabled);
+    showIf('tts-group', s.tts_enabled);
+    showIf('btn-s', s.sdr1_enabled);
+    showIf('btn-x', s.sdr2_enabled);
+    showIf('btn-c', s.remote_enabled);
+    showIf('btn-a', s.announce_enabled);
+    showIf('btn-o', s.speaker_enabled);
+    showIf('btn-j', s.relay_radio_enabled);
+    showIf('btn-h', s.relay_charger_enabled);
+    // Broadcastify buttons & status text
+    var bcGrp = document.getElementById('broadcastify-group');
+    if(bcGrp) {
+      if(!s.streaming_enabled) { bcGrp.style.display='none'; } else { bcGrp.style.display=''; }
+      var bcSt = document.getElementById('bc-status');
+      if(bcSt) {
+        var ds = s.darkice_stats || {};
+        if(s.darkice_running && ds.connected) {
+          var extra = '';
+          if(ds.send_rate) extra += ' '+ds.send_rate;
+          if(ds.rtt) extra += ' RTT:'+ds.rtt.toFixed(0)+'ms';
+          bcSt.innerHTML='<span class="green">&#9679; LIVE'+extra+'</span>';
+        } else if(s.darkice_running) {
+          bcSt.innerHTML='<span class="yellow">&#9679; Running (no connection)</span>';
+        } else {
+          bcSt.innerHTML='<span class="red">&#9679; Stopped</span>';
+        }
+      }
+      setBtn('btn-bc-start', s.darkice_running, 'active');
+      setBtn('btn-bc-stop', !s.darkice_running && s.streaming_enabled, 'muted');
+    }
+    // Gateway Link controls
+    var linkCont = document.getElementById('link-ctrl-container');
+    if(linkCont && s.link_enabled) {
+      var eps = s.link_endpoints || [];
+      window._lastLinkEndpoints = eps;
+      if(eps.length > 0) {
+        var ch = '';
+        for(var ei=0; ei<eps.length; ei++) {
+          var le = eps[ei];
+          var eid = le.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+          ch += '<div class="ctrl-group" style="min-width:280px;">';
+          ch += '<h3>Link: '+le.name+'</h3>';
+          ch += '<div style="font-size:0.85em; color:#888; margin-bottom:8px;">'+le.plugin+' '+(le.connected?'<span style="color:#2ecc71;">connected</span>':'<span style="color:#e74c3c;">offline</span>')+'</div>';
+          ch += '<div style="display:flex; gap:10px; align-items:flex-start;">';
+          if(le.capabilities && le.capabilities.ptt) {
+            var pttStyle = le.ptt_active ? 'background:var(--t-btn-active);border-color:var(--t-accent);color:var(--t-accent);' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
+            ch += '<button onclick="linkPttToggle(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\')" style="width:80px; height:50px; font-size:1.1em; border:1px solid; border-radius:4px; cursor:pointer; '+pttStyle+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
+          }
+          ch += '<div style="flex:1; display:flex; flex-direction:column; gap:4px;">';
+          ch += '<div style="display:flex; align-items:center; gap:6px;">';
+          ch += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">RX</span>';
+          ch += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.level||0)+'%; background:#2ecc71; border-radius:2px;"></div></div>';
+          ch += '</div>';
+          ch += '<div style="display:flex; align-items:center; gap:6px;">';
+          ch += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">TX</span>';
+          ch += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.tx_level||0)+'%; background:#e74c3c; border-radius:2px;"></div></div>';
+          ch += '</div>';
+          var rxmStyle = le.rx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
+          ch += '<div style="display:flex; align-items:center; gap:6px; margin-top:4px;">';
+          ch += '<button onclick="linkMuteToggle(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'rx\\\')" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+rxmStyle+'">Mute</button>';
+          ch += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'rx_gain\\\',this.value)">';
+          ch += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+' dB</span>';
+          ch += '</div>';
+          var txmStyle = le.tx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
+          ch += '<div style="display:flex; align-items:center; gap:6px;">';
+          ch += '<button onclick="linkMuteToggle(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'tx\\\')" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+txmStyle+'">Mute</button>';
+          ch += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'tx_gain\\\',this.value)">';
+          ch += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+' dB</span>';
+          ch += '</div>';
+          ch += '</div></div></div>';
+        }
+        linkCont.innerHTML = ch;
+        linkCont.style.display = '';
+      } else {
+        linkCont.innerHTML = '';
+        linkCont.style.display = s.link_enabled ? '' : 'none';
+      }
+    } else if(linkCont) {
+      linkCont.style.display = 'none';
+    }
+  }).catch(function(){}).finally(function(){ _ctrlBusy=false; });
+}
+setInterval(updateControls, 1000);
+updateControls();
+</script>
+
+<script src="/pages/common.js"></script>
+</body>
+</html>

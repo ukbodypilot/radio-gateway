@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TH-D75 Control</title>
+<link rel="stylesheet" href="/pages/common.css">
+</head>
+<body>
+
+
+<style>
+.rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
+  color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; min-width:44px; }
+.rb:hover { background:var(--t-btn-hover); border-color:var(--t-accent); }
+.rb:active { background:var(--t-border); }
+.rb-sm { font-size:0.8em; padding:5px 10px; }
+.rb-active { background:var(--t-accent) !important; color:#fff !important; border-color:var(--t-accent) !important; }
+.d75-band { background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; }
+.d75-freq { color:#2ecc71; font-size:2.2em; text-align:center; letter-spacing:2px; margin:8px 0; font-family:monospace; }
+.mem-row { cursor:pointer; }
+.mem-row:hover { background:rgba(255,255,255,0.05); }
+.d75-label { color:#888; font-size:0.85em; }
+.d75-val { color:#e0e0e0; font-family:monospace; }
+.d75-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.d75-meter { flex:1; background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:3px; height:18px; position:relative; overflow:hidden; }
+.d75-meter-fill { height:100%; transition:width 0.3s; }
+.d75-meter-text { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.75em; color:#fff; font-weight:bold; }
+.d75-input { background:var(--t-btn); border:1px solid var(--t-btn-border); color:#2ecc71; padding:6px 10px;
+  border-radius:4px; font-family:monospace; font-size:1.1em; width:140px; text-align:center; }
+.d75-select { background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; padding:5px 8px;
+  border-radius:3px; font-family:monospace; font-size:0.9em; }
+</style>
+
+<div id="d75-offline" style="display:none; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px;">
+  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+    <span style="color:#e74c3c; font-weight:bold;">D75 Not Connected</span>
+    <span id="d75-status-detail" style="color:#f39c12; font-size:0.9em;"></span>
+  </div>
+  <div id="d75-status-steps" style="margin-top:10px; font-size:0.85em; font-family:monospace;">
+    <div><span id="d75-chk-tcp" style="color:#888;">&#x25cf;</span> Gateway TCP Link: <span id="d75-chk-tcp-text">checking...</span>
+      <button id="d75-reconnect-btn" class="rb rb-sm" onclick="d75svcAction('reconnect')" style="display:none; margin-left:8px;">Reconnect</button></div>
+    <div><span id="d75-chk-serial" style="color:#888;">&#x25cf;</span> Radio BT Serial: <span id="d75-chk-serial-text">checking...</span>
+      <button id="d75-offline-btstart-btn" class="rb rb-sm" onclick="d75svcAction('btstart_via_reconnect')" style="display:none; margin-left:8px;">BT Start</button></div>
+    <div><span id="d75-chk-svc" style="color:#888;">&#x25cf;</span> Local CAT Service: <span id="d75-chk-svc-text">checking...</span>
+      <button id="d75-start-svc-btn" class="rb rb-sm" onclick="d75svcAction('start_service')" style="display:none; margin-left:8px;">Start Service</button></div>
+  </div>
+</div>
+
+<div id="d75-panel" style="display:none;">
+
+<!-- Status bar -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+  <span class="d75-label">Model:</span> <span id="d75-model" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">S/N:</span> <span id="d75-sn" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">FW:</span> <span id="d75-fw" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">Mode:</span> <span id="d75-mode" class="d75-val">—</span>
+  <span id="d75-audio-row"><span style="color:#333;">|</span>
+  <span class="d75-label">Audio:</span> <span id="d75-audio-status" class="d75-val">—</span></span>
+  <span style="flex:1;"></span>
+  <span id="d75-tx-badge" style="display:none; background:#c0392b; color:#fff; padding:2px 8px; border-radius:3px; font-weight:bold;">TX</span>
+  <span style="flex:1;"></span>
+  <span id="d75-feedback" style="font-family:monospace; font-size:0.85em; min-width:120px;"></span>
+  <button id="d75-btstart-btn" class="rb rb-sm" onclick="d75cmd('btstart')" style="display:none;">BT Start</button>
+  <button id="d75-btstop-btn" class="rb rb-sm" onclick="d75cmd('btstop')" style="display:none;">BT Stop</button>
+  <button id="d75-audio-off-btn" class="rb rb-sm" onclick="d75cmd('audio','disconnect')" style="display:none;">Audio Off</button>
+  <button id="d75-audio-on-btn" class="rb rb-sm" onclick="d75cmd('audio','connect')" style="display:none;">Audio On</button>
+  <button class="rb rb-sm" onclick="d75cmd('ptt')" id="d75-ptt-btn">PTT</button>
+</div>
+
+<!-- Radio Controls Row -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+  <span class="d75-label">Band:</span>
+  <select id="d75-active-band" class="d75-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;d75cmd('cat','BC '+this.value)">
+    <option value="0">A</option><option value="1">B</option>
+  </select>
+  <span class="d75-label">Dual:</span>
+  <select id="d75-dual" class="d75-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;d75cmd('cat','DL '+this.value)">
+    <option value="0">Dual</option><option value="1">Single</option>
+  </select>
+  <span style="color:#333;">|</span>
+  <button class="rb rb-sm" onclick="d75cmd('cat','UP')">Up</button>
+  <button class="rb rb-sm" onclick="d75cmd('cat','DN')">Down</button>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">Battery:</span> <span id="d75-battery" class="d75-val">—</span>
+  <span class="d75-label">BT:</span> <span id="d75-bt-state" class="d75-val">—</span>
+  <span style="color:#333;">|</span>
+  <span class="d75-label">TNC:</span> <span id="d75-tnc" class="d75-val">—</span>
+  <span class="d75-label">Beacon:</span> <span id="d75-beacon" class="d75-val">—</span>
+</div>
+
+<!-- GPS Row -->
+<div id="d75-gps-row" style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+  <span style="color:var(--t-accent); font-weight:bold;">GPS</span>
+  <span class="d75-label">Lat:</span> <span id="d75-gps-lat" class="d75-val">—</span>
+  <span class="d75-label">Lon:</span> <span id="d75-gps-lon" class="d75-val">—</span>
+  <span class="d75-label">Alt:</span> <span id="d75-gps-alt" class="d75-val">—</span>
+  <span class="d75-label">Speed:</span> <span id="d75-gps-spd" class="d75-val">—</span>
+  <span class="d75-label">Sats:</span> <span id="d75-gps-sat" class="d75-val">—</span>
+</div>
+
+<!-- Memory Channels -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <span style="color:var(--t-accent); font-weight:bold;">Memory Channels</span>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <span id="d75-mem-count" style="color:#888; font-size:0.85em;"></span>
+      <button class="rb rb-sm" onclick="d75LoadMemories()" id="d75-mem-scan-btn">Scan</button>
+    </div>
+  </div>
+  <div id="d75-mem-list" style="max-height:300px; overflow-y:auto; font-family:monospace; font-size:0.85em;">
+    <span style="color:#888;">Press Scan to read memory channels from radio</span>
+  </div>
+</div>
+
+<!-- Volume control (full width) -->
+<div style="margin-bottom:14px; background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:10px 14px;">
+  <div class="d75-row">
+    <span class="d75-label" style="min-width:50px;">Volume</span>
+    <input id="d75-vol" type="range" min="0" max="500" value="100" step="10" style="flex:1; accent-color:var(--t-accent);"
+      oninput="d75VolDebounce(this.value)">
+    <span id="d75-vol-val" class="d75-val" style="min-width:3.5em;">100%</span>
+  </div>
+</div>
+
+<!-- Two-column band display -->
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(350px, 1fr)); gap:14px; margin-bottom:14px;">
+
+  <!-- BAND A -->
+  <div class="d75-band" id="d75-band-a">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span style="display:flex; align-items:center; gap:8px;">
+        <span style="color:var(--t-accent); font-weight:bold; font-size:1.1em;">Band A</span>
+        <span id="d75-a-main" style="display:none; background:#c0392b; color:#fff; padding:1px 7px; border-radius:3px; font-size:0.8em; font-weight:bold;">MAIN</span>
+      </span>
+      <span id="d75-a-mode" style="color:#f39c12; font-weight:bold;">FM</span>
+    </div>
+
+    <!-- Frequency display -->
+    <div style="background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px; margin-bottom:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span id="d75-a-power" style="color:#f39c12; font-size:0.85em;">—</span>
+        <span id="d75-a-tone-info" style="color:#888; font-size:0.8em;"></span>
+        <span id="d75-a-shift-info" style="color:#888; font-size:0.8em;"></span>
+      </div>
+      <div id="d75-a-freq" class="d75-freq">———.———</div>
+    </div>
+
+    <!-- VFO/Memory mode + Channel -->
+    <div class="d75-row">
+      <select id="d75-a-vfomode" class="d75-select" onchange="d75cmd('cat','VM 0,'+this.value)">
+        <option value="0">VFO</option><option value="1">Memory</option><option value="2">Call</option><option value="3">DV</option>
+      </select>
+      <span class="d75-label">CH:</span>
+      <input id="d75-a-ch" class="d75-input" style="width:60px;" placeholder="001"
+        onkeydown="if(event.key==='Enter')d75cmd('cat','MC 0,'+this.value)">
+      <button class="rb rb-sm" onclick="d75cmd('cat','MC 0,'+document.getElementById('d75-a-ch').value)">Go</button>
+    </div>
+
+    <!-- S-Meter -->
+    <div class="d75-row">
+      <span class="d75-label">S:</span>
+      <div class="d75-meter">
+        <div id="d75-a-sig-bar" class="d75-meter-fill" style="background:#2ecc71; width:0%;"></div>
+        <span id="d75-a-sig-text" class="d75-meter-text">S0</span>
+      </div>
+    </div>
+
+    <!-- Squelch -->
+    <div class="d75-row">
+      <span class="d75-label" style="min-width:30px;">SQ</span>
+      <input id="d75-a-sq" type="range" min="0" max="5" value="2" style="flex:1; accent-color:#f39c12;"
+        oninput="d75sq(0,this.value)">
+      <span id="d75-a-sq-val" class="d75-val" style="min-width:2em;">2</span>
+    </div>
+
+    <!-- Frequency input -->
+    <div class="d75-row" style="margin-top:8px;">
+      <span class="d75-label">Freq:</span>
+      <input id="d75-a-freq-input" class="d75-input" placeholder="145.500" onkeydown="if(event.key==='Enter')d75setFreq(0,this.value)">
+      <span class="d75-label">MHz</span>
+      <button class="rb rb-sm" onclick="d75setFreq(0,document.getElementById('d75-a-freq-input').value)">Set</button>
+    </div>
+
+    <!-- Mode & Power -->
+    <div class="d75-row" style="margin-top:6px;">
+      <span class="d75-label">Mode:</span>
+      <select id="d75-a-mode-sel" class="d75-select" onfocus="_toneEditUntil[0]=Date.now()+5000" onchange="_toneEditUntil[0]=Date.now()+3000;d75setMode(0,this.value)">
+        
+<script src="/pages/common.js"></script>
+</body>
+</html>
