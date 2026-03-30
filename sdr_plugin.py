@@ -469,7 +469,7 @@ class SDRPlugin(RadioPlugin):
         if self._tuner1:
             self._tuner1.muted = getattr(config, 'SDR_MUTE_DEFAULT', False)
         if self._tuner2:
-            self._tuner2.muted = getattr(config, 'SDR2_MUTE_DEFAULT', True)
+            self._tuner2.muted = getattr(config, 'SDR2_MUTE_DEFAULT', False)
 
         return success
 
