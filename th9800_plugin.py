@@ -190,27 +190,17 @@ class TH9800Plugin(RadioPlugin):
 
     # -- Standard plugin interface --
 
-    _ga_count = 0
-    _ga_got = 0
-
     def get_audio(self, chunk_size=None):
         """Get RX audio from the blocking reader queue."""
-        self._ga_count += 1
         if not self.enabled or self.muted:
             return None, False
 
         data = None
         try:
             data = self._rx_queue.get_nowait()
-            self._ga_got += 1
         except _queue_mod.Empty:
             self.audio_level = max(0, int(self.audio_level * 0.7))
-            if self._ga_count % 200 == 0:
-                print(f"  [TH9800] get_audio #{self._ga_count}: got={self._ga_got} q={self._rx_queue.qsize()} level={self.audio_level}")
             return None, False
-
-        if self._ga_count % 200 == 0:
-            print(f"  [TH9800] get_audio #{self._ga_count}: got={self._ga_got} q={self._rx_queue.qsize()} level={self.audio_level}")
 
         # Level metering
         try:
