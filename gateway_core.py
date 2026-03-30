@@ -3885,8 +3885,9 @@ class RadioGateway:
                     if self.tx_audio_level < 3:
                         self.tx_audio_level = 0
                 
-                # Audio stream health now handled by TH9800Plugin
-                pass
+                # Audio stream health — let plugin check its own watchdog
+                if self.th9800_plugin:
+                    self.th9800_plugin.check_watchdog()
             
             # DarkIce health check (every 10s — pgrep spawns a process)
             if (self._darkice_was_running and

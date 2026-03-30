@@ -316,7 +316,14 @@ class TH9800Plugin(RadioPlugin):
             return
         try:
             if not self._input_stream.is_active():
+                print(f"  [TH-9800] Stream inactive — restarting")
                 self._restart_audio_input()
+            elif self._radio_source and self._radio_source._chunk_queue.qsize() == 0:
+                # Stream reports active but no blobs — check if stuck
+                last_capture = getattr(self._gateway, 'last_audio_capture_time', 0) if self._gateway else 0
+                if last_capture > 0 and time.time() - last_capture > 10.0:
+                    print(f"  [TH-9800] No audio blobs for 10s — restarting stream")
+                    self._restart_audio_input()
         except Exception:
             pass
 
