@@ -2572,8 +2572,8 @@ class RadioGateway:
                     _tr_sdr2_q = -1
                     _tr_sdr2_sb = -1
                     _tr_sdr2_prebuf = False
-                    _tr_aioc_q = self.radio_source._chunk_queue.qsize() if self.radio_source else -1
-                    _tr_aioc_sb = len(self.radio_source._sub_buffer) if self.radio_source else -1
+                    _tr_aioc_q = -1  # TH9800Plugin doesn't use chunk_queue
+                    _tr_aioc_sb = -1
 
                     _tr_mixer_t0 = time.monotonic()
                     _bus_out = self.mixer.tick(self.config.AUDIO_CHUNK_SIZE)
