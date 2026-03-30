@@ -636,11 +636,45 @@ class WebConfigServer:
                 self.end_headers()
                 self.wfile.write(b'<h1>401 Unauthorized</h1>')
 
+            # Static page routes — path → filename in web_pages/
+            _STATIC_PAGES = {
+                '/': 'shell.html',
+                '/dashboard': 'dashboard.html',
+                '/controls': 'controls.html',
+                '/sdr': 'sdr.html',
+                '/d75': 'd75.html',
+                '/kv4p': 'kv4p.html',
+                '/radio': 'radio.html',
+                '/telegram': 'telegram.html',
+                '/monitor': 'monitor.html',
+                '/recordings': 'recordings.html',
+                '/logs': 'logs.html',
+                '/aircraft': 'aircraft.html',
+                '/voice': 'voice.html',
+                '/routing': 'routing.html',
+            }
+
             def do_GET(self):
                 if not self._check_auth():
                     return
                 import json as json_mod
                 import os
+
+                # Serve static HTML pages
+                if self.path in self._STATIC_PAGES:
+                    _fname = self._STATIC_PAGES[self.path]
+                    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web_pages', _fname)
+                    try:
+                        with open(_p, 'rb') as _f:
+                            _body = _f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    except Exception:
+                        self.send_response(500)
+                        self.end_headers()
+                    return
 
                 if self.path == '/status':
                     # JSON status endpoint for live dashboard
@@ -724,21 +758,7 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
-                elif self.path in ('/d75', '/controls', '/monitor'):
-                    import os as _os
-                    _fname = {'/d75': 'd75.html', '/controls': 'controls.html', '/monitor': 'monitor.html'}
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', _fname[self.path])
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
                 elif self.path == '/monitor-apk':
                     import os
                     apk_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'room-monitor.apk')
@@ -811,19 +831,7 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
-                elif self.path == '/kv4p':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'kv4p.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
                 elif self.path == '/kv4pstatus':
                     # KV4P status JSON endpoint — served by KV4PPlugin
                     data = {'connected': False, 'kv4p_enabled': False}
@@ -840,19 +848,7 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
-                elif self.path == '/radio':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'radio.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
                 elif self.path == '/d75memlist':
                     # D75 memory channel list — scans channels one at a time via !cat ME
                     import json as json_mod
@@ -972,19 +968,7 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
-                elif self.path == '/sdr':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'sdr.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
                 elif self.path == '/sdrstatus':
                     # SDR status JSON endpoint — served by SDRPlugin
                     data = {}
@@ -1060,19 +1044,7 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
                     except BrokenPipeError:
                         pass
-                elif self.path == '/telegram':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'telegram.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
                 elif self.path == '/telegramstatus':
                     import json as json_mod, os as _os
                     data = {'enabled': False, 'bot_running': False, 'bot_username': '',
@@ -1517,46 +1489,9 @@ class WebConfigServer:
                         print(f"[Stream] Disconnected {_client_ip} ({_kb}KB sent)")
                         parent._unsubscribe_stream(ev)
                     return
-                elif self.path == '/':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'shell.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
-                elif self.path == '/dashboard':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'dashboard.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
-                elif self.path == '/logs':
-                    # Log viewer — static HTML page
-                    import os as _os
-                    _lp = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'logs.html')
-                    try:
-                        with open(_lp, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
+
+
                 elif self.path == '/tracestatus':
                     _gw = parent.gateway
                     _ts = {'audio_trace': False, 'watchdog_trace': False}
@@ -1590,19 +1525,7 @@ class WebConfigServer:
                         self.wfile.write(json_mod.dumps({'seq': last_seq, 'lines': lines}).encode('utf-8'))
                     except BrokenPipeError:
                         pass
-                elif self.path == '/recordings':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'recordings.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
                 elif self.path == '/recordingslist':
                     # JSON list of recording files
                     import json as json_mod
@@ -1680,19 +1603,7 @@ class WebConfigServer:
                                 self.wfile.write(chunk)
                     except BrokenPipeError:
                         pass
-                elif self.path == '/aircraft':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'aircraft.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
+
                 elif self.path == '/adsb' or self.path.startswith('/adsb/'):
                     # Reverse proxy to dump1090-fa web interface
                     import urllib.request as _ureq
@@ -1754,33 +1665,7 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(html.encode('utf-8'))
 
-                elif self.path == '/voice':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'voice.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
 
-                elif self.path == '/routing':
-                    import os as _os
-                    _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'web_pages', 'routing.html')
-                    try:
-                        with open(_p, 'rb') as _f:
-                            _body = _f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    except Exception:
-                        self.send_response(500)
-                        self.end_headers()
 
                 elif self.path == '/routing/status':
                     # Return current routing state for the UI
@@ -3452,7 +3337,6 @@ class WebConfigServer:
             html += '    <a href="/kv4p" class="rb rb-sm" style="text-decoration:none;">KV4P</a>\n'
         return html
 
-    # _generate_shell_page removed — now served as static HTML from web_pages/
 
     def _wrap_html(self, title, body):
         """Wrap body content in the standard HTML shell."""
@@ -3506,19 +3390,12 @@ class WebConfigServer:
 <script>var _T={{bg:'{t['bg']}',panel:'{t['panel']}',border:'{t['border']}',accent:'{t['accent']}',btn:'{t['btn']}',btnBorder:'{t['btn_border']}',btnHover:'{t['btn_hover']}',btnActive:'{t['btn_active_bg']}'}}</script>
 </head><body>{body}</body></html>'''
 
-    # _generate_logs_page removed — now served as static HTML from web_pages/
 
-    # _generate_radio_page removed — now served as static HTML from web_pages/
 
-    # _generate_d75_page removed — now served as static HTML from web_pages/
 
-    # _generate_kv4p_page removed — now served as static HTML from web_pages/
 
-    # _generate_telegram_page removed — now served as static HTML from web_pages/
 
-    # _generate_aircraft_page removed — now served as static HTML from web_pages/
 
-    # _generate_sdr_page removed — now served as static HTML from web_pages/
 
     # ── Routing API ──────────────────────────────────────────────────────
 
@@ -3960,15 +3837,10 @@ class WebConfigServer:
 
         return info
 
-    # _generate_dashboard removed — now served as static HTML from web_pages/
 
-    # _generate_controls_page removed — now served as static HTML from web_pages/
 
-    # _generate_monitor_page removed — now served as static HTML from web_pages/
 
-    # _generate_recordings_page removed — now served as static HTML from web_pages/
 
-    # _generate_voice_page removed — now served as static HTML from web_pages/
 
     def _generate_html(self):
         """Build the full HTML page with form inputs grouped by section.
