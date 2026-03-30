@@ -236,20 +236,11 @@ class BusManager:
             elif sink_id == 'aioc_tx' and getattr(gw, 'th9800_plugin', None):
                 gw.th9800_plugin.put_audio(audio)
 
-        # Feed PCM/MP3 streams based on per-bus flags
-        mixed = bus_output.mixed_audio
-        if mixed:
-            # PCM WebSocket stream
-            if bus_cfg.get('pcm', True):
-                ws = getattr(gw, 'web_config_server', None)
-                if ws and ws._ws_clients:
-                    ws.push_ws_audio(mixed)
-
-            # MP3 stream
-            if bus_cfg.get('mp3', True):
-                ws = getattr(gw, 'web_config_server', None)
-                if ws and ws._stream_subscribers:
-                    ws.push_audio(mixed)
+        # PCM/MP3 stream delivery disabled for now — the primary ListenBus
+        # in the main loop already feeds these streams. Enabling here would
+        # double-feed and cause choppy audio. This will be enabled when the
+        # main loop's direct delivery is removed.
+        # TODO: enable when main loop sink delivery is migrated to BusManager
 
     def _tick_loop(self):
         """Main bus tick loop — runs all non-primary busses."""
