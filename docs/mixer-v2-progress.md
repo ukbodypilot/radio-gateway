@@ -95,6 +95,10 @@ any work on the mixer.
 | 2026-03-30 | SoloBus | PASS | Built and smoke tested |
 | 2026-03-30 | DuplexRepeaterBus | PASS | Built and smoke tested (full duplex cross-link) |
 | 2026-03-30 | SimplexRepeaterBus | PASS | Built and smoke tested (store-and-forward) |
+| 2026-03-30 | Console removal | PASS | StatusBar/keyboard/ANSI removed (-649 lines) |
+| 2026-03-30 | Web modularization | PASS | 13 pages extracted to static HTML in web_pages/ |
+| 2026-03-30 | Dead code cleanup | PASS | _generate_* methods removed (-5375 lines from web_server.py) |
+| 2026-03-30 | Nav status fields | PASS | adsb_enabled + telegram_enabled added to /status |
 
 ## Known Issues
 (none yet)
