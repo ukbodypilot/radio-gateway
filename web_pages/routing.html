@@ -60,6 +60,57 @@
   .drawflow .drawflow-node.bus-simplex .title-box { background: #3e1a1a; border-color: #e74c3c; }
   .drawflow .drawflow-node.sink .title-box { background: #2a1a3e; border-color: #9b59b6; }
 
+  /* Node controls (mute + gain) */
+  .node-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 3px;
+  }
+  .mute-btn {
+    width: 22px;
+    height: 18px;
+    border: 1px solid var(--t-btn-border);
+    border-radius: 3px;
+    background: var(--t-btn);
+    color: #888;
+    font-size: 0.6rem;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0;
+    line-height: 18px;
+    text-align: center;
+  }
+  .mute-btn:hover { border-color: #e74c3c; }
+  .mute-btn.muted {
+    background: #e74c3c;
+    color: #fff;
+    border-color: #c0392b;
+  }
+  .gain-slider {
+    flex: 1;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--t-btn-border);
+    border-radius: 2px;
+    outline: none;
+  }
+  .gain-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--t-accent);
+    cursor: pointer;
+  }
+  .gain-val {
+    font-size: 0.55rem;
+    color: #888;
+    min-width: 28px;
+    text-align: right;
+  }
+
   /* Level bars inside nodes */
   .level-bar {
     height: 6px;
@@ -163,7 +214,13 @@ function rebuildEditor() {
   // Add source nodes (output only — right side)
   for (var i = 0; i < _state.sources.length; i++) {
     var s = _state.sources[i];
-    var html = '<div class="box">' + (s.type || (s.can_rx ? 'RX' : 'TX'))
+    var muted = s.muted ? ' muted' : '';
+    var html = '<div class="box">'
+      + '<div class="node-controls">'
+      + '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">' + (s.muted ? 'M' : '') + '</button>'
+      + '<input type="range" class="gain-slider" min="0" max="200" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" title="Gain">'
+      + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>'
+      + '</div>'
       + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>'
       + '</div>';
     var nodeId = editor.addNode(s.id, 0, 1, xSource, ySource, 'source', {id: s.id}, s.name + '\n' + html);
@@ -184,7 +241,13 @@ function rebuildEditor() {
   // Add sink nodes (input only — left side)
   for (var i = 0; i < _state.sinks.length; i++) {
     var s = _state.sinks[i];
-    var html = '<div class="box">' + (s.type || '')
+    var muted = s.muted ? ' muted' : '';
+    var html = '<div class="box">'
+      + '<div class="node-controls">'
+      + '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">' + (s.muted ? 'M' : '') + '</button>'
+      + '<input type="range" class="gain-slider" min="0" max="200" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" title="Gain">'
+      + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>'
+      + '</div>'
       + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>'
       + '</div>';
     var nodeId = editor.addNode(s.id, 1, 0, xSink, ySink, 'sink', {id: s.id}, s.name + '\n' + html);
@@ -314,6 +377,48 @@ editor.on('nodeRemoved', function(nodeId) {
 });
 
 loadRouting();
+
+// Mute toggle
+function toggleMute(id) {
+  fetch('/routing/cmd', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd: 'mute', id: id})
+  }).then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        var btn = document.getElementById('mute-' + id);
+        if (btn) {
+          if (d.muted) {
+            btn.classList.add('muted');
+            btn.textContent = 'M';
+          } else {
+            btn.classList.remove('muted');
+            btn.textContent = '';
+          }
+        }
+        setStatus(id + ': ' + (d.muted ? 'muted' : 'unmuted'));
+      }
+    });
+}
+
+// Gain control
+function setGain(id, value) {
+  var label = document.getElementById('gain-val-' + id);
+  if (label) label.textContent = value + '%';
+  // Debounce — only send after slider stops moving
+  clearTimeout(setGain._timer);
+  setGain._timer = setTimeout(function() {
+    fetch('/routing/cmd', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cmd: 'gain', id: id, value: parseInt(value)})
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) setStatus(id + ': gain ' + value + '%');
+      });
+  }, 200);
+}
 
 // Poll audio levels and update bars
 function pollLevels() {

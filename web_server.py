@@ -3406,31 +3406,38 @@ class WebConfigServer:
 
         # Build source list from available plugins/sources
         sources = []
+        def _src_info(obj):
+            """Get muted and gain from a source/plugin object."""
+            return {
+                'muted': getattr(obj, 'muted', False),
+                'gain': int(getattr(obj, 'audio_boost', 1.0) * 100),
+            }
+
         if gw:
             if gw.sdr_plugin:
-                sources.append({'id': 'sdr', 'name': 'SDR [RX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False})
+                sources.append({**{'id': 'sdr', 'name': 'SDR [RX]', 'enabled': True,
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.sdr_plugin)})
             if gw.kv4p_plugin:
-                sources.append({'id': 'kv4p', 'name': 'KV4P [RX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False})
+                sources.append({**{'id': 'kv4p', 'name': 'KV4P [RX]', 'enabled': True,
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.kv4p_plugin)})
             if gw.d75_plugin:
-                sources.append({'id': 'd75', 'name': 'TH-D75 [RX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False})
+                sources.append({**{'id': 'd75', 'name': 'TH-D75 [RX]', 'enabled': True,
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.d75_plugin)})
             if getattr(gw, 'radio_source', None):
-                sources.append({'id': 'aioc', 'name': 'TH-9800 [RX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False})
+                sources.append({**{'id': 'aioc', 'name': 'TH-9800 [RX]', 'enabled': True,
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.radio_source)})
             if getattr(gw, 'playback_source', None):
-                sources.append({'id': 'playback', 'name': 'File Playback', 'enabled': True,
-                                'can_rx': False, 'can_tx': True, 'can_ptt': True})
+                sources.append({**{'id': 'playback', 'name': 'File Playback', 'enabled': True,
+                                'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.playback_source)})
             if getattr(gw, 'web_mic_source', None):
-                sources.append({'id': 'webmic', 'name': 'Web Mic', 'enabled': True,
-                                'can_rx': False, 'can_tx': True, 'can_ptt': True})
+                sources.append({**{'id': 'webmic', 'name': 'Web Mic', 'enabled': True,
+                                'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.web_mic_source)})
             if getattr(gw, 'announce_input_source', None):
-                sources.append({'id': 'announce', 'name': 'Announcements', 'enabled': True,
-                                'can_rx': False, 'can_tx': True, 'can_ptt': True})
+                sources.append({**{'id': 'announce', 'name': 'Announcements', 'enabled': True,
+                                'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.announce_input_source)})
             if getattr(gw, 'web_monitor_source', None):
-                sources.append({'id': 'monitor', 'name': 'Room Monitor', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False})
+                sources.append({**{'id': 'monitor', 'name': 'Room Monitor', 'enabled': True,
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.web_monitor_source)})
 
         # Build sink list (passive consumers + TX-capable radios)
         sinks = []
@@ -3444,11 +3451,11 @@ class WebConfigServer:
         # TX-capable radios as destinations
         if gw:
             if gw.kv4p_plugin:
-                sinks.append({'id': 'kv4p_tx', 'name': 'KV4P [TX]', 'type': 'Radio TX', 'enabled': True})
+                sinks.append({**{'id': 'kv4p_tx', 'name': 'KV4P [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.kv4p_plugin)})
             if gw.d75_plugin:
-                sinks.append({'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True})
+                sinks.append({**{'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.d75_plugin)})
             if getattr(gw, 'radio_source', None):
-                sinks.append({'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True})
+                sinks.append({**{'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.radio_source)})
 
         # Load bus config
         busses, connections = self._load_routing_config()
@@ -3552,7 +3559,44 @@ class WebConfigServer:
                     return {'ok': True, 'warning': f'saved but reload failed: {e}'}
             return {'ok': True}
 
+        elif cmd == 'mute':
+            target_id = data.get('id', '')
+            plugin = self._get_plugin_by_id(target_id)
+            if plugin:
+                plugin.muted = not getattr(plugin, 'muted', False)
+                return {'ok': True, 'muted': plugin.muted}
+            return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
+
+        elif cmd == 'gain':
+            target_id = data.get('id', '')
+            value = int(data.get('value', 100))
+            plugin = self._get_plugin_by_id(target_id)
+            if plugin:
+                plugin.audio_boost = value / 100.0
+                return {'ok': True, 'gain': value}
+            return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
+
         return {'ok': False, 'error': f'unknown command: {cmd}'}
+
+    def _get_plugin_by_id(self, id):
+        """Resolve a source/sink ID to the corresponding plugin/source object."""
+        gw = self.gateway
+        if not gw:
+            return None
+        _map = {
+            'sdr': gw.sdr_plugin,
+            'kv4p': gw.kv4p_plugin,
+            'd75': gw.d75_plugin,
+            'kv4p_tx': gw.kv4p_plugin,
+            'd75_tx': gw.d75_plugin,
+            'aioc': getattr(gw, 'radio_source', None),
+            'aioc_tx': getattr(gw, 'radio_source', None),
+            'playback': getattr(gw, 'playback_source', None),
+            'webmic': getattr(gw, 'web_mic_source', None),
+            'announce': getattr(gw, 'announce_input_source', None),
+            'monitor': getattr(gw, 'web_monitor_source', None),
+        }
+        return _map.get(id)
 
     _ROUTING_CONFIG_PATH = None
 
