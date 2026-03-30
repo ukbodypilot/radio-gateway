@@ -1244,7 +1244,7 @@ class RadioGateway:
                 from th9800_plugin import TH9800Plugin
                 print("Initializing TH-9800 plugin...")
                 self.th9800_plugin = TH9800Plugin()
-                if self.th9800_plugin.setup(self.config):
+                if self.th9800_plugin.setup(self.config, gateway=self):
                     self.mixer.add_source(self.th9800_plugin, bus_priority=1, duckable=False)
                     print("✓ TH-9800 plugin added to mixer")
                 else:

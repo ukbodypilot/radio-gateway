@@ -103,12 +103,13 @@ class TH9800Plugin(RadioPlugin):
         self._last_audio_capture_time = 0
         self._stream_restart_count = 0
 
-    def setup(self, config):
+    def setup(self, config, gateway=None):
         """Initialize all TH-9800 hardware: AIOC, CAT, relays, audio streams."""
         if isinstance(config, dict):
             return False
 
         self._config = config
+        self._gateway = gateway  # real gateway object for AIOCRadioSource
         self._ptt_method = str(getattr(config, 'PTT_METHOD', 'aioc')).lower()
         self._ptt_channel = int(getattr(config, 'AIOC_PTT_CHANNEL', 3))
 
@@ -120,8 +121,11 @@ class TH9800Plugin(RadioPlugin):
         self._init_aioc()
 
         # Create AIOCRadioSource BEFORE opening streams — the input stream
-        # needs the source's callback for PortAudio delivery
-        self._radio_source = AIOCRadioSource(config, self._create_source_gateway_shim())
+        # needs the source's callback for PortAudio delivery.
+        # Pass the real gateway if available — AIOCRadioSource needs gateway.input_stream,
+        # gateway.check_vad(), etc. The plugin sets gateway.input_stream after stream init.
+        _source_gw = self._gateway if self._gateway else self._create_source_gateway_shim()
+        self._radio_source = AIOCRadioSource(config, _source_gw)
 
         # Initialize PyAudio and audio streams (uses radio_source callback)
         if not self._init_audio_streams():
