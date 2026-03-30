@@ -2055,6 +2055,91 @@ class NetworkAnnouncementSource(AudioSource):
         self._sub_buffer = b''
 
 
+class MumbleSource(AudioSource):
+    """Receives Mumble RX audio and feeds it into the bus system.
+
+    The Mumble sound_received_handler pushes PCM into a queue.
+    get_audio() pulls from the queue with ptt_control=True so the
+    bus knows to key the radio when Mumble audio is active.
+    """
+    def __init__(self, config, gateway=None):
+        super().__init__("MUMBLE_RX", config)
+        self.gateway = gateway
+        self.priority = 0  # Highest — Mumble audio takes priority
+        self.ptt_control = True
+        self.volume = 1.0
+        self.enabled = True
+        self.muted = False
+        self.audio_level = 0
+        self.audio_boost = float(getattr(config, 'OUTPUT_VOLUME', 1.0))
+
+        self._chunk_queue = _queue_mod.Queue(maxsize=64)
+        self._chunk_bytes = config.AUDIO_CHUNK_SIZE * getattr(config, 'AUDIO_CHANNELS', 1) * 2
+
+    def push_audio(self, pcm_bytes):
+        """Called by sound_received_handler to push Mumble RX audio."""
+        try:
+            self._chunk_queue.put_nowait(pcm_bytes)
+        except _queue_mod.Full:
+            try:
+                self._chunk_queue.get_nowait()
+            except _queue_mod.Empty:
+                pass
+            try:
+                self._chunk_queue.put_nowait(pcm_bytes)
+            except _queue_mod.Full:
+                pass
+
+    def get_audio(self, chunk_size):
+        if not self.enabled or self.muted:
+            return None, False
+
+        # Drain queue
+        data = None
+        try:
+            data = self._chunk_queue.get_nowait()
+        except _queue_mod.Empty:
+            self.audio_level = max(0, int(self.audio_level * 0.7))
+            return None, False
+
+        # Apply volume
+        if self.audio_boost != 1.0:
+            arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+            data = np.clip(arr * self.audio_boost, -32768, 32767).astype(np.int16).tobytes()
+
+        # Level metering
+        try:
+            arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
+            if rms > 0:
+                level = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
+            else:
+                level = 0
+            if level > self.audio_level:
+                self.audio_level = int(level)
+            else:
+                self.audio_level = int(self.audio_level * 0.7 + level * 0.3)
+        except Exception:
+            pass
+
+        return data, True  # ptt_control=True → triggers PTT
+
+    def is_active(self):
+        return self.enabled and not self.muted and not self._chunk_queue.empty()
+
+    def get_status(self):
+        if not self.enabled:
+            return "MUMBLE_RX: Disabled"
+        return f"MUMBLE_RX: {self.audio_level}%"
+
+    def cleanup(self):
+        while not self._chunk_queue.empty():
+            try:
+                self._chunk_queue.get_nowait()
+            except _queue_mod.Empty:
+                break
+
+
 class WebMicSource(AudioSource):
     """Receives browser microphone audio via WebSocket and routes to radio TX.
 
