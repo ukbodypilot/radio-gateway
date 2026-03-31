@@ -924,8 +924,8 @@ devices:
             time.sleep(5)
 
             # Start SDR1 (Master)
-            subprocess.run(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
-                           capture_output=True, timeout=10)
+            subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             alive = False
             for _ in range(5):
                 time.sleep(1)
@@ -939,8 +939,8 @@ devices:
             # Start SDR2 (Slave)
             time.sleep(3)
             if os.path.exists(self.CONFIG_PATH_SDR2):
-                subprocess.run(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SDR2],
-                               capture_output=True, timeout=10)
+                subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SDR2],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 time.sleep(2)
 
             self._save_settings()
@@ -969,9 +969,9 @@ devices:
                            capture_output=True, timeout=10)
             time.sleep(8)  # sdrplay needs time to initialize hardware
 
-        # Start SDR1 (Master)
-        subprocess.run(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
-                       capture_output=True, timeout=10)
+        # Start SDR1 (Master) — don't capture output (breaks daemonization)
+        subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         alive = False
         for _ in range(5):
             time.sleep(1)
