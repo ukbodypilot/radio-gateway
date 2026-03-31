@@ -595,7 +595,7 @@ class SDRPlugin(RadioPlugin):
         """Return full status dict for web UI and status bar."""
         alive = False
         try:
-            result = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
+            result = subprocess.run(['pgrep', '-f', 'rtl_airband'], capture_output=True, timeout=2)
             alive = result.returncode == 0
         except Exception:
             pass
