@@ -197,22 +197,17 @@ function updateStatus() {
     var bcPanel = document.getElementById('bc-panel');
     if(s.streaming_enabled) {
       bcPanel.style.display = '';
-      var bcRun = s.darkice_running;
       var ds = s.darkice_stats || {};
-      var conn = ds.connected;
-      var stClr = bcRun&&conn?'green':bcRun?'yellow':'red';
-      var stTxt = bcRun?(conn?'LIVE':'NO CONN'):'OFF';
+      var conn = ds.connected || s.stream_connected;
+      var stClr = conn?'green':'red';
+      var stTxt = conn?'LIVE':'OFF';
       document.getElementById('bc-status-badge').innerHTML = '<span style="color:'+stClr+'">'+stTxt+'</span>';
       var bh = '';
-      if(ds.uptime) { var u=ds.uptime; var uh=Math.floor(u/3600); var um=Math.floor((u%3600)/60); var us=u%60; bh += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+uh+'h '+('0'+um).slice(-2)+'m '+('0'+us).slice(-2)+'s</span></div>'; }
+      if(ds.server) bh += '<div class="st-item"><span class="st-label">Server:</span><span class="st-val white">'+ds.server+ds.mount+'</span></div>';
+      if(ds.bitrate) bh += '<div class="st-item"><span class="st-label">Bitrate:</span><span class="st-val cyan">'+ds.bitrate+' kbps MP3</span></div>';
+      if(ds.uptime) { var u=ds.uptime; var uh=Math.floor(u/3600); var um=Math.floor((u%3600)/60); var us=Math.floor(u%60); bh += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+uh+'h '+('0'+um).slice(-2)+'m '+('0'+us).slice(-2)+'s</span></div>'; }
       if(ds.bytes_sent) { var kb=ds.bytes_sent/1024; var mb=kb/1024; bh += '<div class="st-item"><span class="st-label">Sent:</span><span class="st-val cyan">'+(mb>=1?mb.toFixed(1)+' MB':kb.toFixed(0)+' KB')+'</span></div>'; }
       if(ds.send_rate) bh += '<div class="st-item"><span class="st-label">Rate:</span><span class="st-val cyan">'+ds.send_rate+'</span></div>';
-      if(ds.rtt) bh += '<div class="st-item"><span class="st-label">RTT:</span><span class="st-val '+(ds.rtt<100?'green':ds.rtt<500?'yellow':'red')+'">'+ds.rtt.toFixed(0)+'ms</span></div>';
-      bh += '<div class="st-item"><span class="st-label">Pipe:</span><span class="st-val '+(s.stream_pipe_ok?'green':'red')+'">'+(s.stream_pipe_ok?'OK':'ERR')+'</span></div>';
-      bh += '<div class="st-item"><span class="st-label">Health:</span><span class="st-val '+(s.stream_health?'green':'red')+'">'+(s.stream_health?'ON':'off')+'</span></div>';
-      bh += '<div class="st-item"><span class="st-label">PID:</span><span class="st-val white">'+(s.darkice_pid||'—')+'</span></div>';
-      var rTot = (s.darkice_restarts||0) + (s.stream_restarts||0);
-      if(rTot > 0) bh += '<div class="st-item"><span class="st-label">Restarts:</span><span class="st-val yellow">'+(s.darkice_restarts||0)+'d/'+(s.stream_restarts||0)+'s</span></div>';
       document.getElementById('bc-stats').innerHTML = bh;
     } else {
       bcPanel.style.display = 'none';

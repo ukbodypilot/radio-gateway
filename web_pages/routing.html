@@ -37,8 +37,8 @@
     font-size: 0.85rem;
   }
   .drawflow .drawflow-node .box {
-    padding: 6px 10px;
-    font-size: 0.75rem;
+    padding: 1px 6px;
+    font-size: 0.65rem;
     color: #aaa;
   }
   .drawflow .connection .main-path {
@@ -65,22 +65,22 @@
   .node-controls {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-    padding: 0 2px;
+    gap: 3px;
+    margin-bottom: 1px;
+    padding: 0;
   }
   .mute-btn {
-    width: 24px;
-    height: 20px;
-    border: 2px solid #555;
-    border-radius: 3px;
+    width: 18px;
+    height: 14px;
+    border: 1px solid #555;
+    border-radius: 2px;
     background: #2a2a3e;
     color: #888;
-    font-size: 0.65rem;
+    font-size: 0.55rem;
     font-weight: bold;
     cursor: pointer;
     padding: 0;
-    line-height: 18px;
+    line-height: 14px;
     text-align: center;
     flex-shrink: 0;
   }
@@ -91,9 +91,9 @@
     border-color: #c0392b;
   }
   .gain-slider {
-    width: 60px;
+    width: 40px;
     flex-shrink: 0;
-    height: 4px;
+    height: 2px;
     -webkit-appearance: none;
     appearance: none;
     background: #444;
@@ -102,14 +102,14 @@
   }
   .gain-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     background: var(--t-accent);
     cursor: pointer;
   }
   .gain-val {
-    font-size: 0.6rem;
+    font-size: 0.5rem;
     color: #aaa;
     min-width: 30px;
     text-align: right;
@@ -119,22 +119,22 @@
   /* Processing buttons on bus nodes */
   .proc-buttons {
     display: flex;
-    gap: 3px;
-    margin-top: 4px;
+    gap: 2px;
+    margin-top: 1px;
   }
   .proc-btn {
-    width: 22px;
-    height: 18px;
+    width: 18px;
+    height: 14px;
     border: 1px solid #555;
-    border-radius: 3px;
+    border-radius: 2px;
     background: #2a2a3e;
     color: #666;
-    font-size: 0.65rem;
+    font-size: 0.55rem;
     font-weight: bold;
     cursor: pointer;
     padding: 0;
     text-align: center;
-    line-height: 18px;
+    line-height: 14px;
   }
   .proc-btn:hover { border-color: var(--t-accent); color: var(--t-accent); }
   .proc-btn.on {
@@ -148,14 +148,15 @@
   }
 
   /* Wider nodes to fit controls */
-  .drawflow .drawflow-node { min-width: 180px; }
+  .drawflow .drawflow-node { min-width: 170px; }
+  .drawflow .drawflow-node .title-box { padding: 2px 6px; font-size: 0.7rem; }
 
   /* Level bars inside nodes */
   .level-bar {
-    height: 6px;
+    height: 3px;
     background: rgba(255,255,255,0.08);
-    border-radius: 3px;
-    margin-top: 4px;
+    border-radius: 1px;
+    margin-top: 1px;
     overflow: hidden;
   }
   .level-fill {
@@ -202,7 +203,8 @@
   <button onclick="addBusNode('solo')">+ Solo Bus</button>
   <button onclick="addBusNode('duplex')">+ Duplex Bus</button>
   <button onclick="addBusNode('simplex')">+ Simplex Bus</button>
-  <span class="hint">Drag outputs to inputs to connect. Select + Delete to remove.</span>
+  <button onclick="deleteSelected()" style="background:#e74c3c;border-color:#c0392b;">Delete Selected</button>
+  <span class="hint">Click a connection to select it, then click Delete Selected (or right-click).</span>
   <span class="spacer"></span>
   <button onclick="saveRouting()" style="background:#2ecc71;border-color:#27ae60;color:#000;font-weight:bold;">Save</button>
   <button onclick="loadRouting()">Reload</button>
@@ -225,6 +227,55 @@ var container = document.getElementById('drawflow');
 editor = new Drawflow(container);
 editor.reroute = true;
 editor.start();
+
+// Delete selected connection or node
+function deleteSelected() {
+  // Try to find a selected connection
+  var sel = document.querySelector('.main-path.selected');
+  if (sel) {
+    var parent = sel.closest('.connection');
+    if (parent) {
+      var classes = parent.classList;
+      // Extract node_out, node_in, output, input from class names
+      var nodeOut, nodeIn, outputClass, inputClass;
+      for (var i = 0; i < classes.length; i++) {
+        if (classes[i].startsWith('node_in_node-')) nodeIn = classes[i].replace('node_in_node-', '');
+        if (classes[i].startsWith('node_out_node-')) nodeOut = classes[i].replace('node_out_node-', '');
+        if (classes[i].startsWith('output_') && !classes[i].startsWith('node_out')) outputClass = classes[i];
+        if (classes[i].startsWith('input_') && !classes[i].startsWith('node_in')) inputClass = classes[i];
+      }
+      if (nodeOut && nodeIn && outputClass && inputClass) {
+        editor.removeSingleConnection(nodeOut, nodeIn, outputClass, inputClass);
+        setStatus('Connection removed');
+        return;
+      }
+    }
+  }
+  // Try selected node
+  var selNode = document.querySelector('.drawflow-node.selected');
+  if (selNode) {
+    var nid = selNode.id.replace('node-', '');
+    editor.removeNodeId('node-' + nid);
+    setStatus('Node removed');
+    return;
+  }
+  setStatus('Nothing selected — click a connection or node first');
+}
+
+// Right-click on connection to delete
+container.addEventListener('contextmenu', function(e) {
+  var path = e.target.closest('.connection');
+  if (path) {
+    e.preventDefault();
+    // Select then delete
+    var mainPath = path.querySelector('.main-path');
+    if (mainPath) {
+      // Click to select first
+      mainPath.classList.add('selected');
+      deleteSelected();
+    }
+  }
+});
 
 // Load routing state and populate nodes
 function loadRouting() {
@@ -291,10 +342,11 @@ function rebuildEditor() {
       + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
       + '<button class="proc-btn' + (proc.notch ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'notch\')" id="proc-' + b.id + '-notch" title="Notch Filter">N</button>'
       + '<span style="margin-left:6px;border-left:1px solid #555;padding-left:6px;"></span>'
-      + '<button class="proc-btn out-btn' + (proc.pcm !== false ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
-      + '<button class="proc-btn out-btn' + (proc.mp3 !== false ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'
+      + '<button class="proc-btn out-btn' + (proc.pcm === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
+      + '<button class="proc-btn out-btn' + (proc.mp3 === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'
       + '<button class="proc-btn out-btn' + (proc.vad ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'vad\')" id="proc-' + b.id + '-vad" title="VAD gate">V</button>'
       + '</div>'
+      + '<div class="level-bar" id="level-bus_' + b.id + '"><div class="level-fill"></div></div>'
       + '</div>';
     var pos = savedPositions[b.id] || {x: xBus, y: yBus};
     var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, cls, {id: b.id, type: b.type}, b.name + '\n' + html);
@@ -312,8 +364,17 @@ function rebuildEditor() {
       + '<input type="range" class="gain-slider" min="0" max="200" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" title="Gain">'
       + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>'
       + '</div>'
-      + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>'
-      + '</div>';
+      + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>';
+    // Speaker mode selector
+    if (s.id === 'speaker') {
+      var sm = (s.speaker_mode || 'virtual').toLowerCase();
+      html += '<div class="proc-buttons" style="margin-top:2px;">'
+        + '<button class="proc-btn' + (sm === 'virtual' ? ' on' : '') + '" onclick="setSpeakerMode(\'virtual\')" id="spk-virtual" title="Virtual (metering only)">V</button>'
+        + '<button class="proc-btn' + (sm === 'auto' ? ' on' : '') + '" onclick="setSpeakerMode(\'auto\')" id="spk-auto" title="Auto (try device, fallback virtual)">A</button>'
+        + '<button class="proc-btn' + (sm === 'real' ? ' on' : '') + '" onclick="setSpeakerMode(\'real\')" id="spk-real" title="Real (require audio device)">R</button>'
+        + '</div>';
+    }
+    html += '</div>';
     var pos = savedPositions[s.id] || {x: xSink, y: ySink};
     var nodeId = editor.addNode(s.id, 1, 0, pos.x, pos.y, 'sink', {id: s.id}, s.name + '\n' + html);
     _nodeMap['sink-' + s.id] = nodeId;
@@ -501,6 +562,26 @@ function toggleProc(busId, filter) {
           else btn.classList.remove('on');
         }
         setStatus(busId + ': ' + filter + ' ' + (d.state ? 'ON' : 'OFF'));
+      }
+    });
+}
+
+// Speaker mode selector
+function setSpeakerMode(mode) {
+  fetch('/routing/cmd', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd: 'speaker_mode', mode: mode})
+  }).then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        ['virtual','auto','real'].forEach(function(m) {
+          var b = document.getElementById('spk-' + m);
+          if (b) { if (m === d.mode) b.classList.add('on'); else b.classList.remove('on'); }
+        });
+        setStatus('Speaker: ' + d.mode + (d.device ? ' (' + d.device + ')' : ''));
+      } else {
+        setStatus('Speaker mode error: ' + (d.error || 'unknown'));
       }
     });
 }

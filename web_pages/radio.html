@@ -64,7 +64,8 @@
   <button onclick="serialDisconnect()" class="rb rb-sm" style="background:#c0392b; border-color:#e74c3c;">Disconnect</button>
   <button onclick="serialConnect()" class="rb rb-sm">Connect</button>
   <button onclick="setupRadio()" class="rb rb-sm" style="background:#2c3e50; border-color:#34495e;">Setup</button>
-  <button id="radio-power-btn" onclick="radioPower()" class="rb rb-sm" style="background:#8e44ad; border-color:#9b59b6; display:none;">Radio Power</button>
+  <button id="radio-power-btn" onclick="radioPower()" class="rb rb-sm" style="background:#8e44ad; border-color:#9b59b6;">Radio Power</button>
+  <button onclick="chargerToggle()" class="rb rb-sm" style="background:#2c3e50; border-color:#34495e;">Charger</button>
   <span style="color:#333;">|</span>
   <span style="color:#888; font-size:0.85em;">RTS TX:</span>
   <span id="rts-state" style="font-weight:bold;">—</span>
@@ -262,14 +263,7 @@
           onclick="togglePTT()">PTT</button>
         <span style="color:#888; font-size:0.75em; margin-top:6px;">Toggle TX</span>
       </div>
-      <div style="display:flex; flex-direction:column; align-items:center;">
-        <div id="mic-level" style="width:80px; height:6px; background:var(--t-btn); border-radius:3px; margin-bottom:4px; overflow:hidden;">
-          <div id="mic-level-bar" style="height:100%; width:0%; background:#2ecc71; transition:width 0.1s;"></div>
-        </div>
-        <button id="mic-ptt-btn" class="rb" style="width:80px; height:80px; font-size:1.4em; font-weight:bold; border-radius:50%; background:#1a3a1a; border-color:#2ecc71;"
-          onclick="micPTTToggle()">MIC<br>PTT</button>
-        <span id="mic-status" style="color:#888; font-size:0.75em; margin-top:6px;">Ready</span>
-      </div>
+      <!-- MIC PTT removed — use MIC button in nav bar + routing page -->
     </div>
   </div>
 </div>
@@ -363,6 +357,10 @@ function radioPower() {
   fetch('/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:'j'})});
 }
 
+function chargerToggle() {
+  fetch('/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:'h'})});
+}
+
 function catCmd(cmd) {
   fetch('/catcmd', {method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({cmd:cmd})})
@@ -388,94 +386,7 @@ function togglePTT() {
 }
 
 // --- Browser Mic PTT ---
-var _micWs = null;
-var _micStream = null;
-var _micCtx = null;
-var _micWorklet = null;
-var _micActive = false;
-
-function micPTTToggle() {
-  if (_micActive) {
-    micPTTCleanup();
-    return;
-  }
-  _micActive = true;
-  var btn = document.getElementById('mic-ptt-btn');
-  var st = document.getElementById('mic-status');
-  btn.style.background = '#c0392b';
-  btn.style.borderColor = '#e74c3c';
-  btn.style.color = '#fff';
-  st.textContent = 'Connecting...';
-  st.style.color = '#f39c12';
-
-  navigator.mediaDevices.getUserMedia({
-    audio: {sampleRate:48000, channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:true}
-  }).then(function(stream) {
-    _micStream = stream;
-    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    _micWs = new WebSocket(proto + '//' + location.host + '/ws_mic');
-    _micWs.binaryType = 'arraybuffer';
-    _micWs.onopen = function() {
-      st.textContent = 'TX — click to stop';
-      st.style.color = '#e74c3c';
-      _micCtx = new AudioContext({sampleRate: 48000});
-      var source = _micCtx.createMediaStreamSource(stream);
-      var proc = _micCtx.createScriptProcessor(2048, 1, 1);
-      proc.onaudioprocess = function(e) {
-        if (!_micWs || _micWs.readyState !== 1) return;
-        var f32 = e.inputBuffer.getChannelData(0);
-        var buf = new ArrayBuffer(f32.length * 2);
-        var i16 = new Int16Array(buf);
-        for (var i = 0; i < f32.length; i++) {
-          var s = Math.max(-1, Math.min(1, f32[i]));
-          i16[i] = s < 0 ? s * 32768 : s * 32767;
-        }
-        _micWs.send(buf);
-        var peak = 0;
-        for (var i = 0; i < f32.length; i++) {
-          var a = Math.abs(f32[i]);
-          if (a > peak) peak = a;
-        }
-        var pct = Math.min(100, Math.round(peak * 100));
-        document.getElementById('mic-level-bar').style.width = pct + '%';
-      };
-      source.connect(proc);
-      proc.connect(_micCtx.destination);
-      _micWorklet = proc;
-    };
-    _micWs.onerror = function() {
-      st.textContent = 'Error';
-      st.style.color = '#e74c3c';
-      micPTTCleanup();
-    };
-    _micWs.onclose = function() {
-      micPTTCleanup();
-    };
-  }).catch(function(e) {
-    st.textContent = 'Mic denied';
-    st.style.color = '#e74c3c';
-    _micActive = false;
-    btn.style.background = '#1a3a1a';
-    btn.style.borderColor = '#2ecc71';
-    btn.style.color = '#e0e0e0';
-  });
-}
-
-function micPTTCleanup() {
-  _micActive = false;
-  if (_micWorklet) { _micWorklet.disconnect(); _micWorklet = null; }
-  if (_micCtx) { _micCtx.close().catch(function(){}); _micCtx = null; }
-  if (_micStream) { _micStream.getTracks().forEach(function(t){t.stop();}); _micStream = null; }
-  if (_micWs) { try { _micWs.close(); } catch(e){} _micWs = null; }
-  var btn = document.getElementById('mic-ptt-btn');
-  btn.style.background = '#1a3a1a';
-  btn.style.borderColor = '#2ecc71';
-  btn.style.color = '#e0e0e0';
-  document.getElementById('mic-level-bar').style.width = '0%';
-  var st = document.getElementById('mic-status');
-  st.textContent = 'Ready';
-  st.style.color = '#888';
-}
+// MIC PTT removed — use MIC button in nav bar + routing page
 
 function catConnect() {
   var btn = document.getElementById('cat-connect-btn');

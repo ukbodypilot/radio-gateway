@@ -34,6 +34,77 @@ class BusManager:
         self._config_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'routing_config.json')
         self._tick_interval = 0.05  # 50ms = 20 ticks/sec (matches main loop)
+        # Shared PCM/MP3 buffer — BusManager deposits mixed audio here,
+        # main loop picks it up and mixes with listen bus output before pushing.
+        self._pcm_buffer = None     # latest PCM audio from non-listen busses
+        self._mp3_buffer = None     # latest MP3-destined audio from non-listen busses
+        self._bus_levels = {}       # bus_id → audio level (0-100) for routing page
+
+    def get_bus_sinks(self):
+        """Return per-bus connected sink IDs from routing config.
+
+        Returns dict: {bus_id: set of sink_ids}
+        """
+        sinks = {}
+        try:
+            with open(self._config_path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return sinks
+        for bus_cfg in data.get('busses', []):
+            sinks[bus_cfg['id']] = set()
+        for c in data.get('connections', []):
+            if c['type'] == 'bus-sink':
+                bus_id = c['from']
+                if bus_id in sinks:
+                    sinks[bus_id].add(c['to'])
+        return sinks
+
+    def drain_pcm(self):
+        """Return and clear the accumulated PCM audio from non-listen busses."""
+        pcm = self._pcm_buffer
+        self._pcm_buffer = None
+        return pcm
+
+    def drain_mp3(self):
+        """Return and clear the accumulated MP3 audio from non-listen busses."""
+        mp3 = self._mp3_buffer
+        self._mp3_buffer = None
+        return mp3
+
+    def get_listen_bus_id(self):
+        """Return the ID of the first listen-type bus in routing config."""
+        try:
+            with open(self._config_path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return 'listen'
+        for bus_cfg in data.get('busses', []):
+            if bus_cfg.get('type') == 'listen':
+                return bus_cfg['id']
+        return 'listen'
+
+    def get_bus_stream_flags(self):
+        """Return per-bus stream flags from routing config.
+
+        Returns dict: {bus_id: {'pcm': bool, 'mp3': bool, 'vad': bool}}
+        Includes ALL busses (including 'listen' type).
+        """
+        flags = {}
+        try:
+            with open(self._config_path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return flags
+        for bus_cfg in data.get('busses', []):
+            bus_id = bus_cfg['id']
+            proc = bus_cfg.get('processing', {})
+            flags[bus_id] = {
+                'pcm': proc.get('pcm', False),
+                'mp3': proc.get('mp3', False),
+                'vad': proc.get('vad', False),
+            }
+        return flags
 
     def start(self):
         """Load config and start the bus tick loop."""
@@ -75,25 +146,41 @@ class BusManager:
             bus_type = bus_cfg['type']
             bus_name = bus_cfg.get('name', bus_id)
 
-            # Skip 'listen' type — the primary ListenBus handles that
-            if bus_type == 'listen':
+            # Skip the PRIMARY listen bus — the main loop's mixer handles that.
+            # Secondary listen busses are created and ticked by BusManager.
+            _primary_listen_id = self.get_listen_bus_id()
+            if bus_type == 'listen' and bus_id == _primary_listen_id:
                 continue
 
             # Create the bus
             if bus_type == 'solo':
                 bus = SoloBus(bus_name, self.config)
-                # Find the radio (first TX-capable sink connected)
+                _solo_radio = None
+                # Find the radio from RX sources (e.g. aioc → bus)
                 for c in connections:
-                    if c['type'] == 'bus-sink' and c['from'] == bus_id:
-                        radio = self._get_radio_plugin(c['to'])
+                    if c['type'] == 'source-bus' and c['to'] == bus_id:
+                        radio = self._get_radio_plugin(c['from'])
                         if radio:
+                            _solo_radio = radio
                             bus.set_radio(radio)
+                            print(f"  [BusManager] {bus_name}: radio from source {c['from']}")
                             break
-                # Add TX sources
+                # TX-only sinks (e.g. aioc_tx) — set as radio for TX but skip RX
+                if not _solo_radio:
+                    for c in connections:
+                        if c['type'] == 'bus-sink' and c['from'] == bus_id and c['to'].endswith('_tx'):
+                            radio = self._get_radio_plugin(c['to'])
+                            if radio:
+                                _solo_radio = radio
+                                bus.set_radio(radio)
+                                bus._tx_only = True  # Don't call get_audio()
+                                print(f"  [BusManager] {bus_name}: TX-only radio from sink {c['to']}")
+                                break
+                # Add TX sources (skip the radio itself)
                 for c in connections:
                     if c['type'] == 'source-bus' and c['to'] == bus_id:
                         source = self._get_source(c['from'])
-                        if source:
+                        if source and source is not _solo_radio:
                             bus.add_tx_source(source)
                 # Add non-radio sinks
                 for c in connections:
@@ -136,6 +223,20 @@ class BusManager:
                 for c in connections:
                     if c['type'] == 'bus-sink' and c['from'] == bus_id:
                         bus.add_sink(c['to'])
+
+            elif bus_type == 'listen':
+                # Secondary listen bus (not the primary)
+                bus = ListenBus(bus_name, self.config)
+                for c in connections:
+                    if c['type'] == 'source-bus' and c['to'] == bus_id:
+                        source = self._get_source(c['from'])
+                        if source:
+                            _duck = getattr(source, 'duck', True)
+                            _prio = getattr(source, 'sdr_priority', getattr(source, 'priority', 5))
+                            bus.add_source(source, bus_priority=_prio, duckable=_duck)
+                for c in connections:
+                    if c['type'] == 'bus-sink' and c['from'] == bus_id:
+                        bus.add_sink(c['to'])
             else:
                 continue
 
@@ -162,6 +263,8 @@ class BusManager:
             return gw.kv4p_plugin
         elif sink_id == 'd75_tx' and gw.d75_plugin:
             return gw.d75_plugin
+        elif sink_id in ('aioc_tx', 'aioc') and getattr(gw, 'th9800_plugin', None):
+            return gw.th9800_plugin
         elif sink_id == 'kv4p' and gw.kv4p_plugin:
             return gw.kv4p_plugin
         elif sink_id == 'd75' and gw.d75_plugin:
@@ -177,8 +280,8 @@ class BusManager:
             return gw.kv4p_plugin
         elif source_id == 'd75' and gw.d75_plugin:
             return gw.d75_plugin
-        elif source_id == 'aioc' and getattr(gw, 'radio_source', None):
-            return gw.radio_source
+        elif source_id == 'aioc' and getattr(gw, 'th9800_plugin', None):
+            return gw.th9800_plugin
         elif source_id == 'playback' and getattr(gw, 'playback_source', None):
             return gw.playback_source
         elif source_id == 'webmic' and getattr(gw, 'web_mic_source', None):
@@ -187,6 +290,8 @@ class BusManager:
             return gw.announce_input_source
         elif source_id == 'monitor' and getattr(gw, 'web_monitor_source', None):
             return gw.web_monitor_source
+        elif source_id == 'mumble_rx' and getattr(gw, 'mumble_source', None):
+            return gw.mumble_source
         return None
 
     def _apply_processing(self, audio, bus_id):
@@ -215,10 +320,18 @@ class BusManager:
             # Passive sinks
             if sink_id == 'mumble' and gw.mumble:
                 try:
-                    gw.mumble.sound_output.add_sound(audio)
+                    if (hasattr(gw.mumble, 'sound_output') and
+                            gw.mumble.sound_output is not None and
+                            getattr(gw.mumble.sound_output, 'encoder_framesize', None) is not None):
+                        gw.mumble.sound_output.add_sound(audio)
+                        _ml = gw.calculate_audio_level(audio)
+                        if _ml > getattr(gw, 'mumble_tx_level', 0):
+                            gw.mumble_tx_level = _ml
+                        else:
+                            gw.mumble_tx_level = int(getattr(gw, 'mumble_tx_level', 0) * 0.7 + _ml * 0.3)
                 except Exception:
                     pass
-            elif sink_id == 'speaker' and getattr(gw, 'speaker_queue', None):
+            elif sink_id == 'speaker':
                 gw._speaker_enqueue(audio)
             elif sink_id == 'broadcastify' and getattr(gw, 'stream_output', None):
                 try:
@@ -236,27 +349,63 @@ class BusManager:
             elif sink_id == 'aioc_tx' and getattr(gw, 'th9800_plugin', None):
                 gw.th9800_plugin.put_audio(audio)
 
-        # PCM/MP3 stream delivery disabled for now — the primary ListenBus
-        # in the main loop already feeds these streams. Enabling here would
-        # double-feed and cause choppy audio. This will be enabled when the
-        # main loop's direct delivery is removed.
-        # TODO: enable when main loop sink delivery is migrated to BusManager
+        # Per-bus PCM/MP3: deposit into shared buffer for main loop to mix & push.
+        # Direct push would interleave with main loop's push → choppy audio.
+        proc_cfg = bus_cfg
+        mixed = bus_output.mixed_audio
+        if mixed is not None:
+            if proc_cfg.get('pcm', False):
+                from audio_bus import mix_audio_streams
+                if self._pcm_buffer is None:
+                    self._pcm_buffer = mixed
+                else:
+                    self._pcm_buffer = mix_audio_streams(self._pcm_buffer, mixed)
+            if proc_cfg.get('mp3', False):
+                from audio_bus import mix_audio_streams as _mix
+                if self._mp3_buffer is None:
+                    self._mp3_buffer = mixed
+                else:
+                    self._mp3_buffer = _mix(self._mp3_buffer, mixed)
 
     def _tick_loop(self):
         """Main bus tick loop — runs all non-primary busses."""
         chunk_size = getattr(self.config, 'AUDIO_CHUNK_SIZE', 2400)
         next_tick = time.monotonic()
+        _diag_counter = 0
+        _diag_interval = 100  # every 5 seconds (100 ticks * 50ms)
 
         while self._running:
             now = time.monotonic()
             if next_tick > now:
                 time.sleep(next_tick - now)
             next_tick = time.monotonic() + self._tick_interval
+            _diag_counter += 1
 
             for bus_id, bus in self._busses.items():
                 try:
                     output = bus.tick(chunk_size)
+                    # Track bus output level
+                    _mixed = output.mixed_audio
+                    if _mixed is not None:
+                        _arr = np.frombuffer(_mixed, dtype=np.int16).astype(np.float32)
+                        _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
+                        _lv = int(max(0, min(100, (20 * math.log10(_rms / 32767.0) + 60) * (100 / 60)))) if _rms > 0 else 0
+                    else:
+                        # Check TX audio for solo busses
+                        _tx_active = output.status.get('tx_audio_active', False)
+                        _lv = 50 if _tx_active else 0
+                    _prev = self._bus_levels.get(bus_id, 0)
+                    self._bus_levels[bus_id] = _lv if _lv > _prev else max(0, int(_prev * 0.7))
+                    if _diag_counter % _diag_interval == 1:
+                        _has_radio = getattr(bus, '_radio', None) is not None
+                        _sinks = list(output.audio.keys())
+                        _has_audio = output.mixed_audio is not None
+                        _cfg = self._bus_config.get(bus_id, {})
+                        _tx_srcs = len(getattr(bus, '_tx_sources', []))
+                        _tx_only = getattr(bus, '_tx_only', False)
+                        _ptt = getattr(bus, '_ptt_active', False)
+                        _extra = f" tx_srcs={_tx_srcs} tx_only={_tx_only} ptt={_ptt}" if _tx_srcs > 0 or _tx_only else ""
+                        print(f"  [BusManager] {bus_id}: radio={_has_radio} sinks={_sinks} audio={_has_audio} pcm={_cfg.get('pcm')} mp3={_cfg.get('mp3')}{_extra}")
                     self._deliver_audio(output, bus_id)
                 except Exception as e:
-                    if getattr(self.config, 'VERBOSE_LOGGING', False):
-                        print(f"  [BusManager] {bus_id} tick error: {e}")
+                    print(f"  [BusManager] {bus_id} tick error: {e}")

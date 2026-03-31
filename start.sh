@@ -48,20 +48,13 @@ cleanup() {
         try_sudo systemctl stop th9800-cat.service 2>/dev/null
         ts "  Stopped TH-9800 CAT service"
     fi
-    if [ ! -z "$DARKICE_PID" ]; then
-        kill $DARKICE_PID 2>/dev/null
-        ts "  Stopped Darkice"
-    fi
-    if [ ! -z "$FFMPEG_PID" ]; then
-        kill $FFMPEG_PID 2>/dev/null
-        ts "  Stopped FFmpeg"
-    fi
     if [ ! -z "$SUDO_KEEPALIVE_PID" ]; then
         kill $SUDO_KEEPALIVE_PID 2>/dev/null
     fi
-    rm -f /tmp/darkice_audio 2>/dev/null
     rm -f /tmp/gateway.lock 2>/dev/null
-    try_sudo modprobe -r snd-aloop 2>/dev/null
+    pkill -9 darkice 2>/dev/null
+    pkill -f "ffmpeg.*darkice_audio" 2>/dev/null
+    rm -f /tmp/darkice_audio 2>/dev/null
     # Restore terminal from raw mode (gateway sets cbreak for keyboard controls)
     stty sane 2>/dev/null
     ts "Done"
@@ -235,22 +228,8 @@ for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
 done
 ts "  CPU governor set (or unsupported on this platform)"
 
-# 6. Unload and reload ALSA loopback (fresh start)
-ts "[6/11] Resetting ALSA loopback..."
-try_sudo modprobe -r snd-aloop 2>/dev/null
-sleep 1
-try_sudo modprobe snd-aloop
-if [ $? -ne 0 ]; then
-    ts "  Failed to load ALSA loopback"
-    exit 1
-fi
-sleep 2  # Wait for device to be ready
-ts "  ALSA loopback loaded"
-
-# Verify device exists
-if ! aplay -l 2>/dev/null | grep -q "Loopback"; then
-    ts "  Warning: Loopback device not visible in aplay -l"
-fi
+# 6. ALSA loopback (no longer needed — streaming is handled internally)
+ts "[6/11] ALSA loopback: skipped (streaming handled by gateway)"
 
 # 7. Reset AIOC USB device (clears stale audio output state)
 ts "[7/11] Resetting AIOC USB device..."
@@ -277,76 +256,12 @@ else
     ts "  AIOC USB device not found (skipping reset)"
 fi
 
-# 8-10. Streaming pipeline (pipe + DarkIce + FFmpeg) — only if ENABLE_STREAM_OUTPUT = true
-if [ "$ENABLE_STREAM_OUTPUT" = "true" ]; then
-    # 8. Create named pipe
-    ts "[8/11] Creating named pipe..."
-    rm -f /tmp/darkice_audio 2>/dev/null
-    fuser -k /tmp/darkice_audio 2>/dev/null
-    sleep 1
-    mkfifo /tmp/darkice_audio
-    chmod 666 /tmp/darkice_audio
-    ts "  Pipe created: /tmp/darkice_audio"
-
-    # 9. Start Darkice with visible output
-    ts "[9/11] Starting Darkice..."
-    ts "  (Darkice output will be shown below)"
-    echo "  ----------------------------------------"
-
-    darkice -c /etc/darkice.cfg > /tmp/darkice.log 2>&1 &
-    DARKICE_PID=$!
-
-    sleep 4
-
-    if ! ps -p $DARKICE_PID > /dev/null 2>&1; then
-        echo "  ----------------------------------------"
-        if grep -qi "forbidden\|mountpoint occupied\|maximum sources" /tmp/darkice.log 2>/dev/null; then
-            ts "  Darkice: feed already live on another server — continuing without streaming"
-            ts "  (Broadcastify mountpoint is occupied; local audio bridge will still run)"
-            DARKICE_PID=""
-            export GATEWAY_FEED_OCCUPIED=1
-        else
-            ts "  Darkice FAILED to start — continuing without streaming"
-            echo ""
-            ts "Error output:"
-            cat /tmp/darkice.log
-            echo ""
-            ts "Common fixes:"
-            echo "  1. Check /etc/darkice.cfg has: device = hw:Loopback,1,0"
-            echo "  2. Check bitrate matches Broadcastify (usually 16)"
-            echo "  3. Check Broadcastify password is correct"
-            echo "  4. Run: sudo modprobe -r snd-aloop && sudo modprobe snd-aloop"
-            DARKICE_PID=""
-        fi
-    else
-        head -n 10 /tmp/darkice.log
-        echo "  ----------------------------------------"
-        ts "  Darkice running (PID: $DARKICE_PID)"
-        ts "  Full log: /tmp/darkice.log"
-    fi
-
-    # 10. Start FFmpeg bridge with auto-restart
-    ts "[10/11] Starting FFmpeg bridge..."
-    (
-        while true; do
-            ffmpeg -loglevel error -f s16le -ar 48000 -ac 1 -i /tmp/darkice_audio \
-                   -f alsa hw:Loopback,0,0 2>&1
-            sleep 1
-        done
-    ) > /tmp/ffmpeg.log 2>&1 &
-    FFMPEG_PID=$!
-    sleep 2
-
-    if ! ps -p $FFMPEG_PID > /dev/null; then
-        ts "  FFmpeg failed to start!"
-        cat /tmp/ffmpeg.log
-        cleanup
-    fi
-
-    ts "  FFmpeg bridge running (PID: $FFMPEG_PID)"
-else
-    ts "[8-10/11] Streaming disabled (ENABLE_STREAM_OUTPUT = false) — skipping DarkIce/FFmpeg"
-fi
+# 8-10. Streaming now handled internally by the gateway (direct Icecast)
+ts "[8-10/11] Streaming: handled by gateway (direct Icecast, no DarkIce)"
+# Kill any leftover DarkIce/FFmpeg from previous versions
+pkill -9 darkice 2>/dev/null
+pkill -f "ffmpeg.*darkice_audio" 2>/dev/null
+rm -f /tmp/darkice_audio 2>/dev/null
 
 # 11. Start Gateway
 ts "[11/11] Starting gateway..."
@@ -369,8 +284,7 @@ echo "=========================================="
 ts "All components started successfully!"
 echo "=========================================="
 if [ "$ENABLE_STREAM_OUTPUT" = "true" ]; then
-    ts "  Darkice:  ${DARKICE_PID:+"PID $DARKICE_PID (log: /tmp/darkice.log)"}${DARKICE_PID:-"disabled (see error above)"}"
-    ts "  FFmpeg:   PID $FFMPEG_PID (log: /tmp/ffmpeg.log)"
+    ts "  Streaming: direct Icecast (handled by gateway)"
 else
     ts "  Streaming: disabled"
 fi

@@ -145,6 +145,23 @@ class _TunerCapture:
                 if len(data) < chunk_bytes:
                     data += b'\x00' * (chunk_bytes - len(data))
                 self._last_successful_read = time.monotonic()
+                # Track level in reader thread (works without bus)
+                try:
+                    arr = np.frombuffer(data, dtype=np.int16)
+                    if len(arr) >= 2:
+                        mono = ((arr.reshape(-1, 2).astype(np.int32)[:, 0] + arr.reshape(-1, 2).astype(np.int32)[:, 1]) >> 1).astype(np.float32)
+                    else:
+                        mono = arr.astype(np.float32)
+                    rms = float(np.sqrt(np.mean(mono * mono))) if len(mono) > 0 else 0.0
+                    _lv = int(max(0, min(100, (20.0 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
+                    dg = getattr(self.config, 'SDR2_DISPLAY_GAIN' if '2' in self.name else 'SDR_DISPLAY_GAIN', 1.0)
+                    _lv = min(100, int(_lv * dg))
+                    if _lv > self.audio_level:
+                        self.audio_level = _lv
+                    else:
+                        self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+                except Exception:
+                    pass
                 try:
                     self._chunk_queue.put_nowait(data)
                 except _queue_mod.Full:
@@ -445,7 +462,6 @@ class SDRPlugin(RadioPlugin):
                 _chk = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
                 if _chk.returncode != 0:
                     print("  rtl_airband not running — retrying in background")
-                    import threading
                     def _retry():
                         for attempt in range(6):
                             time.sleep(10)
@@ -454,6 +470,12 @@ class SDRPlugin(RadioPlugin):
                                 if _c.returncode == 0:
                                     print(f"  [SDR] rtl_airband started (attempt {attempt+1})")
                                     return
+                                # Restart sdrplay service — it can be "active" but non-functional
+                                if attempt % 2 == 0:
+                                    print(f"  [SDR] Restarting sdrplay service (attempt {attempt+1})")
+                                    subprocess.run(['sudo', 'systemctl', 'restart', 'sdrplay.service'],
+                                                   capture_output=True, timeout=10)
+                                    time.sleep(5)
                                 self._start_rtl_airband_only()
                                 _c = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
                                 if _c.returncode == 0:
@@ -496,7 +518,62 @@ class SDRPlugin(RadioPlugin):
         if self._tuner2:
             self._tuner2.muted = getattr(config, 'SDR2_MUTE_DEFAULT', False)
 
+        # PipeWire link guard — remove unauthorized links to SDR sinks
+        self._guard_sdr_links()
+        # Run guard periodically in background
+        def _link_guard_loop():
+            while True:
+                time.sleep(30)
+                try:
+                    self._guard_sdr_links()
+                except Exception:
+                    pass
+        threading.Thread(target=_link_guard_loop, daemon=True, name="SDR-LinkGuard").start()
+
         return success
+
+    def _guard_sdr_links(self):
+        """Disconnect any unauthorized PipeWire links to SDR capture sinks.
+
+        Only rtl_airband should feed the SDR sinks. Anything else (e.g. PortAudio
+        speaker output auto-linked by WirePlumber) causes feedback.
+        """
+        try:
+            result = subprocess.run(['pw-link', '-l'], capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                return
+        except Exception:
+            return
+
+        lines = result.stdout.splitlines()
+        _allowed_sources = {'rtl_airband'}
+        _sdr_sinks = {'sdr_capture', 'sdr_capture2'}
+        _current_sink = None
+        _bad_links = []
+
+        for line in lines:
+            stripped = line.strip()
+            # Sink header: "sdr_capture:playback_FL"
+            if not stripped.startswith('|') and ':' in stripped:
+                parts = stripped.split(':')
+                _current_sink = parts[0]
+                _current_port = parts[1] if len(parts) > 1 else ''
+                continue
+            # Input link: "  |<- source_name:output_port"
+            if stripped.startswith('|<-') and _current_sink in _sdr_sinks:
+                source_ref = stripped[4:].strip()  # "source_name:output_port"
+                source_name = source_ref.split(':')[0]
+                source_port = source_ref.split(':')[1] if ':' in source_ref else ''
+                if source_name not in _allowed_sources:
+                    _bad_links.append((source_ref, f"{_current_sink}:{_current_port}"))
+
+        for src, dst in _bad_links:
+            try:
+                subprocess.run(['pw-link', '-d', src, dst],
+                               capture_output=True, timeout=5)
+                print(f"  [SDR LinkGuard] Removed unauthorized link: {src} → {dst}")
+            except Exception:
+                pass
 
     def teardown(self):
         """Stop rtl_airband and clean up audio captures."""
@@ -595,7 +672,7 @@ class SDRPlugin(RadioPlugin):
         """Return full status dict for web UI and status bar."""
         alive = False
         try:
-            result = subprocess.run(['pgrep', '-f', 'rtl_airband'], capture_output=True, timeout=2)
+            result = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
             alive = result.returncode == 0
         except Exception:
             pass
@@ -969,9 +1046,10 @@ devices:
                            capture_output=True, timeout=10)
             time.sleep(8)  # sdrplay needs time to initialize hardware
 
-        # Start SDR1 (Master) — don't capture output (breaks daemonization)
-        subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Start SDR1 (Master) — capture stderr briefly to diagnose failures
+        _sdr1_err = subprocess.PIPE
+        _sdr1_proc = subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
+                         stdout=subprocess.DEVNULL, stderr=_sdr1_err)
         alive = False
         for _ in range(5):
             time.sleep(1)
@@ -980,7 +1058,14 @@ devices:
                 alive = True
                 break
         if not alive:
-            print("  Warning: rtl_airband (SDR1) failed to start")
+            _err = ''
+            try:
+                _err = _sdr1_proc.stderr.read(2048).decode(errors='replace') if _sdr1_proc.stderr else ''
+            except Exception:
+                pass
+            print(f"  Warning: rtl_airband (SDR1) failed to start")
+            if _err:
+                print(f"  SDR1 stderr: {_err[:500]}")
             return
 
         # Start SDR2 (Slave) — must start after Master

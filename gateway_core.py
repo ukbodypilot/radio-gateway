@@ -871,9 +871,13 @@ class RadioGateway:
 
     def sound_received_handler(self, user, soundchunk):
         """Called when audio is received from Mumble server"""
+        # Feed MumbleSource for routing system
+        if hasattr(self, 'mumble_source') and self.mumble_source:
+            self.mumble_source.push_audio(soundchunk.pcm)
+
         # Track when we last received audio
         self.last_rx_audio_time = time.time()
-        
+
         # Calculate audio level (with smoothing)
         current_level = self.calculate_audio_level(soundchunk.pcm)
         # Smooth the level display (fast attack, slow decay)
@@ -889,32 +893,10 @@ class RadioGateway:
         # Update last sound time
         self.last_sound_time = time.time()
         
-        # Key PTT if not already active AND TX is not muted
-        # Don't key the radio if we're muted - that would broadcast silence!
-        # Also don't auto-key if manual PTT mode is active
-        if not self.ptt_active and not self.tx_muted and not self.manual_ptt_mode:
-            # Queue the HID write to the audio thread (between audio reads) to
-            # avoid concurrent USB HID + isochronous audio on the AIOC device.
-            # Set ptt_active immediately so repeated Mumble callbacks don't
-            # queue a second activation before the first is processed.
-            self.ptt_active = True
-            self._pending_ptt_state = True
-            self._ptt_change_time = time.monotonic()
-        
-        # Play sound to AIOC output (to radio mic input)
-        # But only if TX is not muted
-        if self.output_stream and not self.tx_muted:
-            try:
-                # Apply output volume
-                pcm = soundchunk.pcm
-                if self.config.OUTPUT_VOLUME != 1.0:
-                    arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-                    pcm = np.clip(arr * self.config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
-                
-                self.output_stream.write(pcm)
-            except Exception as e:
-                if self.config.VERBOSE_LOGGING:
-                    print(f"\nError playing audio: {e}")
+        # PTT and TX audio are now handled by the bus system (SoloBus).
+        # MumbleSource.push_audio() feeds the queue, SoloBus drains it
+        # and calls put_audio() + PTT on the radio plugin.
+        # Legacy direct path disabled to avoid double-writing to output stream.
     
     def find_usb_device_path(self):
         """Find the USB device path for the AIOC"""
@@ -1125,26 +1107,119 @@ class RadioGateway:
         print(f"Warning: Speaker output device '{spec}' not found -- using system default")
         return None, 'system default'
 
-    def _speaker_enqueue(self, data):
-        """Apply SPEAKER_VOLUME and enqueue audio for the speaker output thread.
-        Non-blocking: if queue is full, drop oldest chunk to absorb clock drift
-        between software timer and speaker hardware clock."""
-        if not self.speaker_queue or self.speaker_muted or not data:
+    def _source_on_listen_bus(self, source_id):
+        """Check if a source is connected to the PRIMARY listen bus in routing config.
+
+        Only the first listen bus is the primary (handled by main loop mixer).
+        Secondary listen busses are handled by BusManager.
+        """
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'routing_config.json')
+            with open(config_path) as f:
+                data = json_mod.load(f)
+            # Find the primary listen bus (first one)
+            primary_id = None
+            for b in data.get('busses', []):
+                if b.get('type') == 'listen':
+                    primary_id = b['id']
+                    break
+            if not primary_id:
+                print(f"  [routing] {source_id}: no listen bus found")
+                return False
+            for c in data.get('connections', []):
+                if c['type'] == 'source-bus' and c['from'] == source_id and c['to'] == primary_id:
+                    print(f"  [routing] {source_id} → primary listen bus '{primary_id}' ✓")
+                    return True
+            print(f"  [routing] {source_id} not on primary listen bus '{primary_id}'")
+        except Exception as e:
+            print(f"  [routing] _source_on_listen_bus error for {source_id}: {e}")
+        return False
+
+    def sync_mixer_sources(self):
+        """Reconcile primary ListenBus sources with routing config.
+
+        Called after routing save to add/remove sources from the mixer
+        so reality matches what the routing UI shows.
+        """
+        if not self.mixer:
             return
+        _before = {s.source.name for s in self.mixer.source_slots}
+        print(f"  [sync] BEFORE: primary mixer sources = {_before}")
+        # Map source_id → (plugin, priority, duckable)
+        source_map = {}
+        if self.sdr_plugin:
+            source_map['sdr'] = (self.sdr_plugin, 11, getattr(self.config, 'SDR_DUCK', True))
+        if self.th9800_plugin:
+            source_map['aioc'] = (self.th9800_plugin, 1, False)
+        if self.kv4p_plugin:
+            source_map['kv4p'] = (self.kv4p_plugin, int(getattr(self.config, 'KV4P_AUDIO_PRIORITY', 2)) + 10, getattr(self.config, 'KV4P_AUDIO_DUCK', True))
+        if self.d75_plugin:
+            source_map['d75'] = (self.d75_plugin, int(getattr(self.config, 'D75_AUDIO_PRIORITY', 2)) + 10, getattr(self.config, 'D75_AUDIO_DUCK', True))
+        if getattr(self, 'playback_source', None):
+            source_map['playback'] = (self.playback_source, 0, False)
+        if getattr(self, 'web_mic_source', None):
+            source_map['webmic'] = (self.web_mic_source, 0, False)
+        if getattr(self, 'announce_input_source', None):
+            source_map['announce'] = (self.announce_input_source, 0, False)
+        if getattr(self, 'web_monitor_source', None):
+            source_map['monitor'] = (self.web_monitor_source, 5, False)
+        if getattr(self, 'mumble_source', None):
+            source_map['mumble_rx'] = (self.mumble_source, 0, False)
+
+        # Which sources should be on the listen bus?
+        should_be_on = set()
+        for sid in source_map:
+            if self._source_on_listen_bus(sid):
+                should_be_on.add(sid)
+
+        # Current sources on mixer
+        current_names = {s.source.name for s in self.mixer.source_slots}
+
+        # Add missing
+        for sid in should_be_on:
+            plugin, prio, duck = source_map[sid]
+            if plugin.name not in current_names:
+                self.mixer.add_source(plugin, bus_priority=prio, duckable=duck)
+                print(f"  [sync] Added {sid} to listen bus")
+
+        # Remove extras (only for sources we manage)
+        for sid, (plugin, _, _) in source_map.items():
+            if sid not in should_be_on and plugin.name in current_names:
+                self.mixer.remove_source(plugin.name)
+                print(f"  [sync] Removed {sid} from listen bus")
+
+        _final = {s.source.name for s in self.mixer.source_slots}
+        print(f"  [sync] Primary mixer sources: {_final}")
+
+    def _speaker_enqueue(self, data):
+        """Route audio to speaker — either real PortAudio or virtual (metering only).
+
+        Virtual mode: just track audio level for the routing page, no actual output.
+        Real mode: apply volume, queue for PortAudio callback.
+        """
+        if self.speaker_muted or not data:
+            return
+
+        # Level metering (always, regardless of mode)
         try:
             spk = data
             if self.config.SPEAKER_VOLUME != 1.0:
                 arr = np.frombuffer(spk, dtype=np.int16).astype(np.float32)
                 spk = np.clip(arr * self.config.SPEAKER_VOLUME, -32768, 32767).astype(np.int16).tobytes()
-            # Update speaker level for status bar (fast attack, slow decay)
             current_level = self.calculate_audio_level(spk)
             if current_level > self.speaker_audio_level:
                 self.speaker_audio_level = current_level
             else:
                 self.speaker_audio_level = int(self.speaker_audio_level * 0.7 + current_level * 0.3)
+        except Exception:
+            return
+
+        # Virtual speaker — metering only, no real audio output
+        if not self.speaker_queue:
+            return
+
+        try:
             # Absorb hw/sw clock drift: drain excess when queue gets deep.
-            # USB audio clocks can drift ~0.7% from software clock, accumulating
-            # ~1 extra chunk per 3.5s. Drain at 4 to keep latency bounded.
             _spk_qd = self.speaker_queue.qsize()
             if _spk_qd >= 4:
                 while self.speaker_queue.qsize() > 2:
@@ -1187,13 +1262,30 @@ class RadioGateway:
         return (chunk, pyaudio.paContinue)
 
     def open_speaker_output(self):
-        """Open optional local speaker monitoring output stream."""
+        """Open speaker output — real PortAudio device or virtual (metering only).
+
+        Virtual mode: no PortAudio stream opened, no PipeWire link to mess with.
+        Audio level is still tracked for the routing page. Use SPEAKER_MODE=virtual
+        in config, or it auto-falls back to virtual if the device isn't found.
+        """
         if not self.config.ENABLE_SPEAKER_OUTPUT:
             return
+
+        speaker_mode = str(getattr(self.config, 'SPEAKER_MODE', 'auto')).lower()
+
+        if speaker_mode == 'virtual':
+            # Virtual speaker — metering only, no real audio
+            print(f"✓ Speaker output: virtual (metering only, no audio device)")
+            return
+
+        # Try to open a real PortAudio device
         try:
             device_index, device_name = self.find_speaker_device(self.pyaudio_instance)
+            if device_index is None and speaker_mode == 'auto':
+                # No matching device — fall back to virtual
+                print(f"✓ Speaker output: virtual (no device found, metering only)")
+                return
             import queue
-            # 6 chunks × 50ms = 300ms of buffer headroom to absorb timing jitter
             self.speaker_queue = queue.Queue(maxsize=6)
             self.speaker_stream = self.pyaudio_instance.open(
                 format=pyaudio.paInt16,
@@ -1207,7 +1299,7 @@ class RadioGateway:
             print(f"✓ Speaker output initialized OK")
             print(f"  Device: {device_name}")
         except Exception as e:
-            print(f"Warning: Speaker output failed to open: {e}")
+            print(f"✓ Speaker output: virtual (device open failed: {e})")
             self.speaker_stream = None
 
     def setup_audio(self):
@@ -1226,8 +1318,11 @@ class RadioGateway:
                     print("Initializing SDR plugin (RSPduo dual tuner)...")
                     self.sdr_plugin = SDRPlugin()
                     if self.sdr_plugin.setup(self.config):
-                        self.mixer.add_source(self.sdr_plugin, bus_priority=11, duckable=getattr(self.config, 'SDR_DUCK', True))
-                        print("✓ SDR plugin added to mixer")
+                        if self._source_on_listen_bus('sdr'):
+                            self.mixer.add_source(self.sdr_plugin, bus_priority=11, duckable=getattr(self.config, 'SDR_DUCK', True))
+                            print("✓ SDR plugin added to mixer (listen bus)")
+                        else:
+                            print("✓ SDR plugin initialized (routed via bus manager)")
                     else:
                         self.sdr_plugin = None
                 except Exception as sdr_err:
@@ -1245,8 +1340,12 @@ class RadioGateway:
                 print("Initializing TH-9800 plugin...")
                 self.th9800_plugin = TH9800Plugin()
                 if self.th9800_plugin.setup(self.config, gateway=self):
-                    self.mixer.add_source(self.th9800_plugin, bus_priority=1, duckable=False)
-                    print("✓ TH-9800 plugin added to mixer")
+                    # Only add to primary ListenBus if routed there (not to a solo/other bus)
+                    if self._source_on_listen_bus('aioc'):
+                        self.mixer.add_source(self.th9800_plugin, bus_priority=1, duckable=False)
+                        print("✓ TH-9800 plugin added to mixer (listen bus)")
+                    else:
+                        print("✓ TH-9800 plugin initialized (routed via bus manager)")
                 else:
                     print("⚠ TH-9800 plugin setup failed")
                     self.th9800_plugin = None
@@ -1343,8 +1442,11 @@ class RadioGateway:
                         self.remote_audio_source.enabled = True
                         self.remote_audio_source.duck = self.config.REMOTE_AUDIO_DUCK
                         self.remote_audio_source.sdr_priority = int(self.config.REMOTE_AUDIO_PRIORITY)
-                        self.mixer.add_source(self.remote_audio_source, bus_priority=int(self.config.REMOTE_AUDIO_PRIORITY) + 10, duckable=self.config.REMOTE_AUDIO_DUCK)
-                        print(f"✓ Remote audio source (SDRSV) added to mixer")
+                        if self._source_on_listen_bus('monitor') or not self.bus_manager:
+                            self.mixer.add_source(self.remote_audio_source, bus_priority=int(self.config.REMOTE_AUDIO_PRIORITY) + 10, duckable=self.config.REMOTE_AUDIO_DUCK)
+                            print(f"✓ Remote audio source (SDRSV) added to mixer")
+                        else:
+                            print(f"✓ Remote audio source initialized (routed via bus manager)")
                         print(f"  Priority: {self.config.REMOTE_AUDIO_PRIORITY}")
                         print(f"  Press 'c' to mute/unmute remote audio")
                     else:
@@ -1362,8 +1464,11 @@ class RadioGateway:
                     print(f"Initializing announcement input (listening on {bind_host}:{port})...")
                     self.announce_input_source = NetworkAnnouncementSource(self.config, self)
                     if self.announce_input_source.setup_audio():
-                        self.mixer.add_source(self.announce_input_source, bus_priority=0, duckable=False, deterministic=True)
-                        print(f"✓ Announcement input (ANNIN) added to mixer")
+                        if self._source_on_listen_bus('announce'):
+                            self.mixer.add_source(self.announce_input_source, bus_priority=0, duckable=False, deterministic=True)
+                            print(f"✓ Announcement input (ANNIN) added to mixer (listen bus)")
+                        else:
+                            print(f"✓ Announcement input initialized (routed via bus manager)")
                         if not self.aioc_available:
                             print("  ⚠ No AIOC — PTT will not activate (audio discarded)")
                     else:
@@ -1378,8 +1483,11 @@ class RadioGateway:
                 try:
                     self.web_mic_source = WebMicSource(self.config, self)
                     if self.web_mic_source.setup_audio():
-                        self.mixer.add_source(self.web_mic_source, bus_priority=0, duckable=False, deterministic=True)
-                        print("✓ Web microphone source (WEBMIC) added to mixer")
+                        if self._source_on_listen_bus('webmic'):
+                            self.mixer.add_source(self.web_mic_source, bus_priority=0, duckable=False, deterministic=True)
+                            print("✓ Web microphone source (WEBMIC) added to mixer (listen bus)")
+                        else:
+                            print("✓ Web microphone source initialized (routed via bus manager)")
                 except Exception as e:
                     print(f"⚠ Warning: Could not initialize web mic source: {e}")
                     self.web_mic_source = None
@@ -1389,8 +1497,11 @@ class RadioGateway:
                 try:
                     self.web_monitor_source = WebMonitorSource(self.config, self)
                     if self.web_monitor_source.setup_audio():
-                        self.mixer.add_source(self.web_monitor_source, bus_priority=5, duckable=False)
-                        print("✓ Web monitor source (MONITOR) added to mixer")
+                        if self._source_on_listen_bus('monitor'):
+                            self.mixer.add_source(self.web_monitor_source, bus_priority=5, duckable=False)
+                            print("✓ Web monitor source (MONITOR) added to mixer (listen bus)")
+                        else:
+                            print("✓ Web monitor source initialized (routed via bus manager)")
                 except Exception as e:
                     print(f"⚠ Warning: Could not initialize web monitor source: {e}")
                     self.web_monitor_source = None
@@ -1411,8 +1522,11 @@ class RadioGateway:
                     print("Initializing D75 plugin...")
                     self.d75_plugin = D75Plugin()
                     if self.d75_plugin.setup(self.config):
-                        self.mixer.add_source(self.d75_plugin, bus_priority=int(getattr(self.config, 'D75_AUDIO_PRIORITY', 2)) + 10, duckable=getattr(self.config, 'D75_AUDIO_DUCK', True))
-                        print("✓ D75 plugin added to mixer")
+                        if self._source_on_listen_bus('d75'):
+                            self.mixer.add_source(self.d75_plugin, bus_priority=int(getattr(self.config, 'D75_AUDIO_PRIORITY', 2)) + 10, duckable=getattr(self.config, 'D75_AUDIO_DUCK', True))
+                            print("✓ D75 plugin added to mixer (listen bus)")
+                        else:
+                            print("✓ D75 plugin initialized (routed via bus manager)")
                     else:
                         print("⚠ Warning: D75 plugin setup failed")
                         self.d75_plugin = None
@@ -1640,13 +1754,7 @@ class RadioGateway:
             else:
                 self.stream_output = None
 
-            # Detect running DarkIce for process monitoring
-            if self.config.ENABLE_STREAM_OUTPUT:
-                pid = self._find_darkice_pid()
-                if pid:
-                    self._darkice_pid = pid
-                    self._darkice_was_running = True
-                    print(f"  DarkIce detected (PID {pid})")
+            # DarkIce no longer needed — streaming handled directly by StreamOutputSource
 
             # Serial connect — must happen before setup_radio so commands reach the radio
             if self.cat_client:
@@ -1783,6 +1891,9 @@ class RadioGateway:
             print("=" * 60)
             return True
 
+        # Create MumbleSource for routing system
+        from audio_sources import MumbleSource
+        self.mumble_source = MumbleSource(self.config, gateway=self)
         print(f"\nConnecting to Mumble: {self.config.MUMBLE_SERVER}:{self.config.MUMBLE_PORT}...")
 
         try:
@@ -2579,6 +2690,21 @@ class RadioGateway:
                     _bus_out = self.mixer.tick(self.config.AUDIO_CHUNK_SIZE)
                     data = _bus_out.mixed_audio
                     ptt_required = _bus_out.ptt.get('_ptt_required', False)
+
+                    # Periodic bus state diagnostic (every 10s)
+                    if not hasattr(self, '_bus_diag_counter'):
+                        self._bus_diag_counter = 0
+                    self._bus_diag_counter += 1
+                    if self._bus_diag_counter % 200 == 1:
+                        _pm_srcs = [s.source.name for s in self.mixer.source_slots]
+                        _pm_active = _bus_out.active_sources
+                        print(f"  [DIAG] Primary mixer: sources={_pm_srcs} active={_pm_active} data={'YES' if data else 'NO'} ptt={ptt_required}")
+                        if self.bus_manager:
+                            for _bid, _bus in self.bus_manager._busses.items():
+                                _bsrcs = [s.source.name for s in getattr(_bus, 'source_slots', getattr(_bus, '_tx_sources', []))]
+                                _bradio = getattr(_bus, '_radio', None)
+                                _btxonly = getattr(_bus, '_tx_only', False)
+                                print(f"  [DIAG] Bus {_bid}: type={_bus.bus_type} sources={_bsrcs} radio={_bradio.name if _bradio else None} tx_only={_btxonly}")
                     active_sources = _bus_out.active_sources
                     sdr1_was_ducked = 'SDR1' in _bus_out.ducked_sources
                     sdr2_was_ducked = 'SDR2' in _bus_out.ducked_sources
@@ -2601,16 +2727,68 @@ class RadioGateway:
                         _tr_mixer_state['gl_m'] = getattr(self, 'global_muted', False)
 
                     _tr_mixer_got = data is not None
+
+                    # Track listen bus output level for routing page
+                    if data is not None:
+                        _mlv = self.calculate_audio_level(data)
+                        if _mlv > getattr(self, '_last_mixer_level', 0):
+                            self._last_mixer_level = _mlv
+                        else:
+                            self._last_mixer_level = max(0, int(getattr(self, '_last_mixer_level', 0) * 0.7))
+                    else:
+                        self._last_mixer_level = max(0, int(getattr(self, '_last_mixer_level', 0) * 0.7))
+
+                    # Drain BusManager PCM/MP3 once per tick (don't call twice!)
+                    _bm_pcm = self.bus_manager.drain_pcm() if self.bus_manager else None
+                    _bm_mp3 = self.bus_manager.drain_mp3() if self.bus_manager else None
+
+                    # Early sink delivery — before VAD/signal gates so monitoring
+                    # sinks always receive audio (SDR scanner feeds etc.)
+                    _early_audio = data if data is not None else sdr_only_audio
+                    _listen_sinks = self._bus_sinks.get(self._listen_bus_id, set())
+                    # Decay sink levels when no audio
+                    if _early_audio is None:
+                        self.stream_audio_level = max(0, int(self.stream_audio_level * 0.7))
+                        self.mumble_tx_level = max(0, int(getattr(self, 'mumble_tx_level', 0) * 0.7))
+                    if _early_audio is not None:
+                        if 'broadcastify' in _listen_sinks:
+                            if self.stream_output and self.stream_output.connected:
+                                try:
+                                    self.stream_output.send_audio(_early_audio)
+                                    self.stream_audio_level = self.calculate_audio_level(_early_audio)
+                                except Exception:
+                                    pass
+                        if 'mumble' in _listen_sinks:
+                            if (self.mumble and
+                                    hasattr(self.mumble, 'sound_output') and
+                                    self.mumble.sound_output is not None and
+                                    getattr(self.mumble.sound_output, 'encoder_framesize', None) is not None):
+                                try:
+                                    self.mumble.sound_output.add_sound(_early_audio)
+                                    # Track Mumble TX level for routing page
+                                    _ml = self.calculate_audio_level(_early_audio)
+                                    if _ml > getattr(self, 'mumble_tx_level', 0):
+                                        self.mumble_tx_level = _ml
+                                    else:
+                                        self.mumble_tx_level = int(getattr(self, 'mumble_tx_level', 0) * 0.7 + _ml * 0.3)
+                                except Exception:
+                                    pass
+
                     if data is None:
                         # No audio from any source — nothing to send.
                         # Feed silence to speaker so its PortAudio buffer stays primed,
                         # but skip the Mumble/remote-audio send path entirely.
                         self.audio_capture_active = False
                         _silence = b'\x00' * (self.config.AUDIO_CHUNK_SIZE * 2)
-                        self._speaker_enqueue(_silence)
-                        # Keep WebSocket clients fed with silence so they stay connected
-                        if self.web_config_server and self.web_config_server._ws_clients:
-                            self.web_config_server.push_ws_audio(_silence)
+                        if 'speaker' in self._bus_sinks.get(self._listen_bus_id, set()):
+                            self._speaker_enqueue(_silence)
+                        # Use already-drained BusManager PCM
+                        if _bm_pcm is not None:
+                            if self.web_config_server and self.web_config_server._ws_clients:
+                                self.web_config_server.push_ws_audio(_bm_pcm)
+                        elif self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False):
+                            if self.web_config_server and self.web_config_server._ws_clients:
+                                self.web_config_server.push_ws_audio(_silence)
                         _tr_outcome = 'vad_gate'
                         continue
                     else:
@@ -2624,12 +2802,23 @@ class RadioGateway:
                         if self.automation_engine and self.automation_engine.recorder.is_recording():
                             self.automation_engine.recorder.feed(data)
 
-                        # Push to WebSocket PCM clients.
-                        # During PTT with talkback off, defer to the PTT branch
-                        # which sends concurrent RX (not TX audio) to local outputs.
-                        if self.web_config_server and self.web_config_server._ws_clients:
-                            if not (ptt_required and not self.tx_talkback):
-                                self.web_config_server.push_ws_audio(data)
+                        # Push to WebSocket PCM clients — mix listen bus + other busses.
+                        _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
+                        _listen_pcm_on = _listen_flags.get('pcm', False)
+                        # _bm_pcm already drained above — reuse it
+                        if _listen_pcm_on or _bm_pcm is not None:
+                            _pcm_out = None
+                            if _listen_pcm_on and data is not None:
+                                _pcm_out = data
+                            if _bm_pcm is not None:
+                                if _pcm_out is None:
+                                    _pcm_out = _bm_pcm
+                                else:
+                                    from audio_bus import mix_audio_streams
+                                    _pcm_out = mix_audio_streams(_pcm_out, _bm_pcm)
+                            if _pcm_out is not None:
+                                if self.web_config_server and self.web_config_server._ws_clients:
+                                    self.web_config_server.push_ws_audio(_pcm_out)
 
                     _tr_outcome = 'mix'  # will be updated to sent/no_mumble/etc below
 
@@ -2705,8 +2894,10 @@ class RadioGateway:
                         else:
                             _tr_rebro = 'hold'
 
-                    # Route audio based on PTT requirement
-                    if ptt_required:
+                    # Old PTT path disabled — TX routing handled by bus system.
+                    # Sources with ptt_control=True on a listen bus just mix normally.
+                    # SoloBus handles PTT keying when sources are on a solo bus.
+                    if False and ptt_required:
                         # PTT required (file playback / announcement input)
 
                         # Trace: measure RMS inside PTT branch (the common
@@ -2798,29 +2989,37 @@ class RadioGateway:
                             )
                         _ws_local = _local_audio if _local_audio is not None else b'\x00' * len(data)
                         if _local_audio is not None:
-                            if (self.mumble and
-                                    hasattr(self.mumble, 'sound_output') and
-                                    self.mumble.sound_output is not None and
-                                    getattr(self.mumble.sound_output, 'encoder_framesize', None) is not None):
-                                try:
-                                    self.mumble.sound_output.add_sound(_local_audio)
-                                except Exception:
-                                    pass
-                            if self.stream_output and self.stream_output.connected:
-                                try:
-                                    self.stream_output.send_audio(_local_audio)
-                                except Exception:
-                                    pass
-                            if self.speaker_stream and not self.speaker_muted:
-                                self._speaker_enqueue(_local_audio)
-                        if self.web_config_server and self.web_config_server._ws_clients:
-                            self.web_config_server.push_ws_audio(_ws_local)
+                            if 'mumble' in self._bus_sinks.get(self._listen_bus_id, set()):
+                                if (self.mumble and
+                                        hasattr(self.mumble, 'sound_output') and
+                                        self.mumble.sound_output is not None and
+                                        getattr(self.mumble.sound_output, 'encoder_framesize', None) is not None):
+                                    try:
+                                        self.mumble.sound_output.add_sound(_local_audio)
+                                    except Exception:
+                                        pass
+                            if 'speaker' in self._bus_sinks.get(self._listen_bus_id, set()):
+                                if self.speaker_stream and not self.speaker_muted:
+                                    self._speaker_enqueue(_local_audio)
+                        _listen_flags_ptt = self._bus_stream_flags.get(self._listen_bus_id, {})
+                        _bm_pcm_ptt = self.bus_manager.drain_pcm() if self.bus_manager else None
+                        _pcm_ptt_out = _ws_local if _listen_flags_ptt.get('pcm', False) else None
+                        if _bm_pcm_ptt is not None:
+                            if _pcm_ptt_out is None:
+                                _pcm_ptt_out = _bm_pcm_ptt
+                            else:
+                                from audio_bus import mix_audio_streams as _mix_ptt
+                                _pcm_ptt_out = _mix_ptt(_pcm_ptt_out, _bm_pcm_ptt)
+                        if _pcm_ptt_out is not None:
+                            if self.web_config_server and self.web_config_server._ws_clients:
+                                self.web_config_server.push_ws_audio(_pcm_ptt_out)
 
                         # Push to MP3 stream during PTT (talkback=TX audio, else concurrent RX)
-                        if self.web_config_server and self.web_config_server._stream_subscribers:
-                            _mp3_audio = data if self.tx_talkback else _local_audio
-                            if _mp3_audio is not None:
-                                self.web_config_server.push_audio(_mp3_audio)
+                        if _listen_flags_ptt.get('mp3', False):
+                            if self.web_config_server and self.web_config_server._stream_subscribers:
+                                _mp3_audio = data if self.tx_talkback else _local_audio
+                                if _mp3_audio is not None:
+                                    self.web_config_server.push_audio(_mp3_audio)
 
                         # Send ONE frame to remote client during PTT — the mixed
                         # playback data.  Previously both rx_for_mumble AND data were
@@ -2849,9 +3048,10 @@ class RadioGateway:
                             _tr_outcome = 'ptt_err'
                         continue
 
-                    # No PTT required (radio RX / SDR) — apply VAD then fall through to Mumble send
+                    # No PTT required (radio RX / SDR) — deliver to sinks that bypass VAD, then gate
                     if data and not self.check_vad(data):
-                        self._speaker_enqueue(data)
+                        if 'speaker' in self._bus_sinks.get(self._listen_bus_id, set()):
+                            self._speaker_enqueue(data)
                         _tr_outcome = 'vad_gate'
                         continue
 
@@ -2895,14 +3095,12 @@ class RadioGateway:
 
                     data = self.process_audio_for_mumble(data)
 
-                    # Push to WebSocket clients BEFORE VAD gate so low-latency
-                    # listeners always get continuous audio (like speaker output).
-                    if self.web_config_server and self.web_config_server._ws_clients:
-                        self.web_config_server.push_ws_audio(data)
+                    # PCM already pushed earlier (after mixer.tick) — don't double-push
 
                     if not self.check_vad(data):
                         # Speaker bypasses VAD — monitor even when Mumble is gated
-                        self._speaker_enqueue(data)
+                        if 'speaker' in self._bus_sinks.get(self._listen_bus_id, set()):
+                            self._speaker_enqueue(data)
                         continue
 
                 else:
@@ -2941,11 +3139,11 @@ class RadioGateway:
                                 _farr[_lo:_hi+1] = np.linspace(_farr[_lo], _farr[_hi], _hi - _lo + 1)
                         data = np.clip(_farr, -32768, 32767).astype(np.int16).tobytes()
 
-                # Speaker output — send whatever Mumble gets (real audio or silence).
-                # The speaker's PortAudio hardware buffer (~200ms) smooths timing.
-                if self.speaker_queue and not self.speaker_muted:
-                    _tr_spk_qd = self.speaker_queue.qsize()
-                self._speaker_enqueue(data)
+                # Speaker output — only if connected as a sink on the listen bus.
+                if 'speaker' in self._bus_sinks.get(self._listen_bus_id, set()):
+                    if self.speaker_queue and not self.speaker_muted:
+                        _tr_spk_qd = self.speaker_queue.qsize()
+                    self._speaker_enqueue(data)
                 _tr_spk_ok = True
 
                 # Remote audio server send — must be BEFORE Mumble checks so it
@@ -2983,32 +3181,8 @@ class RadioGateway:
                         except Exception:
                             pass
 
-                if not self.mumble:
-                    _tr_outcome = 'no_mumble'
-                    continue
-
-                if not hasattr(self.mumble, 'sound_output') or self.mumble.sound_output is None:
-                    _tr_outcome = 'no_sndout'
-                    continue
-
-                if not hasattr(self.mumble.sound_output, 'encoder_framesize') or self.mumble.sound_output.encoder_framesize is None:
-                    if self.mixer and self.mixer.call_count % 500 == 1:
-                        print(f"\n⚠ Mumble codec still not ready (encoder_framesize is None)")
-                        print(f"   Waiting for server negotiation to complete...")
-                        print(f"   Check that MUMBLE_SERVER = {self.config.MUMBLE_SERVER} is correct")
-                    _tr_outcome = 'no_codec'
-                    continue
-
-                try:
-                    _tr_m_t0 = time.monotonic()
-                    self.mumble.sound_output.add_sound(data)
-                    _tr_mumble_ms = (time.monotonic() - _tr_m_t0) * 1000
-                    _tr_outcome = 'sent'
-                except Exception as send_err:
-                    _tr_outcome = 'send_err'
-                    print(f"\n[Error] Failed to send to Mumble: {send_err}")
-                    import traceback
-                    traceback.print_exc()
+                # Mumble delivery handled early (before VAD gate) — skip here
+                _tr_outcome = 'sent' if 'mumble' in self._bus_sinks.get(self._listen_bus_id, set()) else 'no_mumble_sink'
 
                 if self.echolink_source and self.config.RADIO_TO_ECHOLINK:
                     try:
@@ -3017,21 +3191,14 @@ class RadioGateway:
                         if self.config.VERBOSE_LOGGING:
                             print(f"\n[EchoLink] Send error: {el_err}")
 
-                if self.stream_output and self.stream_output.connected:
-                    try:
-                        self.stream_output.send_audio(data)
-                        # Track stream audio level for routing page
-                        self.stream_audio_level = self.calculate_audio_level(data)
-                    except Exception as stream_err:
-                        if self.config.VERBOSE_LOGGING:
-                            print(f"\n[Stream] Send error: {stream_err}")
+                # Broadcastify already delivered early (after mixer.tick, before gates)
 
-                # Push to web audio stream listeners (MP3 only — WebSocket PCM
-                # is already pushed earlier in the mixer path (line ~11849) and
-                # direct-AIOC path (line ~12087) to avoid double-pushing.)
-                if self.web_config_server:
-                    if self.web_config_server._stream_subscribers:
-                        self.web_config_server.push_audio(data)
+                # Push to web audio stream listeners (MP3 only, gated by bus M toggle)
+                _listen_flags_mp3 = self._bus_stream_flags.get(self._listen_bus_id, {})
+                if _listen_flags_mp3.get('mp3', False):
+                    if self.web_config_server:
+                        if self.web_config_server._stream_subscribers:
+                            self.web_config_server.push_audio(data)
 
             except Exception as e:
                 consecutive_errors += 1
@@ -3204,6 +3371,22 @@ class RadioGateway:
         except Exception:
             stats['connected'] = False
         return stats
+
+    def _get_stream_stats(self):
+        """Get live streaming statistics from direct Icecast connection."""
+        so = getattr(self, 'stream_output', None)
+        if not so or not so.connected:
+            return {}
+        uptime_s = int(so.uptime)
+        return {
+            'connected': True,
+            'uptime': uptime_s,
+            'bytes_sent': int(so._bytes_sent),
+            'send_rate': f"{so._bytes_sent * 8 / max(uptime_s, 1) / 1000:.1f} kbps" if uptime_s > 0 else '—',
+            'server': getattr(self.config, 'STREAM_SERVER', ''),
+            'mount': getattr(self.config, 'STREAM_MOUNT', ''),
+            'bitrate': int(getattr(self.config, 'STREAM_BITRATE', 16)),
+        }
 
     def _get_darkice_stats_cached(self):
         """Return cached DarkIce stats, refreshing every 5 seconds."""
@@ -3670,13 +3853,9 @@ class RadioGateway:
 
         mumble_ok = getattr(self, 'mumble', None) and getattr(self.mumble, 'is_alive', lambda: False)()
 
-        # Audio levels (note: rx_audio_level = Mumble→Radio TX, tx_audio_level = Radio→Mumble RX)
-        radio_tx = getattr(self, 'rx_audio_level', 0)
-        # Match console: show 0% when VAD is blocking (not actually transmitting)
-        if self.config.ENABLE_VAD and not self.vad_active:
-            radio_rx = 0
-        else:
-            radio_rx = getattr(self, 'tx_audio_level', 0)
+        # Audio levels — use plugin levels directly
+        radio_rx = self.th9800_plugin.audio_level if self.th9800_plugin else 0
+        radio_tx = getattr(self.th9800_plugin, 'tx_audio_level', 0) if self.th9800_plugin else 0
         sdr1_level = self.sdr_plugin.tuner1_level if self.sdr_plugin else 0
         sdr2_level = self.sdr_plugin.tuner2_level if self.sdr_plugin else 0
         sv_level = getattr(self, 'sv_audio_level', 0)
@@ -3831,15 +4010,16 @@ class RadioGateway:
             'playback_enabled': bool(self.playback_source),
             'tts_enabled': bool(getattr(self, 'tts_engine', None)),
             'smart_announce_enabled': bool(self.smart_announce),
-            # Broadcastify / DarkIce streaming
+            # Broadcastify / Icecast streaming
             'streaming_enabled': bool(getattr(self.config, 'ENABLE_STREAM_OUTPUT', False)),
+            'stream_connected': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
             'stream_pipe_ok': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
-            'darkice_running': self._darkice_pid is not None,
-            'darkice_pid': self._darkice_pid,
-            'darkice_restarts': self._darkice_restart_count,
+            'darkice_running': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
+            'darkice_pid': None,
+            'darkice_restarts': 0,
             'stream_restarts': self.stream_restart_count,
-            'stream_health': bool(self._darkice_pid is not None and getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
-            'darkice_stats': self._get_darkice_stats_cached(),
+            'stream_health': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
+            'darkice_stats': self._get_stream_stats(),
             'notifications': list(self._notifications),
             'automation_enabled': bool(self.automation_engine),
             'automation_task': self.automation_engine._current_task if self.automation_engine else None,
@@ -4097,9 +4277,19 @@ class RadioGateway:
             from bus_manager import BusManager
             self.bus_manager = BusManager(self)
             self.bus_manager.start()
+            # Cache per-bus stream flags (pcm/mp3/vad), sink connections, and listen bus ID
+            self._bus_stream_flags = self.bus_manager.get_bus_stream_flags()
+            self._bus_sinks = self.bus_manager.get_bus_sinks()
+            self._listen_bus_id = self.bus_manager.get_listen_bus_id()
         except Exception as e:
             print(f"  [BusManager] Failed to start: {e}")
             self.bus_manager = None
+        if not hasattr(self, '_bus_stream_flags'):
+            self._bus_stream_flags = {}
+        if not hasattr(self, '_bus_sinks'):
+            self._bus_sinks = {}
+        if not hasattr(self, '_listen_bus_id'):
+            self._listen_bus_id = 'listen'
 
         # Start Automation Engine if enabled
         if getattr(self.config, 'ENABLE_AUTOMATION', False):

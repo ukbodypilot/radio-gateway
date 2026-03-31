@@ -585,6 +585,7 @@ class SoloBus(AudioBus):
     def __init__(self, name, config):
         super().__init__(name, 'solo', config)
         self._radio = None          # The radio plugin (has get_audio/put_audio)
+        self._tx_only = False       # If True, radio is TX-only (don't call get_audio)
         self._tx_sources = []       # SourceSlots for TX sources (webmic, announce, etc.)
         self._ptt_active = False
         self._ptt_hold_until = 0.0
@@ -657,9 +658,9 @@ class SoloBus(AudioBus):
             elif hasattr(self._radio, 'write_tx_audio'):
                 self._radio.write_tx_audio(tx_audio)
 
-        # ── Phase 4: Get RX audio from radio ──
+        # ── Phase 4: Get RX audio from radio (skip if TX-only) ──
         rx_audio = None
-        if self._radio:
+        if self._radio and not self._tx_only:
             rx_audio, _rx_ptt = self._radio.get_audio(chunk_size)
             if rx_audio is not None:
                 active_sources.append(self._radio.name)

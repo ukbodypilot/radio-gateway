@@ -269,6 +269,7 @@ class Config:
             # Speaker Output (local monitoring)
             'ENABLE_SPEAKER_OUTPUT': True,
             'SPEAKER_OUTPUT_DEVICE': '',   # '' = system default; or partial name e.g. 'USB Audio', 'hw:2,0'
+            'SPEAKER_MODE': 'virtual',     # 'virtual' = metering only (no audio device), 'auto' = try device then fallback, 'real' = require device
             'SPEAKER_VOLUME': 1.0,         # float multiplier
             'SPEAKER_START_MUTED': False,  # Start with speaker unmuted
             # Remote Audio Link (server sends mixed audio to client over TCP)

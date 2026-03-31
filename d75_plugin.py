@@ -672,6 +672,16 @@ class D75Plugin(RadioPlugin):
                         arr_48k = np.interp(idx_ext, np.arange(len(extended), dtype=np.float32), extended)
                         pcm_48k = np.clip(arr_48k, -32768, 32767).astype(np.int16).tobytes()
 
+                        # Track level in reader thread (works without bus)
+                        try:
+                            _rms = float(np.sqrt(np.mean(arr_48k * arr_48k))) if len(arr_48k) > 0 else 0.0
+                            _lv = int(max(0, min(100, (20.0 * math.log10(_rms / 32767.0) + 60) * (100 / 60)))) if _rms > 0 else 0
+                            if _lv > self.audio_level:
+                                self.audio_level = int(_lv)
+                            else:
+                                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+                        except Exception:
+                            pass
                         try:
                             self._chunk_queue.put_nowait(pcm_48k)
                         except _queue_mod.Full:

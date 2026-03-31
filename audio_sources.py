@@ -2072,12 +2072,27 @@ class MumbleSource(AudioSource):
         self.muted = False
         self.audio_level = 0
         self.audio_boost = float(getattr(config, 'OUTPUT_VOLUME', 1.0))
+        self.vad_threshold_db = float(getattr(config, 'MUMBLE_VAD_THRESHOLD', -40.0))
 
         self._chunk_queue = _queue_mod.Queue(maxsize=64)
         self._chunk_bytes = config.AUDIO_CHUNK_SIZE * getattr(config, 'AUDIO_CHANNELS', 1) * 2
 
     def push_audio(self, pcm_bytes):
         """Called by sound_received_handler to push Mumble RX audio."""
+        # Track level here so it works even when not on a bus
+        try:
+            arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
+            if rms > 0:
+                _lv = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
+            else:
+                _lv = 0
+            if _lv > self.audio_level:
+                self.audio_level = int(_lv)
+            else:
+                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+        except Exception:
+            pass
         try:
             self._chunk_queue.put_nowait(pcm_bytes)
         except _queue_mod.Full:
@@ -2094,20 +2109,31 @@ class MumbleSource(AudioSource):
         if not self.enabled or self.muted:
             return None, False
 
-        # Drain queue
-        data = None
-        try:
-            data = self._chunk_queue.get_nowait()
-        except _queue_mod.Empty:
-            self.audio_level = max(0, int(self.audio_level * 0.7))
+        cb = self._chunk_bytes  # target chunk size in bytes
+
+        # Accumulate Mumble frames (20ms each) until we have a full chunk (50ms)
+        if not hasattr(self, '_sub_buffer'):
+            self._sub_buffer = b''
+
+        while len(self._sub_buffer) < cb:
+            try:
+                blob = self._chunk_queue.get_nowait()
+                self._sub_buffer += blob
+            except _queue_mod.Empty:
+                break
+
+        if len(self._sub_buffer) < cb:
             return None, False
+
+        data = self._sub_buffer[:cb]
+        self._sub_buffer = self._sub_buffer[cb:]
 
         # Apply volume
         if self.audio_boost != 1.0:
             arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
             data = np.clip(arr * self.audio_boost, -32768, 32767).astype(np.int16).tobytes()
 
-        # Level metering
+        # Level metering (in get_audio for bus-connected path)
         try:
             arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
             rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
@@ -2122,7 +2148,16 @@ class MumbleSource(AudioSource):
         except Exception:
             pass
 
-        return data, True  # ptt_control=True → triggers PTT
+        # VAD-gated PTT: only key radio when voice detected, not on silence/noise
+        vad_pass = False
+        try:
+            _arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+            _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
+            if _rms > 0:
+                vad_pass = (20.0 * _math_mod.log10(_rms / 32767.0)) > self.vad_threshold_db
+        except Exception:
+            pass
+        return data, vad_pass
 
     def is_active(self):
         return self.enabled and not self.muted and not self._chunk_queue.empty()
@@ -2167,6 +2202,17 @@ class WebMicSource(AudioSource):
 
     def push_audio(self, pcm_bytes):
         """Called by WebSocket handler to push raw PCM into the queue."""
+        # Track level in push (works without bus)
+        try:
+            arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
+            _lv = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
+            if _lv > self.audio_level:
+                self.audio_level = int(_lv)
+            else:
+                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+        except Exception:
+            pass
         try:
             self._chunk_queue.put_nowait(pcm_bytes)
         except _queue_mod.Full:
@@ -2225,19 +2271,21 @@ class WebMicSource(AudioSource):
 
 
 class WebMonitorSource(AudioSource):
-    """Receives browser monitor audio via WebSocket — NO PTT control.
+    """Receives browser monitor audio via WebSocket — VAD-gated PTT.
 
-    Audio feeds into the mixer like any other source (SDR, remote, etc.)
-    but never keys the transmitter.  Used for room monitoring via phone mic.
+    Audio feeds into the bus system. On a listen bus, it mixes passively.
+    On a solo bus with a TX radio, it keys PTT only when audio exceeds
+    the VAD threshold (prevents keying on room silence/noise).
     """
     def __init__(self, config, gateway):
         super().__init__("MONITOR", config)
         self.gateway = gateway
         self.priority = 5
-        self.ptt_control = False  # Never trigger PTT
+        self.ptt_control = True  # PTT capable, but gated by VAD in get_audio
         self.volume = float(getattr(config, 'WEB_MONITOR_VOLUME', 1.0))
         self.enabled = True
         self.muted = False
+        self.vad_threshold_db = float(getattr(config, 'MONITOR_VAD_THRESHOLD', -40.0))
 
         self.audio_level = 0
         self.client_connected = False
@@ -2251,6 +2299,17 @@ class WebMonitorSource(AudioSource):
 
     def push_audio(self, pcm_bytes):
         """Called by WebSocket handler to push raw PCM into the queue."""
+        # Track level in push (works without bus)
+        try:
+            arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
+            _lv = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
+            if _lv > self.audio_level:
+                self.audio_level = int(_lv)
+            else:
+                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+        except Exception:
+            pass
         try:
             self._chunk_queue.put_nowait(pcm_bytes)
         except _queue_mod.Full:
@@ -2281,18 +2340,24 @@ class WebMonitorSource(AudioSource):
         raw = self._sub_buffer[:cb]
         self._sub_buffer = self._sub_buffer[cb:]
 
-        # Level metering
+        # Level metering + VAD
         arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
         rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
         raw_level = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
         self.audio_level = raw_level if raw_level > self.audio_level else int(self.audio_level * 0.7 + raw_level * 0.3)
+
+        # VAD-gated PTT: only trigger PTT when audio exceeds threshold
+        vad_pass = False
+        if rms > 0:
+            db = 20.0 * _math_mod.log10(rms / 32767.0)
+            vad_pass = db > self.vad_threshold_db
 
         # Apply volume multiplier
         if self.volume != 1.0:
             arr = arr * self.volume
             raw = np.clip(arr, -32768, 32767).astype(np.int16).tobytes()
 
-        return raw, False  # Never trigger PTT
+        return raw, vad_pass  # PTT only when voice detected
 
     def is_active(self):
         return self.enabled and not self.muted and self.client_connected
@@ -2310,75 +2375,184 @@ class WebMonitorSource(AudioSource):
 
 
 class StreamOutputSource:
-    """Stream audio output to named pipe for Darkice"""
+    """Direct Icecast streaming — PCM → ffmpeg MP3 → Icecast HTTP SOURCE.
+
+    Replaces the old DarkIce/FFmpeg/ALSA loopback chain with a single
+    in-process pipeline. No external processes needed.
+    """
     def __init__(self, config, gateway):
         self.config = config
         self.gateway = gateway
         self.connected = False
-        self.pipe = None
-        
-        # Try to open pipe if enabled
+        self._encoder = None      # ffmpeg subprocess
+        self._icecast_sock = None  # TCP socket to Icecast
+        self._lock = threading.Lock()
+        self._reader_thread = None
+        self._bytes_sent = 0
+        self._connect_time = 0
+        self._reconnect_backoff = 5
+
         if config.ENABLE_STREAM_OUTPUT:
-            self.setup_stream()
-    
-    def setup_stream(self):
-        """Open named pipe for Darkice"""
-        import os
-        
-        try:
-            pipe_path = '/tmp/darkice_audio'
-            
-            # Create pipe if it doesn't exist
-            if not os.path.exists(pipe_path):
-                os.mkfifo(pipe_path)
-                os.chmod(pipe_path, 0o666)
-                if self.gateway.config.VERBOSE_LOGGING:
-                    print(f"  Created pipe: {pipe_path}")
-            
-            # Open pipe for writing (non-blocking)
-            import fcntl
-            self.pipe = open(pipe_path, 'wb', buffering=0)
-            
-            # Make non-blocking
-            fd = self.pipe.fileno()
-            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-            
-            self.connected = True
-            
-            if self.gateway.config.VERBOSE_LOGGING:
-                print(f"  ✓ Streaming via Darkice pipe")
-                print(f"    Pipe: {pipe_path}")
-                print(f"    Format: PCM 48kHz mono 16-bit")
-                print(f"    Make sure Darkice is running:")
-                print(f"      darkice -c /etc/darkice.cfg")
-                
-        except Exception as e:
-            print(f"  ⚠ Darkice pipe setup failed: {e}")
-            print(f"    Install: sudo apt-get install darkice")
-            print(f"    Configure: /etc/darkice.cfg")
-            print(f"    Start: darkice -c /etc/darkice.cfg")
-            self.connected = False
-    
-    def send_audio(self, audio_data):
-        """Send raw PCM audio to Darkice via pipe"""
-        if not self.connected or not self.pipe:
+            self._connect()
+
+    def _connect(self):
+        """Connect to Icecast and start the MP3 encoder pipeline."""
+        import socket, base64
+
+        server = getattr(self.config, 'STREAM_SERVER', '')
+        port = int(getattr(self.config, 'STREAM_PORT', 8000))
+        mount = getattr(self.config, 'STREAM_MOUNT', '/stream')
+        password = getattr(self.config, 'STREAM_PASSWORD', '')
+        bitrate = int(getattr(self.config, 'STREAM_BITRATE', 16))
+        name = getattr(self.config, 'STREAM_NAME', 'Radio Gateway')
+
+        if not server or not password:
+            print("  ⚠ Broadcastify: missing server or password")
             return
-        
+
+        # Connect TCP to Icecast
         try:
-            self.pipe.write(audio_data)
-                
-        except BlockingIOError:
-            # Pipe full - skip this chunk
-            pass
-        except BrokenPipeError:
-            if self.gateway.config.VERBOSE_LOGGING:
-                print(f"\n[Stream] Darkice pipe broken - Darkice may have stopped")
-            self.connected = False
+            sock = socket.create_connection((server, port), timeout=10)
+            # Send SOURCE request (Icecast SOURCE protocol)
+            auth = base64.b64encode(f"source:{password}".encode()).decode()
+            headers = (
+                f"SOURCE {mount} HTTP/1.0\r\n"
+                f"Authorization: Basic {auth}\r\n"
+                f"Content-Type: audio/mpeg\r\n"
+                f"ice-name: {name}\r\n"
+                f"ice-public: 1\r\n"
+                f"ice-bitrate: {bitrate}\r\n"
+                f"\r\n"
+            )
+            sock.sendall(headers.encode())
+
+            # Read response
+            resp = b''
+            sock.settimeout(5)
+            try:
+                while b'\r\n\r\n' not in resp and len(resp) < 1024:
+                    chunk = sock.recv(256)
+                    if not chunk:
+                        break
+                    resp += chunk
+            except socket.timeout:
+                pass
+
+            resp_str = resp.decode(errors='replace')
+            if '200' not in resp_str.split('\n')[0]:
+                print(f"  ⚠ Broadcastify: Icecast rejected connection: {resp_str.strip()}")
+                sock.close()
+                return
+
+            sock.settimeout(None)
+            self._icecast_sock = sock
+
         except Exception as e:
-            if self.gateway.config.VERBOSE_LOGGING:
-                print(f"\n[Stream] Pipe error: {e}")
+            print(f"  ⚠ Broadcastify: connection failed: {e}")
+            return
+
+        # Start ffmpeg MP3 encoder: PCM stdin → MP3 stdout
+        import subprocess as sp
+        try:
+            self._encoder = sp.Popen([
+                'ffmpeg', '-hide_banner', '-loglevel', 'error',
+                '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
+                '-c:a', 'libmp3lame', '-b:a', f'{bitrate}k',
+                '-flush_packets', '1',
+                '-fflags', '+nobuffer',
+                '-f', 'mp3', 'pipe:1'
+            ], stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.DEVNULL)
+        except Exception as e:
+            print(f"  ⚠ Broadcastify: ffmpeg encoder failed: {e}")
+            self._icecast_sock.close()
+            self._icecast_sock = None
+            return
+
+        # Reader thread: reads MP3 from ffmpeg, sends to Icecast
+        def _reader():
+            while self._encoder and self._encoder.poll() is None:
+                try:
+                    data = self._encoder.stdout.read(4096)
+                    if not data:
+                        break
+                    with self._lock:
+                        if self._icecast_sock:
+                            self._icecast_sock.sendall(data)
+                            self._bytes_sent += len(data)
+                except (BrokenPipeError, OSError, ConnectionError):
+                    print("  [Broadcastify] Connection lost")
+                    self.connected = False
+                    break
+                except Exception:
+                    break
+            # Clean up on exit
             self.connected = False
+
+        self._reader_thread = threading.Thread(target=_reader, daemon=True,
+                                                name="Broadcastify-sender")
+        self._reader_thread.start()
+        self.connected = True
+        self._connect_time = time.time()
+        self._bytes_sent = 0
+        print(f"  ✓ Broadcastify: direct Icecast stream to {server}:{port}{mount} ({bitrate}kbps)")
+
+    def send_audio(self, audio_data):
+        """Send raw PCM audio to the MP3 encoder. Auto-reconnects on failure."""
+        if not self.connected or not self._encoder:
+            # Auto-reconnect if we were previously connected
+            if self._connect_time > 0 and not getattr(self, '_reconnecting', False):
+                self._reconnecting = True
+                def _auto_reconnect():
+                    time.sleep(5)
+                    print("  [Broadcastify] Auto-reconnecting...")
+                    self.close()
+                    self._connect()
+                    self._reconnecting = False
+                threading.Thread(target=_auto_reconnect, daemon=True).start()
+            return
+        try:
+            self._encoder.stdin.write(audio_data)
+        except (BrokenPipeError, OSError):
+            self.connected = False
+        except Exception:
+            pass
+
+    def reconnect(self):
+        """Tear down and reconnect."""
+        self.close()
+        time.sleep(1)
+        self._connect()
+
+    def close(self):
+        """Clean shutdown."""
+        self.connected = False
+        if self._encoder:
+            try:
+                self._encoder.stdin.close()
+            except Exception:
+                pass
+            try:
+                self._encoder.kill()
+                self._encoder.wait(timeout=3)
+            except Exception:
+                pass
+            self._encoder = None
+        if self._icecast_sock:
+            try:
+                self._icecast_sock.close()
+            except Exception:
+                pass
+            self._icecast_sock = None
+
+    @property
+    def uptime(self):
+        """Seconds since connection."""
+        return time.time() - self._connect_time if self._connect_time else 0
+
+    @property
+    def bytes_sent_mb(self):
+        """MB sent."""
+        return self._bytes_sent / (1024 * 1024)
     
     def cleanup(self):
         """Close pipe"""

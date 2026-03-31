@@ -1267,25 +1267,8 @@ class WebConfigServer:
                     _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     _mic_src.client_connected = True
                     print(f"\n[WS-Mic] Browser mic connected from {_client_ip}")
-                    # Key PTT on the selected TX radio
-                    _gw = parent.gateway
-                    _cat_ptt_keyed = False
-                    _ws_tx_radio = str(getattr(_gw.config, 'TX_RADIO', 'th9800')).lower() if _gw else 'th9800'
-                    if _gw:
-                        try:
-                            if _ws_tx_radio == 'd75':
-                                _gw._ptt_d75(True)
-                            elif _ws_tx_radio == 'kv4p':
-                                _gw._ptt_kv4p(True)
-                            elif _gw.cat_client:
-                                _gw.cat_client._send_cmd("!ptt on")
-                            _cat_ptt_keyed = True
-                            _gw.ptt_active = True
-                            _gw._webmic_ptt_active = True
-                            _gw.last_sound_time = time.time()
-                            print(f"[WS-Mic] PTT keyed via {_ws_tx_radio}")
-                        except Exception as _ce:
-                            print(f"[WS-Mic] PTT key failed: {_ce}")
+                    # PTT is handled by the bus system — WebMicSource has ptt_control=True,
+                    # so any SoloBus with webmic as a TX source will auto-key its radio.
                     try:
                         while True:
                             try:
@@ -1328,21 +1311,8 @@ class WebConfigServer:
                     finally:
                         _mic_src.client_connected = False
                         _mic_src._sub_buffer = b''
-                        # Unkey PTT on the same radio that was keyed
-                        if _gw:
-                            _gw._webmic_ptt_active = False
-                        if _gw and _cat_ptt_keyed:
-                            try:
-                                if _ws_tx_radio == 'd75':
-                                    _gw._ptt_d75(False)
-                                elif _ws_tx_radio == 'kv4p':
-                                    _gw._ptt_kv4p(False)
-                                elif _gw.cat_client:
-                                    _gw.cat_client._send_cmd("!ptt off")
-                                _gw.ptt_active = False
-                                print(f"[WS-Mic] PTT unkeyed via {_ws_tx_radio}")
-                            except Exception:
-                                pass
+                        # PTT release handled by bus system — SoloBus releases PTT
+                        # after ptt_release_delay when WebMicSource stops producing audio.
                         print(f"[WS-Mic] Disconnected {_client_ip}")
                     return
                 elif self.path == '/ws_monitor':
@@ -1701,7 +1671,10 @@ class WebConfigServer:
                             data['webmic'] = gw.web_mic_source.audio_level if gw.web_mic_source.client_connected else 0
                         if getattr(gw, 'web_monitor_source', None):
                             data['monitor'] = gw.web_monitor_source.audio_level
-                        data['mumble_rx'] = getattr(gw, 'rx_audio_level', 0)
+                        if getattr(gw, 'mumble_source', None):
+                            data['mumble_rx'] = gw.mumble_source.audio_level
+                        else:
+                            data['mumble_rx'] = getattr(gw, 'rx_audio_level', 0)
                         # TX levels (radio destinations)
                         if gw.kv4p_plugin:
                             data['kv4p_tx'] = getattr(gw.kv4p_plugin, 'tx_audio_level', 0)
@@ -1709,11 +1682,35 @@ class WebConfigServer:
                             data['d75_tx'] = getattr(gw.d75_plugin, 'tx_audio_level', 0)
                         if getattr(gw, 'th9800_plugin', None):
                             data['aioc_tx'] = getattr(gw.th9800_plugin, 'tx_audio_level', 0)
-                        # Passive sinks
-                        data['speaker'] = getattr(gw, 'speaker_audio_level', 0)
-                        # Broadcastify — use the mixer output level (same audio goes to stream)
-                        if getattr(gw, 'stream_output', None) and getattr(gw.stream_output, 'connected', False):
-                            data['broadcastify'] = getattr(gw, 'stream_audio_level', getattr(gw, 'speaker_audio_level', 0))
+                        # Passive sinks — only show level if connected to a bus
+                        _all_sinks = getattr(gw, '_bus_sinks', {})
+                        _all_connected = set()
+                        for _sinks in _all_sinks.values():
+                            _all_connected.update(_sinks)
+                        # Decay sink + source levels on each poll (200ms interval)
+                        gw.speaker_audio_level = max(0, int(getattr(gw, 'speaker_audio_level', 0) * 0.8))
+                        gw.stream_audio_level = max(0, int(getattr(gw, 'stream_audio_level', 0) * 0.8))
+                        gw.mumble_tx_level = max(0, int(getattr(gw, 'mumble_tx_level', 0) * 0.8))
+                        if getattr(gw, 'mumble_source', None):
+                            gw.mumble_source.audio_level = max(0, int(gw.mumble_source.audio_level * 0.8))
+                        if 'speaker' in _all_connected:
+                            data['speaker'] = gw.speaker_audio_level
+                        if 'broadcastify' in _all_connected:
+                            data['broadcastify'] = gw.stream_audio_level
+                        if 'mumble' in _all_connected:
+                            data['mumble'] = gw.mumble_tx_level
+                        if 'recording' in _all_connected:
+                            data['recording'] = 0
+                        # Bus output levels
+                        _bm = getattr(gw, 'bus_manager', None)
+                        if _bm:
+                            for _bid, _blv in _bm._bus_levels.items():
+                                data['bus_' + _bid] = _blv
+                        # Primary listen bus level from mixer
+                        if gw.mixer:
+                            _listen_id = getattr(gw, '_listen_bus_id', 'listen')
+                            _mix_audio = getattr(gw, '_last_mixer_level', 0)
+                            data['bus_' + _listen_id] = _mix_audio
                     try:
                         self.send_response(200)
                         self.send_header('Content-Type', 'application/json')
@@ -3449,12 +3446,13 @@ class WebConfigServer:
 
         # Build sink list (passive consumers + TX-capable radios)
         sinks = []
-        sinks.append({'id': 'mumble', 'name': 'Mumble', 'type': 'VoIP',
+        sinks.append({'id': 'mumble', 'name': 'Mumble [TX]', 'type': 'VoIP',
                       'enabled': bool(gw and gw.mumble)})
         sinks.append({'id': 'broadcastify', 'name': 'Broadcastify', 'type': 'Stream',
                       'enabled': bool(gw and getattr(gw, 'stream_output', None))})
+        _spk_mode = str(getattr(gw.config, 'SPEAKER_MODE', 'virtual')).lower() if gw else 'virtual'
         sinks.append({'id': 'speaker', 'name': 'Speaker', 'type': 'Local',
-                      'enabled': bool(gw and getattr(gw, 'speaker_stream', None))})
+                      'enabled': True, 'speaker_mode': _spk_mode})
         sinks.append({'id': 'recording', 'name': 'Recording', 'type': 'File', 'enabled': True})
         # TX-capable radios as destinations
         if gw:
@@ -3561,12 +3559,37 @@ class WebConfigServer:
                 b['sources'] = upd.get('sources', [])
                 b['sinks'] = upd.get('sinks', [])
             self._save_routing_config(busses, new_connections, layout=layout)
-            # Reload bus manager to apply changes
+            # Reload bus manager, refresh cached maps, sync mixer sources
             if self.gateway and hasattr(self.gateway, 'bus_manager') and self.gateway.bus_manager:
                 try:
                     self.gateway.bus_manager.reload()
+                    self.gateway._bus_stream_flags = self.gateway.bus_manager.get_bus_stream_flags()
+                    self.gateway._bus_sinks = self.gateway.bus_manager.get_bus_sinks()
+                    self.gateway._listen_bus_id = self.gateway.bus_manager.get_listen_bus_id()
                 except Exception as e:
                     return {'ok': True, 'warning': f'saved but reload failed: {e}'}
+            # Reset stale sink audio levels
+            if self.gateway:
+                self.gateway.speaker_audio_level = 0
+                self.gateway.stream_audio_level = 0
+                self.gateway.mumble_tx_level = 0
+                if getattr(self.gateway, 'th9800_plugin', None):
+                    self.gateway.th9800_plugin.tx_audio_level = 0
+                if self.gateway.kv4p_plugin:
+                    self.gateway.kv4p_plugin.tx_audio_level = 0
+                if self.gateway.d75_plugin:
+                    self.gateway.d75_plugin.tx_audio_level = 0
+            if self.gateway and hasattr(self.gateway, 'sync_mixer_sources'):
+                try:
+                    self.gateway.sync_mixer_sources()
+                except Exception as e:
+                    print(f"  [routing] sync_mixer_sources error: {e}")
+            # Log reload confirmation
+            _bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
+            if _bm:
+                _bus_ids = list(_bm._busses.keys())
+                _sink_map = getattr(self.gateway, '_bus_sinks', {})
+                print(f"  [routing] Saved & reloaded: busses={_bus_ids} sinks={dict(_sink_map)}")
             return {'ok': True}
 
         elif cmd == 'toggle_proc':
@@ -3579,6 +3602,14 @@ class WebConfigServer:
                     proc = b.setdefault('processing', {})
                     proc[filt] = not proc.get(filt, False)
                     self._save_routing_config(busses, connections)
+                    # Update cached stream flags on gateway + BusManager
+                    if filt in ('pcm', 'mp3', 'vad') and self.gateway:
+                        flags = getattr(self.gateway, '_bus_stream_flags', {})
+                        bus_flags = flags.setdefault(bus_id, {'pcm': False, 'mp3': False, 'vad': False})
+                        bus_flags[filt] = proc[filt]
+                    bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
+                    if bm and bus_id in bm._bus_config:
+                        bm._bus_config[bus_id][filt] = proc[filt]
                     return {'ok': True, 'state': proc[filt]}
             return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
@@ -3599,6 +3630,34 @@ class WebConfigServer:
                 return {'ok': True, 'gain': value}
             return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
 
+        elif cmd == 'speaker_mode':
+            mode = data.get('mode', 'virtual').lower()
+            if mode not in ('virtual', 'auto', 'real'):
+                return {'ok': False, 'error': f'invalid mode: {mode}'}
+            gw = self.gateway
+            if not gw:
+                return {'ok': False, 'error': 'gateway not ready'}
+            gw.config.SPEAKER_MODE = mode
+            # Close existing real stream if switching to virtual
+            if mode == 'virtual':
+                if gw.speaker_stream:
+                    try:
+                        if gw.speaker_stream.is_active():
+                            gw.speaker_stream.stop_stream()
+                        gw.speaker_stream.close()
+                    except Exception:
+                        pass
+                    gw.speaker_stream = None
+                    gw.speaker_queue = None
+                    print(f"  [Speaker] Switched to virtual (metering only)")
+                return {'ok': True, 'mode': mode, 'device': None}
+            else:
+                # Try to open real device
+                if not gw.speaker_stream:
+                    gw.open_speaker_output()
+                _dev = 'connected' if gw.speaker_stream else 'virtual (fallback)'
+                return {'ok': True, 'mode': mode if gw.speaker_stream else 'virtual', 'device': _dev}
+
         return {'ok': False, 'error': f'unknown command: {cmd}'}
 
     def _get_plugin_by_id(self, id):
@@ -3618,6 +3677,7 @@ class WebConfigServer:
             'webmic': getattr(gw, 'web_mic_source', None),
             'announce': getattr(gw, 'announce_input_source', None),
             'monitor': getattr(gw, 'web_monitor_source', None),
+            'mumble_rx': getattr(gw, 'mumble_source', None),
         }
         return _map.get(id)
 

@@ -550,6 +550,17 @@ class KV4PPlugin(RadioPlugin):
         self._trace_rx_bytes += len(opus_data)
         try:
             pcm = self._decoder.decode(opus_data, 1920)
+            # Track level in callback (works without bus)
+            try:
+                _arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
+                _lv = int(max(0, min(100, (20.0 * math.log10(_rms / 32767.0) + 60) * (100 / 60)))) if _rms > 0 else 0
+                if _lv > self.audio_level:
+                    self.audio_level = int(_lv)
+                else:
+                    self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+            except Exception:
+                pass
             if len(self._chunk_queue) >= self._chunk_queue.maxlen:
                 self._chunk_queue.popleft()
                 self._trace_queue_drops += 1

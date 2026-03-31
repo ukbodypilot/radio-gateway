@@ -64,6 +64,10 @@
       <input id="ws-vol" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
       <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
       <span id="ws-status" style="font-size:0.75em;"></span>
+      <span style="color:var(--t-border);">|</span>
+      <button id="mic-btn" onclick="toggleMic()" style="min-width:52px; text-align:center;">&#127908; MIC</button>
+      <span id="mic-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#e74c3c; box-shadow:0 0 6px #e74c3c;"></span>
+      <span id="mic-status" style="font-size:0.75em;"></span>
     </span>
   </div>
 </div>
@@ -316,6 +320,59 @@ function stopWS() {
 
 function setWSVol(v) {
   if (_wsGain) _wsGain.gain.value = v / 100;
+}
+
+// --- Browser Mic → WebMicSource ---
+var _micWs=null, _micStream=null, _micCtx=null, _micProc=null, _micActive=false;
+
+function toggleMic() {
+  if (_micActive) { stopMic(); return; }
+  // Ensure clean state before starting
+  stopMic();
+  _micActive = true;
+  var btn=document.getElementById('mic-btn'), st=document.getElementById('mic-status'), ind=document.getElementById('mic-indicator');
+  btn.innerHTML = '&#9724; MIC'; btn.style.color='#e74c3c'; btn.style.borderColor='#e74c3c';
+  st.textContent='...'; st.style.color='#f39c12';
+
+  navigator.mediaDevices.getUserMedia({audio:{sampleRate:48000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
+  .then(function(stream) {
+    _micStream = stream;
+    var proto = location.protocol==='https:' ? 'wss:' : 'ws:';
+    _micWs = new WebSocket(proto+'//'+location.host+'/ws_mic');
+    _micWs.binaryType = 'arraybuffer';
+    _micWs.onopen = function() {
+      st.textContent='TX'; st.style.color='#e74c3c';
+      ind.style.display='inline-block';
+      _micCtx = new AudioContext({sampleRate:48000});
+      var src = _micCtx.createMediaStreamSource(stream);
+      var proc = _micCtx.createScriptProcessor(2048,1,1);
+      proc.onaudioprocess = function(e) {
+        if (!_micWs || _micWs.readyState!==1) return;
+        var f32=e.inputBuffer.getChannelData(0), buf=new ArrayBuffer(f32.length*2), i16=new Int16Array(buf);
+        for (var i=0;i<f32.length;i++) { var s=Math.max(-1,Math.min(1,f32[i])); i16[i]=s<0?s*32768:s*32767; }
+        _micWs.send(buf);
+      };
+      src.connect(proc); proc.connect(_micCtx.destination); _micProc=proc;
+    };
+    _micWs.onerror = function() { if (_micActive) stopMic(); };
+    _micWs.onclose = function() { if (_micActive) stopMic(); };
+  }).catch(function() {
+    st.textContent='denied'; st.style.color='#e74c3c';
+    _micActive=false;
+    btn.innerHTML='&#127908; MIC'; btn.style.color='#e0e0e0'; btn.style.borderColor=_T.btnBorder;
+  });
+}
+
+function stopMic() {
+  _micActive=false;
+  if(_micProc){_micProc.disconnect();_micProc=null;}
+  if(_micCtx){_micCtx.close().catch(function(){});_micCtx=null;}
+  if(_micStream){_micStream.getTracks().forEach(function(t){t.stop();});_micStream=null;}
+  if(_micWs){try{_micWs.close();}catch(e){}_micWs=null;}
+  var btn=document.getElementById('mic-btn');
+  btn.innerHTML='&#127908; MIC'; btn.style.color='#e0e0e0'; btn.style.borderColor=_T.btnBorder;
+  document.getElementById('mic-indicator').style.display='none';
+  document.getElementById('mic-status').textContent='';
 }
 
 // --- Audio level bars (always visible) ---
