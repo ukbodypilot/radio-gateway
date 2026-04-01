@@ -36,8 +36,11 @@ class BusManager:
         self._tick_interval = 0.05  # 50ms = 20 ticks/sec (matches main loop)
         # Shared PCM/MP3 buffer — BusManager deposits mixed audio here,
         # main loop picks it up and mixes with listen bus output before pushing.
-        self._pcm_buffer = None     # latest PCM audio from non-listen busses
-        self._mp3_buffer = None     # latest MP3-destined audio from non-listen busses
+        self._pcm_queue = []        # PCM audio chunks from non-listen busses (list, not single buffer)
+        self._mp3_queue = []        # MP3 audio chunks from non-listen busses
+        # Keep old names for backward compat with drain methods
+        self._pcm_buffer = None
+        self._mp3_buffer = None
         self._bus_levels = {}       # bus_id → audio level (0-100) for routing page
 
     def get_bus_sinks(self):
@@ -62,14 +65,21 @@ class BusManager:
 
     def drain_pcm(self):
         """Return and clear the accumulated PCM audio from non-listen busses."""
-        pcm = self._pcm_buffer
-        self._pcm_buffer = None
-        return pcm
+        if not self._pcm_queue:
+            return None
+        from audio_bus import additive_mix
+        chunks = list(self._pcm_queue)
+        self._pcm_queue.clear()
+        return additive_mix(chunks)
 
     def drain_mp3(self):
         """Return and clear the accumulated MP3 audio from non-listen busses."""
-        mp3 = self._mp3_buffer
-        self._mp3_buffer = None
+        if not self._mp3_queue:
+            return None
+        from audio_bus import additive_mix
+        chunks = list(self._mp3_queue)
+        self._mp3_queue.clear()
+        return additive_mix(chunks)
         return mp3
 
     def get_listen_bus_id(self):
@@ -321,17 +331,34 @@ class BusManager:
             # Passive sinks
             if sink_id == 'mumble' and gw.mumble:
                 try:
-                    if (hasattr(gw.mumble, 'sound_output') and
-                            gw.mumble.sound_output is not None and
-                            getattr(gw.mumble.sound_output, 'encoder_framesize', None) is not None):
-                        gw.mumble.sound_output.add_sound(audio)
+                    _so = getattr(gw.mumble, 'sound_output', None)
+                    _ef = getattr(_so, 'encoder_framesize', None) if _so else None
+                    if _so is not None and _ef is not None:
+                        # Split into pymumble-sized frames (encoder_framesize * 48000 * 2 bytes)
+                        _frame_bytes = int(_ef * 48000 * 2)
+                        for _fi in range(0, len(audio), _frame_bytes):
+                            _frame = audio[_fi:_fi + _frame_bytes]
+                            if len(_frame) == _frame_bytes:
+                                gw.mumble.sound_output.add_sound(_frame)
+                        _pcm_len = len(_so.pcm) if hasattr(_so, 'pcm') else -1
+                        if not hasattr(self, '_mumble_send_count'):
+                            self._mumble_send_count = 0
+                        self._mumble_send_count += 1
+                        if self._mumble_send_count <= 3 or self._mumble_send_count % 100 == 0:
+                            print(f"  [Mumble-TX] add_sound #{self._mumble_send_count}: {len(audio)}B pcm_buf={_pcm_len} ef={_ef}")
                         _ml = gw.calculate_audio_level(audio)
                         if _ml > getattr(gw, 'mumble_tx_level', 0):
                             gw.mumble_tx_level = _ml
                         else:
                             gw.mumble_tx_level = int(getattr(gw, 'mumble_tx_level', 0) * 0.7 + _ml * 0.3)
-                except Exception:
-                    pass
+                    else:
+                        if not hasattr(self, '_mumble_skip_logged'):
+                            self._mumble_skip_logged = True
+                            print(f"  [Mumble-TX] SKIPPED: sound_output={_so is not None} encoder_framesize={_ef}")
+                except Exception as _me:
+                    if not hasattr(self, '_mumble_err_logged'):
+                        self._mumble_err_logged = True
+                        print(f"  [Mumble-TX] ERROR: {_me}")
             elif sink_id == 'speaker':
                 gw._speaker_enqueue(audio)
             elif sink_id == 'broadcastify' and getattr(gw, 'stream_output', None):
@@ -351,22 +378,18 @@ class BusManager:
                 gw.th9800_plugin.put_audio(audio)
 
         # Per-bus PCM/MP3: deposit into shared buffer for main loop to mix & push.
-        # Direct push would interleave with main loop's push → choppy audio.
         proc_cfg = bus_cfg
         mixed = bus_output.mixed_audio
         if mixed is not None:
+            if not hasattr(self, '_pcm_deposit_count'):
+                self._pcm_deposit_count = 0
             if proc_cfg.get('pcm', False):
-                from audio_bus import mix_audio_streams
-                if self._pcm_buffer is None:
-                    self._pcm_buffer = mixed
-                else:
-                    self._pcm_buffer = mix_audio_streams(self._pcm_buffer, mixed)
+                self._pcm_queue.append(mixed)
+                self._pcm_deposit_count += 1
+                if self._pcm_deposit_count <= 3 or self._pcm_deposit_count % 100 == 0:
+                    print(f"  [PCM] deposit #{self._pcm_deposit_count}: {len(mixed)}B from {bus_id} q={len(self._pcm_queue)}")
             if proc_cfg.get('mp3', False):
-                from audio_bus import mix_audio_streams as _mix
-                if self._mp3_buffer is None:
-                    self._mp3_buffer = mixed
-                else:
-                    self._mp3_buffer = _mix(self._mp3_buffer, mixed)
+                self._mp3_queue.append(mixed)
 
     def _tick_loop(self):
         """Main bus tick loop — runs all non-primary busses."""

@@ -2265,8 +2265,11 @@ class WebMicSource(AudioSource):
                 blob = self._chunk_queue.get_nowait()
                 self._sub_buffer += blob
             except _queue_mod.Empty:
-                # No audio in queue but client is connected — send silence, keep PTT keyed
-                return b'\x00' * cb, True
+                break
+
+        if len(self._sub_buffer) < cb:
+            # Not enough data yet — return silence to keep PTT keyed while connected
+            return b'\x00' * cb, True if self._sub_buffer else False
 
         raw = self._sub_buffer[:cb]
         self._sub_buffer = self._sub_buffer[cb:]
@@ -2363,8 +2366,10 @@ class WebMonitorSource(AudioSource):
                 blob = self._chunk_queue.get_nowait()
                 self._sub_buffer += blob
             except _queue_mod.Empty:
-                self.audio_level = max(0, int(self.audio_level * 0.7))
-                return None, False  # No audio — return nothing (no PTT)
+                break
+
+        if len(self._sub_buffer) < cb:
+            return None, False
 
         raw = self._sub_buffer[:cb]
         self._sub_buffer = self._sub_buffer[cb:]

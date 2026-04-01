@@ -2782,7 +2782,13 @@ class RadioGateway:
                                     self.mumble.sound_output is not None and
                                     getattr(self.mumble.sound_output, 'encoder_framesize', None) is not None):
                                 try:
-                                    self.mumble.sound_output.add_sound(_early_audio)
+                                    # Split into pymumble-sized frames
+                                    _ef = self.mumble.sound_output.encoder_framesize
+                                    _fb = int(_ef * 48000 * 2)
+                                    for _fi in range(0, len(_early_audio), _fb):
+                                        _fr = _early_audio[_fi:_fi + _fb]
+                                        if len(_fr) == _fb:
+                                            self.mumble.sound_output.add_sound(_fr)
                                     # Track Mumble TX level for routing page
                                     _ml = self.calculate_audio_level(_early_audio)
                                     if _ml > getattr(self, 'mumble_tx_level', 0):
@@ -2802,6 +2808,12 @@ class RadioGateway:
                             self._speaker_enqueue(_silence)
                         # Use already-drained BusManager PCM
                         if _bm_pcm is not None:
+                            if not hasattr(self, '_bm_pcm_push_count'):
+                                self._bm_pcm_push_count = 0
+                            self._bm_pcm_push_count += 1
+                            if self._bm_pcm_push_count <= 3 or self._bm_pcm_push_count % 100 == 0:
+                                _has_ws = bool(self.web_config_server and self.web_config_server._ws_clients)
+                                print(f"  [PCM-drain] #{self._bm_pcm_push_count}: {len(_bm_pcm)}B ws_clients={_has_ws}")
                             if self.web_config_server and self.web_config_server._ws_clients:
                                 self.web_config_server.push_ws_audio(_bm_pcm)
                         elif self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False):

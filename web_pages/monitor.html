@@ -50,15 +50,15 @@
   <div style="padding:12px 14px;">
     <div style="margin-bottom:14px;">
       <label style="color:#888; font-size:0.85em; display:block; margin-bottom:4px;">
-        Gain: <span id="mon-gain-val">1x</span>
+        Gain: <span id="mon-gain-val">25x</span>
       </label>
-      <input id="mon-gain" type="range" min="1" max="50" step="1" value="1"
+      <input id="mon-gain" type="range" min="1" max="50" step="1" value="25"
         style="width:100%; accent-color:var(--t-accent);"
         oninput="document.getElementById('mon-gain-val').textContent=this.value+'x'">
     </div>
     <div style="margin-bottom:14px;">
       <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-        <input id="mon-vad-en" type="checkbox" checked
+        <input id="mon-vad-en" type="checkbox"
           style="accent-color:var(--t-accent); width:18px; height:18px;">
         <span style="color:#888; font-size:0.85em;">VAD (only send when sound detected)</span>
       </label>
