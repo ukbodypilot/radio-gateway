@@ -286,6 +286,7 @@ class FilePlaybackSource(AudioSource):
         self._play_seq = 0  # Sequence counter — each button press gets a unique ID
         import threading as _th
         self._play_lock = _th.Lock()  # Serializes stop+decode+queue
+        self._loop_active = False  # Test loop mode
         
         # Periodic announcement - auto-detect station_id file
         self.last_announcement_time = 0
@@ -745,6 +746,26 @@ class FilePlaybackSource(AudioSource):
 
         return True
     
+    def toggle_test_loop(self):
+        """Toggle test loop — plays loop.mp3/loop.wav from audio dir on repeat."""
+        import os
+        if self._loop_active:
+            # Stop loop
+            self._loop_active = False
+            self.stop_playback()
+            print("[Playback] Test loop stopped")
+            return {'ok': True, 'looping': False}
+        # Find loop file
+        audio_dir = self.announcement_directory
+        for name in ('loop.mp3', 'loop.wav', 'loop.ogg'):
+            path = os.path.join(audio_dir, name)
+            if os.path.exists(path):
+                self._loop_active = True
+                self.queue_file(path)
+                print(f"[Playback] Test loop started: {name}")
+                return {'ok': True, 'looping': True, 'file': name}
+        return {'ok': False, 'error': 'No loop.mp3/loop.wav found in audio/'}
+
     def stop_playback(self):
         """Stop current playback and clear queue"""
         # Mark current file as not playing
@@ -756,6 +777,7 @@ class FilePlaybackSource(AudioSource):
                     break
 
         # Clear current playback
+        self._loop_active = False
         self.current_file = None
         self.file_data = None
         self.file_position = 0
@@ -958,6 +980,10 @@ class FilePlaybackSource(AudioSource):
 
         # Check if we have enough data left
         if self.file_position >= len(self.file_data):
+            # Loop mode: rewind and continue
+            if self._loop_active:
+                self.file_position = 0
+                return self.file_data[:chunk_bytes].ljust(chunk_bytes, b'\x00'), False
             # File finished
             if self.gateway.config.VERBOSE_LOGGING:
                 print(f"\n[Playback] Finished: {os.path.basename(self.current_file) if self.current_file else 'unknown'}")
@@ -1669,6 +1695,34 @@ class LinkAudioSource(AudioSource):
                 self._link_server.send_audio(pcm)
             except Exception:
                 pass
+
+    def put_audio(self, pcm):
+        """Send TX audio to the remote endpoint (SoloBus radio interface)."""
+        if self.gateway and self.gateway.link_server:
+            try:
+                self.gateway.link_server.send_audio_to(self.endpoint_name, pcm)
+            except Exception:
+                pass
+
+    def execute(self, cmd):
+        """Route commands to the remote endpoint via link server (SoloBus radio interface)."""
+        _srv = self.gateway.link_server if self.gateway else None
+        if _srv:
+            try:
+                print(f"  [LinkSrc:{self.endpoint_name}] execute: {cmd}")
+                _srv.send_command_to(self.endpoint_name, cmd)
+                return {"ok": True}
+            except Exception as e:
+                print(f"  [LinkSrc:{self.endpoint_name}] execute error: {e}")
+                return {"ok": False, "error": str(e)}
+        print(f"  [LinkSrc:{self.endpoint_name}] execute: no link server (gw={self.gateway is not None})")
+        return {"ok": False, "error": "link server not available"}
+
+    def ptt_on(self):
+        self.execute({'cmd': 'ptt', 'state': True})
+
+    def ptt_off(self):
+        self.execute({'cmd': 'ptt', 'state': False})
 
     def is_active(self):
         return self.enabled and not self.muted and self.server_connected

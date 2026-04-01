@@ -281,6 +281,11 @@ class BusManager:
             return gw.kv4p_plugin
         elif sink_id == 'd75' and gw.d75_plugin:
             return gw.d75_plugin
+        # Check link endpoints for D75 (when using link endpoint instead of plugin)
+        if sink_id in ('d75_tx', 'd75') and not gw.d75_plugin:
+            for name, src in gw.link_endpoints.items():
+                if 'd75' in name.lower():
+                    return src
         return None
 
     def _get_source(self, source_id):
@@ -340,7 +345,16 @@ class BusManager:
                     _so = getattr(gw.mumble, 'sound_output', None)
                     _ef = getattr(_so, 'encoder_framesize', None) if _so else None
                     if _so is not None and _ef is not None:
-                        gw.mumble.sound_output.add_sound(audio)
+                        # Feed in frame-aligned chunks (20ms = 960 samples = 1920 bytes)
+                        # to prevent fractional frame accumulation in pymumble's buffer
+                        _frame_bytes = int(_ef * getattr(gw.config, 'AUDIO_RATE', 48000) * 2)
+                        if not hasattr(self, '_mumble_buf'):
+                            self._mumble_buf = b''
+                        self._mumble_buf += audio
+                        while len(self._mumble_buf) >= _frame_bytes:
+                            _frame = self._mumble_buf[:_frame_bytes]
+                            self._mumble_buf = self._mumble_buf[_frame_bytes:]
+                            _so.add_sound(_frame)
                         _ml = gw.calculate_audio_level(audio)
                         if _ml > getattr(gw, 'mumble_tx_level', 0):
                             gw.mumble_tx_level = _ml

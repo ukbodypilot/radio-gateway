@@ -34,6 +34,7 @@
           <button onclick="sendKey('0')" id="btn-f0">ID</button>
           <button onclick="sendKey('-')">Stop</button>
           <button onclick="refreshSounds()" title="Refresh random sounds">&#x21bb;</button>
+          <button onclick="toggleTestLoop(this)" id="btn-test-loop" title="Loop audio/loop.mp3">Loop</button>
         </div>
       </div>
       <div style="margin-left:6px; margin-right:6px;">
@@ -156,6 +157,20 @@
 function sendKey(k) {
   fetch('/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:k})});
   if(document.activeElement) document.activeElement.blur();
+}
+function toggleTestLoop(btn) {
+  fetch('/testloop', {method:'POST'}).then(function(r){return r.json()}).then(function(d) {
+    if (d.looping) {
+      btn.style.background = '#e74c3c';
+      btn.style.color = '#fff';
+      btn.textContent = 'Stop Loop';
+    } else {
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.textContent = 'Loop';
+    }
+    if (d.error) alert(d.error);
+  });
 }
 // togProc, togFlag, darkiceCmd removed — handled by routing page
 function openTmux() {

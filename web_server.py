@@ -1861,6 +1861,16 @@ class WebConfigServer:
                     self.end_headers()
                     self.wfile.write(b'{"ok":true}')
                     return
+                elif self.path == '/testloop':
+                    # Toggle test loop playback
+                    result = {'ok': False, 'error': 'playback not available'}
+                    if parent.gateway and parent.gateway.playback_source:
+                        result = parent.gateway.playback_source.toggle_test_loop()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps(result).encode('utf-8'))
+                    return
                 elif self.path == '/mixer':
                     # Mixer control endpoint — explicit mute/unmute/volume/duck/boost/toggles
                     length = int(self.headers.get('Content-Length', 0))
@@ -3520,6 +3530,11 @@ class WebConfigServer:
             if gw.d75_plugin:
                 sources.append({**{'id': 'd75', 'name': 'TH-D75 [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.d75_plugin)})
+            elif any('d75' in n.lower() for n in gw.link_endpoints):
+                _d75_src = next((s for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), None)
+                if _d75_src:
+                    sources.append({**{'id': 'd75', 'name': 'TH-D75 [RX]', 'enabled': True,
+                                    'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(_d75_src)})
             if getattr(gw, 'th9800_plugin', None):
                 sources.append({**{'id': 'aioc', 'name': 'TH-9800 [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.th9800_plugin)})
@@ -3562,6 +3577,10 @@ class WebConfigServer:
                 sinks.append({**{'id': 'kv4p_tx', 'name': 'KV4P [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.kv4p_plugin)})
             if gw.d75_plugin:
                 sinks.append({**{'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.d75_plugin)})
+            elif any('d75' in n.lower() for n in gw.link_endpoints):
+                _d75_src = next((s for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), None)
+                if _d75_src:
+                    sinks.append({**{'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(_d75_src)})
             if getattr(gw, 'th9800_plugin', None):
                 sinks.append({**{'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.th9800_plugin)})
 

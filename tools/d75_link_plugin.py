@@ -148,6 +148,11 @@ class D75Plugin(RadioPlugin):
         if not self._audio or not self._audio.connected:
             return
         try:
+            # Cap TX buffer at 200ms (1600 bytes @ 8kHz) to prevent unbounded growth
+            if hasattr(self._audio, '_tx_buf_lock'):
+                with self._audio._tx_buf_lock:
+                    if len(self._audio._tx_buf) > 1600:
+                        return  # drop — buffer full
             data_8k = _downsample(pcm)
             self._audio.write_sco(data_8k)
         except Exception as e:

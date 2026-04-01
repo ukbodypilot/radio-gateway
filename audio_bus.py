@@ -374,6 +374,11 @@ class ListenBus(AudioBus):
             audio, ptt = slot.source.get_audio(chunk_size)
             if audio is None:
                 continue
+            # Apply per-source gain (routing page slider)
+            _boost = getattr(slot.source, 'audio_boost', 1.0)
+            if _boost != 1.0 and audio:
+                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+                audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
             active_sources.append(slot.source.name)
             if ptt and slot.source.ptt_control:
                 ptt_required = True
@@ -413,6 +418,11 @@ class ListenBus(AudioBus):
         duckee_audio = {}
         for slot in duckee_slots:
             audio, _ptt = slot.source.get_audio(chunk_size)
+            # Apply per-source gain (routing page slider)
+            _boost = getattr(slot.source, 'audio_boost', 1.0)
+            if _boost != 1.0 and audio:
+                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+                audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
             if should_duck:
                 duckee_audio[slot] = None  # ducked — discard
                 if audio is not None:
@@ -624,6 +634,11 @@ class SoloBus(AudioBus):
             audio, ptt = slot.source.get_audio(chunk_size)
             if audio is None:
                 continue
+            # Apply per-source gain
+            _boost = getattr(slot.source, 'audio_boost', 1.0)
+            if _boost != 1.0:
+                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+                audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
             active_sources.append(slot.source.name)
             if ptt and slot.source.ptt_control:
                 ptt_needed = True
@@ -638,6 +653,7 @@ class SoloBus(AudioBus):
             if not self._ptt_active and self._radio:
                 # Key PTT
                 self._ptt_active = True
+                print(f"  [SoloBus:{self.name}] PTT ON via {self._radio.name if hasattr(self._radio, 'name') else type(self._radio).__name__}")
                 if hasattr(self._radio, 'execute'):
                     self._radio.execute({'cmd': 'ptt', 'state': True})
                 elif hasattr(self._radio, 'ptt_on'):

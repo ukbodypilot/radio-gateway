@@ -28,7 +28,7 @@
         "announce"
       ],
       "sinks": [
-        "aioc_tx"
+        "d75_tx"
       ],
       "processing": {
         "pcm": false
@@ -80,7 +80,7 @@
     {
       "type": "bus-sink",
       "from": "announce",
-      "to": "aioc_tx"
+      "to": "d75_tx"
     },
     {
       "type": "bus-sink",
@@ -357,14 +357,14 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "21",
+                    "node": "20",
                     "output": "input_1"
                   }
                 ]
               }
             },
-            "pos_x": 347,
-            "pos_y": 422
+            "pos_x": 340,
+            "pos_y": 424
           },
           "13": {
             "id": 13,
@@ -533,7 +533,12 @@
             "typenode": false,
             "inputs": {
               "input_1": {
-                "connections": []
+                "connections": [
+                  {
+                    "node": "12",
+                    "input": "output_1"
+                  }
+                ]
               }
             },
             "outputs": {},
@@ -551,12 +556,7 @@
             "typenode": false,
             "inputs": {
               "input_1": {
-                "connections": [
-                  {
-                    "node": "12",
-                    "input": "output_1"
-                  }
-                ]
+                "connections": []
               }
             },
             "outputs": {},
