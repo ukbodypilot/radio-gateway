@@ -1054,6 +1054,213 @@ def process_control(service: str, action: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tools — Audio Routing (Bus System)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def routing_status() -> str:
+    """
+    Get the full audio routing configuration: all sources, busses, sinks,
+    and connections between them. This is the bus-based routing system
+    that controls how audio flows through the gateway.
+    """
+    return json.dumps(_get('/routing/status'), indent=2)
+
+
+@mcp.tool()
+def routing_levels() -> str:
+    """
+    Get live audio levels for all sources, sinks, and busses.
+    Returns a dict of id → level (0-100). Polled by the routing UI
+    every 200ms. Useful for checking if audio is flowing.
+    """
+    return json.dumps(_get('/routing/levels'), indent=2)
+
+
+@mcp.tool()
+def routing_connect(source_or_bus: str, bus_or_sink: str, connection_type: str = "auto") -> str:
+    """
+    Connect a source to a bus, or a bus to a sink.
+
+    Args:
+        source_or_bus: The source ID (e.g. 'sdr', 'webmic', 'mumble_rx') or bus ID
+        bus_or_sink: The bus ID or sink ID (e.g. 'speaker', 'broadcastify', 'mumble', 'kv4p_tx')
+        connection_type: 'source-bus', 'bus-sink', or 'auto' (auto-detect based on IDs)
+    """
+    if connection_type == 'auto':
+        # Heuristic: if second arg looks like a sink, it's bus→sink
+        sink_ids = {'speaker', 'broadcastify', 'mumble', 'recording', 'remote_audio_tx',
+                    'kv4p_tx', 'd75_tx', 'aioc_tx'}
+        if bus_or_sink in sink_ids:
+            connection_type = 'bus-sink'
+        else:
+            connection_type = 'source-bus'
+
+    result = _post('/routing/cmd', {
+        'cmd': 'connect',
+        'type': connection_type,
+        'from': source_or_bus,
+        'to': bus_or_sink
+    })
+    if result.get('ok'):
+        return f"Connected {source_or_bus} → {bus_or_sink} ({connection_type})"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def routing_disconnect(source_or_bus: str, bus_or_sink: str, connection_type: str = "auto") -> str:
+    """
+    Disconnect a source from a bus, or a bus from a sink.
+
+    Args:
+        source_or_bus: The source ID or bus ID
+        bus_or_sink: The bus ID or sink ID
+        connection_type: 'source-bus', 'bus-sink', or 'auto' (auto-detect)
+    """
+    if connection_type == 'auto':
+        sink_ids = {'speaker', 'broadcastify', 'mumble', 'recording', 'remote_audio_tx',
+                    'kv4p_tx', 'd75_tx', 'aioc_tx'}
+        if bus_or_sink in sink_ids:
+            connection_type = 'bus-sink'
+        else:
+            connection_type = 'source-bus'
+
+    result = _post('/routing/cmd', {
+        'cmd': 'disconnect',
+        'type': connection_type,
+        'from': source_or_bus,
+        'to': bus_or_sink
+    })
+    if result.get('ok'):
+        return f"Disconnected {source_or_bus} → {bus_or_sink}"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def bus_create(name: str, bus_type: str = "solo") -> str:
+    """
+    Create a new audio bus.
+
+    Args:
+        name: Display name for the bus (e.g. 'Monitor Mix', 'D75 TX')
+        bus_type: One of 'listen', 'solo', 'duplex', 'simplex'
+                  - listen: mixing bus for monitoring (like a broadcast mix)
+                  - solo: single source to single radio TX
+                  - duplex: cross-link two radios (full duplex)
+                  - simplex: store-and-forward repeater
+    """
+    result = _post('/routing/cmd', {
+        'cmd': 'add_bus',
+        'name': name,
+        'type': bus_type
+    })
+    if result.get('ok'):
+        return f"Created {bus_type} bus '{name}' (id: {result.get('id', '?')})"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def bus_delete(bus_id: str) -> str:
+    """
+    Delete an audio bus and all its connections.
+
+    Args:
+        bus_id: The bus ID to delete (use routing_status to find IDs)
+    """
+    result = _post('/routing/cmd', {
+        'cmd': 'delete_bus',
+        'bus': bus_id
+    })
+    if result.get('ok'):
+        return f"Deleted bus '{bus_id}'"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def bus_mute(bus_id: str) -> str:
+    """
+    Toggle mute on a bus. When muted, no audio passes through the bus
+    in either direction.
+
+    Args:
+        bus_id: The bus ID to mute/unmute
+    """
+    result = _post('/routing/cmd', {
+        'cmd': 'bus_mute',
+        'bus': bus_id
+    })
+    if result.get('ok'):
+        state = 'muted' if result.get('muted') else 'unmuted'
+        return f"Bus '{bus_id}': {state}"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def sink_mute(sink_id: str) -> str:
+    """
+    Toggle mute on a source or sink. When muted, audio is blocked.
+
+    Args:
+        sink_id: The source or sink ID (e.g. 'speaker', 'broadcastify',
+                 'mumble', 'sdr', 'kv4p', 'remote_audio_tx')
+    """
+    result = _post('/routing/cmd', {
+        'cmd': 'mute',
+        'id': sink_id
+    })
+    if result.get('ok'):
+        state = 'muted' if result.get('muted') else 'unmuted'
+        return f"'{sink_id}': {state}"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def bus_toggle_processing(bus_id: str, filter_name: str) -> str:
+    """
+    Toggle an audio processing filter or stream output on a bus.
+
+    Args:
+        bus_id: The bus ID
+        filter_name: One of:
+                     'gate'  — noise gate
+                     'hpf'   — high-pass filter
+                     'lpf'   — low-pass filter
+                     'notch' — notch filter
+                     'pcm'   — feed PCM stream output
+                     'mp3'   — feed MP3 stream output
+                     'vad'   — VAD (voice activity detection) gate
+    """
+    result = _post('/routing/cmd', {
+        'cmd': 'toggle_proc',
+        'bus': bus_id,
+        'filter': filter_name
+    })
+    if result.get('ok'):
+        state = 'ON' if result.get('state') else 'OFF'
+        return f"Bus '{bus_id}' {filter_name}: {state}"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def set_gain(target_id: str, gain_percent: int) -> str:
+    """
+    Set the gain/volume on a source or sink.
+
+    Args:
+        target_id: The source or sink ID
+        gain_percent: Gain as percentage (0-200, where 100 = unity)
+    """
+    result = _post('/routing/cmd', {
+        'cmd': 'gain',
+        'id': target_id,
+        'value': gain_percent
+    })
+    if result.get('ok'):
+        return f"'{target_id}' gain: {gain_percent}%"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
