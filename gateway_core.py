@@ -1463,7 +1463,7 @@ class RadioGateway:
                         self.remote_audio_source.enabled = True
                         self.remote_audio_source.duck = self.config.REMOTE_AUDIO_DUCK
                         self.remote_audio_source.sdr_priority = int(self.config.REMOTE_AUDIO_PRIORITY)
-                        if self._source_on_listen_bus('remote_audio') or not self.bus_manager:
+                        if self._source_on_listen_bus('remote_audio') or not getattr(self, 'bus_manager', None):
                             self.mixer.add_source(self.remote_audio_source, bus_priority=int(self.config.REMOTE_AUDIO_PRIORITY) + 10, duckable=self.config.REMOTE_AUDIO_DUCK)
                             print(f"✓ Remote audio RX source added to mixer")
                         else:
@@ -3217,6 +3217,12 @@ class RadioGateway:
                             _tr_sv_ms += (time.monotonic() - _sv_t0) * 1000
                             _tr_sv_sent += 1
                             self._update_sv_level(data)
+                            # Update routing-visible level
+                            _rl = self.calculate_audio_level(data)
+                            if _rl > getattr(self, 'remote_audio_tx_level', 0):
+                                self.remote_audio_tx_level = _rl
+                            else:
+                                self.remote_audio_tx_level = int(getattr(self, 'remote_audio_tx_level', 0) * 0.7 + _rl * 0.3)
                         except Exception:
                             pass
 

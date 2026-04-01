@@ -597,11 +597,14 @@ function pollLevels() {
           var fill = el.querySelector('.level-fill');
           if (fill) fill.style.width = Math.min(100, d[id]) + '%';
         }
-        // Also update TX sink bars (e.g. kv4p_tx uses kv4p level)
-        var txEl = document.getElementById('level-' + id + '_tx');
-        if (txEl) {
-          var txFill = txEl.querySelector('.level-fill');
-          if (txFill) txFill.style.width = Math.min(100, d[id]) + '%';
+        // Also update TX sink bars for radio plugins (e.g. kv4p level → kv4p_tx bar)
+        // Skip for sources that have independent TX sinks (remote_audio, mumble)
+        if (id !== 'remote_audio' && id !== 'mumble_rx') {
+          var txEl = document.getElementById('level-' + id + '_tx');
+          if (txEl) {
+            var txFill = txEl.querySelector('.level-fill');
+            if (txFill) txFill.style.width = Math.min(100, d[id]) + '%';
+          }
         }
       }
     })
