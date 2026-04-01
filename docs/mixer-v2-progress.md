@@ -148,3 +148,49 @@ now complete and merged.
 - `gateway_mcp.py` — MODIFIED: 14 new routing/automation tools
 - `docs/mixer-v2-design.md` — UPDATED: architecture reference (status: COMPLETE)
 - `docs/mixer-v2-progress.md` — this file
+
+## Bugs Fixed During v2.0 Development
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| All sources fell through to BusManager | `json` vs `json_mod` NameError silently caught in `_source_on_listen_bus()` | Use `json_mod.load()` |
+| Double PCM push per tick | Main loop pushed PCM at two points | Remove duplicate push |
+| Sinks not receiving audio | Hardcoded `'listen'` bus ID failed when bus renamed to `'sdr_mix'` | Use `self._listen_bus_id` |
+| TH-9800 not routable | `aioc_tx`/`aioc` missing from `_get_radio_plugin` and `_get_source` maps | Add entries |
+| Queue competition | TH-9800 on both primary mixer AND solo bus simultaneously | `_source_on_listen_bus()` guards |
+| TX sink calling get_audio | `aioc_tx` resolved as SoloBus radio causing get_audio on TX-only path | `_tx_only` flag |
+| Broadcastify/Mumble gated by VAD | Delivery placed after VAD gate | Move to early delivery path |
+| Mumble RX 2fps choppy | `PTT_ACTIVATION_DELAY=0.5` sleep blocked pymumble callback thread | Remove sleep, bus handles PTT |
+| PipeWire feedback loop | Speaker PortAudio auto-linked to SDR capture by WirePlumber | Virtual speaker + link guard |
+| Old PTT routing to wrong radio | `ptt_required` triggered old TX path to KV4P | Disable entire old PTT block |
+| `_padded` variable crash | Stale reference after code change crashed bus tick every 10s | Remove reference |
+| Python 3.14 scoping | Local `import threading` in nested function shadowed module-level | Remove local import |
+| Audio trace crash | `radio_source._serve_discontinuity` doesn't exist on TH9800Plugin | `getattr()` with defaults |
+| Mumble Speak permission | Server ACL didn't grant Speak to 'all' group | Update SQLite ACL |
+| Mumble TX stutter | GIL starvation — 33 threads + SCHED_RR starved pymumble to ~20 sends/sec | `audio_per_packet=0.06` (3 frames) |
+| PCM buffer race | Single-value `_pcm_buffer` lost data on same-tick drain+deposit | List-based `_pcm_queue` |
+| Stale sink level bars | Sink levels never decayed | 0.8x decay per poll |
+| WebMonitorSource no audio | Returned None when sub-buffer < 4800B | Accumulation fix |
+| Room Monitor too quiet | Default gain 1.0x vs Web Mic 25.0x | Default gain 25x |
+| Remote audio source init crash | `bus_manager` not yet created, `not self.bus_manager` threw AttributeError | `getattr(self, 'bus_manager', None)` |
+| RX level bleeding to TX bar | JS auto-mapping appended `_tx` to every level key | Skip for independent TX sinks |
+| TX sink level not updating | Main loop updated `sv_audio_level` but routing reads `remote_audio_tx_level` | Update both |
+| Remote audio cross-contamination | Source unconditionally added to mixer (bus_manager=None at init) | Defer to `sync_mixer_sources()` |
+| Sink mute not working | `_get_plugin_by_id` didn't handle passive sinks | `_muted_sinks` set |
+| Bus mute not blocking PCM/MP3 | Primary listen bus PCM/MP3 path not checking mute flag | Add `_listen_bus_muted` check |
+| Mumble TX level bar stuck | Level not reported as 0 when sink disconnected | Always report 0 for disconnected sinks |
+| Windows client WDM-KS crash | Blocking RawInputStream not supported | Callback-based streams with queues |
+
+## Code Removed (Total: ~7,200+ lines)
+| What | Lines |
+|------|-------|
+| Console/terminal UI (StatusBar, keyboard, ANSI) | ~650 |
+| Old AudioMixer class | ~700 |
+| AIOCRadioSource class | ~200 |
+| `_generate_*` web methods (13 pages) | ~5,400 |
+| Dead PTT code block | ~150 |
+| Old fallback AIOC path | ~50 |
+| `_create_source_gateway_shim` | ~70 |
+| Diagnostic trace prints + counters | ~100 |
+| Backward compat aliases, stale imports | ~30 |
+| docs/MANUAL.txt (stale v1.5 manual) | ~1,600 |
+| docs/img/ (duplicate screenshots) | 12 files |

@@ -1702,17 +1702,13 @@ class WebConfigServer:
                             gw.d75_plugin.tx_audio_level = max(0, int(getattr(gw.d75_plugin, 'tx_audio_level', 0) * 0.8))
                         if getattr(gw, 'th9800_plugin', None):
                             gw.th9800_plugin.tx_audio_level = max(0, int(getattr(gw.th9800_plugin, 'tx_audio_level', 0) * 0.8))
-                        if 'speaker' in _all_connected:
-                            data['speaker'] = gw.speaker_audio_level
-                        if 'broadcastify' in _all_connected:
-                            data['broadcastify'] = gw.stream_audio_level
-                        if 'mumble' in _all_connected:
-                            data['mumble'] = gw.mumble_tx_level
-                        if 'recording' in _all_connected:
-                            data['recording'] = 0
-                        if 'remote_audio_tx' in _all_connected:
-                            gw.remote_audio_tx_level = max(0, int(getattr(gw, 'remote_audio_tx_level', 0) * 0.8))
-                            data['remote_audio_tx'] = getattr(gw, 'remote_audio_tx_level', 0)
+                        # Report sink levels — 0 when disconnected so bars clear
+                        data['speaker'] = gw.speaker_audio_level if 'speaker' in _all_connected else 0
+                        data['broadcastify'] = gw.stream_audio_level if 'broadcastify' in _all_connected else 0
+                        data['mumble'] = gw.mumble_tx_level if 'mumble' in _all_connected else 0
+                        data['recording'] = 0
+                        gw.remote_audio_tx_level = max(0, int(getattr(gw, 'remote_audio_tx_level', 0) * 0.8))
+                        data['remote_audio_tx'] = getattr(gw, 'remote_audio_tx_level', 0) if 'remote_audio_tx' in _all_connected else 0
                         # Bus output levels
                         _bm = getattr(gw, 'bus_manager', None)
                         if _bm:
