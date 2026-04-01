@@ -33,7 +33,7 @@ class TH9800Plugin(RadioPlugin):
     """TH-9800 radio plugin — AIOC + CAT + relays.
 
     Audio path:
-      RX: AIOC USB mic → PyAudio callback → AIOCRadioSource → get_audio()
+      RX: AIOC USB mic → PyAudio blocking read → _rx_reader_loop → get_audio()
       TX: put_audio() → PyAudio output stream → AIOC USB speaker → radio mic
 
     PTT methods (configurable):
@@ -67,9 +67,6 @@ class TH9800Plugin(RadioPlugin):
         self._input_stream = None
         self._output_stream = None
         self._aioc_available = False
-
-        # AIOCRadioSource (RX audio with callback buffering)
-        self._radio_source = None
 
         # CAT control
         self._cat_client = None
@@ -109,7 +106,7 @@ class TH9800Plugin(RadioPlugin):
             return False
 
         self._config = config
-        self._gateway = gateway  # real gateway object for AIOCRadioSource
+        self._gateway = gateway
         self._ptt_method = str(getattr(config, 'PTT_METHOD', 'aioc')).lower()
         self._ptt_channel = int(getattr(config, 'AIOC_PTT_CHANNEL', 3))
 
@@ -131,8 +128,6 @@ class TH9800Plugin(RadioPlugin):
         self._rx_thread = threading.Thread(target=self._rx_reader_loop, daemon=True, name="TH9800-rx")
         self._rx_thread.start()
         print("  TH-9800: RX reader started")
-        self._radio_source = None  # not using AIOCRadioSource
-
         # Initialize CAT client
         self._init_cat()
 
@@ -314,7 +309,7 @@ class TH9800Plugin(RadioPlugin):
             if not self._input_stream.is_active():
                 print(f"  [TH-9800] Stream inactive — restarting")
                 self._restart_audio_input()
-            elif self._radio_source and self._radio_source._chunk_queue.qsize() == 0:
+            elif self._rx_queue.qsize() == 0:
                 # Stream reports active but no blobs — check if stuck
                 last_capture = getattr(self._gateway, 'last_audio_capture_time', 0) if self._gateway else 0
                 if last_capture > 0 and time.time() - last_capture > 10.0:
@@ -424,16 +419,9 @@ class TH9800Plugin(RadioPlugin):
                             self.audio_level = int(_lv)
                         else:
                             self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
-                        if not hasattr(self, '_rx_level_count'):
-                            self._rx_level_count = 0
-                        self._rx_level_count += 1
-                        if self._rx_level_count <= 3 or self._rx_level_count % 500 == 0:
-                            print(f"  [TH9800-RX] level #{self._rx_level_count}: rms={rms:.0f} lv={_lv:.0f} audio_level={self.audio_level}")
                     except Exception as _e:
-                        if not hasattr(self, '_rx_level_err'):
-                            self._rx_level_err = 0
-                        self._rx_level_err += 1
-                        if self._rx_level_err <= 3:
+                        if not getattr(self, '_rx_level_err_logged', False):
+                            self._rx_level_err_logged = True
                             print(f"  [TH9800-RX] level error: {_e}")
 
                     # Queue for get_audio()
@@ -629,15 +617,13 @@ class TH9800Plugin(RadioPlugin):
             input_idx, _ = self._find_aioc_device()
             if input_idx is not None and self._pyaudio:
                 import pyaudio
-                cb = self._radio_source._audio_callback if self._radio_source else None
                 self._input_stream = self._pyaudio.open(
                     format=pyaudio.paInt16,
                     channels=self._config.AUDIO_CHANNELS,
                     rate=self._config.AUDIO_RATE,
                     input=True,
                     input_device_index=input_idx,
-                    frames_per_buffer=self._config.AUDIO_CHUNK_SIZE,
-                    stream_callback=cb)
+                    frames_per_buffer=self._config.AUDIO_CHUNK_SIZE)
                 self._stream_restart_count += 1
                 print(f"  [TH-9800] Audio input restarted (count: {self._stream_restart_count})")
         except Exception as e:
@@ -664,71 +650,3 @@ class TH9800Plugin(RadioPlugin):
         p.notch_freq = getattr(self._config, 'NOTCH_FREQ', 1000)
         p.notch_q = getattr(self._config, 'NOTCH_Q', 10.0)
 
-    # -- Internal: gateway shim for AIOCRadioSource --
-
-    def _create_source_gateway_shim(self):
-        """Create a shim object that AIOCRadioSource can use as 'self.gateway'.
-
-        AIOCRadioSource expects self.gateway to have:
-          - input_stream, restarting_stream, rx_muted, config
-          - last_audio_capture_time, last_successful_read, audio_capture_active
-          - process_audio_for_mumble(), check_vad(), calculate_audio_level()
-          - tx_audio_level, ptt_active, vad_active
-          - _ptt_change_time
-        """
-        plugin = self
-
-        class _Shim:
-            config = plugin._config
-
-            @property
-            def input_stream(self):
-                return plugin._input_stream
-
-            @property
-            def restarting_stream(self):
-                return plugin._restarting_stream
-
-            @property
-            def rx_muted(self):
-                return plugin.muted
-
-            @property
-            def ptt_active(self):
-                return plugin._ptt_active
-
-            @property
-            def _ptt_change_time(self):
-                return plugin._ptt_change_time
-
-            # Level tracking
-            tx_audio_level = 0
-            last_audio_capture_time = 0
-            last_successful_read = 0
-            audio_capture_active = False
-            vad_active = False
-
-            def process_audio_for_mumble(self, pcm_data):
-                if plugin._processor:
-                    plugin._sync_processor()
-                    return plugin._processor.process(pcm_data)
-                return pcm_data
-
-            def check_vad(self, pcm_data):
-                # Always pass — the bus system handles gating/ducking.
-                # AIOCRadioSource uses this to decide whether to return audio.
-                # In plugin mode, we always return audio and let the bus decide.
-                return True
-
-            def calculate_audio_level(self, pcm_data):
-                arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-                rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-                if rms > 0:
-                    db = 20.0 * math.log10(rms / 32767.0)
-                    return max(0, min(100, int((db + 60) * (100 / 60))))
-                return 0
-
-            def notify(self, message, level='error'):
-                print(f"  [TH-9800] {message}")
-
-        return _Shim()

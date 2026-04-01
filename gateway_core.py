@@ -98,7 +98,7 @@ except ImportError:
     sys.exit(1)
 
 from audio_sources import (
-    AudioSource, AudioProcessor, AIOCRadioSource, FilePlaybackSource,
+    AudioSource, AudioProcessor, FilePlaybackSource,
     EchoLinkSource,
     RemoteAudioServer, RemoteAudioSource,
     NetworkAnnouncementSource,
@@ -1847,17 +1847,6 @@ class RadioGateway:
                                 frames_per_buffer=self.config.AUDIO_CHUNK_SIZE * 4  # Larger buffer for smoother output
                             )
                             
-                            # Initialize radio source first to get callback
-                            try:
-                                self.radio_source = AIOCRadioSource(self.config, self)
-                                self.mixer.add_source(self.radio_source, bus_priority=1, duckable=False)
-                                if self.config.VERBOSE_LOGGING:
-                                    print("✓ Radio audio source added to mixer")
-                            except Exception as source_err:
-                                print(f"⚠ Warning: Could not initialize radio source: {source_err}")
-                                self.radio_source = None
-
-                            aioc_callback = getattr(self.radio_source, '_audio_callback', None) if self.radio_source else None
                             self.input_stream = self.pyaudio_instance.open(
                                 format=audio_format,
                                 channels=self.config.AUDIO_CHANNELS,
@@ -1865,7 +1854,6 @@ class RadioGateway:
                                 input=True,
                                 input_device_index=input_idx,
                                 frames_per_buffer=self.config.AUDIO_CHUNK_SIZE * 4,
-                                stream_callback=aioc_callback
                             )
 
                             print("✓ Audio initialized successfully after USB reset")
@@ -1962,32 +1950,6 @@ class RadioGateway:
             while time.time() - wait_start < max_wait:
                 if hasattr(self.mumble.sound_output, 'encoder_framesize') and self.mumble.sound_output.encoder_framesize is not None:
                     print(f"  ✓ Audio codec ready (framesize: {self.mumble.sound_output.encoder_framesize})")
-
-                    # Monkey-patch pymumble send_audio to instrument the full chain
-                    _so = self.mumble.sound_output
-                    _orig_send = _so.send_audio
-                    _so._send_count = 0
-                    _so._send_last_t = time.monotonic()
-                    _so._send_frames_total = 0
-                    _so._send_gaps = 0
-                    def _instrumented_send():
-                        _t0 = time.monotonic()
-                        _pcm_before = len(_so.pcm)
-                        result = _orig_send()
-                        _pcm_after = len(_so.pcm)
-                        _consumed = _pcm_before - _pcm_after
-                        if _consumed > 0:
-                            _so._send_count += 1
-                            _so._send_frames_total += _consumed
-                            _gap = (_t0 - _so._send_last_t) * 1000
-                            _so._send_last_t = _t0
-                            _elapsed = (time.monotonic() - _t0) * 1000
-                            if _so._send_count <= 5 or _so._send_count % 200 == 0 or _gap > 100:
-                                print(f"  [pymumble-send] #{_so._send_count}: consumed={_consumed} remaining={_pcm_after} gap={_gap:.0f}ms encode={_elapsed:.1f}ms total_frames={_so._send_frames_total}")
-                            if _gap > 100:
-                                _so._send_gaps += 1
-                        return result
-                    _so.send_audio = _instrumented_send
 
                     break
                 time.sleep(0.1)
@@ -2745,20 +2707,6 @@ class RadioGateway:
                     data = _bus_out.mixed_audio
                     ptt_required = _bus_out.ptt.get('_ptt_required', False)
 
-                    # Periodic bus state diagnostic (every 10s)
-                    if not hasattr(self, '_bus_diag_counter'):
-                        self._bus_diag_counter = 0
-                    self._bus_diag_counter += 1
-                    if self._bus_diag_counter % 200 == 1:
-                        _pm_srcs = [s.source.name for s in self.mixer.source_slots]
-                        _pm_active = _bus_out.active_sources
-                        print(f"  [DIAG] Primary mixer: sources={_pm_srcs} active={_pm_active} data={'YES' if data else 'NO'} ptt={ptt_required}")
-                        if self.bus_manager:
-                            for _bid, _bus in self.bus_manager._busses.items():
-                                _bsrcs = [s.source.name for s in getattr(_bus, 'source_slots', getattr(_bus, '_tx_sources', []))]
-                                _bradio = getattr(_bus, '_radio', None)
-                                _btxonly = getattr(_bus, '_tx_only', False)
-                                print(f"  [DIAG] Bus {_bid}: type={_bus.bus_type} sources={_bsrcs} radio={_bradio.name if _bradio else None} tx_only={_btxonly}")
                     active_sources = _bus_out.active_sources
                     sdr1_was_ducked = 'SDR1' in _bus_out.ducked_sources
                     sdr2_was_ducked = 'SDR2' in _bus_out.ducked_sources
@@ -2841,12 +2789,6 @@ class RadioGateway:
                             self._speaker_enqueue(_silence)
                         # Use already-drained BusManager PCM
                         if _bm_pcm is not None:
-                            if not hasattr(self, '_bm_pcm_push_count'):
-                                self._bm_pcm_push_count = 0
-                            self._bm_pcm_push_count += 1
-                            if self._bm_pcm_push_count <= 3 or self._bm_pcm_push_count % 100 == 0:
-                                _has_ws = bool(self.web_config_server and self.web_config_server._ws_clients)
-                                print(f"  [PCM-drain] #{self._bm_pcm_push_count}: {len(_bm_pcm)}B ws_clients={_has_ws}")
                             if self.web_config_server and self.web_config_server._ws_clients:
                                 self.web_config_server.push_ws_audio(_bm_pcm)
                         elif self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False):
@@ -2957,213 +2899,11 @@ class RadioGateway:
                         else:
                             _tr_rebro = 'hold'
 
-                    # Old PTT path disabled — TX routing handled by bus system.
-                    # Sources with ptt_control=True on a listen bus just mix normally.
-                    # SoloBus handles PTT keying when sources are on a solo bus.
-                    if False and ptt_required:
-                        # PTT required (file playback / announcement input)
-
-                        # Trace: measure RMS inside PTT branch (the common
-                        # trace point after `continue` never runs for PTT)
-                        if self._trace_recording and data:
-                            _tr_arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-                            _tr_data_rms = float(np.sqrt(np.mean(_tr_arr * _tr_arr))) if len(_tr_arr) > 0 else 0.0
-
-                        # Update last sound time so PTT release timer works
-                        self.last_sound_time = time.time()
-
-                        # Calculate audio level for TX bar
-                        current_level = self.calculate_audio_level(data)
-                        # Smooth the level display (fast attack, slow decay)
-                        if current_level > self.rx_audio_level:
-                            self.rx_audio_level = current_level
-                        else:
-                            self.rx_audio_level = int(self.rx_audio_level * 0.7 + current_level * 0.3)
-
-                        # Update last RX audio time to prevent decay during file playback
-                        self.last_rx_audio_time = time.time()
-
-                        # Activate PTT if not already active and not muted.
-                        if not self.ptt_active and not self.tx_muted and not self.manual_ptt_mode:
-                            self.set_ptt_state(True)
-                            self._ptt_change_time = time.monotonic()  # arm click suppression in AIOCRadioSource
-                            self._announcement_ptt_delay_until = time.time() + self.config.PTT_ANNOUNCEMENT_DELAY
-                            self.announcement_delay_active = True
-
-                        # Clear the delay flag once the window has passed.
-                        if self.announcement_delay_active and time.time() >= self._announcement_ptt_delay_until:
-                            self.announcement_delay_active = False
-
-                        # Send audio to radio output
-                        _ptt_wrote = False
-                        _tx_radio_cfg = str(getattr(self.config, 'TX_RADIO', 'th9800')).lower()
-                        _use_d75_tx = (_tx_radio_cfg == 'd75' and self.d75_plugin)
-                        _use_kv4p_tx = (_tx_radio_cfg == 'kv4p' and self.kv4p_plugin)
-                        if (_use_d75_tx or _use_kv4p_tx or self.output_stream) and not self.tx_muted:
-                            try:
-                                # Suppress audio while the PTT relay is settling.
-                                # announcement_delay_active is set in the same iteration
-                                # that PTT first activates, so data already holds a real
-                                # audio chunk — replace it with silence here too.
-                                # KV4P uses serial audio with no physical relay, so no
-                                # settle delay is needed — send real audio immediately.
-                                _needs_delay = self.announcement_delay_active and not _use_kv4p_tx and not _use_d75_tx
-                                pcm = b'\x00' * len(data) if _needs_delay else data
-                                if self.config.OUTPUT_VOLUME != 1.0:
-                                    arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-                                    pcm = np.clip(arr * self.config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
-                                if _use_d75_tx:
-                                    self.d75_plugin.write_tx_audio(pcm)
-                                elif _use_kv4p_tx:
-                                    self.kv4p_plugin.write_tx_audio(pcm)
-                                else:
-                                    try:
-                                        self.output_stream.write(pcm, exception_on_overflow=False)
-                                    except TypeError:
-                                        self.output_stream.write(pcm)
-                                _ptt_wrote = True
-                            except IOError as io_err:
-                                if self.config.VERBOSE_LOGGING:
-                                    print(f"\n[Warning] Output stream buffer issue: {io_err}")
-                            except Exception as tx_err:
-                                if self.config.VERBOSE_LOGGING:
-                                    print(f"\n[Error] Failed to send to radio TX: {tx_err}")
-
-                        # EchoLink can optionally receive PTT audio directly
-                        if self.echolink_source and self.config.RADIO_TO_ECHOLINK:
-                            try:
-                                self.echolink_source.send_audio(data)
-                            except Exception as el_err:
-                                if self.config.VERBOSE_LOGGING:
-                                    print(f"\n[EchoLink] Send error: {el_err}")
-
-                        # Local output routing during PTT:
-                        # talkback OFF (default): local outputs get concurrent RX
-                        #   only (so user can monitor on a separate radio)
-                        # talkback ON: local outputs get TX audio (for local monitoring)
-                        if self.tx_talkback:
-                            # Talkback: send TX audio to all local outputs
-                            _local_audio = data
-                        else:
-                            # No talkback: forward concurrent radio RX (if any)
-                            _local_audio = (
-                                getattr(self.radio_source, '_rx_cache', None)
-                                if self.radio_source else rx_audio
-                            )
-                        _ws_local = _local_audio if _local_audio is not None else b'\x00' * len(data)
-                        if _local_audio is not None:
-                            if 'mumble' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())) and not getattr(self, '_listen_bus_muted', False):
-                                if (self.mumble and
-                                        hasattr(self.mumble, 'sound_output') and
-                                        self.mumble.sound_output is not None and
-                                        getattr(self.mumble.sound_output, 'encoder_framesize', None) is not None):
-                                    try:
-                                        self.mumble.sound_output.add_sound(_local_audio)
-                                    except Exception:
-                                        pass
-                            if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
-                                if self.speaker_stream and not self.speaker_muted:
-                                    self._speaker_enqueue(_local_audio)
-                        _listen_flags_ptt = self._bus_stream_flags.get(self._listen_bus_id, {})
-                        _bm_pcm_ptt = self.bus_manager.drain_pcm() if self.bus_manager else None
-                        _pcm_ptt_out = _ws_local if _listen_flags_ptt.get('pcm', False) else None
-                        if _bm_pcm_ptt is not None:
-                            if _pcm_ptt_out is None:
-                                _pcm_ptt_out = _bm_pcm_ptt
-                            else:
-                                from audio_bus import mix_audio_streams as _mix_ptt
-                                _pcm_ptt_out = _mix_ptt(_pcm_ptt_out, _bm_pcm_ptt)
-                        if _pcm_ptt_out is not None:
-                            if self.web_config_server and self.web_config_server._ws_clients:
-                                self.web_config_server.push_ws_audio(_pcm_ptt_out)
-
-                        # Push to MP3 stream during PTT (talkback=TX audio, else concurrent RX)
-                        if _listen_flags_ptt.get('mp3', False):
-                            if self.web_config_server and self.web_config_server._stream_subscribers:
-                                _mp3_audio = data if self.tx_talkback else _local_audio
-                                if _mp3_audio is not None:
-                                    self.web_config_server.push_audio(_mp3_audio)
-
-                        # Send ONE frame to remote client during PTT — the mixed
-                        # playback data.  Previously both rx_for_mumble AND data were
-                        # sent, doubling the frame rate and causing client-side stutter.
-                        if self.remote_audio_server and self.remote_audio_server.connected and not getattr(self, '_listen_bus_muted', False):
-                            try:
-                                _sv_t0 = time.monotonic()
-                                self.remote_audio_server.send_audio(data)
-                                _tr_sv_ms += (time.monotonic() - _sv_t0) * 1000
-                                _tr_sv_sent += 1
-                                self._update_sv_level(data)
-                            except Exception:
-                                pass
-
-                        # Skip the normal RX→Mumble path below - this is TX audio
-                        # Trace: encode PTT write status into outcome
-                        # ptt_ok = wrote to AIOC, ptt_nostream = output_stream is None,
-                        # ptt_txm = tx_muted, ptt_delay = in announcement delay
-                        if _ptt_wrote:
-                            _tr_outcome = 'ptt_ok'
-                        elif not self.output_stream:
-                            _tr_outcome = 'ptt_nostr'
-                        elif self.tx_muted:
-                            _tr_outcome = 'ptt_txm'
-                        else:
-                            _tr_outcome = 'ptt_err'
-                        continue
-
                     # No PTT required (radio RX / SDR) — deliver to sinks that bypass VAD, then gate
                     if data and not self.check_vad(data):
                         if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
                             self._speaker_enqueue(data)
                         _tr_outcome = 'vad_gate'
-                        continue
-
-                elif False:
-                    # Fallback AIOC path disabled — TH9800Plugin handles audio
-                    try:
-                        data = self.input_stream.read(
-                            self.config.AUDIO_CHUNK_SIZE,
-                            exception_on_overflow=False
-                        )
-                    except IOError as io_err:
-                        if io_err.errno == -9981:  # Input overflow
-                            if self.config.VERBOSE_LOGGING and consecutive_errors == 0:
-                                print("\n[Diagnostic] Input overflow, clearing buffer...")
-                            try:
-                                self.input_stream.read(self.config.AUDIO_CHUNK_SIZE * 2, exception_on_overflow=False)
-                            except:
-                                pass
-                            time.sleep(0.05)
-                            continue
-                        else:
-                            raise
-
-                    # Calculate audio level for TX
-                    current_level = self.calculate_audio_level(data)
-                    if current_level > self.tx_audio_level:
-                        self.tx_audio_level = current_level
-                    else:
-                        self.tx_audio_level = int(self.tx_audio_level * 0.7 + current_level * 0.3)
-
-                    self.last_audio_capture_time = time.time()
-                    self.last_successful_read = time.time()
-                    self.audio_capture_active = True
-
-                    if self.config.INPUT_VOLUME != 1.0 and data:
-                        try:
-                            arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-                            data = np.clip(arr * self.config.INPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
-                        except Exception:
-                            pass
-
-                    data = self.process_audio_for_mumble(data)
-
-                    # PCM already pushed earlier (after mixer.tick) — don't double-push
-
-                    if not self.check_vad(data):
-                        # Speaker bypasses VAD — monitor even when Mumble is gated
-                        if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
-                            self._speaker_enqueue(data)
                         continue
 
                 else:
@@ -3307,10 +3047,10 @@ class RadioGateway:
                     _sdr1_sb_after = -1
                     _sdr1_cb_ovf = 0
                     _sdr1_cb_drop = 0
-                    _aioc_disc = getattr(self.radio_source, '_serve_discontinuity', 0.0) if self.radio_source else 0.0
-                    _aioc_sb_after = getattr(self.radio_source, '_sub_buffer_after', -1) if self.radio_source else -1
-                    _aioc_cb_ovf = getattr(self.radio_source, '_cb_overflow_count', 0) if self.radio_source else 0
-                    _aioc_cb_drop = getattr(self.radio_source, '_cb_drop_count', 0) if self.radio_source else 0
+                    _aioc_disc = 0.0
+                    _aioc_sb_after = -1
+                    _aioc_cb_ovf = 0
+                    _aioc_cb_drop = 0
                     _kv4p_snap = self.kv4p_plugin.get_trace_snapshot() if self.kv4p_plugin else {}
 
                     _trace.append((
@@ -3324,7 +3064,7 @@ class RadioGateway:
                         ','.join(active_sources) if active_sources else '',  # 7: active sources
                         _tr_mixer_ms,                         # 8: mixer call duration (ms)
                         0.0,  # 9: SDR blocked (ms)
-                        getattr(self.radio_source, '_last_blocked_ms', 0.0) if self.radio_source else 0.0,  # 10: AIOC blocked (ms)
+                        0.0,  # 10: AIOC blocked (ms) — legacy field, always 0
                         _tr_outcome,                          # 11: outcome (sent/no_mumble/no_sndout/no_codec/ptt/exception)
                         _tr_mumble_ms,                        # 12: Mumble add_sound time (ms)
                         _tr_spk_ok,                           # 13: speaker enqueue attempted?
@@ -3553,7 +3293,6 @@ class RadioGateway:
                 print(f"  [Diagnostic] Opening new input stream (device {input_idx})...")
                 restart_os.dup2(devnull_fd, stderr_fd)
             
-            aioc_callback = getattr(self.radio_source, '_audio_callback', None) if self.radio_source else None
             try:
                 self.input_stream = self.pyaudio_instance.open(
                     format=audio_format,
@@ -3562,7 +3301,6 @@ class RadioGateway:
                     input=True,
                     input_device_index=input_idx,
                     frames_per_buffer=self.config.AUDIO_CHUNK_SIZE * 4,
-                    stream_callback=aioc_callback
                 )
 
                 if self.config.VERBOSE_LOGGING:
@@ -3663,7 +3401,6 @@ class RadioGateway:
                 )
             
             if input_idx is not None:
-                aioc_callback = getattr(self.radio_source, '_audio_callback', None) if self.radio_source else None
                 self.input_stream = self.pyaudio_instance.open(
                     format=audio_format,
                     channels=self.config.AUDIO_CHANNELS,
@@ -3671,7 +3408,6 @@ class RadioGateway:
                     input=True,
                     input_device_index=input_idx,
                     frames_per_buffer=self.config.AUDIO_CHUNK_SIZE * 4,
-                    stream_callback=aioc_callback
                 )
 
             if self.config.VERBOSE_LOGGING:
@@ -4437,7 +4173,7 @@ class RadioGateway:
             th_tx = _alive(self._tx_thread)
             th_stat = _alive(self._status_thread)
             th_kb = _alive(self._keyboard_thread)
-            th_aioc = _alive(self.radio_source._reader_thread if self.radio_source and hasattr(self.radio_source, '_reader_thread') else None)
+            th_aioc = _alive(self.radio_source._rx_thread if self.radio_source and hasattr(self.radio_source, '_rx_thread') else None)
             th_sdr1 = _alive(None)
             th_sdr2 = _alive(None)
             th_remote = _alive(self.remote_audio_source._reader_thread if self.remote_audio_source and hasattr(self.remote_audio_source, '_reader_thread') else None)
@@ -4477,8 +4213,10 @@ class RadioGateway:
             # Queue depths
             def _qsize(src):
                 try:
-                    if src and hasattr(src, '_chunk_queue'):
-                        return src._chunk_queue.qsize()
+                    for attr in ('_rx_queue', '_chunk_queue'):
+                        q = getattr(src, attr, None)
+                        if q is not None:
+                            return q.qsize()
                 except Exception:
                     pass
                 return -1
