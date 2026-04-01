@@ -11,7 +11,7 @@ Protocol: length-prefixed PCM — [4-byte big-endian uint32 length][PCM payload]
 Audio: 48000 Hz, mono, 16-bit signed little-endian PCM, 2400 frames per chunk.
 
 Keyboard controls:
-  l = Toggle TX LIVE/IDLE (mic capture)
+  l = Toggle TX ON/MUTE (mic capture)
   p = Toggle RX PLAY/MUTE (speaker output)
   , (or <) = TX volume down 5%
   . (or >) = TX volume up 5%
@@ -499,7 +499,7 @@ def _display_thread_func(state, gateway_host, tx_port, rx_port,
             f"  RX speaker: {out_dev_name}\n"
             f"  Gateway   : {gateway_host}  (TX→{tx_port}  RX←{rx_port})\n"
             f"\n"
-            f"  Keys: {CYAN}l{RESET}=TX live/idle  {CYAN}p{RESET}=RX play/mute  "
+            f"  Keys: {CYAN}l{RESET}=TX on/mute  {CYAN}p{RESET}=RX play/mute  "
             f"{CYAN}</>={RESET}TX vol  {CYAN}[/]={RESET}RX vol  Ctrl+C=quit\n"
         )
 
@@ -516,9 +516,9 @@ def _display_thread_func(state, gateway_host, tx_port, rx_port,
         if not tx_conn:
             tx_tag = f"{YELLOW}DISCONNECTED{RESET}"
         elif tx_live:
-            tx_tag = f"{RED}LIVE{RESET}"
+            tx_tag = f"{GREEN}  ON{RESET}"
         else:
-            tx_tag = f"{GREEN}IDLE{RESET}"
+            tx_tag = f"{YELLOW}MUTE{RESET}"
         tx_bar, tx_sdb = level_bar(tx_db, vol_pct=tx_vol)
 
         # RX status
