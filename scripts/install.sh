@@ -78,6 +78,39 @@ else
 fi
 
 echo "  ✓ System packages installed"
+
+# cloudflared — Cloudflare tunnel for free public HTTPS access (optional)
+echo "  Installing cloudflared..."
+if command -v cloudflared &>/dev/null; then
+    echo "  ✓ cloudflared already installed"
+elif [ "$DISTRO" = "arch" ]; then
+    # Try AUR helper first, fall back to manual binary
+    if command -v yay &>/dev/null; then
+        yay -S --noconfirm cloudflared-bin 2>/dev/null \
+            && echo "  ✓ cloudflared installed (AUR)" \
+            || echo "  ⚠ cloudflared install failed — Cloudflare tunnel will not work"
+    elif command -v paru &>/dev/null; then
+        paru -S --noconfirm cloudflared-bin 2>/dev/null \
+            && echo "  ✓ cloudflared installed (AUR)" \
+            || echo "  ⚠ cloudflared install failed — Cloudflare tunnel will not work"
+    else
+        echo "  ⚠ No AUR helper found — install cloudflared manually:"
+        echo "    yay -S cloudflared-bin"
+    fi
+else
+    # Debian/Ubuntu/RPi — official Cloudflare repo
+    set +e
+    if curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null 2>&1 \
+        && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null 2>&1 \
+        && sudo apt-get update -qq 2>/dev/null \
+        && sudo apt-get install -y cloudflared 2>/dev/null; then
+        echo "  ✓ cloudflared installed (Cloudflare repo)"
+    else
+        echo "  ⚠ cloudflared install failed — Cloudflare tunnel will not work"
+        echo "    See: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+    fi
+    set -e
+fi
 echo
 
 # ── 2. ALSA loopback module ──────────────────────────────────
@@ -260,6 +293,17 @@ set +e
 _pip mcp 2>/dev/null \
     && echo "  ✓ mcp installed (MCP server for AI control)" \
     || echo "  ⚠ Could not pip install mcp — gateway_mcp.py will not work (run: pip install mcp)"
+set -e
+
+# faster-whisper — local voice-to-text transcription engine (optional, ~500MB model download on first use)
+set +e
+if python3 -c "import faster_whisper" 2>/dev/null; then
+    echo "  ✓ faster-whisper already installed"
+else
+    _pip faster-whisper 2>/dev/null \
+        && echo "  ✓ faster-whisper installed (transcription engine)" \
+        || echo "  ⚠ Could not pip install faster-whisper — transcription will not work"
+fi
 set -e
 
 # UDEV rule for CP2102 (KV4P HT USB-serial chip) — stable /dev/kv4p symlink
