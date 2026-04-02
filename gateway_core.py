@@ -298,6 +298,7 @@ class RadioGateway:
         self.sdr2_muted = False  # SDR2-specific mute
         self.sdr2_ducked = False  # Is SDR2 currently being ducked (status display)
         self.sdr2_audio_level = 0  # SDR2 audio level for status bar
+        self.stream_audio_level = 0  # Broadcastify stream level for status bar
         self.remote_audio_server = None   # RemoteAudioServer (role=server)
         self.remote_audio_source = None   # RemoteAudioSource (role=client)
         self.remote_audio_muted = False   # Client: mute toggle
@@ -1728,7 +1729,8 @@ class RadioGateway:
             # Initialize Cloudflare Tunnel
             if getattr(self.config, 'ENABLE_CLOUDFLARE_TUNNEL', False):
                 try:
-                    self.cloudflare_tunnel = CloudflareTunnel(self.config)
+                    self.cloudflare_tunnel = CloudflareTunnel(
+                        self.config, on_url_changed=self._on_tunnel_url_changed)
                     self.cloudflare_tunnel.start()
                 except Exception as e:
                     print(f"  [Tunnel] Init error: {e}")
@@ -5256,5 +5258,14 @@ class RadioGateway:
                 pass
         
         print("Shutdown complete")
+
+    def _on_tunnel_url_changed(self, new_url):
+        """Called by CloudflareTunnel when the tunnel is relaunched with a new URL."""
+        print(f"  [Gateway] Tunnel URL changed: {new_url}")
+        if self.email_notifier:
+            try:
+                self.email_notifier.send_tunnel_changed(new_url)
+            except Exception as e:
+                print(f"  [Gateway] Failed to send tunnel change email: {e}")
 
 

@@ -95,12 +95,12 @@
 <!-- Frequency display -->
 <div class="kv-panel" id="kv-freq-box">
   <div class="kv-row" style="justify-content:center;">
-    <span class="kv-label">RX</span>
+    <span id="kv-rx-label" class="kv-label">RX</span>
     <span id="kv-rx-freq" class="kv-freq">—</span>
     <span class="kv-label">MHz</span>
   </div>
   <div id="kv-tx-freq-row" class="kv-row" style="justify-content:center; display:none;">
-    <span class="kv-label">TX</span>
+    <span id="kv-tx-label" class="kv-label">TX</span>
     <span id="kv-tx-freq" style="color:#e67e22; font-size:1.6em; font-family:monospace;">—</span>
     <span class="kv-label">MHz</span>
   </div>
@@ -248,15 +248,29 @@ function kvPoll() {
     kvFreqBox.style.background = d.transmitting ? '#5c1a1a' : '';
     kvFreqBox.style.borderColor = d.transmitting ? '#e74c3c' : '';
 
-    // Frequency
+    // Frequency — show TX freq as primary when transmitting on a split
     var rxf = d.frequency || '0.000000';
-    document.getElementById('kv-rx-freq').textContent = parseFloat(rxf).toFixed(4);
-
     var txf = d.tx_frequency || rxf;
-    if (txf !== rxf) {
+    var isSplit = (txf !== rxf);
+
+    if (d.transmitting && isSplit) {
+      // TX active on split: big display = TX freq, small row = RX freq
+      document.getElementById('kv-rx-label').textContent = 'TX';
+      document.getElementById('kv-rx-freq').textContent = parseFloat(txf).toFixed(4);
       document.getElementById('kv-tx-freq-row').style.display = 'flex';
+      document.getElementById('kv-tx-label').textContent = 'RX';
+      document.getElementById('kv-tx-freq').textContent = parseFloat(rxf).toFixed(4);
+    } else if (isSplit) {
+      // Split but not TX: big display = RX, small row = TX
+      document.getElementById('kv-rx-label').textContent = 'RX';
+      document.getElementById('kv-rx-freq').textContent = parseFloat(rxf).toFixed(4);
+      document.getElementById('kv-tx-freq-row').style.display = 'flex';
+      document.getElementById('kv-tx-label').textContent = 'TX';
       document.getElementById('kv-tx-freq').textContent = parseFloat(txf).toFixed(4);
     } else {
+      // Simplex
+      document.getElementById('kv-rx-label').textContent = 'RX';
+      document.getElementById('kv-rx-freq').textContent = parseFloat(rxf).toFixed(4);
       document.getElementById('kv-tx-freq-row').style.display = 'none';
     }
 

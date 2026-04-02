@@ -344,6 +344,19 @@ class KV4PPlugin(RadioPlugin):
         except Exception:
             pass
 
+    # Frequency ranges per RF module type
+    _FREQ_RANGES = {
+        'SA818_VHF': (134.0, 174.0),
+        'SA818_UHF': (400.0, 480.0),
+    }
+
+    def _validate_freq(self, freq):
+        """Check if frequency is within the RF module's range. Returns error string or None."""
+        lo, hi = self._FREQ_RANGES.get(self._rf_module, (0, 9999))
+        if not (lo <= freq <= hi):
+            return f"{freq:.4f} MHz out of range for {self._rf_module} ({lo:.0f}-{hi:.0f} MHz)"
+        return None
+
     def execute(self, cmd):
         """Handle commands: freq, squelch, ctcss, bandwidth, power, boost, ptt, mute, status."""
         if not isinstance(cmd, dict):
@@ -353,6 +366,13 @@ class KV4PPlugin(RadioPlugin):
         if action == 'freq':
             freq = float(cmd.get('frequency', self._frequency))
             tx_freq = float(cmd.get('tx_frequency', 0))
+            err = self._validate_freq(freq)
+            if err:
+                return {"ok": False, "error": err}
+            if tx_freq > 0:
+                err = self._validate_freq(tx_freq)
+                if err:
+                    return {"ok": False, "error": f"TX {err}"}
             self._frequency = freq
             self._tx_frequency = tx_freq if tx_freq > 0 else freq
             self._apply_group()
@@ -489,10 +509,14 @@ class KV4PPlugin(RadioPlugin):
                 self._firmware_version = ver.firmware_version
                 self._rf_module = ver.rf_module_type.name if hasattr(ver.rf_module_type, 'name') else 'VHF'
 
-            # Apply initial config
+            # Apply initial config (warn if frequency is out of range for this module)
             self._frequency = float(getattr(self._config, 'KV4P_FREQ', 146.520))
             tx_freq = float(getattr(self._config, 'KV4P_TX_FREQ', 0))
             self._tx_frequency = tx_freq if tx_freq > 0 else self._frequency
+            for _label, _f in [('RX', self._frequency), ('TX', self._tx_frequency)]:
+                _err = self._validate_freq(_f)
+                if _err:
+                    print(f"  [KV4P] WARNING: {_label} {_err}")
             self._squelch = int(getattr(self._config, 'KV4P_SQUELCH', 4))
             self._bandwidth = int(getattr(self._config, 'KV4P_BANDWIDTH', 1))
             self._ctcss_tx = int(getattr(self._config, 'KV4P_CTCSS_TX', 0))

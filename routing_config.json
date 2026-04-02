@@ -8,7 +8,7 @@
         "playback"
       ],
       "sinks": [
-        "d75_tx"
+        "kv4p_tx"
       ],
       "processing": {
         "pcm": false
@@ -40,7 +40,21 @@
         "transcription"
       ],
       "processing": {
-        "pcm": true
+        "pcm": false
+      }
+    },
+    {
+      "id": "tester",
+      "name": "tester",
+      "type": "solo",
+      "sources": [
+        "kv4p"
+      ],
+      "sinks": [
+        "speaker"
+      ],
+      "processing": {
+        "pcm": false
       }
     }
   ],
@@ -49,6 +63,11 @@
       "type": "source-bus",
       "from": "sdr",
       "to": "main"
+    },
+    {
+      "type": "source-bus",
+      "from": "kv4p",
+      "to": "tester"
     },
     {
       "type": "source-bus",
@@ -63,7 +82,7 @@
     {
       "type": "bus-sink",
       "from": "announce",
-      "to": "d75_tx"
+      "to": "kv4p_tx"
     },
     {
       "type": "bus-sink",
@@ -79,14 +98,19 @@
       "type": "bus-sink",
       "from": "th9800",
       "to": "transcription"
+    },
+    {
+      "type": "bus-sink",
+      "from": "tester",
+      "to": "speaker"
     }
   ],
   "layout": {
     "drawflow": {
       "Home": {
         "data": {
-          "44": {
-            "id": 44,
+          "1": {
+            "id": 1,
             "name": "sdr",
             "data": {
               "id": "sdr"
@@ -99,7 +123,7 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "55",
+                    "node": "12",
                     "output": "input_1"
                   }
                 ]
@@ -108,8 +132,8 @@
             "pos_x": 50,
             "pos_y": 20
           },
-          "45": {
-            "id": 45,
+          "2": {
+            "id": 2,
             "name": "kv4p",
             "data": {
               "id": "kv4p"
@@ -120,14 +144,19 @@
             "inputs": {},
             "outputs": {
               "output_1": {
-                "connections": []
+                "connections": [
+                  {
+                    "node": "14",
+                    "output": "input_1"
+                  }
+                ]
               }
             },
             "pos_x": 50,
             "pos_y": 100
           },
-          "46": {
-            "id": 46,
+          "3": {
+            "id": 3,
             "name": "d75",
             "data": {
               "id": "d75"
@@ -144,8 +173,8 @@
             "pos_x": 50,
             "pos_y": 180
           },
-          "47": {
-            "id": 47,
+          "4": {
+            "id": 4,
             "name": "aioc",
             "data": {
               "id": "aioc"
@@ -158,7 +187,7 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "56",
+                    "node": "13",
                     "output": "input_1"
                   }
                 ]
@@ -167,8 +196,8 @@
             "pos_x": 50,
             "pos_y": 260
           },
-          "48": {
-            "id": 48,
+          "5": {
+            "id": 5,
             "name": "playback",
             "data": {
               "id": "playback"
@@ -181,7 +210,7 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "54",
+                    "node": "11",
                     "output": "input_1"
                   }
                 ]
@@ -190,8 +219,8 @@
             "pos_x": 50,
             "pos_y": 340
           },
-          "49": {
-            "id": 49,
+          "6": {
+            "id": 6,
             "name": "webmic",
             "data": {
               "id": "webmic"
@@ -208,8 +237,8 @@
             "pos_x": 50,
             "pos_y": 420
           },
-          "50": {
-            "id": 50,
+          "7": {
+            "id": 7,
             "name": "announce",
             "data": {
               "id": "announce"
@@ -226,8 +255,8 @@
             "pos_x": 50,
             "pos_y": 500
           },
-          "51": {
-            "id": 51,
+          "8": {
+            "id": 8,
             "name": "monitor",
             "data": {
               "id": "monitor"
@@ -244,8 +273,8 @@
             "pos_x": 50,
             "pos_y": 580
           },
-          "52": {
-            "id": 52,
+          "9": {
+            "id": 9,
             "name": "mumble_rx",
             "data": {
               "id": "mumble_rx"
@@ -262,8 +291,8 @@
             "pos_x": 50,
             "pos_y": 660
           },
-          "53": {
-            "id": 53,
+          "10": {
+            "id": 10,
             "name": "remote_audio",
             "data": {
               "id": "remote_audio"
@@ -280,8 +309,8 @@
             "pos_x": 50,
             "pos_y": 740
           },
-          "54": {
-            "id": 54,
+          "11": {
+            "id": 11,
             "name": "announce",
             "data": {
               "id": "announce",
@@ -294,7 +323,7 @@
               "input_1": {
                 "connections": [
                   {
-                    "node": "48",
+                    "node": "5",
                     "input": "output_1"
                   }
                 ]
@@ -304,7 +333,7 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "64",
+                    "node": "21",
                     "output": "input_1"
                   }
                 ]
@@ -313,8 +342,8 @@
             "pos_x": 377,
             "pos_y": 431
           },
-          "55": {
-            "id": 55,
+          "12": {
+            "id": 12,
             "name": "main",
             "data": {
               "id": "main",
@@ -327,7 +356,7 @@
               "input_1": {
                 "connections": [
                   {
-                    "node": "44",
+                    "node": "1",
                     "input": "output_1"
                   }
                 ]
@@ -337,11 +366,11 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "58",
+                    "node": "16",
                     "output": "input_1"
                   },
                   {
-                    "node": "57",
+                    "node": "15",
                     "output": "input_1"
                   }
                 ]
@@ -350,21 +379,21 @@
             "pos_x": 371,
             "pos_y": 10
           },
-          "56": {
-            "id": 56,
+          "13": {
+            "id": 13,
             "name": "th9800",
             "data": {
               "id": "th9800",
               "type": "solo"
             },
             "class": "bus-solo",
-            "html": "TH9800\n<div class=\"box\">solo bus<div class=\"proc-buttons\"><button class=\"proc-btn\" onclick=\"toggleProc('th9800','gate')\" id=\"proc-th9800-gate\" title=\"Noise Gate\">G</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','hpf')\" id=\"proc-th9800-hpf\" title=\"High Pass Filter\">H</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','lpf')\" id=\"proc-th9800-lpf\" title=\"Low Pass Filter\">L</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','notch')\" id=\"proc-th9800-notch\" title=\"Notch Filter\">N</button><span style=\"margin-left:6px;border-left:1px solid #555;padding-left:6px;\"></span><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','pcm')\" id=\"proc-th9800-pcm\" title=\"Feed PCM stream\">P</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','mp3')\" id=\"proc-th9800-mp3\" title=\"Feed MP3 stream\">M</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','vad')\" id=\"proc-th9800-vad\" title=\"VAD gate\">V</button><span style=\"flex-grow:1;\"></span><button class=\"mute-btn\" onclick=\"toggleBusMute('th9800')\" id=\"bus-mute-th9800\" title=\"Mute bus\">M</button></div><div class=\"level-bar\" id=\"level-bus_th9800\"><div class=\"level-fill\"></div></div></div>",
+            "html": "TH9800\n<div class=\"box\">solo bus<div class=\"proc-buttons\"><button class=\"proc-btn\" onclick=\"toggleProc('th9800','gate')\" id=\"proc-th9800-gate\" title=\"Noise Gate\">G</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','hpf')\" id=\"proc-th9800-hpf\" title=\"High Pass Filter\">H</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','lpf')\" id=\"proc-th9800-lpf\" title=\"Low Pass Filter\">L</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','notch')\" id=\"proc-th9800-notch\" title=\"Notch Filter\">N</button><span style=\"margin-left:6px;border-left:1px solid #555;padding-left:6px;\"></span><button class=\"proc-btn out-btn on\" onclick=\"toggleProc('th9800','pcm')\" id=\"proc-th9800-pcm\" title=\"Feed PCM stream\">P</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','mp3')\" id=\"proc-th9800-mp3\" title=\"Feed MP3 stream\">M</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','vad')\" id=\"proc-th9800-vad\" title=\"VAD gate\">V</button><span style=\"flex-grow:1;\"></span><button class=\"mute-btn\" onclick=\"toggleBusMute('th9800')\" id=\"bus-mute-th9800\" title=\"Mute bus\">M</button></div><div class=\"level-bar\" id=\"level-bus_th9800\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {
               "input_1": {
                 "connections": [
                   {
-                    "node": "47",
+                    "node": "4",
                     "input": "output_1"
                   }
                 ]
@@ -374,17 +403,50 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "61",
+                    "node": "19",
                     "output": "input_1"
                   }
                 ]
               }
             },
-            "pos_x": 387,
-            "pos_y": 187
+            "pos_x": 372,
+            "pos_y": 257
           },
-          "57": {
-            "id": 57,
+          "14": {
+            "id": 14,
+            "name": "tester",
+            "data": {
+              "id": "tester",
+              "type": "solo"
+            },
+            "class": "bus-solo",
+            "html": "tester\n<div class=\"box\">solo bus<div class=\"proc-buttons\"><button class=\"proc-btn\" onclick=\"toggleProc('tester','gate')\" id=\"proc-tester-gate\" title=\"Noise Gate\">G</button><button class=\"proc-btn\" onclick=\"toggleProc('tester','hpf')\" id=\"proc-tester-hpf\" title=\"High Pass Filter\">H</button><button class=\"proc-btn\" onclick=\"toggleProc('tester','lpf')\" id=\"proc-tester-lpf\" title=\"Low Pass Filter\">L</button><button class=\"proc-btn\" onclick=\"toggleProc('tester','notch')\" id=\"proc-tester-notch\" title=\"Notch Filter\">N</button><span style=\"margin-left:6px;border-left:1px solid #555;padding-left:6px;\"></span><button class=\"proc-btn out-btn\" onclick=\"toggleProc('tester','pcm')\" id=\"proc-tester-pcm\" title=\"Feed PCM stream\">P</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('tester','mp3')\" id=\"proc-tester-mp3\" title=\"Feed MP3 stream\">M</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('tester','vad')\" id=\"proc-tester-vad\" title=\"VAD gate\">V</button><span style=\"flex-grow:1;\"></span><button class=\"mute-btn\" onclick=\"toggleBusMute('tester')\" id=\"bus-mute-tester\" title=\"Mute bus\">M</button></div><div class=\"level-bar\" id=\"level-bus_tester\"><div class=\"level-fill\"></div></div></div>",
+            "typenode": false,
+            "inputs": {
+              "input_1": {
+                "connections": [
+                  {
+                    "node": "2",
+                    "input": "output_1"
+                  }
+                ]
+              }
+            },
+            "outputs": {
+              "output_1": {
+                "connections": [
+                  {
+                    "node": "17",
+                    "output": "input_1"
+                  }
+                ]
+              }
+            },
+            "pos_x": 366,
+            "pos_y": 128
+          },
+          "15": {
+            "id": 15,
             "name": "mumble",
             "data": {
               "id": "mumble"
@@ -396,7 +458,7 @@
               "input_1": {
                 "connections": [
                   {
-                    "node": "55",
+                    "node": "12",
                     "input": "output_1"
                   }
                 ]
@@ -406,8 +468,8 @@
             "pos_x": 734,
             "pos_y": 257
           },
-          "58": {
-            "id": 58,
+          "16": {
+            "id": 16,
             "name": "broadcastify",
             "data": {
               "id": "broadcastify"
@@ -419,7 +481,7 @@
               "input_1": {
                 "connections": [
                   {
-                    "node": "55",
+                    "node": "12",
                     "input": "output_1"
                   }
                 ]
@@ -429,8 +491,8 @@
             "pos_x": 731,
             "pos_y": 9
           },
-          "59": {
-            "id": 59,
+          "17": {
+            "id": 17,
             "name": "speaker",
             "data": {
               "id": "speaker"
@@ -440,15 +502,20 @@
             "typenode": false,
             "inputs": {
               "input_1": {
-                "connections": []
+                "connections": [
+                  {
+                    "node": "14",
+                    "input": "output_1"
+                  }
+                ]
               }
             },
             "outputs": {},
             "pos_x": 731,
             "pos_y": 92
           },
-          "60": {
-            "id": 60,
+          "18": {
+            "id": 18,
             "name": "recording",
             "data": {
               "id": "recording"
@@ -465,8 +532,8 @@
             "pos_x": 732,
             "pos_y": 170
           },
-          "61": {
-            "id": 61,
+          "19": {
+            "id": 19,
             "name": "transcription",
             "data": {
               "id": "transcription"
@@ -478,7 +545,7 @@
               "input_1": {
                 "connections": [
                   {
-                    "node": "56",
+                    "node": "13",
                     "input": "output_1"
                   }
                 ]
@@ -488,8 +555,8 @@
             "pos_x": 737,
             "pos_y": 668
           },
-          "62": {
-            "id": 62,
+          "20": {
+            "id": 20,
             "name": "remote_audio_tx",
             "data": {
               "id": "remote_audio_tx"
@@ -506,8 +573,8 @@
             "pos_x": 740,
             "pos_y": 340
           },
-          "63": {
-            "id": 63,
+          "21": {
+            "id": 21,
             "name": "kv4p_tx",
             "data": {
               "id": "kv4p_tx"
@@ -517,15 +584,20 @@
             "typenode": false,
             "inputs": {
               "input_1": {
-                "connections": []
+                "connections": [
+                  {
+                    "node": "11",
+                    "input": "output_1"
+                  }
+                ]
               }
             },
             "outputs": {},
             "pos_x": 740,
             "pos_y": 420
           },
-          "64": {
-            "id": 64,
+          "22": {
+            "id": 22,
             "name": "d75_tx",
             "data": {
               "id": "d75_tx"
@@ -535,20 +607,15 @@
             "typenode": false,
             "inputs": {
               "input_1": {
-                "connections": [
-                  {
-                    "node": "54",
-                    "input": "output_1"
-                  }
-                ]
+                "connections": []
               }
             },
             "outputs": {},
             "pos_x": 740,
             "pos_y": 500
           },
-          "65": {
-            "id": 65,
+          "23": {
+            "id": 23,
             "name": "aioc_tx",
             "data": {
               "id": "aioc_tx"

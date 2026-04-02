@@ -415,6 +415,35 @@ class EmailNotifier:
 
         return lines
 
+    def send_tunnel_changed(self, new_url):
+        """Send notification that the Cloudflare tunnel URL has changed."""
+        import datetime
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        lines = [
+            f"Cloudflare tunnel URL changed at {now}",
+            "",
+            f"Gateway:   {new_url}",
+            f"Config:    {new_url}/config",
+            f"Monitor:   {new_url}/monitor",
+            f"Monitor App: {new_url}/ws_monitor",
+            f"Voice Tmux: {new_url.rstrip('/')}/voice",
+            "",
+            "The previous tunnel link has expired. Update your bookmarks.",
+            "",
+            "-- Radio Gateway",
+        ]
+
+        hostname = ''
+        try:
+            import socket
+            hostname = socket.gethostname()
+        except Exception:
+            pass
+
+        subject = f"Tunnel URL Changed{' — ' + hostname if hostname else ''}"
+        self.send(subject, '\n'.join(lines))
+
     def send_startup_delayed(self):
         """Wait for tunnel URL (up to 60s) then send startup email."""
         def _delayed():
@@ -446,12 +475,16 @@ class CloudflareTunnel:
     URL_FILE = '/tmp/cloudflare_tunnel_url'
     LOG_FILE = '/tmp/cloudflared_output.log'
 
-    def __init__(self, config):
+    HEALTH_CHECK_INTERVAL = 900  # seconds between liveness checks (15 min)
+
+    def __init__(self, config, on_url_changed=None):
         self.config = config
         self._process = None  # only set if WE launched it
         self._url = None
         self._thread = None
         self._adopted = False  # True if we reused an existing process
+        self._on_url_changed = on_url_changed  # callback(new_url) when tunnel is replaced
+        self._health_thread = None
 
     def start(self):
         import subprocess
@@ -488,6 +521,7 @@ class CloudflareTunnel:
                 # the next restart will launch a fresh one.
                 if self._url:
                     print(f"  [Tunnel] Reusing existing cloudflared (URL: {self._url})")
+                    self._start_health_check()
                     return
                 # No cached URL but process is running — tail the log for it
                 else:
@@ -495,6 +529,7 @@ class CloudflareTunnel:
                     self._thread = threading.Thread(target=self._tail_log, daemon=True,
                                                     name="cf-tunnel")
                     self._thread.start()
+                    self._start_health_check()
                     return
         except Exception:
             pass
@@ -508,6 +543,60 @@ class CloudflareTunnel:
             pass
 
         self._do_launch(port)
+        self._start_health_check()
+
+    def _start_health_check(self):
+        """Start periodic health check thread if not already running."""
+        if self._health_thread and self._health_thread.is_alive():
+            return
+        self._health_thread = threading.Thread(target=self._health_check_loop, daemon=True,
+                                                name="cf-health")
+        self._health_thread.start()
+
+    def _health_check_loop(self):
+        """Periodically verify cloudflared is alive; relaunch if it has exited."""
+        import subprocess
+        while True:
+            time.sleep(self.HEALTH_CHECK_INTERVAL)
+            try:
+                result = subprocess.run(
+                    ['pgrep', '-x', 'cloudflared'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    continue  # Still running
+
+                # cloudflared is gone — relaunch
+                old_url = self._url
+                self._url = None
+                self._adopted = False
+                self._process = None
+                try:
+                    os.unlink(self.URL_FILE)
+                except Exception:
+                    pass
+
+                port = int(getattr(self.config, 'WEB_CONFIG_PORT', 8080))
+                print(f"  [Tunnel] cloudflared not running — relaunching...")
+                self._do_launch(port)
+
+                # Wait up to 60s for new URL
+                for _ in range(60):
+                    if self._url:
+                        break
+                    time.sleep(1)
+
+                if self._url and self._url != old_url:
+                    print(f"  [Tunnel] New URL after relaunch: {self._url}")
+                    if self._on_url_changed:
+                        try:
+                            self._on_url_changed(self._url)
+                        except Exception as e:
+                            print(f"  [Tunnel] on_url_changed callback error: {e}")
+                elif not self._url:
+                    print(f"  [Tunnel] Relaunch failed — no URL after 60s")
+            except Exception as e:
+                print(f"  [Tunnel] Health check error: {e}")
 
     def _do_launch(self, port):
         """Launch cloudflared in its own systemd scope so it survives gateway restarts.
