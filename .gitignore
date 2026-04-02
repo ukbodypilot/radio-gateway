@@ -47,6 +47,8 @@ logs/
 # User configurations — never commit (contains secrets: stream keys, passwords)
 gateway_config.txt
 sdr_channels.json
+routing_config.json
+.transcribe_settings.json
 gateway_config_local.txt
 windows_audio_client.json
 web_cert.pem
