@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "mode": "streaming",
   "model": "base",
   "language": "en",
@@ -7,5 +7,5 @@
   "vad_hold": 0.7,
   "forward_mumble": false,
   "forward_telegram": false,
-  "audio_boost": 150
+  "audio_boost": 200
 }

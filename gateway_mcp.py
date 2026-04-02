@@ -687,18 +687,24 @@ def d75_command(
 
     Args:
         cmd:  Command name — one of:
-              'btstart'    — Start Bluetooth connection
-              'btstop'     — Stop Bluetooth connection
-              'reconnect'  — Reconnect TCP + auto BT start
-              'start_service' — Start d75-cat systemd service
               'cat'        — Send raw CAT command (put command in args)
               'vol'        — Set audio boost 0-500% (put value in args)
               'ptt'        — Toggle PTT on D75
-        args: Arguments for the command (e.g. CAT command string like 'FO 0',
-              or volume percentage like '200').
+              'tone'       — Set tone (args: 'band off|tone|ctcss|dcs [freq/code]')
+              'shift'      — Set shift (args: 'band 0|1|2')
+              'offset'     — Set offset (args: 'band mhz')
+              'freq'       — Set frequency (args: 'band,freq_hz')
+              'btstart'    — Start Bluetooth (managed by endpoint)
+              'btstop'     — Stop Bluetooth (managed by endpoint)
+              'reconnect'  — Reconnect (managed by endpoint)
+              'start_service' — Start d75-cat service
+              'mute'       — Toggle mute
+              'status'     — Request status update
+        args: Arguments for the command.
     """
     cmd = cmd.lower().strip()
-    valid = ('btstart', 'btstop', 'reconnect', 'start_service', 'cat', 'vol', 'ptt')
+    valid = ('btstart', 'btstop', 'reconnect', 'start_service', 'cat', 'vol',
+             'ptt', 'tone', 'shift', 'offset', 'freq', 'mute', 'status')
     if cmd not in valid:
         return f"Error: cmd must be one of: {', '.join(valid)}"
     result = _post('/d75cmd', {'cmd': cmd, 'args': args}, timeout=15)
@@ -1278,7 +1284,7 @@ def set_gain(target_id: str, gain_percent: int) -> str:
 
     Args:
         target_id: The source or sink ID
-        gain_percent: Gain as percentage (0-200, where 100 = unity)
+        gain_percent: Gain as percentage (0-500, where 100 = unity)
     """
     result = _post('/routing/cmd', {
         'cmd': 'gain',
@@ -1288,6 +1294,220 @@ def set_gain(target_id: str, gain_percent: int) -> str:
     if result.get('ok'):
         return f"'{target_id}' gain: {gain_percent}%"
     return f"Error: {result.get('error', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
+# Transcription
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def transcription_status() -> str:
+    """
+    Get live transcription status: model, mode, VAD state, performance stats,
+    and recent transcription results.
+    """
+    result = _get('/transcriptions?since=0')
+    status = result.get('status', {})
+    results = result.get('results', [])
+    lines = []
+    lines.append(f"Mode: {status.get('mode', '?')}  Model: {status.get('model', '?')}  Enabled: {status.get('enabled', '?')}")
+    lines.append(f"Loaded: {status.get('model_loaded', False)}  VAD: {status.get('vad_db', -100):.0f}dB (thresh {status.get('vad_threshold', '?')})")
+    lines.append(f"Total: {status.get('total_transcriptions', 0)}  Pending: {status.get('pending', 0)}")
+    stats = status.get('stats', {})
+    if stats.get('count', 0) > 0:
+        lines.append(f"Perf: avg {stats.get('avg_ratio', '?')}x realtime, {stats.get('realtime_pct', '?')}% under realtime")
+    if results:
+        lines.append(f"\nRecent ({len(results)}):")
+        for r in results[-10:]:
+            p = ' [partial]' if r.get('partial') else ''
+            lines.append(f"  [{r.get('time_str','')}] ({r.get('duration',0)}s) {r.get('text','')[:80]}{p}")
+    return '\n'.join(lines)
+
+
+@mcp.tool()
+def transcription_config(
+    key: str,
+    value: str,
+) -> str:
+    """
+    Change transcription settings at runtime.
+
+    Args:
+        key:   Setting to change — one of:
+               'enabled'     — true/false (pause/resume without restart)
+               'model'       — tiny/base/small/medium (requires restart)
+               'mode'        — chunked/streaming (requires restart)
+               'language'    — en/es/fr/de/ja/auto
+               'vad_threshold' — dB level, e.g. -35
+               'vad_hold'    — seconds, e.g. 1.0
+               'min_duration' — seconds, e.g. 0.5
+               'audio_boost' — percentage, e.g. 200
+               'forward_mumble' — true/false
+               'forward_telegram' — true/false
+               'restart'     — restart transcriber with saved settings
+               'clear'       — clear all results
+        value: The value to set (ignored for restart/clear).
+    """
+    if key in ('enabled', 'forward_mumble', 'forward_telegram'):
+        value = value.lower() in ('true', '1', 'yes')
+    result = _post('/transcribe_config', {'key': key, 'value': value})
+    if result.get('ok'):
+        note = result.get('note', '')
+        return f"Transcription {key} set" + (f' ({note})' if note else '')
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
+# Link Endpoints
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def link_endpoint_status() -> str:
+    """
+    Get detailed status of all connected Gateway Link endpoints including
+    audio levels, PTT state, capabilities, and endpoint-reported radio state.
+    """
+    result = _get('/status')
+    endpoints = result.get('link_endpoints', [])
+    if not endpoints:
+        return "No link endpoints connected"
+    lines = []
+    for ep in endpoints:
+        lines.append(f"Endpoint: {ep['name']}")
+        lines.append(f"  Plugin: {ep.get('plugin', '?')}  Connected: {ep.get('connected')}")
+        lines.append(f"  RX level: {ep.get('level', 0)}  TX level: {ep.get('tx_level', 0)}")
+        lines.append(f"  RX muted: {ep.get('rx_muted')}  TX muted: {ep.get('tx_muted')}  PTT: {ep.get('ptt_active')}")
+        caps = ep.get('capabilities', {})
+        lines.append(f"  Capabilities: {', '.join(k for k, v in caps.items() if v)}")
+        es = ep.get('endpoint_status', {})
+        if es:
+            for k in ('model', 'firmware', 'serial_connected', 'audio_connected',
+                       'battery_level', 'transmitting', 'active_band'):
+                if k in es:
+                    lines.append(f"  {k}: {es[k]}")
+            bands = es.get('band', [])
+            for i, b in enumerate(bands):
+                if isinstance(b, dict) and b.get('frequency'):
+                    lines.append(f"  Band {i}: {b['frequency']} MHz power={b.get('power','')} s_meter={b.get('s_meter','')}")
+    return '\n'.join(lines)
+
+
+@mcp.tool()
+def link_endpoint_command(
+    endpoint: str,
+    cmd: str,
+    args: str = '',
+) -> str:
+    """
+    Send a command to a specific link endpoint.
+
+    Args:
+        endpoint: Endpoint name (e.g. 'd75-bt')
+        cmd:      Command — 'ptt', 'frequency', 'cat', 'tone', 'shift', 'offset',
+                  'memscan', 'status', 'rx_gain', 'tx_gain'
+        args:     Command arguments (e.g. freq in MHz, CAT command string,
+                  'on'/'off' for PTT)
+    """
+    payload = {'cmd': cmd}
+    if cmd == 'ptt':
+        payload['state'] = args.lower() in ('on', 'true', '1')
+    elif cmd == 'frequency':
+        payload['freq'] = args
+    elif cmd in ('cat', 'tone', 'shift', 'offset'):
+        payload['raw'] = args
+    elif cmd in ('rx_gain', 'tx_gain'):
+        try:
+            payload['gain'] = float(args)
+        except ValueError:
+            return f"Error: {cmd} requires a numeric value"
+    result = _post('/linkcmd', {'endpoint': endpoint, **payload})
+    if result.get('ok'):
+        resp = result.get('response', '')
+        return f"Endpoint {endpoint} {cmd} OK" + (f': {resp}' if resp else '')
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
+# Test Loop & Speaker
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def test_loop_toggle() -> str:
+    """
+    Toggle the test loop — plays audio/loop.mp3 on repeat with PTT.
+    Call again to stop.
+    """
+    result = _post('/testloop', {})
+    if result.get('ok'):
+        if result.get('looping'):
+            return f"Test loop started: {result.get('file', 'loop.mp3')}"
+        return "Test loop stopped"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def speaker_mode(mode: str) -> str:
+    """
+    Set the speaker output mode.
+
+    Args:
+        mode: 'virtual' (metering only, no audio device),
+              'auto' (use default output),
+              'real' (use specific ALSA device)
+    """
+    result = _post('/routing/cmd', {'cmd': 'speaker_mode', 'mode': mode})
+    if result.get('ok'):
+        return f"Speaker mode: {result.get('mode', mode)}"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def d75_memscan() -> str:
+    """
+    Scan TH-D75 memory channels. Returns a list of programmed channels
+    with frequency, name, tone, mode, shift, offset, and power.
+    Takes ~10-30 seconds depending on how many channels are programmed.
+    """
+    result = _get('/d75memlist')
+    if isinstance(result, list):
+        if not result:
+            return "No programmed channels found"
+        lines = [f"{len(result)} channels:"]
+        for ch in result[:50]:
+            tone = ch.get('tone', '')
+            lines.append(f"  CH{ch['ch']} {ch['freq']:.4f} MHz {ch.get('name','')} "
+                        f"{ch.get('mode','')} {ch.get('shift','')}{ch.get('offset','')} "
+                        f"tone={tone}")
+        if len(result) > 50:
+            lines.append(f"  ... and {len(result)-50} more")
+        return '\n'.join(lines)
+    return f"Error: {result.get('error', 'scan failed')}" if isinstance(result, dict) else "Scan failed"
+
+
+@mcp.tool()
+def cloudflare_status() -> str:
+    """
+    Get the Cloudflare tunnel URL and connection status.
+    """
+    result = _get('/status')
+    url = result.get('tunnel_url', '')
+    return f"Tunnel URL: {url}" if url else "No Cloudflare tunnel active"
+
+
+@mcp.tool()
+def gateway_restart() -> str:
+    """
+    Restart the radio gateway service via systemd.
+    """
+    import subprocess
+    try:
+        r = subprocess.run(['sudo', '-n', 'systemctl', 'restart', 'radio-gateway.service'],
+                          capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return "Gateway restart initiated"
+        return f"Restart failed: {r.stderr.strip()}"
+    except Exception as e:
+        return f"Restart error: {e}"
 
 
 # ---------------------------------------------------------------------------
