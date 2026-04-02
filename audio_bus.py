@@ -679,6 +679,11 @@ class SoloBus(AudioBus):
         if self._radio and not self._tx_only:
             rx_audio, _rx_ptt = self._radio.get_audio(chunk_size)
             if rx_audio is not None:
+                # Apply per-source gain
+                _boost = getattr(self._radio, 'audio_boost', 1.0)
+                if _boost != 1.0:
+                    _arr = np.frombuffer(rx_audio, dtype=np.int16).astype(np.float32)
+                    rx_audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
                 active_sources.append(self._radio.name)
 
         # ── Phase 5: Build output ──

@@ -41,19 +41,22 @@ LINK_RATE = 48000
 RESAMPLE_RATIO = LINK_RATE // SCO_RATE  # 6
 
 
-def _upsample_linear(data_8k):
-    """Upsample 8kHz 16-bit PCM to 48kHz using linear interpolation."""
-    samples = struct.unpack(f'<{len(data_8k) // 2}h', data_8k)
-    out = []
-    for i in range(len(samples) - 1):
-        s0, s1 = samples[i], samples[i + 1]
-        for j in range(RESAMPLE_RATIO):
-            t = j / RESAMPLE_RATIO
-            v = int(s0 + (s1 - s0) * t)
-            out.append(max(-32768, min(32767, v)))
-    # Last sample — repeat
-    out.extend([samples[-1]] * RESAMPLE_RATIO)
-    return struct.pack(f'<{len(out)}h', *out)
+def _upsample_np(data_8k, prev_last=0.0):
+    """Upsample 8kHz 16-bit PCM to 48kHz using numpy interpolation.
+
+    Prepends prev_last from the previous chunk to smooth the boundary.
+    Returns (pcm_48k_bytes, new_prev_last).
+    """
+    import numpy as np
+    arr_8k = np.frombuffer(data_8k, dtype=np.int16).astype(np.float32)
+    if len(arr_8k) == 0:
+        return data_8k, prev_last
+    extended = np.concatenate(([prev_last], arr_8k))
+    out_len = len(arr_8k) * RESAMPLE_RATIO
+    idx = np.linspace(0, len(extended) - 1, out_len).astype(np.float32)
+    arr_48k = np.interp(idx, np.arange(len(extended), dtype=np.float32), extended)
+    new_prev = float(arr_8k[-1])
+    return np.clip(arr_48k, -32768, 32767).astype(np.int16).tobytes(), new_prev
 
 
 def _downsample(data_48k):
@@ -486,6 +489,7 @@ class D75Plugin(RadioPlugin):
         _rx_bytes = 0
         _rx_chunks = 0
         _rx_diag = time.time()
+        _prev_last = 0.0  # carry-over sample for smooth chunk boundaries
         try:
             while self._running:
                 try:
@@ -500,8 +504,8 @@ class D75Plugin(RadioPlugin):
                         chunk_8k = self._rx_buf[:chunk_8k_size]
                         self._rx_buf = self._rx_buf[chunk_8k_size:]
 
-                        # Upsample 8kHz → 48kHz
-                        chunk_48k = _upsample_linear(chunk_8k)
+                        # Upsample 8kHz → 48kHz (with cross-chunk interpolation)
+                        chunk_48k, _prev_last = _upsample_np(chunk_8k, _prev_last)
 
                         _rx_chunks += 1
                         # DIAG with level

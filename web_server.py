@@ -530,7 +530,7 @@ class WebConfigServer:
         self._defaults = getattr(config, '_defaults', {})
         self._stream_subscribers = []  # list of events for audio stream listeners
         self._stream_events = []      # events to notify listeners of new data
-        self._stream_lock = threading.Lock()
+        self._stream_lock = _thr.Lock()
         self._mp3_buffer = []         # shared ring buffer of MP3 chunks
         self._mp3_seq = 0             # sequence number of next append
         self._encoder_proc = None     # shared FFmpeg process
@@ -540,7 +540,7 @@ class WebConfigServer:
         self.usbip_manager = None     # USBIPManager instance
         # WebSocket PCM streaming (low-latency)
         self._ws_clients = []         # list of (socket, queue) tuples for WebSocket PCM clients
-        self._ws_lock = threading.Lock()
+        self._ws_lock = _thr.Lock()
 
     # Color themes — all dark backgrounds with colored accents
     THEMES = {
@@ -889,9 +889,8 @@ class WebConfigServer:
                                 break
                     if _d75_ep and _link:
                         # Send memscan command and wait for ACK with results
-                        import threading
                         _scan_result = [None]
-                        _scan_evt = threading.Event()
+                        _scan_evt = _thr.Event()
                         _orig_ack = getattr(gw, '_link_scan_ack', None)
                         def _scan_ack(name, ack):
                             if name == _d75_ep and ack.get('cmd') == 'memscan':
@@ -1241,7 +1240,7 @@ class WebConfigServer:
                             except (BrokenPipeError, ConnectionResetError, OSError):
                                 break
 
-                    _send_thread = threading.Thread(target=_ws_sender, args=(_sock, _send_q), daemon=True)
+                    _send_thread = _thr.Thread(target=_ws_sender, args=(_sock, _send_q), daemon=True)
                     _send_thread.start()
 
                     with parent._ws_lock:
@@ -2158,7 +2157,6 @@ class WebConfigServer:
                                 'top_text': top_text,
                                 'tail_text': tail_text,
                             }
-                            import threading as _thr
                             _thr.Thread(target=sa._run_announcement, args=(entry, True),
                                         daemon=True, name="WebAIText").start()
                             ok = True
@@ -2190,7 +2188,6 @@ class WebConfigServer:
                             _wpm  = int(data.get('wpm',  gw.config.CW_WPM))
                             _freq = int(data.get('freq', gw.config.CW_FREQUENCY))
                             _vol  = float(data.get('vol', gw.config.CW_VOLUME))
-                            import threading
                             def _do_cw():
                                 pcm = generate_cw_pcm(text, _wpm, _freq, 48000)
                                 if _vol != 1.0:
@@ -2206,7 +2203,7 @@ class WebConfigServer:
                                 if not gw.playback_source.queue_file(tf.name):
                                     import os as _os
                                     _os.unlink(tf.name)
-                            threading.Thread(target=_do_cw, daemon=True, name="WebCW").start()
+                            _thr.Thread(target=_do_cw, daemon=True, name="WebCW").start()
                             ok = True
                     except Exception as e:
                         error = str(e)
@@ -2233,10 +2230,9 @@ class WebConfigServer:
                         elif not parent.gateway.tts_engine:
                             error = 'TTS not available'
                         else:
-                            import threading
                             def _do_tts():
                                 parent.gateway.speak_text(text, voice=voice)
-                            threading.Thread(target=_do_tts, daemon=True, name="WebTTS").start()
+                            _thr.Thread(target=_do_tts, daemon=True, name="WebTTS").start()
                             ok = True
                     except Exception as e:
                         error = str(e)
@@ -2691,7 +2687,7 @@ class WebConfigServer:
                         _gw._watchdog_active = not _gw._watchdog_active
                         if _gw._watchdog_active:
                             _gw._watchdog_t0 = time.monotonic()
-                            _gw._watchdog_thread = threading.Thread(
+                            _gw._watchdog_thread = _thr.Thread(
                                 target=_gw._watchdog_trace_loop, daemon=True)
                             _gw._watchdog_thread.start()
                             print(f"\n[Watchdog] Trace STARTED (via web UI)")
@@ -3082,7 +3078,7 @@ class WebConfigServer:
                 else:
                     print(f"  [WebConfig] HTTPS failed, falling back to HTTP")
 
-            self._thread = threading.Thread(target=self._server.serve_forever,
+            self._thread = _thr.Thread(target=self._server.serve_forever,
                                             name='WebConfig', daemon=True)
             self._thread.start()
             print(f"  [WebConfig] Listening on {scheme}://0.0.0.0:{port}/")
@@ -3168,7 +3164,7 @@ class WebConfigServer:
                         # Notify all waiting listeners
                         for ev in self._stream_events:
                             ev.set()
-            t = threading.Thread(target=_reader, daemon=True, name='mp3-reader')
+            t = _thr.Thread(target=_reader, daemon=True, name='mp3-reader')
             t.start()
             # Feed silence when no real audio is arriving — keeps encoder producing output
             def _silence_feed():
@@ -3181,7 +3177,7 @@ class WebConfigServer:
                             self._encoder_stdin.write(_silence)
                         except (BrokenPipeError, OSError, ValueError):
                             break
-            t2 = threading.Thread(target=_silence_feed, daemon=True, name='mp3-silence')
+            t2 = _thr.Thread(target=_silence_feed, daemon=True, name='mp3-silence')
             t2.start()
             print(f"  [Stream] MP3 encoder started (PID {self._encoder_proc.pid})")
         except FileNotFoundError:
@@ -3209,7 +3205,7 @@ class WebConfigServer:
 
     def _subscribe_stream(self):
         """Register a new stream listener. Returns (event, seq)."""
-        ev = threading.Event()
+        ev = _thr.Event()
         with self._stream_lock:
             seq = self._mp3_seq  # Start from current sequence number
             self._stream_events.append(ev)
@@ -3363,7 +3359,7 @@ class WebConfigServer:
                 except Exception as e:
                     print(f"\n[WebConfig] Renewal check error: {e}")
 
-        t = threading.Thread(target=_renewal_loop, name='CertRenewal', daemon=True)
+        t = _thr.Thread(target=_renewal_loop, name='CertRenewal', daemon=True)
         t.start()
 
     def _build_section_map(self):
@@ -3829,7 +3825,13 @@ class WebConfigServer:
             'mumble_rx': getattr(gw, 'mumble_source', None),
             'remote_audio': getattr(gw, 'remote_audio_source', None),
         }
-        return _map.get(id)
+        result = _map.get(id)
+        # Fallback to link endpoints for D75 when plugin is None
+        if result is None and id in ('d75', 'd75_tx'):
+            for name, src in gw.link_endpoints.items():
+                if 'd75' in name.lower():
+                    return src
+        return result
 
     _ROUTING_CONFIG_PATH = None
 

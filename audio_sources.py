@@ -1668,18 +1668,18 @@ class LinkAudioSource(AudioSource):
         raw = self._sub_buffer[:cb]
         self._sub_buffer = self._sub_buffer[cb:]
 
-        # Level metering with VAD gate — only show level when signal is above noise floor
+        # Level metering — no VAD gate here, bus handles that
         arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
         rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        db = 20 * _math_mod.log10(rms / 32767.0) if rms > 0 else -100.0
-        _vad_thresh = getattr(self.gateway.config, 'VAD_THRESHOLD', -40)
-        if db > _vad_thresh:
-            raw_level = int(max(0, min(100, (db + 60) * (100 / 60))))
+        if rms > 0:
+            raw_level = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60))))
             display_level = min(100, int(raw_level * self.display_gain))
-            self.audio_level = display_level if display_level > self.audio_level else int(self.audio_level * 0.7 + display_level * 0.3)
+            if display_level > self.audio_level:
+                self.audio_level = display_level
+            else:
+                self.audio_level = int(self.audio_level * 0.7 + display_level * 0.3)
         else:
             self.audio_level = max(0, int(self.audio_level * 0.7))
-            return None, False  # Gate silence — don't feed noise into mixer
 
         # Audio boost
         if self.audio_boost != 1.0:

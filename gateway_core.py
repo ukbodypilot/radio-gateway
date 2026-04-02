@@ -1597,8 +1597,15 @@ class RadioGateway:
                         saved = self.link_endpoint_settings.get(name, {})
                         src.muted = saved.get('rx_muted', False)
                         src.server_connected = True
-                        self.mixer.add_source(src, bus_priority=int(getattr(self.config, 'LINK_AUDIO_PRIORITY', 3)) + 10, duckable=getattr(self.config, 'LINK_AUDIO_DUCK', False))
                         self.link_endpoints[name] = src
+                        # Only add to primary mixer if this source is on the primary listen bus.
+                        # Otherwise BusManager handles it via the solo/duplex bus, and adding
+                        # to the primary mixer causes queue competition (both call get_audio).
+                        if hasattr(self, '_source_on_listen_bus') and self._source_on_listen_bus('d75' if 'd75' in name.lower() else name):
+                            self.mixer.add_source(src, bus_priority=int(getattr(self.config, 'LINK_AUDIO_PRIORITY', 3)) + 10, duckable=getattr(self.config, 'LINK_AUDIO_DUCK', False))
+                            print(f"  [Link] {name} added to primary mixer (listen bus)")
+                        else:
+                            print(f"  [Link] {name} routed via bus manager (not on listen bus)")
                         self._link_ptt_active[name] = False
                         self._link_last_status[name] = {}
                         self._link_tx_levels[name] = 0
@@ -2927,6 +2934,14 @@ class RadioGateway:
                     if data and not _vad_pass:
                         if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
                             self._speaker_enqueue(data)
+                        # Always push PCM to WebSocket — browser AudioWorklet needs steady stream
+                        _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
+                        if _listen_flags.get('pcm', False) and self.web_config_server and self.web_config_server._ws_clients:
+                            _vad_pcm = data
+                            if _bm_pcm is not None:
+                                from audio_bus import mix_audio_streams
+                                _vad_pcm = mix_audio_streams(_vad_pcm, _bm_pcm)
+                            self.web_config_server.push_ws_audio(_vad_pcm)
                         _tr_outcome = 'vad_gate'
                         continue
 

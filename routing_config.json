@@ -35,11 +35,11 @@
       }
     },
     {
-      "id": "th9800",
-      "name": "TH9800",
+      "id": "test",
+      "name": "Test",
       "type": "solo",
       "sources": [
-        "aioc"
+        "d75"
       ],
       "sinks": [
         "mumble"
@@ -54,8 +54,8 @@
     },
     {
       "type": "source-bus",
-      "from": "aioc",
-      "to": "th9800"
+      "from": "d75",
+      "to": "test"
     },
     {
       "type": "source-bus",
@@ -84,7 +84,7 @@
     },
     {
       "type": "bus-sink",
-      "from": "th9800",
+      "from": "test",
       "to": "mumble"
     }
   ],
@@ -99,14 +99,14 @@
               "id": "sdr"
             },
             "class": "source",
-            "html": "SDR [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('sdr')\" id=\"mute-sdr\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('sdr',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-sdr\">100%</span></div><div class=\"level-bar\" id=\"level-sdr\"><div class=\"level-fill\"></div></div></div>",
+            "html": "SDR [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('sdr')\" id=\"mute-sdr\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('sdr',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-sdr\">100%</span></div><div class=\"level-bar\" id=\"level-sdr\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
               "output_1": {
                 "connections": [
                   {
-                    "node": "11",
+                    "node": "10",
                     "output": "input_1"
                   }
                 ]
@@ -122,7 +122,7 @@
               "id": "kv4p"
             },
             "class": "source",
-            "html": "KV4P [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('kv4p')\" id=\"mute-kv4p\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"150\" oninput=\"setGain('kv4p',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-kv4p\">150%</span></div><div class=\"level-bar\" id=\"level-kv4p\"><div class=\"level-fill\"></div></div></div>",
+            "html": "KV4P [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('kv4p')\" id=\"mute-kv4p\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"150\" oninput=\"setGain('kv4p',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-kv4p\">150%</span></div><div class=\"level-bar\" id=\"level-kv4p\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
@@ -140,12 +140,17 @@
               "id": "d75"
             },
             "class": "source",
-            "html": "TH-D75 [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('d75')\" id=\"mute-d75\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"500\" oninput=\"setGain('d75',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-d75\">500%</span></div><div class=\"level-bar\" id=\"level-d75\"><div class=\"level-fill\"></div></div></div>",
+            "html": "TH-D75 [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('d75')\" id=\"mute-d75\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('d75',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-d75\">100%</span></div><div class=\"level-bar\" id=\"level-d75\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
               "output_1": {
-                "connections": []
+                "connections": [
+                  {
+                    "node": "12",
+                    "output": "input_1"
+                  }
+                ]
               }
             },
             "pos_x": 50,
@@ -158,17 +163,12 @@
               "id": "aioc"
             },
             "class": "source",
-            "html": "TH-9800 [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('aioc')\" id=\"mute-aioc\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('aioc',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-aioc\">100%</span></div><div class=\"level-bar\" id=\"level-aioc\"><div class=\"level-fill\"></div></div></div>",
+            "html": "TH-9800 [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('aioc')\" id=\"mute-aioc\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('aioc',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-aioc\">100%</span></div><div class=\"level-bar\" id=\"level-aioc\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
               "output_1": {
-                "connections": [
-                  {
-                    "node": "13",
-                    "output": "input_1"
-                  }
-                ]
+                "connections": []
               }
             },
             "pos_x": 50,
@@ -181,14 +181,14 @@
               "id": "playback"
             },
             "class": "source",
-            "html": "File Playback\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('playback')\" id=\"mute-playback\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('playback',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-playback\">100%</span></div><div class=\"level-bar\" id=\"level-playback\"><div class=\"level-fill\"></div></div></div>",
+            "html": "File Playback\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('playback')\" id=\"mute-playback\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('playback',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-playback\">100%</span></div><div class=\"level-bar\" id=\"level-playback\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
               "output_1": {
                 "connections": [
                   {
-                    "node": "12",
+                    "node": "11",
                     "output": "input_1"
                   }
                 ]
@@ -204,7 +204,7 @@
               "id": "webmic"
             },
             "class": "source",
-            "html": "Web Mic\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('webmic')\" id=\"mute-webmic\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('webmic',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-webmic\">100%</span></div><div class=\"level-bar\" id=\"level-webmic\"><div class=\"level-fill\"></div></div></div>",
+            "html": "Web Mic\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('webmic')\" id=\"mute-webmic\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('webmic',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-webmic\">100%</span></div><div class=\"level-bar\" id=\"level-webmic\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
@@ -222,14 +222,14 @@
               "id": "announce"
             },
             "class": "source",
-            "html": "Announcements\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('announce')\" id=\"mute-announce\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('announce',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-announce\">100%</span></div><div class=\"level-bar\" id=\"level-announce\"><div class=\"level-fill\"></div></div></div>",
+            "html": "Announcements\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('announce')\" id=\"mute-announce\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('announce',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-announce\">100%</span></div><div class=\"level-bar\" id=\"level-announce\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
               "output_1": {
                 "connections": [
                   {
-                    "node": "12",
+                    "node": "11",
                     "output": "input_1"
                   }
                 ]
@@ -245,7 +245,7 @@
               "id": "monitor"
             },
             "class": "source",
-            "html": "Room Monitor\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('monitor')\" id=\"mute-monitor\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('monitor',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-monitor\">100%</span></div><div class=\"level-bar\" id=\"level-monitor\"><div class=\"level-fill\"></div></div></div>",
+            "html": "Room Monitor\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('monitor')\" id=\"mute-monitor\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('monitor',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-monitor\">100%</span></div><div class=\"level-bar\" id=\"level-monitor\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
@@ -258,12 +258,12 @@
           },
           "9": {
             "id": 9,
-            "name": "mumble_rx",
+            "name": "remote_audio",
             "data": {
-              "id": "mumble_rx"
+              "id": "remote_audio"
             },
             "class": "source",
-            "html": "Mumble [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('mumble_rx')\" id=\"mute-mumble_rx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('mumble_rx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-mumble_rx\">100%</span></div><div class=\"level-bar\" id=\"level-mumble_rx\"><div class=\"level-fill\"></div></div></div>",
+            "html": "Remote Audio [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('remote_audio')\" id=\"mute-remote_audio\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('remote_audio',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-remote_audio\">100%</span></div><div class=\"level-bar\" id=\"level-remote_audio\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {},
             "outputs": {
@@ -276,24 +276,6 @@
           },
           "10": {
             "id": 10,
-            "name": "remote_audio",
-            "data": {
-              "id": "remote_audio"
-            },
-            "class": "source",
-            "html": "Remote Audio [RX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('remote_audio')\" id=\"mute-remote_audio\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('remote_audio',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-remote_audio\">100%</span></div><div class=\"level-bar\" id=\"level-remote_audio\"><div class=\"level-fill\"></div></div></div>",
-            "typenode": false,
-            "inputs": {},
-            "outputs": {
-              "output_1": {
-                "connections": []
-              }
-            },
-            "pos_x": 50,
-            "pos_y": 740
-          },
-          "11": {
-            "id": 11,
             "name": "sdr_mix",
             "data": {
               "id": "sdr_mix",
@@ -316,21 +298,21 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "15",
+                    "node": "14",
                     "output": "input_1"
                   },
                   {
-                    "node": "18",
+                    "node": "17",
                     "output": "input_1"
                   }
                 ]
               }
             },
-            "pos_x": 334,
-            "pos_y": 28
+            "pos_x": 380,
+            "pos_y": 20
           },
-          "12": {
-            "id": 12,
+          "11": {
+            "id": 11,
             "name": "announce",
             "data": {
               "id": "announce",
@@ -357,30 +339,30 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "20",
+                    "node": "19",
                     "output": "input_1"
                   }
                 ]
               }
             },
-            "pos_x": 340,
-            "pos_y": 424
+            "pos_x": 380,
+            "pos_y": 130
           },
-          "13": {
-            "id": 13,
-            "name": "th9800",
+          "12": {
+            "id": 12,
+            "name": "test",
             "data": {
-              "id": "th9800",
+              "id": "test",
               "type": "solo"
             },
             "class": "bus-solo",
-            "html": "TH9800\n<div class=\"box\">solo bus<div class=\"proc-buttons\"><button class=\"proc-btn\" onclick=\"toggleProc('th9800','gate')\" id=\"proc-th9800-gate\" title=\"Noise Gate\">G</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','hpf')\" id=\"proc-th9800-hpf\" title=\"High Pass Filter\">H</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','lpf')\" id=\"proc-th9800-lpf\" title=\"Low Pass Filter\">L</button><button class=\"proc-btn\" onclick=\"toggleProc('th9800','notch')\" id=\"proc-th9800-notch\" title=\"Notch Filter\">N</button><span style=\"margin-left:6px;border-left:1px solid #555;padding-left:6px;\"></span><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','pcm')\" id=\"proc-th9800-pcm\" title=\"Feed PCM stream\">P</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','mp3')\" id=\"proc-th9800-mp3\" title=\"Feed MP3 stream\">M</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('th9800','vad')\" id=\"proc-th9800-vad\" title=\"VAD gate\">V</button><span style=\"flex-grow:1;\"></span><button class=\"mute-btn\" onclick=\"toggleBusMute('th9800')\" id=\"bus-mute-th9800\" title=\"Mute bus\">M</button></div><div class=\"level-bar\" id=\"level-bus_th9800\"><div class=\"level-fill\"></div></div></div>",
+            "html": "Test\n<div class=\"box\">solo bus<div class=\"proc-buttons\"><button class=\"proc-btn\" onclick=\"toggleProc('test','gate')\" id=\"proc-test-gate\" title=\"Noise Gate\">G</button><button class=\"proc-btn\" onclick=\"toggleProc('test','hpf')\" id=\"proc-test-hpf\" title=\"High Pass Filter\">H</button><button class=\"proc-btn\" onclick=\"toggleProc('test','lpf')\" id=\"proc-test-lpf\" title=\"Low Pass Filter\">L</button><button class=\"proc-btn\" onclick=\"toggleProc('test','notch')\" id=\"proc-test-notch\" title=\"Notch Filter\">N</button><span style=\"margin-left:6px;border-left:1px solid #555;padding-left:6px;\"></span><button class=\"proc-btn out-btn\" onclick=\"toggleProc('test','pcm')\" id=\"proc-test-pcm\" title=\"Feed PCM stream\">P</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('test','mp3')\" id=\"proc-test-mp3\" title=\"Feed MP3 stream\">M</button><button class=\"proc-btn out-btn\" onclick=\"toggleProc('test','vad')\" id=\"proc-test-vad\" title=\"VAD gate\">V</button><span style=\"flex-grow:1;\"></span><button class=\"mute-btn\" onclick=\"toggleBusMute('test')\" id=\"bus-mute-test\" title=\"Mute bus\">M</button></div><div class=\"level-bar\" id=\"level-bus_test\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {
               "input_1": {
                 "connections": [
                   {
-                    "node": "4",
+                    "node": "3",
                     "input": "output_1"
                   }
                 ]
@@ -390,146 +372,23 @@
               "output_1": {
                 "connections": [
                   {
-                    "node": "14",
+                    "node": "13",
                     "output": "input_1"
                   }
                 ]
               }
             },
-            "pos_x": 325,
-            "pos_y": 187
+            "pos_x": 380,
+            "pos_y": 240
           },
-          "14": {
-            "id": 14,
+          "13": {
+            "id": 13,
             "name": "mumble",
             "data": {
               "id": "mumble"
             },
             "class": "sink",
-            "html": "Mumble [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('mumble')\" id=\"mute-mumble\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('mumble',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-mumble\">100%</span></div><div class=\"level-bar\" id=\"level-mumble\"><div class=\"level-fill\"></div></div></div>",
-            "typenode": false,
-            "inputs": {
-              "input_1": {
-                "connections": [
-                  {
-                    "node": "13",
-                    "input": "output_1"
-                  }
-                ]
-              }
-            },
-            "outputs": {},
-            "pos_x": 696,
-            "pos_y": 177
-          },
-          "15": {
-            "id": 15,
-            "name": "broadcastify",
-            "data": {
-              "id": "broadcastify"
-            },
-            "class": "sink",
-            "html": "Broadcastify\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('broadcastify')\" id=\"mute-broadcastify\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('broadcastify',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-broadcastify\">100%</span></div><div class=\"level-bar\" id=\"level-broadcastify\"><div class=\"level-fill\"></div></div></div>",
-            "typenode": false,
-            "inputs": {
-              "input_1": {
-                "connections": [
-                  {
-                    "node": "11",
-                    "input": "output_1"
-                  }
-                ]
-              }
-            },
-            "outputs": {},
-            "pos_x": 692,
-            "pos_y": 17
-          },
-          "16": {
-            "id": 16,
-            "name": "speaker",
-            "data": {
-              "id": "speaker"
-            },
-            "class": "sink",
-            "html": "Speaker\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('speaker')\" id=\"mute-speaker\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('speaker',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-speaker\">100%</span></div><div class=\"level-bar\" id=\"level-speaker\"><div class=\"level-fill\"></div></div></div>",
-            "typenode": false,
-            "inputs": {
-              "input_1": {
-                "connections": []
-              }
-            },
-            "outputs": {},
-            "pos_x": 708,
-            "pos_y": 348
-          },
-          "17": {
-            "id": 17,
-            "name": "recording",
-            "data": {
-              "id": "recording"
-            },
-            "class": "sink",
-            "html": "Recording\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('recording')\" id=\"mute-recording\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('recording',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-recording\">100%</span></div><div class=\"level-bar\" id=\"level-recording\"><div class=\"level-fill\"></div></div></div>",
-            "typenode": false,
-            "inputs": {
-              "input_1": {
-                "connections": []
-              }
-            },
-            "outputs": {},
-            "pos_x": 709,
-            "pos_y": 427
-          },
-          "18": {
-            "id": 18,
-            "name": "remote_audio_tx",
-            "data": {
-              "id": "remote_audio_tx"
-            },
-            "class": "sink",
-            "html": "Remote Audio [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('remote_audio_tx')\" id=\"mute-remote_audio_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('remote_audio_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-remote_audio_tx\">100%</span></div><div class=\"level-bar\" id=\"level-remote_audio_tx\"><div class=\"level-fill\"></div></div></div>",
-            "typenode": false,
-            "inputs": {
-              "input_1": {
-                "connections": [
-                  {
-                    "node": "11",
-                    "input": "output_1"
-                  }
-                ]
-              }
-            },
-            "outputs": {},
-            "pos_x": 698,
-            "pos_y": 93
-          },
-          "19": {
-            "id": 19,
-            "name": "kv4p_tx",
-            "data": {
-              "id": "kv4p_tx"
-            },
-            "class": "sink",
-            "html": "KV4P [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('kv4p_tx')\" id=\"mute-kv4p_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"150\" oninput=\"setGain('kv4p_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-kv4p_tx\">150%</span></div><div class=\"level-bar\" id=\"level-kv4p_tx\"><div class=\"level-fill\"></div></div></div>",
-            "typenode": false,
-            "inputs": {
-              "input_1": {
-                "connections": []
-              }
-            },
-            "outputs": {},
-            "pos_x": 701,
-            "pos_y": 262
-          },
-          "20": {
-            "id": 20,
-            "name": "d75_tx",
-            "data": {
-              "id": "d75_tx"
-            },
-            "class": "sink",
-            "html": "TH-D75 [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('d75_tx')\" id=\"mute-d75_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"500\" oninput=\"setGain('d75_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-d75_tx\">500%</span></div><div class=\"level-bar\" id=\"level-d75_tx\"><div class=\"level-fill\"></div></div></div>",
+            "html": "Mumble [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('mumble')\" id=\"mute-mumble\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('mumble',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-mumble\">100%</span></div><div class=\"level-bar\" id=\"level-mumble\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {
               "input_1": {
@@ -542,17 +401,40 @@
               }
             },
             "outputs": {},
-            "pos_x": 700,
-            "pos_y": 500
+            "pos_x": 740,
+            "pos_y": 20
           },
-          "21": {
-            "id": 21,
-            "name": "aioc_tx",
+          "14": {
+            "id": 14,
+            "name": "broadcastify",
             "data": {
-              "id": "aioc_tx"
+              "id": "broadcastify"
             },
             "class": "sink",
-            "html": "TH-9800 [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('aioc_tx')\" id=\"mute-aioc_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"200\" value=\"100\" oninput=\"setGain('aioc_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-aioc_tx\">100%</span></div><div class=\"level-bar\" id=\"level-aioc_tx\"><div class=\"level-fill\"></div></div></div>",
+            "html": "Broadcastify\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('broadcastify')\" id=\"mute-broadcastify\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('broadcastify',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-broadcastify\">100%</span></div><div class=\"level-bar\" id=\"level-broadcastify\"><div class=\"level-fill\"></div></div></div>",
+            "typenode": false,
+            "inputs": {
+              "input_1": {
+                "connections": [
+                  {
+                    "node": "10",
+                    "input": "output_1"
+                  }
+                ]
+              }
+            },
+            "outputs": {},
+            "pos_x": 740,
+            "pos_y": 100
+          },
+          "15": {
+            "id": 15,
+            "name": "speaker",
+            "data": {
+              "id": "speaker"
+            },
+            "class": "sink",
+            "html": "Speaker\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('speaker')\" id=\"mute-speaker\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('speaker',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-speaker\">100%</span></div><div class=\"level-bar\" id=\"level-speaker\"><div class=\"level-fill\"></div></div></div>",
             "typenode": false,
             "inputs": {
               "input_1": {
@@ -560,7 +442,107 @@
               }
             },
             "outputs": {},
-            "pos_x": 700,
+            "pos_x": 740,
+            "pos_y": 180
+          },
+          "16": {
+            "id": 16,
+            "name": "recording",
+            "data": {
+              "id": "recording"
+            },
+            "class": "sink",
+            "html": "Recording\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('recording')\" id=\"mute-recording\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('recording',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-recording\">100%</span></div><div class=\"level-bar\" id=\"level-recording\"><div class=\"level-fill\"></div></div></div>",
+            "typenode": false,
+            "inputs": {
+              "input_1": {
+                "connections": []
+              }
+            },
+            "outputs": {},
+            "pos_x": 740,
+            "pos_y": 260
+          },
+          "17": {
+            "id": 17,
+            "name": "remote_audio_tx",
+            "data": {
+              "id": "remote_audio_tx"
+            },
+            "class": "sink",
+            "html": "Remote Audio [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('remote_audio_tx')\" id=\"mute-remote_audio_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('remote_audio_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-remote_audio_tx\">100%</span></div><div class=\"level-bar\" id=\"level-remote_audio_tx\"><div class=\"level-fill\"></div></div></div>",
+            "typenode": false,
+            "inputs": {
+              "input_1": {
+                "connections": [
+                  {
+                    "node": "10",
+                    "input": "output_1"
+                  }
+                ]
+              }
+            },
+            "outputs": {},
+            "pos_x": 740,
+            "pos_y": 340
+          },
+          "18": {
+            "id": 18,
+            "name": "kv4p_tx",
+            "data": {
+              "id": "kv4p_tx"
+            },
+            "class": "sink",
+            "html": "KV4P [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('kv4p_tx')\" id=\"mute-kv4p_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"150\" oninput=\"setGain('kv4p_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-kv4p_tx\">150%</span></div><div class=\"level-bar\" id=\"level-kv4p_tx\"><div class=\"level-fill\"></div></div></div>",
+            "typenode": false,
+            "inputs": {
+              "input_1": {
+                "connections": []
+              }
+            },
+            "outputs": {},
+            "pos_x": 740,
+            "pos_y": 420
+          },
+          "19": {
+            "id": 19,
+            "name": "d75_tx",
+            "data": {
+              "id": "d75_tx"
+            },
+            "class": "sink",
+            "html": "TH-D75 [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('d75_tx')\" id=\"mute-d75_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('d75_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-d75_tx\">100%</span></div><div class=\"level-bar\" id=\"level-d75_tx\"><div class=\"level-fill\"></div></div></div>",
+            "typenode": false,
+            "inputs": {
+              "input_1": {
+                "connections": [
+                  {
+                    "node": "11",
+                    "input": "output_1"
+                  }
+                ]
+              }
+            },
+            "outputs": {},
+            "pos_x": 740,
+            "pos_y": 500
+          },
+          "20": {
+            "id": 20,
+            "name": "aioc_tx",
+            "data": {
+              "id": "aioc_tx"
+            },
+            "class": "sink",
+            "html": "TH-9800 [TX]\n<div class=\"box\"><div class=\"node-controls\"><button class=\"mute-btn\" onclick=\"toggleMute('aioc_tx')\" id=\"mute-aioc_tx\">M</button><input type=\"range\" class=\"gain-slider\" min=\"0\" max=\"500\" value=\"100\" oninput=\"setGain('aioc_tx',this.value)\" title=\"Gain\"><span class=\"gain-val\" id=\"gain-val-aioc_tx\">100%</span></div><div class=\"level-bar\" id=\"level-aioc_tx\"><div class=\"level-fill\"></div></div></div>",
+            "typenode": false,
+            "inputs": {
+              "input_1": {
+                "connections": []
+              }
+            },
+            "outputs": {},
+            "pos_x": 740,
             "pos_y": 580
           }
         }
