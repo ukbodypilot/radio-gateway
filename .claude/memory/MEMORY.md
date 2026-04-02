@@ -89,3 +89,4 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [feedback_single_source_config.md](feedback_single_source_config.md) — GUI changes write to config file, not separate JSON
 - [feedback_no_gateway_restart.md](feedback_no_gateway_restart.md) — Claude can restart gateway
 - [project_d75_cleanup.md](project_d75_cleanup.md) — legacy D75 removal target ~2026-04-08
+- [reference_gdrive_backup.md](reference_gdrive_backup.md) — rclone backup to Google Drive

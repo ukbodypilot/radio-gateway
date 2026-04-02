@@ -2301,11 +2301,12 @@ class RadioGateway:
                         self.mumble_tx_level = max(0, int(getattr(self, 'mumble_tx_level', 0) * 0.7))
                         self.transcription_audio_level = max(0, int(getattr(self, 'transcription_audio_level', 0) * 0.7))
                     if _early_audio is not None:
+                        _early_level = self.calculate_audio_level(_early_audio)
                         if 'broadcastify' in _listen_sinks and self.stream_output:
                             try:
                                 self.stream_output.send_audio(_early_audio)
                                 if self.stream_output.connected:
-                                    self.stream_audio_level = self.calculate_audio_level(_early_audio)
+                                    self.stream_audio_level = _early_level
                             except Exception:
                                 pass
                         # Run VAD once per tick — reused below for the main gate.
@@ -2329,22 +2330,20 @@ class RadioGateway:
                                         self._mumble_early_buf = self._mumble_early_buf[_fb:]
                                         self.mumble.sound_output.add_sound(_fr)
                                     # Track Mumble TX level for routing page
-                                    _ml = self.calculate_audio_level(_early_audio)
-                                    if _ml > getattr(self, 'mumble_tx_level', 0):
-                                        self.mumble_tx_level = _ml
+                                    if _early_level > getattr(self, 'mumble_tx_level', 0):
+                                        self.mumble_tx_level = _early_level
                                     else:
-                                        self.mumble_tx_level = int(getattr(self, 'mumble_tx_level', 0) * 0.7 + _ml * 0.3)
+                                        self.mumble_tx_level = int(getattr(self, 'mumble_tx_level', 0) * 0.7 + _early_level * 0.3)
                                 except Exception:
                                     pass
                         # Transcription sink on listen bus
                         if 'transcription' in _listen_sinks and self.transcriber:
                             try:
                                 self.transcriber.feed(_early_audio, source_id=self._listen_bus_id)
-                                _tl = self.calculate_audio_level(_early_audio)
-                                if _tl > getattr(self, 'transcription_audio_level', 0):
-                                    self.transcription_audio_level = _tl
+                                if _early_level > getattr(self, 'transcription_audio_level', 0):
+                                    self.transcription_audio_level = _early_level
                                 else:
-                                    self.transcription_audio_level = int(getattr(self, 'transcription_audio_level', 0) * 0.7 + _tl * 0.3)
+                                    self.transcription_audio_level = int(getattr(self, 'transcription_audio_level', 0) * 0.7 + _early_level * 0.3)
                             except Exception:
                                 pass
 
@@ -2356,11 +2355,12 @@ class RadioGateway:
                         _silence = b'\x00' * (self.config.AUDIO_CHUNK_SIZE * 2)
                         if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
                             self._speaker_enqueue(_silence)
-                        # BusManager pushes its own PCM directly to WebSocket.
-                        # Only push silence if listen bus has PCM on and nothing is playing.
-                        if self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False):
+                        # Push BusManager PCM (or silence if listen bus PCM is on)
+                        _ws_idle = _bm_pcm if _bm_pcm is not None else (
+                            _silence if self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False) else None)
+                        if _ws_idle is not None:
                             if self.web_config_server and self.web_config_server._ws_clients:
-                                self.web_config_server.push_ws_audio(_silence)
+                                self.web_config_server.push_ws_audio(_ws_idle)
                         _tr_outcome = 'vad_gate'
                         continue
                     else:
@@ -2374,13 +2374,16 @@ class RadioGateway:
                         if self.automation_engine and self.automation_engine.recorder.is_recording():
                             self.automation_engine.recorder.feed(data)
 
-                        # Push listen bus audio to WebSocket PCM clients.
-                        # BusManager busses push their own PCM directly (no mixing here).
+                        # Push listen bus + BusManager PCM mixed to WebSocket.
                         _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
                         _listen_pcm_on = _listen_flags.get('pcm', False) and not getattr(self, '_listen_bus_muted', False)
-                        if _listen_pcm_on and data is not None:
+                        _ws_pcm = data if (_listen_pcm_on and data is not None) else None
+                        if _bm_pcm is not None:
+                            from audio_bus import mix_audio_streams
+                            _ws_pcm = mix_audio_streams(_ws_pcm, _bm_pcm) if _ws_pcm is not None else _bm_pcm
+                        if _ws_pcm is not None:
                             if self.web_config_server and self.web_config_server._ws_clients:
-                                self.web_config_server.push_ws_audio(data)
+                                self.web_config_server.push_ws_audio(_ws_pcm)
 
                     _tr_outcome = 'mix'  # will be updated to sent/no_mumble/etc below
 
@@ -2461,10 +2464,14 @@ class RadioGateway:
                     if data and not _vad_pass:
                         if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
                             self._speaker_enqueue(data)
-                        # Always push PCM to WebSocket — browser AudioWorklet needs steady stream
+                        # Push PCM (mixed with BusManager) to WebSocket
                         _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
-                        if _listen_flags.get('pcm', False) and self.web_config_server and self.web_config_server._ws_clients:
-                            self.web_config_server.push_ws_audio(data)
+                        _ws_vad = data if _listen_flags.get('pcm', False) else None
+                        if _bm_pcm is not None:
+                            from audio_bus import mix_audio_streams
+                            _ws_vad = mix_audio_streams(_ws_vad, _bm_pcm) if _ws_vad is not None else _bm_pcm
+                        if _ws_vad is not None and self.web_config_server and self.web_config_server._ws_clients:
+                            self.web_config_server.push_ws_audio(_ws_vad)
                         _tr_outcome = 'vad_gate'
                         continue
 
@@ -2491,10 +2498,12 @@ class RadioGateway:
                 # in the mixed output and interpolate over a 4-sample window.
                 # The mixer's additive summing can create boundary jumps larger
                 # than any individual source when waveforms combine.
+                # Threshold 8000 catches real discontinuities without firing
+                # on normal audio (a 1kHz sine at -20dBFS has diffs of ~2700).
                 if data and len(data) >= 16:
                     _arr = np.frombuffer(data, dtype=np.int16)
                     _diffs = np.abs(np.diff(_arr.astype(np.int32)))
-                    _clicks = np.where(_diffs > 800)[0]
+                    _clicks = np.where(_diffs > 8000)[0]
                     if len(_clicks) > 0:
                         _farr = _arr.astype(np.float32)
                         for _idx in _clicks:
@@ -2520,12 +2529,11 @@ class RadioGateway:
                             _tr_sv_ms += (time.monotonic() - _sv_t0) * 1000
                             _tr_sv_sent += 1
                             self._update_sv_level(data)
-                            # Update routing-visible level
-                            _rl = self.calculate_audio_level(data)
-                            if _rl > getattr(self, 'remote_audio_tx_level', 0):
-                                self.remote_audio_tx_level = _rl
+                            # Update routing-visible level (reuse _mlv from mixer output)
+                            if _mlv > getattr(self, 'remote_audio_tx_level', 0):
+                                self.remote_audio_tx_level = _mlv
                             else:
-                                self.remote_audio_tx_level = int(getattr(self, 'remote_audio_tx_level', 0) * 0.7 + _rl * 0.3)
+                                self.remote_audio_tx_level = int(getattr(self, 'remote_audio_tx_level', 0) * 0.7 + _mlv * 0.3)
                         except Exception:
                             pass
 
@@ -2534,10 +2542,8 @@ class RadioGateway:
                 # own TX delivery via put_audio() in BusManager.
                 if self.link_server and self.link_endpoints:
                     _listen_sinks_for_link = self._bus_sinks.get(self._listen_bus_id, set())
-                    # Compute TX level once for all endpoints
-                    _la = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-                    _lr = float(np.sqrt(np.mean(_la * _la))) if len(_la) > 0 else 0.0
-                    _ldb = 20 * _math_mod.log10(_lr / 32767.0) if _lr > 0 else -100.0
+                    # Reuse _mlv (0-100 level already computed for data) to derive dB
+                    _ldb = _mlv * 0.6 - 60.0 if _mlv > 0 else -100.0
                     _vad_t = getattr(self.config, 'VAD_THRESHOLD', -40)
                     for _ep_name in list(self.link_endpoints.keys()):
                         # Only send listen bus audio if this endpoint's TX sink is on the listen bus
@@ -2552,9 +2558,8 @@ class RadioGateway:
                         try:
                             self.link_server.send_audio_to(_ep_name, data)
                             if _ldb > _vad_t:
-                                _ll = int(max(0, min(100, (_ldb + 60) * (100 / 60))))
                                 _prev = self._link_tx_levels.get(_ep_name, 0)
-                                self._link_tx_levels[_ep_name] = _ll if _ll > _prev else int(_prev * 0.7 + _ll * 0.3)
+                                self._link_tx_levels[_ep_name] = _mlv if _mlv > _prev else int(_prev * 0.7 + _mlv * 0.3)
                             else:
                                 self._link_tx_levels[_ep_name] = max(0, int(self._link_tx_levels.get(_ep_name, 0) * 0.7))
                         except Exception:

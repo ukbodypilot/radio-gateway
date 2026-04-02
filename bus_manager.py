@@ -341,6 +341,7 @@ class BusManager:
         bus_cfg = self._bus_config.get(bus_id, {})
 
         _muted_sinks = getattr(gw, '_muted_sinks', set())
+        _audio_level = None  # cached: all sinks get same processed audio
         for sink_id, audio in bus_output.audio.items():
             if audio is None:
                 continue
@@ -351,6 +352,10 @@ class BusManager:
             audio = self._apply_processing(audio, bus_id)
             if audio is None:
                 continue
+
+            # Compute level once for level-tracking sinks
+            if _audio_level is None:
+                _audio_level = gw.calculate_audio_level(audio)
 
             # Passive sinks
             if sink_id == 'mumble' and gw.mumble:
@@ -368,11 +373,10 @@ class BusManager:
                             _frame = self._mumble_buf[:_frame_bytes]
                             self._mumble_buf = self._mumble_buf[_frame_bytes:]
                             _so.add_sound(_frame)
-                        _ml = gw.calculate_audio_level(audio)
-                        if _ml > getattr(gw, 'mumble_tx_level', 0):
-                            gw.mumble_tx_level = _ml
+                        if _audio_level > getattr(gw, 'mumble_tx_level', 0):
+                            gw.mumble_tx_level = _audio_level
                         else:
-                            gw.mumble_tx_level = int(getattr(gw, 'mumble_tx_level', 0) * 0.7 + _ml * 0.3)
+                            gw.mumble_tx_level = int(getattr(gw, 'mumble_tx_level', 0) * 0.7 + _audio_level * 0.3)
                     else:
                         if not hasattr(self, '_mumble_skip_logged'):
                             self._mumble_skip_logged = True
@@ -393,22 +397,20 @@ class BusManager:
             elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
                 try:
                     gw.transcriber.feed(audio, source_id=bus_id)
-                    _tl = gw.calculate_audio_level(audio)
-                    if _tl > getattr(gw, 'transcription_audio_level', 0):
-                        gw.transcription_audio_level = _tl
+                    if _audio_level > getattr(gw, 'transcription_audio_level', 0):
+                        gw.transcription_audio_level = _audio_level
                     else:
-                        gw.transcription_audio_level = int(getattr(gw, 'transcription_audio_level', 0) * 0.7 + _tl * 0.3)
+                        gw.transcription_audio_level = int(getattr(gw, 'transcription_audio_level', 0) * 0.7 + _audio_level * 0.3)
                 except Exception:
                     pass
             elif sink_id == 'remote_audio_tx' and getattr(gw, 'remote_audio_server', None):
                 if gw.remote_audio_server.connected:
                     try:
                         gw.remote_audio_server.send_audio(audio)
-                        _rl = gw.calculate_audio_level(audio)
-                        if _rl > getattr(gw, 'remote_audio_tx_level', 0):
-                            gw.remote_audio_tx_level = _rl
+                        if _audio_level > getattr(gw, 'remote_audio_tx_level', 0):
+                            gw.remote_audio_tx_level = _audio_level
                         else:
-                            gw.remote_audio_tx_level = int(getattr(gw, 'remote_audio_tx_level', 0) * 0.7 + _rl * 0.3)
+                            gw.remote_audio_tx_level = int(getattr(gw, 'remote_audio_tx_level', 0) * 0.7 + _audio_level * 0.3)
                     except Exception:
                         pass
 
@@ -426,14 +428,6 @@ class BusManager:
         if mixed is not None:
             if proc_cfg.get('pcm', False):
                 self._pcm_queue.append(mixed)
-                # Also push directly to WebSocket PCM for glitch-free delivery
-                # (the main loop drain/mix path has clock drift issues)
-                gw = self.gateway
-                if gw and getattr(gw, 'web_config_server', None) and gw.web_config_server._ws_clients:
-                    try:
-                        gw.web_config_server.push_ws_audio(mixed)
-                    except Exception:
-                        pass
             if proc_cfg.get('mp3', False):
                 self._mp3_queue.append(mixed)
 
