@@ -1,6 +1,6 @@
 # Radio Gateway
 
-A Linux gateway that bridges two-way radios to digital endpoints: Mumble VoIP, Broadcastify streaming, Telegram, AI automation, and the web. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support, and 44+ MCP tools for AI control -- all from a single Python process.
+A Linux gateway that bridges two-way radios to digital endpoints: Mumble VoIP, Broadcastify streaming, Telegram, AI automation, and the web. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support, and 55+ MCP tools for AI control -- all from a single Python process.
 
 ## v2.0 Highlights
 
@@ -33,6 +33,10 @@ v2.0 is a full architectural rewrite of the audio engine:
 | Telegram | Monitor | Recordings |
 |:-:|:-:|:-:|
 | ![Telegram](docs/screenshots/telegram.png) | ![Monitor](docs/screenshots/monitor.png) | ![Recordings](docs/screenshots/recordings.png) |
+
+| GPS | Repeaters | Transcription |
+|:-:|:-:|:-:|
+| ![GPS](docs/screenshots/gps.png) | ![Repeaters](docs/screenshots/repeaters.png) | ![Transcription](docs/screenshots/transcribe.png) |
 
 | Config | Logs | Voice |
 |:-:|:-:|:-:|
@@ -106,11 +110,14 @@ WEB_THEME = blue             # blue, red, green, purple, amber, teal, pink
 | TH-D75 | `/d75` | Band A/B VFOs, memory channels, D-STAR, BT connect/disconnect |
 | KV4P | `/kv4p` | Frequency, CTCSS TX/RX, squelch, volume, power, S-meter |
 | SDR | `/sdr` | Frequency/modulation/gain/squelch, 10-slot channel memory, dual tuner |
+| GPS | `/gps` | Live Leaflet map with DOP probability ring, satellite SNR chart, SIM/LIVE toggle |
+| Repeaters | `/repeaters` | ARD repeater database with map, proximity search, MASTER/SLAVE SDR tuning |
 | ADS-B | `/aircraft` | Dark mode map with NEXRAD weather, reverse-proxied dump1090-fa |
 | Telegram | `/telegram` | Telegram bot status and message log |
 | Monitor | `/monitor` | Room monitor: streams device mic, gain/VAD/level controls |
 | Recordings | `/recordings` | Browse, play, download, delete recorded audio; filter by source/date |
-| Config | `/` | INI editor with collapsible sections, Save & Restart |
+| Transcribe | `/transcribe` | Live voice-to-text with Whisper, freq-tagged output, Mumble/Telegram forwarding |
+| Config | `/config` | INI editor with collapsible sections, Save & Restart |
 | Logs | `/logs` | Live scrolling log viewer with regex filter, Audio Trace, Watchdog Trace |
 | Voice | `/voice` | Voice relay to Claude Code via tmux |
 
@@ -457,6 +464,63 @@ ADSB_PORT = 30080
 
 ![ADS-B](docs/screenshots/adsb.png)
 
+## GPS Receiver
+
+USB serial GPS module (VK-162 or any NMEA device) with a built-in simulation mode for testing without hardware.
+
+- Live Leaflet/OpenStreetMap with pulsing position dot and DOP-based probability ring (color-coded by accuracy)
+- Satellite signal strength bar chart (PRN, elevation, azimuth, SNR)
+- Movement trail tracking
+- **SIM/LIVE toggle** -- switch between real hardware and simulated position without gateway restart
+- Simulation mode outputs fake data at a configurable position (default DM13do, Santa Ana CA)
+- GPS position feeds the repeater database for proximity queries
+
+```ini
+ENABLE_GPS = true
+GPS_PORT = /dev/ttyACM1    # or 'simulate' for fake data
+GPS_BAUD = 9600
+```
+
+![GPS](docs/screenshots/gps.png)
+
+## Repeater Database
+
+Nearby amateur radio repeaters from the [Amateur Repeater Directory](https://github.com/Amateur-Repeater-Directory/ARD-RepeaterList), filtered by GPS position.
+
+- Downloads per-state JSON files, caches locally for 24h, auto-refreshes on position change
+- State detection from GPS coordinates (includes adjacent states for border coverage)
+- Leaflet map with color-coded markers (green=2m, red=70cm, yellow=other)
+- Filterable table: band, radius (10-200km), operational status
+- **MASTER/SLAVE SDR tuning** -- assign repeaters to SDR1 and SDR2, then SET tunes both with a single restart
+- **KV4P Tune** button sets frequency + CTCSS tone on the KV4P HT
+- MCP tools: `nearby_repeaters`, `repeater_info`, `repeater_tune`, `repeater_refresh`
+
+```ini
+ENABLE_REPEATER_DB = true
+REPEATER_RADIUS_KM = 50
+```
+
+![Repeaters](docs/screenshots/repeaters.png)
+
+## Transcription
+
+Live voice-to-text using OpenAI Whisper (local, no cloud API). Transcriptions are tagged with the source frequency so you know which radio/channel produced each line.
+
+- Two modes: **Chunked** (transcribe after each transmission) and **Streaming** (rolling buffer, partial results)
+- VAD-gated: only transcribes when signal is present
+- Frequency tagging: output prefixed with `[446.760/462.550]` showing which radio/SDR tuner the audio came from
+- Forward to Mumble chat and/or Telegram
+- Configurable: model size, language, VAD threshold, hold time, audio boost
+
+```ini
+ENABLE_TRANSCRIPTION = true
+TRANSCRIBE_MODE = streaming
+TRANSCRIBE_MODEL = base
+TRANSCRIBE_LANGUAGE = en
+```
+
+![Transcription](docs/screenshots/transcribe.png)
+
 ## Gateway Link
 
 See the [Gateway Link documentation](docs/gateway_link.md) for the full protocol spec, plugin development guide, and roadmap.
@@ -535,7 +599,7 @@ All settings live in `gateway_config.txt` (INI format with `[section]` headers).
 
 The web Config page (`/`) provides a live editor with collapsible sections and Save & Restart.
 
-Key sections: `[mumble]`, `[audio]`, `[ptt]`, `[sdr]`, `[web]`, `[cat]`, `[d75]`, `[kv4p]`, `[streaming]`, `[smart_announce]`, `[telegram]`, `[adsb]`, `[link]`, `[remote_audio]`, `[email]`, `[ddns]`, `[echolink]`, `[relay]`, `[automation]`.
+Key sections: `[mumble]`, `[audio]`, `[ptt]`, `[sdr]`, `[web]`, `[cat]`, `[d75]`, `[kv4p]`, `[streaming]`, `[smart_announce]`, `[telegram]`, `[adsb]`, `[link]`, `[remote_audio]`, `[email]`, `[ddns]`, `[echolink]`, `[relay]`, `[automation]`, `[gps]`, `[repeaters]`, `[transcription]`.
 
 > **Security:** `gateway_config.txt` is in `.gitignore` -- it contains stream keys and passwords. Never commit it.
 
@@ -543,56 +607,53 @@ Key sections: `[mumble]`, `[audio]`, `[ptt]`, `[sdr]`, `[web]`, `[cat]`, `[d75]`
 
 ```
 radio-gateway/
-+-- radio_gateway.py          # Main application
-+-- gateway_core.py            # Core gateway logic
-+-- gateway_mcp.py             # MCP server (44+ tools, stdio)
-+-- gateway_utils.py           # Shared utilities
++-- radio_gateway.py           # Entry point
++-- gateway_core.py            # RadioGateway class, main loop, audio setup
++-- gateway_mcp.py             # MCP server (55+ tools, stdio)
++-- web_server.py              # WebConfigServer, Handler dispatch, config layout
++-- web_routes_get.py          # GET route handlers (28 endpoints)
++-- web_routes_post.py         # POST route handlers (27 endpoints)
++-- web_routes_stream.py       # WebSocket + MP3 streaming handlers
++-- text_commands.py           # Mumble chat commands, key dispatch, TTS
++-- audio_trace.py             # Audio pipeline debug trace
++-- stream_stats.py            # Broadcastify/Icecast stats
 +-- audio_bus.py               # Bus system (Listen, Solo, Duplex, Simplex)
 +-- bus_manager.py             # Bus lifecycle and routing manager
 +-- audio_sources.py           # Audio source classes
-+-- ptt.py                     # PTT control
++-- ptt.py                     # PTT control (relay, GPIO)
++-- transcriber.py             # Whisper voice-to-text (streaming + chunked)
 +-- th9800_plugin.py           # TH-9800 radio plugin
-+-- d75_plugin.py              # TH-D75 radio plugin
-+-- kv4p_plugin.py             # KV4P radio plugin
-+-- sdr_plugin.py              # SDR radio plugin
-+-- cat_client.py              # D75 CAT client
-+-- smart_announce.py          # Smart announcement manager
++-- kv4p_plugin.py             # KV4P HT radio plugin
++-- sdr_plugin.py              # RSPduo dual tuner plugin
++-- repeater_manager.py        # ARD repeater database, GPS proximity
++-- smart_announce.py          # AI announcement engine
 +-- radio_automation.py        # Automation engine
 +-- gateway_link.py            # Gateway Link protocol
-+-- web_server.py              # HTTP server
-+-- windows_audio_client.py    # Windows full duplex audio client
++-- ddns_updater.py            # Dynamic DNS updater
++-- email_notifier.py          # Gmail SMTP notifications
++-- cloudflare_tunnel.py       # Cloudflare quick tunnel manager
++-- mumble_server.py           # Local Mumble server manager
++-- usbip_manager.py           # USB/IP remote device manager
++-- gps_manager.py             # GPS receiver (serial NMEA + simulate)
 +-- gateway_config.txt         # Configuration (gitignored)
-+-- .mcp.json                  # MCP server config for Claude Code
-+-- start.sh                   # Startup script
-+-- web_pages/                 # Static HTML pages (18 files)
-|   +-- dashboard.html
-|   +-- routing.html
-|   +-- controls.html
-|   +-- radio.html
-|   +-- d75.html
-|   +-- kv4p.html
-|   +-- sdr.html
-|   +-- aircraft.html
-|   +-- telegram.html
-|   +-- monitor.html
-|   +-- recordings.html
-|   +-- logs.html
-|   +-- voice.html
-|   +-- common.css / common.js
-|   +-- drawflow.min.css / drawflow.min.js
-+-- examples/
-|   +-- gateway_config.txt     # Template configuration
-+-- scripts/
-|   +-- install.sh             # Full installer (RPi + Debian + Arch)
-|   +-- remote_bt_proxy.py     # D75 Bluetooth proxy
++-- web_pages/                 # Static HTML pages (20 files)
+|   +-- dashboard.html, routing.html, controls.html
+|   +-- radio.html, d75.html, kv4p.html, sdr.html
+|   +-- gps.html, repeaters.html, aircraft.html
+|   +-- telegram.html, monitor.html, recordings.html
+|   +-- transcribe.html, logs.html, voice.html, config.html
+|   +-- shell.html, common.css, common.js
 +-- tools/
-|   +-- telegram_bot.py        # Telegram bot
+|   +-- telegram_bot.py        # Telegram bot (systemd service)
 |   +-- link_endpoint.py       # Gateway Link endpoint
 |   +-- room-monitor.apk       # Android room monitor app
 +-- docs/
-|   +-- screenshots/           # Web UI screenshots (15 images)
+|   +-- screenshots/           # Web UI screenshots (18 images)
 |   +-- gateway_link.md        # Gateway Link protocol spec
-|   +-- LICENSE
++-- scripts/
+|   +-- install.sh             # Full installer (RPi + Debian + Arch)
+|   +-- remote_bt_proxy.py     # D75 Bluetooth proxy
+```
 +-- audio/                     # Announcement files
     +-- station_id.mp3
 ```
