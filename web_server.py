@@ -649,6 +649,7 @@ class WebConfigServer:
                 '/telegram': 'telegram.html',
                 '/monitor': 'monitor.html',
                 '/recordings': 'recordings.html',
+                '/transcribe': 'transcribe.html',
                 '/logs': 'logs.html',
                 '/aircraft': 'aircraft.html',
                 '/voice': 'voice.html',
@@ -775,6 +776,29 @@ class WebConfigServer:
                         self.send_response(404)
                         self.end_headers()
                         self.wfile.write(b'APK not built yet')
+                elif self.path.startswith('/transcriptions'):
+                    # Return recent transcriptions as JSON
+                    since = 0
+                    try:
+                        qs = self.path.split('?', 1)[1] if '?' in self.path else ''
+                        for part in qs.split('&'):
+                            if part.startswith('since='):
+                                since = float(part[6:])
+                    except Exception:
+                        pass
+                    data = {'results': [], 'status': {}}
+                    if parent.gateway and parent.gateway.transcriber:
+                        data['results'] = parent.gateway.transcriber.get_results(since=since)
+                        data['status'] = parent.gateway.transcriber.get_status()
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
+
                 elif self.path == '/d75status':
                     # D75 CAT state endpoint — reads from link endpoint or legacy plugin
                     data = {'connected': False, 'd75_enabled': False, 'tcp_connected': False,
@@ -1788,6 +1812,8 @@ class WebConfigServer:
                         data['broadcastify'] = gw.stream_audio_level if 'broadcastify' in _all_connected else 0
                         data['mumble'] = gw.mumble_tx_level if 'mumble' in _all_connected else 0
                         data['recording'] = 0
+                        data['transcription'] = getattr(gw, 'transcription_audio_level', 0) if 'transcription' in _all_connected else 0
+                        gw.transcription_audio_level = max(0, int(getattr(gw, 'transcription_audio_level', 0) * 0.8))
                         gw.remote_audio_tx_level = max(0, int(getattr(gw, 'remote_audio_tx_level', 0) * 0.8))
                         data['remote_audio_tx'] = getattr(gw, 'remote_audio_tx_level', 0) if 'remote_audio_tx' in _all_connected else 0
                         # Bus output levels
@@ -1859,6 +1885,94 @@ class WebConfigServer:
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
                     self.wfile.write(b'{"ok":true}')
+                    return
+                elif self.path == '/transcribe_config':
+                    # Transcriber runtime config
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode('utf-8')
+                    result = {'ok': False}
+                    try:
+                        data = json_mod.loads(body)
+                        key = data.get('key', '')
+                        value = data.get('value', '')
+                        tx = parent.gateway.transcriber if parent.gateway else None
+                        if not tx:
+                            result = {'ok': False, 'error': 'transcriber not running'}
+                        elif key == 'enabled':
+                            tx._enabled = bool(value)
+                            tx._save(); result = {'ok': True}
+                        elif key == 'vad_threshold':
+                            tx._vad_threshold = float(value)
+                            if hasattr(tx, '_silence_threshold'):
+                                tx._silence_threshold = float(value)
+                            tx._save(); result = {'ok': True}
+                        elif key == 'vad_hold':
+                            tx._vad_hold_time = float(value)
+                            if hasattr(tx, '_silence_duration'):
+                                tx._silence_duration = float(value)
+                            tx._save(); result = {'ok': True}
+                        elif key == 'min_duration':
+                            tx._min_duration = float(value)
+                            tx._save(); result = {'ok': True}
+                        elif key == 'language':
+                            tx._language = str(value)
+                            tx._save(); result = {'ok': True}
+                        elif key == 'forward_mumble':
+                            tx._forward_mumble = bool(value)
+                            tx._save(); result = {'ok': True}
+                        elif key == 'forward_telegram':
+                            tx._forward_telegram = bool(value)
+                            tx._save(); result = {'ok': True}
+                        elif key == 'audio_boost':
+                            tx._audio_boost = float(value) / 100.0
+                            tx._save(); result = {'ok': True}
+                        elif key == 'clear':
+                            with tx._results_lock:
+                                tx._results.clear()
+                            result = {'ok': True}
+                        elif key == 'model':
+                            tx._model_size = str(value)
+                            tx._save()
+                            result = {'ok': True, 'note': 'model change takes effect on restart'}
+                        elif key == 'mode':
+                            if parent.gateway:
+                                parent.gateway.config.TRANSCRIBE_MODE = str(value)
+                                # Save mode to settings file so restart picks it up
+                                from transcriber import _load_saved_settings, _save_settings
+                                _s = _load_saved_settings()
+                                _s['mode'] = str(value)
+                                _save_settings(_s)
+                            result = {'ok': True, 'note': 'mode change takes effect on restart'}
+                        elif key == 'restart':
+                            # Restart transcriber with current settings
+                            gw = parent.gateway
+                            if gw:
+                                if gw.transcriber:
+                                    gw.transcriber.stop()
+                                from transcriber import _load_saved_settings
+                                _saved = _load_saved_settings()
+                                _mode = _saved.get('mode', str(getattr(gw.config, 'TRANSCRIBE_MODE', 'chunked'))).lower()
+                                try:
+                                    if _mode == 'streaming':
+                                        from transcriber import StreamingTranscriber
+                                        gw.transcriber = StreamingTranscriber(gw.config, gw)
+                                    else:
+                                        from transcriber import RadioTranscriber
+                                        gw.transcriber = RadioTranscriber(gw.config, gw)
+                                    gw.transcriber.start()
+                                    result = {'ok': True, 'mode': _mode}
+                                except Exception as _re:
+                                    result = {'ok': False, 'error': str(_re)}
+                            else:
+                                result = {'ok': False, 'error': 'gateway not ready'}
+                        else:
+                            result = {'ok': False, 'error': f'unknown key: {key}'}
+                    except Exception as e:
+                        result = {'ok': False, 'error': str(e)}
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json_mod.dumps(result).encode('utf-8'))
                     return
                 elif self.path == '/testloop':
                     # Toggle test loop playback
@@ -3564,6 +3678,9 @@ class WebConfigServer:
         sinks.append({'id': 'speaker', 'name': 'Speaker', 'type': 'Local',
                       'enabled': True, 'speaker_mode': _spk_mode})
         sinks.append({'id': 'recording', 'name': 'Recording', 'type': 'File', 'enabled': True})
+        if gw and getattr(gw, 'transcriber', None):
+            sinks.append({'id': 'transcription', 'name': 'Transcription', 'type': 'AI',
+                          'enabled': True})
         if gw and getattr(gw, 'remote_audio_server', None):
             sinks.append({'id': 'remote_audio_tx', 'name': 'Remote Audio [TX]', 'type': 'Network',
                           'enabled': bool(gw.remote_audio_server.connected)})

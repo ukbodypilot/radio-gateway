@@ -1043,10 +1043,6 @@ class FilePlaybackSource(AudioSource):
         except Exception:
             pass
 
-        # Small yield to prevent file playback from overwhelming other threads
-        import time
-        time.sleep(0.001)
-
         # File playback triggers PTT - ALWAYS
         return chunk, True
     

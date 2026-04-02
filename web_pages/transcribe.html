@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Transcription</title>
+<link rel="stylesheet" href="/pages/common.css">
+<style>
+  body { padding: 10px; }
+  .status-bar {
+    display: flex; gap: 12px; align-items: center;
+    padding: 6px 10px; background: var(--t-panel); border-radius: 6px;
+    margin-bottom: 10px; font-size: 0.8em;
+  }
+  .status-bar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-bar .dot.on { background: #2ecc71; }
+  .status-bar .dot.off { background: #e74c3c; }
+  .vad-bar { width: 60px; height: 12px; background: #333; border-radius: 4px; overflow: hidden; position: relative; }
+  .vad-fill { height: 100%; background: #f39c12; transition: width 0.2s; }
+  #transcript-list {
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: calc(100vh - 100px); overflow-y: auto;
+  }
+  .tx-entry {
+    padding: 6px 10px; background: var(--t-panel); border-radius: 6px;
+    border-left: 3px solid var(--t-accent);
+  }
+  .tx-time { color: var(--t-accent); font-weight: bold; font-size: 0.85em; }
+  .tx-duration { color: #888; font-size: 0.75em; margin-left: 8px; }
+  .tx-text { color: #e0e0e0; margin-top: 2px; font-size: 0.95em; line-height: 1.4; }
+  .tx-pending { color: #f39c12; font-style: italic; }
+  .empty-msg { color: #666; text-align: center; padding: 40px; }
+  .ctrl-sel { background:#222; color:#e0e0e0; border:1px solid #555; border-radius:3px; padding:2px 4px; font-size:1em; }
+  details summary::-webkit-details-marker { color: var(--t-accent); }
+</style>
+</head>
+<body>
+
+<div class="status-bar" style="flex-wrap: wrap;">
+  <span><label style="cursor:pointer;"><input type="checkbox" id="st-enabled" onchange="setConfig('enabled', this.checked)" checked> <span class="dot" id="st-dot"></span> <span id="st-state">—</span></label></span>
+  <span>Mode: <span id="st-mode" style="color:var(--t-accent);">—</span></span>
+  <span>Model: <span id="st-model-disp" style="color:var(--t-accent);">—</span></span>
+  <span><div class="vad-bar" style="width:120px;"><div class="vad-fill" id="st-vad"></div><div id="st-vad-mark" style="position:absolute;top:0;bottom:0;width:2px;background:#fff;opacity:0.7;"></div></div> <span id="st-vad-db" style="color:#888;font-size:0.75em;">—</span></span>
+  <span>Pending: <span id="st-pending">0</span></span>
+  <span>Total: <span id="st-total">0</span></span>
+</div>
+
+<details style="margin-bottom:10px;" id="ctrl-panel">
+  <summary style="cursor:pointer;color:var(--t-accent);font-size:0.85em;padding:4px 0;">Controls</summary>
+  <div style="display:flex;flex-wrap:wrap;gap:12px;padding:8px;background:var(--t-panel);border-radius:6px;margin-top:4px;font-size:0.8em;">
+    <div>
+      <label style="color:#888;">Mode</label><br>
+      <select id="st-mode-sel" onchange="setConfig('mode', this.value)" class="ctrl-sel">
+        <option value="chunked">Chunked (per TX)</option>
+        <option value="streaming">Streaming (live)</option>
+      </select>
+      <div style="color:#666;font-size:0.85em;margin-top:2px;">Change requires restart</div>
+    </div>
+    <div>
+      <label style="color:#888;">Model</label><br>
+      <select id="st-model-sel" onchange="setConfig('model', this.value)" class="ctrl-sel">
+        <option value="tiny">tiny (fastest)</option>
+        <option value="base" selected>base (balanced)</option>
+        <option value="small">small (better)</option>
+        <option value="medium">medium (best, slow)</option>
+      </select>
+      <div style="color:#666;font-size:0.85em;margin-top:2px;">Change requires restart</div>
+    </div>
+    <div>
+      <label style="color:#888;">Language</label><br>
+      <select id="st-lang-sel" onchange="setConfig('language', this.value)" class="ctrl-sel">
+        <option value="en">English</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="ja">Japanese</option>
+        <option value="auto">Auto-detect</option>
+      </select>
+    </div>
+    <div>
+      <label style="color:#888;">VAD Threshold</label><br>
+      <input type="range" id="st-vad-thresh" min="-60" max="-10" value="-35" style="width:100px;" oninput="document.getElementById('st-vad-val').textContent=this.value+'dB'" onchange="setConfig('vad_threshold', this.value)">
+      <span id="st-vad-val" style="color:#aaa;">-35dB</span>
+    </div>
+    <div>
+      <label style="color:#888;">VAD Hold</label><br>
+      <input type="range" id="st-vad-hold" min="0.3" max="5.0" step="0.1" value="1.0" style="width:80px;" oninput="document.getElementById('st-hold-val').textContent=this.value+'s'" onchange="setConfig('vad_hold', this.value)">
+      <span id="st-hold-val" style="color:#aaa;">1.0s</span>
+    </div>
+    <div>
+      <label style="color:#888;">Min Duration</label><br>
+      <input type="range" id="st-min-dur" min="0.1" max="3.0" step="0.1" value="0.5" style="width:80px;" oninput="document.getElementById('st-dur-val').textContent=this.value+'s'" onchange="setConfig('min_duration', this.value)">
+      <span id="st-dur-val" style="color:#aaa;">0.5s</span>
+    </div>
+    <div>
+      <label style="color:#888;">Audio Boost</label><br>
+      <input type="range" id="st-boost" min="100" max="1000" step="50" value="100" style="width:100px;" oninput="document.getElementById('st-boost-val').textContent=this.value+'%'" onchange="setConfig('audio_boost', this.value)">
+      <span id="st-boost-val" style="color:#aaa;">100%</span>
+      <div style="color:#666;font-size:0.85em;">Amplify before transcription</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="color:#888;">Forward to</label>
+      <label style="color:#ccc;"><input type="checkbox" id="st-mumble" onchange="setConfig('forward_mumble', this.checked)" checked> Mumble</label>
+      <label style="color:#ccc;"><input type="checkbox" id="st-telegram" onchange="setConfig('forward_telegram', this.checked)"> Telegram</label>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="color:#888;">Display</label>
+      <label style="color:#ccc;"><input type="checkbox" id="st-autoscroll" checked onchange="_autoScroll=this.checked"> Auto-scroll</label>
+      <select id="st-fontsize" onchange="document.getElementById('transcript-list').style.fontSize=this.value" class="ctrl-sel">
+        <option value="0.85em">Small</option>
+        <option value="1em" selected>Normal</option>
+        <option value="1.2em">Large</option>
+        <option value="1.5em">XL</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
+      <button onclick="restartTranscriber()" style="background:#333;color:#f39c12;border:1px solid #555;border-radius:4px;padding:4px 12px;cursor:pointer;">Restart</button>
+      <button onclick="clearTranscripts()" style="background:#333;color:#e74c3c;border:1px solid #555;border-radius:4px;padding:4px 12px;cursor:pointer;">Clear All</button>
+    </div>
+  </div>
+</details>
+
+<div id="stats-panel" style="margin-bottom:8px;padding:6px 10px;background:var(--t-panel);border-radius:6px;font-size:0.8em;display:none;">
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+    <span style="color:var(--t-accent);font-weight:bold;">Performance</span>
+    <span>Avg: <span id="ps-ratio" style="font-weight:bold;">—</span>x realtime</span>
+    <span>Realtime: <span id="ps-rt-pct" style="font-weight:bold;">—</span>%</span>
+    <span>Avg audio: <span id="ps-dur">—</span>s</span>
+    <span>Avg process: <span id="ps-proc">—</span>s</span>
+    <span>Samples: <span id="ps-count">0</span></span>
+  </div>
+  <div id="ps-chart" style="margin-top:6px;height:40px;display:flex;align-items:flex-end;gap:1px;"></div>
+</div>
+
+<div id="partial-bar" style="display:none;padding:6px 10px;background:#1a2a1a;border:1px solid #2ecc71;border-radius:6px;margin-bottom:6px;font-size:0.9em;">
+  <span style="color:#2ecc71;font-weight:bold;">LIVE</span>
+  <span id="partial-text" style="color:#e0e0e0;margin-left:8px;"></span>
+</div>
+
+<div id="transcript-list">
+  <div class="empty-msg">Waiting for transmissions...</div>
+</div>
+
+<script src="/pages/common.js"></script>
+<script>
+var _lastTimestamp = 0;
+var _entries = [];
+var _autoScroll = true;
+var _configSynced = false;
+
+function poll() {
+  fetch('/transcriptions?since=' + _lastTimestamp)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      // Update status bar
+      var s = d.status || {};
+      var dot = document.getElementById('st-dot');
+      var state = document.getElementById('st-state');
+      if (!s.enabled) {
+        dot.className = 'dot off';
+        state.textContent = 'Disabled';
+        state.style.color = '#888';
+      } else if (s.model_loaded) {
+        dot.className = 'dot on';
+        state.textContent = s.vad_open ? 'Listening...' : 'Ready';
+        state.style.color = s.vad_open ? '#f39c12' : '#2ecc71';
+      } else {
+        dot.className = 'dot off';
+        state.textContent = 'Loading model...';
+        state.style.color = '#f39c12';
+      }
+      var _vdb = s.vad_db || -100;
+      var _vth = s.vad_threshold || -35;
+      var vad_pct = Math.max(0, Math.min(100, (_vdb + 60) * (100/60)));
+      var vadFill = document.getElementById('st-vad');
+      vadFill.style.width = vad_pct + '%';
+      // Green = above threshold (speech), Orange = within 6dB of threshold, Red = below (gating)
+      if (_vdb > _vth) {
+        vadFill.style.background = '#2ecc71';
+      } else if (_vdb > _vth - 6) {
+        vadFill.style.background = '#f39c12';
+      } else {
+        vadFill.style.background = '#e74c3c';
+      }
+      // Position threshold marker on the bar
+      var _thPct = Math.max(0, Math.min(100, (_vth + 60) * (100/60)));
+      document.getElementById('st-vad-mark').style.left = _thPct + '%';
+      document.getElementById('st-vad-db').textContent = _vdb.toFixed(0) + 'dB';
+      document.getElementById('st-pending').textContent = s.pending || 0;
+      document.getElementById('st-total').textContent = s.total_transcriptions || 0;
+      document.getElementById('st-mode').textContent = s.mode || 'chunked';
+      document.getElementById('st-model-disp').textContent = s.model || '—';
+
+      // Streaming mode: show partial text
+      var partialBar = document.getElementById('partial-bar');
+      if (s.partial && s.vad_open) {
+        partialBar.style.display = '';
+        document.getElementById('partial-text').textContent = s.partial;
+      } else {
+        partialBar.style.display = 'none';
+      }
+      // Buffer size in status
+      if (s.buffer_secs !== undefined && s.buffer_secs > 0) {
+        document.getElementById('st-pending').textContent = s.buffer_secs + 's buf';
+      }
+
+      // Sync control values from server on first poll
+      if (!_configSynced && s.model_loaded) {
+        _configSynced = true;
+        if (s.enabled !== undefined) document.getElementById('st-enabled').checked = s.enabled;
+        if (s.mode) document.getElementById('st-mode-sel').value = s.mode;
+        if (s.model) document.getElementById('st-model-sel').value = s.model;
+        if (s.language) document.getElementById('st-lang-sel').value = s.language;
+        if (s.vad_threshold) {
+          document.getElementById('st-vad-thresh').value = s.vad_threshold;
+          document.getElementById('st-vad-val').textContent = s.vad_threshold + 'dB';
+        }
+        if (s.vad_hold) {
+          document.getElementById('st-vad-hold').value = s.vad_hold;
+          document.getElementById('st-hold-val').textContent = s.vad_hold + 's';
+        }
+        if (s.min_duration) {
+          document.getElementById('st-min-dur').value = s.min_duration;
+          document.getElementById('st-dur-val').textContent = s.min_duration + 's';
+        }
+        if (s.forward_mumble !== undefined) document.getElementById('st-mumble').checked = s.forward_mumble;
+        if (s.forward_telegram !== undefined) document.getElementById('st-telegram').checked = s.forward_telegram;
+        if (s.audio_boost) {
+          document.getElementById('st-boost').value = s.audio_boost;
+          document.getElementById('st-boost-val').textContent = s.audio_boost + '%';
+        }
+      }
+
+      // Update performance stats
+      var ps = s.stats || {};
+      var statsPanel = document.getElementById('stats-panel');
+      if (ps.count > 0) {
+        statsPanel.style.display = '';
+        document.getElementById('ps-ratio').textContent = ps.avg_ratio || '—';
+        document.getElementById('ps-ratio').style.color = (ps.avg_ratio||1) < 1 ? '#2ecc71' : '#e74c3c';
+        document.getElementById('ps-rt-pct').textContent = ps.realtime_pct || 0;
+        document.getElementById('ps-rt-pct').style.color = (ps.realtime_pct||0) >= 80 ? '#2ecc71' : (ps.realtime_pct||0) >= 50 ? '#f39c12' : '#e74c3c';
+        document.getElementById('ps-dur').textContent = ps.avg_duration || '—';
+        document.getElementById('ps-proc').textContent = ps.avg_proc_time || '—';
+        document.getElementById('ps-count').textContent = ps.count;
+        // Mini bar chart of recent ratios
+        var recent = ps.recent || [];
+        var chartHtml = '';
+        for (var ri = 0; ri < recent.length; ri++) {
+          var r = recent[ri];
+          var h = Math.min(40, Math.max(2, r.ratio * 30));
+          var c = r.ratio < 1 ? '#2ecc71' : '#e74c3c';
+          chartHtml += '<div title="' + r.duration + 's→' + r.proc_time + 's (' + r.ratio + 'x)" style="width:12px;height:' + h + 'px;background:' + c + ';border-radius:1px;"></div>';
+        }
+        // Add 1.0x reference line
+        document.getElementById('ps-chart').innerHTML = '<div style="position:relative;display:flex;align-items:flex-end;gap:2px;height:40px;">' + chartHtml + '<div style="position:absolute;bottom:30px;left:0;right:0;border-top:1px dashed #555;"></div><span style="position:absolute;bottom:30px;right:0;color:#555;font-size:0.7em;">1.0x</span></div>';
+      }
+
+      // Add new results
+      var results = d.results || [];
+      if (results.length > 0) {
+        for (var i = 0; i < results.length; i++) {
+          var r = results[i];
+          if (r.timestamp > _lastTimestamp) {
+            _lastTimestamp = r.timestamp;
+            _entries.push(r);
+          }
+        }
+        renderList();
+      }
+    })
+    .catch(function(e) { console.error('Poll error:', e); });
+}
+
+function renderList() {
+  var list = document.getElementById('transcript-list');
+  if (!_entries.length) {
+    list.innerHTML = '<div class="empty-msg">Waiting for transmissions...</div>';
+    return;
+  }
+  // Show newest first
+  var html = '';
+  for (var i = _entries.length - 1; i >= 0; i--) {
+    var e = _entries[i];
+    if (e.partial) continue;  // Skip partials in the list — shown in live bar
+    html += '<div class="tx-entry">';
+    html += '<span class="tx-time">' + e.time_str + '</span>';
+    html += '<span class="tx-duration">';
+    if (e.duration) html += e.duration + 's';
+    if (e.proc_time) html += ' &rarr; ' + e.proc_time + 's';
+    if (e.ratio) html += ' <span style="color:' + (e.ratio < 1 ? '#2ecc71' : '#e74c3c') + ';">(' + e.ratio + 'x)</span>';
+    html += '</span>';
+    html += '<div class="tx-text">' + _escHtml(e.text) + '</div>';
+    html += '</div>';
+  }
+  list.innerHTML = html;
+  if (_autoScroll) list.scrollTop = 0;
+}
+
+function _escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function setConfig(key, value) {
+  fetch('/transcribe_config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key: key, value: value})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d.ok) alert(d.error || 'Failed');
+  });
+}
+
+function restartTranscriber() {
+  setConfig('restart', true);
+  _entries = [];
+  _lastTimestamp = 0;
+  _configSynced = false;
+  renderList();
+  document.getElementById('st-state').textContent = 'Restarting...';
+  document.getElementById('st-state').style.color = '#f39c12';
+}
+
+function clearTranscripts() {
+  _entries = [];
+  _lastTimestamp = 0;
+  renderList();
+  fetch('/transcribe_config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key: 'clear'})
+  });
+}
+
+// Update VAD threshold display
+document.getElementById('st-vad-thresh').addEventListener('input', function() {
+  document.getElementById('st-vad-val').textContent = this.value;
+});
+
+setInterval(poll, 2000);
+poll();
+</script>
+</body>
+</html>

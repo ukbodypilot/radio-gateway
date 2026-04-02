@@ -372,7 +372,9 @@ class TH9800Plugin(RadioPlugin):
 
         chunk_size = self._config.AUDIO_CHUNK_SIZE
         chunk_bytes = chunk_size * 2  # 16-bit mono
-        read_size = chunk_size * 4  # 200ms block (matches AIOC USB period)
+        # Read one chunk (50ms) at a time — matches ALSA period size.
+        # Reading more than the buffer causes overruns and glitches.
+        read_size = chunk_size
 
         while self._rx_running:
             # ── Phase 1: Open stream ──
@@ -389,7 +391,7 @@ class TH9800Plugin(RadioPlugin):
                     rate=self._config.AUDIO_RATE,
                     input=True,
                     input_device_index=input_idx,
-                    frames_per_buffer=chunk_size)
+                    frames_per_buffer=chunk_size * 4)  # larger buffer prevents boundary artifacts
                 self._input_stream = stream  # expose for is_active() checks
                 self._stream_restart_count += 1
                 print(f"  [TH9800-RX] Stream opened (restart #{self._stream_restart_count})")
@@ -409,43 +411,42 @@ class TH9800Plugin(RadioPlugin):
                     self._last_audio_capture_time = time.time()
                     _consecutive_errors = 0
 
-                    # Slice 200ms block into 4 × 50ms chunks
-                    for offset in range(0, len(data), chunk_bytes):
-                        chunk = data[offset:offset + chunk_bytes]
-                        if len(chunk) < chunk_bytes:
-                            break
+                    # One chunk per read — no slicing needed
+                    chunk = data
+                    if len(chunk) < chunk_bytes:
+                        chunk = chunk + b'\x00' * (chunk_bytes - len(chunk))
 
-                        # Apply audio processing
-                        if self._processor:
-                            chunk = self._processor.process(chunk)
+                    # Apply audio processing
+                    if self._processor:
+                        chunk = self._processor.process(chunk)
 
-                        # Track level
+                    # Track level
+                    try:
+                        arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
+                        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
+                        if rms > 0:
+                            _lv = max(0, min(100, (20.0 * math.log10(rms / 32767.0) + 60) * (100 / 60)))
+                        else:
+                            _lv = 0
+                        if _lv > self.audio_level:
+                            self.audio_level = int(_lv)
+                        else:
+                            self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+                    except Exception:
+                        pass
+
+                    # Queue for get_audio()
+                    try:
+                        self._rx_queue.put_nowait(chunk)
+                    except _queue_mod.Full:
                         try:
-                            arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-                            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-                            if rms > 0:
-                                _lv = max(0, min(100, (20.0 * math.log10(rms / 32767.0) + 60) * (100 / 60)))
-                            else:
-                                _lv = 0
-                            if _lv > self.audio_level:
-                                self.audio_level = int(_lv)
-                            else:
-                                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
-                        except Exception:
+                            self._rx_queue.get_nowait()
+                        except _queue_mod.Empty:
                             pass
-
-                        # Queue for get_audio()
                         try:
                             self._rx_queue.put_nowait(chunk)
                         except _queue_mod.Full:
-                            try:
-                                self._rx_queue.get_nowait()
-                            except _queue_mod.Empty:
-                                pass
-                            try:
-                                self._rx_queue.put_nowait(chunk)
-                            except _queue_mod.Full:
-                                pass
+                            pass
 
                 except IOError as e:
                     err_code = getattr(e, 'errno', None)

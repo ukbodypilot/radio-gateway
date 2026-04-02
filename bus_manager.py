@@ -67,6 +67,19 @@ class BusManager:
         from audio_bus import additive_mix
         chunks = list(self._pcm_queue)
         self._pcm_queue.clear()
+        # DIAG: log when we drain multiple or zero chunks (indicates clock drift)
+        if not hasattr(self, '_pcm_drain_count'):
+            self._pcm_drain_count = 0
+            self._pcm_drain_multi = 0
+            self._pcm_drain_diag = time.time()
+        self._pcm_drain_count += 1
+        if len(chunks) > 1:
+            self._pcm_drain_multi += 1
+        if time.time() - self._pcm_drain_diag > 10.0:
+            print(f"  [PCM-DIAG] drains={self._pcm_drain_count} multi={self._pcm_drain_multi} ({self._pcm_drain_multi*100//max(1,self._pcm_drain_count)}% double)")
+            self._pcm_drain_count = 0
+            self._pcm_drain_multi = 0
+            self._pcm_drain_diag = time.time()
         return additive_mix(chunks)
 
     def drain_mp3(self):
@@ -377,6 +390,16 @@ class BusManager:
                     pass
             elif sink_id == 'recording':
                 pass  # TODO: recording sink
+            elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
+                try:
+                    gw.transcriber.feed(audio)
+                    _tl = gw.calculate_audio_level(audio)
+                    if _tl > getattr(gw, 'transcription_audio_level', 0):
+                        gw.transcription_audio_level = _tl
+                    else:
+                        gw.transcription_audio_level = int(getattr(gw, 'transcription_audio_level', 0) * 0.7 + _tl * 0.3)
+                except Exception:
+                    pass
             elif sink_id == 'remote_audio_tx' and getattr(gw, 'remote_audio_server', None):
                 if gw.remote_audio_server.connected:
                     try:
@@ -403,6 +426,14 @@ class BusManager:
         if mixed is not None:
             if proc_cfg.get('pcm', False):
                 self._pcm_queue.append(mixed)
+                # Also push directly to WebSocket PCM for glitch-free delivery
+                # (the main loop drain/mix path has clock drift issues)
+                gw = self.gateway
+                if gw and getattr(gw, 'web_config_server', None) and gw.web_config_server._ws_clients:
+                    try:
+                        gw.web_config_server.push_ws_audio(mixed)
+                    except Exception:
+                        pass
             if proc_cfg.get('mp3', False):
                 self._mp3_queue.append(mixed)
 

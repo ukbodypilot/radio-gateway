@@ -342,6 +342,10 @@ class RadioGateway:
         # Automation Engine
         self.automation_engine = None  # AutomationEngine instance
 
+        # Transcriber
+        self.transcriber = None
+        self.transcription_audio_level = 0
+
         # Web configuration UI
         self.web_config_server = None
 
@@ -2772,6 +2776,7 @@ class RadioGateway:
                     if _early_audio is None:
                         self.stream_audio_level = max(0, int(self.stream_audio_level * 0.7))
                         self.mumble_tx_level = max(0, int(getattr(self, 'mumble_tx_level', 0) * 0.7))
+                        self.transcription_audio_level = max(0, int(getattr(self, 'transcription_audio_level', 0) * 0.7))
                     if _early_audio is not None:
                         if 'broadcastify' in _listen_sinks:
                             if self.stream_output and self.stream_output.connected:
@@ -2808,6 +2813,17 @@ class RadioGateway:
                                         self.mumble_tx_level = int(getattr(self, 'mumble_tx_level', 0) * 0.7 + _ml * 0.3)
                                 except Exception:
                                     pass
+                        # Transcription sink on listen bus
+                        if 'transcription' in _listen_sinks and self.transcriber:
+                            try:
+                                self.transcriber.feed(_early_audio)
+                                _tl = self.calculate_audio_level(_early_audio)
+                                if _tl > getattr(self, 'transcription_audio_level', 0):
+                                    self.transcription_audio_level = _tl
+                                else:
+                                    self.transcription_audio_level = int(getattr(self, 'transcription_audio_level', 0) * 0.7 + _tl * 0.3)
+                            except Exception:
+                                pass
 
                     if data is None:
                         # No audio from any source — nothing to send.
@@ -2817,11 +2833,9 @@ class RadioGateway:
                         _silence = b'\x00' * (self.config.AUDIO_CHUNK_SIZE * 2)
                         if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
                             self._speaker_enqueue(_silence)
-                        # Use already-drained BusManager PCM
-                        if _bm_pcm is not None:
-                            if self.web_config_server and self.web_config_server._ws_clients:
-                                self.web_config_server.push_ws_audio(_bm_pcm)
-                        elif self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False):
+                        # BusManager pushes its own PCM directly to WebSocket.
+                        # Only push silence if listen bus has PCM on and nothing is playing.
+                        if self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False):
                             if self.web_config_server and self.web_config_server._ws_clients:
                                 self.web_config_server.push_ws_audio(_silence)
                         _tr_outcome = 'vad_gate'
@@ -2837,23 +2851,13 @@ class RadioGateway:
                         if self.automation_engine and self.automation_engine.recorder.is_recording():
                             self.automation_engine.recorder.feed(data)
 
-                        # Push to WebSocket PCM clients — mix listen bus + other busses.
+                        # Push listen bus audio to WebSocket PCM clients.
+                        # BusManager busses push their own PCM directly (no mixing here).
                         _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
                         _listen_pcm_on = _listen_flags.get('pcm', False) and not getattr(self, '_listen_bus_muted', False)
-                        # _bm_pcm already drained above — reuse it
-                        if _listen_pcm_on or _bm_pcm is not None:
-                            _pcm_out = None
-                            if _listen_pcm_on and data is not None:
-                                _pcm_out = data
-                            if _bm_pcm is not None:
-                                if _pcm_out is None:
-                                    _pcm_out = _bm_pcm
-                                else:
-                                    from audio_bus import mix_audio_streams
-                                    _pcm_out = mix_audio_streams(_pcm_out, _bm_pcm)
-                            if _pcm_out is not None:
-                                if self.web_config_server and self.web_config_server._ws_clients:
-                                    self.web_config_server.push_ws_audio(_pcm_out)
+                        if _listen_pcm_on and data is not None:
+                            if self.web_config_server and self.web_config_server._ws_clients:
+                                self.web_config_server.push_ws_audio(data)
 
                     _tr_outcome = 'mix'  # will be updated to sent/no_mumble/etc below
 
@@ -2937,11 +2941,7 @@ class RadioGateway:
                         # Always push PCM to WebSocket — browser AudioWorklet needs steady stream
                         _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
                         if _listen_flags.get('pcm', False) and self.web_config_server and self.web_config_server._ws_clients:
-                            _vad_pcm = data
-                            if _bm_pcm is not None:
-                                from audio_bus import mix_audio_streams
-                                _vad_pcm = mix_audio_streams(_vad_pcm, _bm_pcm)
-                            self.web_config_server.push_ws_audio(_vad_pcm)
+                            self.web_config_server.push_ws_audio(data)
                         _tr_outcome = 'vad_gate'
                         continue
 
@@ -4149,6 +4149,23 @@ class RadioGateway:
                 print(f"[Automation] Failed to start: {e}")
                 self.automation_engine = None
 
+        # Start Transcriber if enabled
+        if getattr(self.config, 'ENABLE_TRANSCRIPTION', False):
+            try:
+                from transcriber import _load_saved_settings as _load_tx_settings
+                _tx_saved = _load_tx_settings()
+                _tx_mode = _tx_saved.get('mode', str(getattr(self.config, 'TRANSCRIBE_MODE', 'chunked'))).lower()
+                if _tx_mode == 'streaming':
+                    from transcriber import StreamingTranscriber
+                    self.transcriber = StreamingTranscriber(self.config, self)
+                else:
+                    from transcriber import RadioTranscriber
+                    self.transcriber = RadioTranscriber(self.config, self)
+                self.transcriber.start()
+            except Exception as e:
+                print(f"[Transcribe] Failed to start: {e}")
+                self.transcriber = None
+
         # Main loop
         try:
             while self.running:
@@ -5117,6 +5134,12 @@ class RadioGateway:
         if self.automation_engine:
             try:
                 self.automation_engine.stop()
+            except Exception:
+                pass
+
+        if self.transcriber:
+            try:
+                self.transcriber.stop()
             except Exception:
                 pass
 
