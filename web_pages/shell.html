@@ -53,7 +53,7 @@
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/routing" target="content" onclick="setActive(this)">Routing</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a><a href="/radio" target="content" onclick="setActive(this)" id="nav-radio">TH-9800</a><a href="/d75" target="content" onclick="setActive(this)" id="nav-d75">TH-D75</a><a href="/kv4p" target="content" onclick="setActive(this)" id="nav-kv4p">KV4P</a><a href="/sdr" target="content" onclick="setActive(this)" id="nav-sdr">SDR</a><a href="/gps" target="content" onclick="setActive(this)" id="nav-gps">GPS</a><a href="/aircraft" target="content" onclick="setActive(this)" id="nav-adsb">ADS-B</a><a href="/telegram" target="content" onclick="setActive(this)" id="nav-telegram">Telegram</a><a href="/monitor" target="content" onclick="setActive(this)">Monitor</a><a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/transcribe" target="content" onclick="setActive(this)">Transcribe</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a><a href="/voice" target="content" onclick="setActive(this)">Voice</a>
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/routing" target="content" onclick="setActive(this)">Routing</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a><a href="/radio" target="content" onclick="setActive(this)" id="nav-radio">TH-9800</a><a href="/d75" target="content" onclick="setActive(this)" id="nav-d75">TH-D75</a><a href="/kv4p" target="content" onclick="setActive(this)" id="nav-kv4p">KV4P</a><a href="/sdr" target="content" onclick="setActive(this)" id="nav-sdr">SDR</a><a href="/gps" target="content" onclick="setActive(this)" id="nav-gps">GPS</a><a href="/repeaters" target="content" onclick="setActive(this)" id="nav-repeaters">Repeaters</a><a href="/aircraft" target="content" onclick="setActive(this)" id="nav-adsb">ADS-B</a><a href="/telegram" target="content" onclick="setActive(this)" id="nav-telegram">Telegram</a><a href="/monitor" target="content" onclick="setActive(this)">Monitor</a><a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/transcribe" target="content" onclick="setActive(this)">Transcribe</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a><a href="/voice" target="content" onclick="setActive(this)">Voice</a>
     <span class="shell-pcm">
       <button id="play-btn" onclick="toggleStream()" style="min-width:52px; text-align:center;">&#9654; MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
@@ -413,6 +413,7 @@ function _updateNav() {
       'nav-kv4p': s.kv4p_enabled !== false,
       'nav-sdr': s.sdr1_enabled !== false,
       'nav-gps': s.gps_enabled !== false,
+      'nav-repeaters': s.repeater_db_enabled !== false,
       'nav-adsb': s.adsb_enabled !== false,
       'nav-telegram': s.telegram_enabled !== false
     };

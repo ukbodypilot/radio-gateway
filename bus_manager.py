@@ -392,7 +392,7 @@ class BusManager:
                 pass  # TODO: recording sink
             elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
                 try:
-                    gw.transcriber.feed(audio)
+                    gw.transcriber.feed(audio, source_id=bus_id)
                     _tl = gw.calculate_audio_level(audio)
                     if _tl > getattr(gw, 'transcription_audio_level', 0):
                         gw.transcription_audio_level = _tl

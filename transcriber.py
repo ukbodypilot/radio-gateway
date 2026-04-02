@@ -21,6 +21,45 @@ _SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                '.transcribe_settings.json')
 
 
+def _resolve_freq_tag(gateway, source_id):
+    """Look up the current frequency for a bus/source ID. Returns e.g. '446.760' or ''."""
+    if not source_id or not gateway:
+        return ''
+    try:
+        sdr = getattr(gateway, 'sdr_plugin', None)
+        if sdr and source_id in ('main', 'sdr', 'sdr_rspduo'):
+            f1 = getattr(sdr, 'frequency', 0)
+            f2 = getattr(sdr, 'frequency2', 0)
+            if f1 and f2:
+                return f'{f1:.3f}/{f2:.3f}'
+            return f'{f1:.3f}' if f1 else ''
+        if source_id in ('th9800', 'aioc'):
+            cat = getattr(gateway, 'cat_client', None)
+            if cat:
+                freq = getattr(cat, '_frequency', 0) or getattr(cat, 'frequency', 0)
+                if freq:
+                    return f'{freq:.3f}' if isinstance(freq, float) else str(freq)
+        if source_id == 'kv4p':
+            kv = getattr(gateway, 'kv4p_plugin', None)
+            if kv:
+                return f'{kv._frequency:.3f}'
+        if source_id == 'd75':
+            d75 = getattr(gateway, 'd75_plugin', None)
+            if d75 and hasattr(d75, '_frequency'):
+                return f'{d75._frequency:.3f}'
+            for name in getattr(gateway, 'link_endpoints', {}):
+                if 'd75' in name.lower():
+                    status = getattr(gateway, '_link_last_status', {}).get(name, {})
+                    bands = status.get('band', [])
+                    if bands:
+                        freq = bands[0].get('frequency', '')
+                        if freq:
+                            return str(freq)
+    except Exception:
+        pass
+    return ''
+
+
 def _load_saved_settings():
     """Load persisted transcriber settings."""
     try:
@@ -118,10 +157,11 @@ class RadioTranscriber:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def feed(self, pcm_48k):
+    def feed(self, pcm_48k, source_id=None):
         """Feed 48kHz 16-bit mono PCM from the mixer. Called every tick (~50ms)."""
         if not self._enabled:
             return
+        self._current_source = source_id
         arr = np.frombuffer(pcm_48k, dtype=np.int16).astype(np.float32)
         rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
         db = 20 * math.log10(rms / 32767.0) if rms > 0 else -100.0
@@ -161,6 +201,7 @@ class RadioTranscriber:
                             'audio': audio,
                             'start_time': self._buf_start_time,
                             'duration': duration,
+                            'source_id': getattr(self, '_current_source', None),
                         })
                         self._pending_evt.set()
                     self._audio_buf = []
@@ -255,25 +296,29 @@ class RadioTranscriber:
                         self._stats.append(_stat)
                     print(f"  [Transcribe] {_duration:.1f}s audio → {_proc_time:.1f}s process ({_ratio:.2f}x realtime)")
                     if text and text.strip():
+                        freq_tag = _resolve_freq_tag(self._gateway, item.get('source_id'))
                         result = {
                             'timestamp': item['start_time'],
                             'duration': round(item['duration'], 1),
                             'proc_time': round(_proc_time, 1),
                             'ratio': round(_ratio, 2),
                             'text': text.strip(),
+                            'freq': freq_tag,
+                            'source': item.get('source_id', ''),
                             'time_str': time.strftime('%H:%M:%S',
                                                       time.localtime(item['start_time'])),
                         }
                         with self._results_lock:
                             self._results.append(result)
+                        _freq_prefix = f'[{freq_tag}] ' if freq_tag else ''
                         print(f"  [Transcribe] [{result['time_str']}] "
-                              f"({result['duration']}s) {result['text']}")
+                              f"{_freq_prefix}({result['duration']}s) {result['text']}")
 
                         # Forward to Mumble chat
                         if self._forward_mumble and self._gateway and self._gateway.mumble:
                             try:
                                 self._gateway.send_text_message(
-                                    f"[{result['time_str']}] {result['text']}")
+                                    f"[{result['time_str']}] {_freq_prefix}{result['text']}")
                             except Exception:
                                 pass
                         # Forward to Telegram
@@ -415,10 +460,11 @@ class StreamingTranscriber:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def feed(self, pcm_48k):
+    def feed(self, pcm_48k, source_id=None):
         """Feed 48kHz 16-bit mono PCM from the bus sink."""
         if not self._enabled:
             return
+        self._current_source = source_id
         arr = np.frombuffer(pcm_48k, dtype=np.int16).astype(np.float32)
         rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
         db = 20 * math.log10(rms / 32767.0) if rms > 0 else -100.0
@@ -615,23 +661,27 @@ class StreamingTranscriber:
 
     def _finalize_result(self):
         """Convert partial to completed result."""
+        freq_tag = _resolve_freq_tag(self._gateway, getattr(self, '_current_source', None))
         result = {
             'timestamp': self._partial_time or time.time(),
             'duration': 0,
             'proc_time': 0,
             'ratio': 0,
             'text': self._partial_text.strip(),
+            'freq': freq_tag,
+            'source': getattr(self, '_current_source', ''),
             'time_str': time.strftime('%H:%M:%S',
                                       time.localtime(self._partial_time or time.time())),
         }
         with self._results_lock:
             self._results.append(result)
-        print(f"  [StreamTranscribe] FINAL: [{result['time_str']}] {result['text'][:60]}")
+        _freq_prefix = f'[{freq_tag}] ' if freq_tag else ''
+        print(f"  [StreamTranscribe] FINAL: [{result['time_str']}] {_freq_prefix}{result['text'][:60]}")
 
         if self._forward_mumble and self._gateway and self._gateway.mumble:
             try:
                 self._gateway.send_text_message(
-                    f"[{result['time_str']}] {result['text']}")
+                    f"[{result['time_str']}] {_freq_prefix}{result['text']}")
             except Exception:
                 pass
         if self._forward_telegram and self._gateway:
@@ -640,7 +690,7 @@ class StreamingTranscriber:
                 urllib.request.urlopen(
                     urllib.request.Request(
                         'http://127.0.0.1:8080/telegram_send',
-                        data=json.dumps({'text': f"[{result['time_str']}] {result['text']}"}).encode(),
+                        data=json.dumps({'text': f"[{result['time_str']}] {_freq_prefix}{result['text']}"}).encode(),
                         headers={'Content-Type': 'application/json'}),
                     timeout=5)
             except Exception:

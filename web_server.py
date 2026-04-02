@@ -497,6 +497,9 @@ class WebConfigServer:
         ('gps', 'GPS Receiver', [
             'ENABLE_GPS', 'GPS_PORT', 'GPS_BAUD',
         ]),
+        ('repeaters', 'Repeater Database', [
+            'ENABLE_REPEATER_DB', 'REPEATER_RADIUS_KM',
+        ]),
         ('usbip', 'USB/IP Remote Devices', [
             'ENABLE_USBIP', 'USBIP_SERVER', 'USBIP_DEVICES',
         ]),
@@ -670,6 +673,7 @@ class WebConfigServer:
                 '/transcribe': 'transcribe.html',
                 '/logs': 'logs.html',
                 '/gps': 'gps.html',
+                '/repeaters': 'repeaters.html',
                 '/aircraft': 'aircraft.html',
                 '/voice': 'voice.html',
                 '/routing': 'routing.html',
@@ -1233,6 +1237,30 @@ class WebConfigServer:
                         self.send_header('Cache-Control', 'no-cache')
                         self.end_headers()
                         self.wfile.write(json_mod.dumps(data).encode('utf-8'))
+                    except BrokenPipeError:
+                        pass
+                elif self.path.startswith('/repeaterstatus'):
+                    import json as json_mod
+                    from urllib.parse import urlparse, parse_qs
+                    gw = parent.gateway
+                    if gw and gw.repeater_manager:
+                        qs = parse_qs(urlparse(self.path).query)
+                        band = qs.get('band', [''])[0]
+                        radius = float(qs.get('radius', [0])[0] or 0) or None
+                        operational = qs.get('operational', ['true'])[0].lower() != 'false'
+                        reps = gw.repeater_manager.get_nearby(
+                            band=band or None, radius_km=radius, operational_only=operational)
+                        status = gw.repeater_manager.get_status()
+                        data = {'ok': True, 'status': status, 'repeaters': reps}
+                    else:
+                        data = {'ok': True, 'status': {'enabled': False}, 'repeaters': []}
+                    try:
+                        resp = json_mod.dumps(data).encode('utf-8')
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.end_headers()
+                        self.wfile.write(resp)
                     except BrokenPipeError:
                         pass
                 elif self.path == '/automationhistory':

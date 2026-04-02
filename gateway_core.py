@@ -106,6 +106,7 @@ from audio_sources import (
 )
 from audio_bus import ListenBus
 from gateway_utils import DDNSUpdater, EmailNotifier, CloudflareTunnel, MumbleServerManager, USBIPManager, GPSManager
+from repeater_manager import RepeaterManager
 from ptt import RelayController, GPIORelayController
 from cat_client import RadioCATClient
 from smart_announce import SmartAnnouncementManager
@@ -355,6 +356,7 @@ class RadioGateway:
         self.cloudflare_tunnel = None  # CloudflareTunnel instance
         self.email_notifier = None  # EmailNotifier instance
         self.gps_manager = None  # GPSManager instance
+        self.repeater_manager = None  # RepeaterManager instance
 
         # TH-9800 CAT control
         self.cat_client = None  # RadioCATClient instance
@@ -1758,6 +1760,14 @@ class RadioGateway:
                 except Exception as e:
                     print(f"  [GPS] Init error: {e}")
 
+            # Initialize Repeater Database (depends on GPS)
+            if getattr(self.config, 'ENABLE_REPEATER_DB', False):
+                try:
+                    self.repeater_manager = RepeaterManager(self.config, self.gps_manager)
+                    self.repeater_manager.start()
+                except Exception as e:
+                    print(f"  [Repeaters] Init error: {e}")
+
             # Initialize EchoLink source if enabled (Phase 3B)
             if self.config.ENABLE_ECHOLINK:
                 try:
@@ -2827,7 +2837,7 @@ class RadioGateway:
                         # Transcription sink on listen bus
                         if 'transcription' in _listen_sinks and self.transcriber:
                             try:
-                                self.transcriber.feed(_early_audio)
+                                self.transcriber.feed(_early_audio, source_id=self._listen_bus_id)
                                 _tl = self.calculate_audio_level(_early_audio)
                                 if _tl > getattr(self, 'transcription_audio_level', 0):
                                     self.transcription_audio_level = _tl
@@ -3841,6 +3851,7 @@ class RadioGateway:
             'kv4p_level': self.kv4p_plugin.audio_level if self.kv4p_plugin else 0,
             'kv4p_muted': getattr(self, 'kv4p_muted', False),
             'gps_enabled': bool(self.gps_manager),
+            'repeater_db_enabled': bool(self.repeater_manager),
             'adsb_enabled': getattr(self.config, 'ENABLE_ADSB', False),
             'telegram_enabled': getattr(self.config, 'ENABLE_TELEGRAM', False),
             'monitor_enabled': bool(self.web_monitor_source),
@@ -5170,6 +5181,12 @@ class RadioGateway:
         if self.gps_manager:
             try:
                 self.gps_manager.stop()
+            except Exception:
+                pass
+
+        if self.repeater_manager:
+            try:
+                self.repeater_manager.stop()
             except Exception:
                 pass
 
