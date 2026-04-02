@@ -608,7 +608,7 @@ class WebConfigServer:
         # Initialize USB/IP manager
         if getattr(self.config, 'ENABLE_USBIP', False):
             try:
-                from gateway_core import USBIPManager
+                from usbip_manager import USBIPManager
                 self.usbip_manager = USBIPManager(self.config)
                 self.usbip_manager.start()
             except Exception as e:
