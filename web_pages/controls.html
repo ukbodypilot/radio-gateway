@@ -12,9 +12,6 @@
 <!-- Mute, processing, audio, SDR, and Broadcastify controls removed —
      all handled by routing page (mute buttons, G/H/L/N per bus, gain sliders, P/M toggles) -->
 
-<div class="controls">
-  <div id="link-ctrl-container"></div>
-</div>
 
 <div id="playback-section" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start;">
   <div class="ctrl-group" style="min-width:0; display:inline-block;" id="playback-group">
@@ -131,8 +128,8 @@
   .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
   .ctrl-group { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: 10px; min-width: 220px; }
   .ctrl-group h3 { margin: 0 0 10px; color: var(--t-accent); font-size: 1.1em; }
-  .ctrl-group button { padding: 10px 18px; margin: 3px; border: 1px solid var(--t-btn-border); border-radius: 4px;
-    background: var(--t-btn); color: #e0e0e0; cursor: pointer; font-family: monospace; font-size: 1.05em; }
+  .ctrl-group button { padding: 6px 11px; margin: 2px; border: 1px solid var(--t-btn-border); border-radius: 3px;
+    background: var(--t-btn); color: #e0e0e0; cursor: pointer; font-family: monospace; font-size: 0.75em; }
   .ctrl-group button:hover { background: var(--t-btn-hover); }
   .ctrl-group button:active { background: var(--t-btn-active); }
   .ctrl-group button.active { background: var(--t-btn-active); border-color: var(--t-accent); color: var(--t-accent); }
@@ -182,11 +179,18 @@ function linkCmd(endpoint, cmd) {
   return fetch('/linkcmd', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cmd)})
     .then(function(r){return r.json()}).catch(function(){return {};});
 }
+// Track PTT state locally for instant toggle (don't rely on poll data)
+window._linkPttState = {};
 function linkPttToggle(endpoint) {
-  var eps = window._lastLinkEndpoints || [];
-  var current = false;
-  for(var i=0; i<eps.length; i++) { if(eps[i].name === endpoint) { current = eps[i].ptt_active; break; } }
-  linkCmd(endpoint, {cmd:'ptt', state:!current});
+  // Use local state if we've toggled before, otherwise read from last poll
+  if (window._linkPttState[endpoint] === undefined) {
+    var eps = window._lastLinkEndpoints || [];
+    for(var i=0; i<eps.length; i++) { if(eps[i].name === endpoint) { window._linkPttState[endpoint] = eps[i].ptt_active; break; } }
+  }
+  var current = window._linkPttState[endpoint] || false;
+  var next = !current;
+  window._linkPttState[endpoint] = next;
+  linkCmd(endpoint, {cmd:'ptt', state:next});
 }
 function linkGain(endpoint, cmd, db) {
   linkCmd(endpoint, {cmd: cmd, db: parseInt(db)});
@@ -377,59 +381,134 @@ function updateControls() {
       setBtn('btn-bc-stop', !s.darkice_running && s.streaming_enabled, 'muted');
     }
     // Gateway Link controls
-    var linkCont = document.getElementById('link-ctrl-container');
-    if(linkCont && s.link_enabled) {
+    // Render link endpoint panels into #playback-section so they're draggable
+    var pbSection = document.getElementById('playback-section');
+    if(pbSection && s.link_enabled) {
       var eps = s.link_endpoints || [];
       window._lastLinkEndpoints = eps;
-      if(eps.length > 0) {
-        var ch = '';
-        for(var ei=0; ei<eps.length; ei++) {
-          var le = eps[ei];
-          var eid = le.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-          ch += '<div class="ctrl-group" style="min-width:280px;">';
-          ch += '<h3>Link: '+le.name+'</h3>';
-          ch += '<div style="font-size:0.85em; color:#888; margin-bottom:8px;">'+le.plugin+' '+(le.connected?'<span style="color:#2ecc71;">connected</span>':'<span style="color:#e74c3c;">offline</span>')+'</div>';
-          ch += '<div style="display:flex; gap:10px; align-items:flex-start;">';
-          if(le.capabilities && le.capabilities.ptt) {
-            var pttStyle = le.ptt_active ? 'background:var(--t-btn-active);border-color:var(--t-accent);color:var(--t-accent);' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
-            ch += '<button onclick="linkPttToggle(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\')" style="width:80px; height:50px; font-size:1.1em; border:1px solid; border-radius:4px; cursor:pointer; '+pttStyle+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
-          }
-          ch += '<div style="flex:1; display:flex; flex-direction:column; gap:4px;">';
-          ch += '<div style="display:flex; align-items:center; gap:6px;">';
-          ch += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">RX</span>';
-          ch += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.level||0)+'%; background:#2ecc71; border-radius:2px;"></div></div>';
-          ch += '</div>';
-          ch += '<div style="display:flex; align-items:center; gap:6px;">';
-          ch += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">TX</span>';
-          ch += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.tx_level||0)+'%; background:#e74c3c; border-radius:2px;"></div></div>';
-          ch += '</div>';
-          var rxmStyle = le.rx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
-          ch += '<div style="display:flex; align-items:center; gap:6px; margin-top:4px;">';
-          ch += '<button onclick="linkMuteToggle(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'rx\\\')" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+rxmStyle+'">Mute</button>';
-          ch += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'rx_gain\\\',this.value)">';
-          ch += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+' dB</span>';
-          ch += '</div>';
-          var txmStyle = le.tx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
-          ch += '<div style="display:flex; align-items:center; gap:6px;">';
-          ch += '<button onclick="linkMuteToggle(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'tx\\\')" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+txmStyle+'">Mute</button>';
-          ch += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(\\\''+le.name.replace(/'/g, "\\\\'")+'\\\',\\\'tx_gain\\\',this.value)">';
-          ch += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+' dB</span>';
-          ch += '</div>';
-          ch += '</div></div></div>';
+      for(var ei=0; ei<eps.length; ei++) {
+        var le = eps[ei];
+        var eid = 'link-' + le.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+        var existing = document.getElementById(eid);
+        // Only rebuild if panel doesn't exist yet (avoid re-creating on every poll)
+        if(!existing) {
+          var div = document.createElement('div');
+          div.className = 'ctrl-group';
+          div.id = eid;
+          div.style.minWidth = '280px';
+          div.setAttribute('draggable', 'true');
+          div.style.cursor = 'grab';
+          pbSection.appendChild(div);
         }
-        linkCont.innerHTML = ch;
-        linkCont.style.display = '';
-      } else {
-        linkCont.innerHTML = '';
-        linkCont.style.display = s.link_enabled ? '' : 'none';
+        var panel = document.getElementById(eid);
+        if(!panel) continue;
+        var ename = le.name;
+        var h = '<h3>Link: '+ename+'</h3>';
+        h += '<div style="font-size:0.85em; color:#888; margin-bottom:8px;">'+le.plugin+' '+(le.connected?'<span style="color:#2ecc71;">connected</span>':'<span style="color:#e74c3c;">offline</span>')+'</div>';
+        h += '<div style="display:flex; gap:10px; align-items:flex-start;">';
+        if(le.capabilities && le.capabilities.ptt) {
+          var pttStyle = le.ptt_active ? 'background:var(--t-btn-active);border-color:var(--t-accent);color:var(--t-accent);' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
+          h += '<button onclick="linkPttToggle(&quot;'+ename+'&quot;)" style="width:80px; height:50px; font-size:1.1em; border:1px solid; border-radius:4px; cursor:pointer; '+pttStyle+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
+        }
+        h += '<div style="flex:1; display:flex; flex-direction:column; gap:4px;">';
+        h += '<div style="display:flex; align-items:center; gap:6px;">';
+        h += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">RX</span>';
+        h += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.level||0)+'%; background:#2ecc71; border-radius:2px;"></div></div>';
+        h += '</div>';
+        h += '<div style="display:flex; align-items:center; gap:6px;">';
+        h += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">TX</span>';
+        h += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.tx_level||0)+'%; background:#e74c3c; border-radius:2px;"></div></div>';
+        h += '</div>';
+        var rxmStyle = le.rx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
+        h += '<div style="display:flex; align-items:center; gap:6px; margin-top:4px;">';
+        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;rx&quot;)" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+rxmStyle+'">Mute</button>';
+        h += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(&quot;'+ename+'&quot;,&quot;rx_gain&quot;,this.value)">';
+        h += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+' dB</span>';
+        h += '</div>';
+        var txmStyle = le.tx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
+        h += '<div style="display:flex; align-items:center; gap:6px;">';
+        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;tx&quot;)" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+txmStyle+'">Mute</button>';
+        h += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(&quot;'+ename+'&quot;,&quot;tx_gain&quot;,this.value)">';
+        h += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+' dB</span>';
+        h += '</div>';
+        h += '</div></div>';
+        panel.innerHTML = h;
       }
-    } else if(linkCont) {
-      linkCont.style.display = 'none';
     }
   }).catch(function(){}).finally(function(){ _ctrlBusy=false; });
 }
 setInterval(updateControls, 1000);
 updateControls();
+
+// ── Drag-to-reorder panels with localStorage persistence ──
+(function() {
+  var container = document.getElementById('playback-section');
+  if (!container) return;
+  var STORAGE_KEY = 'controls_panel_order';
+
+  // Make panels draggable
+  function initDrag() {
+    var panels = container.querySelectorAll('.ctrl-group[id]');
+    panels.forEach(function(p) {
+      p.setAttribute('draggable', 'true');
+      p.style.cursor = 'grab';
+    });
+  }
+
+  var dragSrc = null;
+
+  container.addEventListener('dragstart', function(e) {
+    var panel = e.target.closest('.ctrl-group[id]');
+    if (!panel) return;
+    dragSrc = panel;
+    panel.style.opacity = '0.4';
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', panel.id);
+  });
+
+  container.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    var target = e.target.closest('.ctrl-group[id]');
+    if (!target || target === dragSrc) return;
+    // Visual feedback
+    var panels = Array.from(container.querySelectorAll('.ctrl-group[id]'));
+    var dragIdx = panels.indexOf(dragSrc);
+    var targetIdx = panels.indexOf(target);
+    if (dragIdx < targetIdx) {
+      container.insertBefore(dragSrc, target.nextSibling);
+    } else {
+      container.insertBefore(dragSrc, target);
+    }
+  });
+
+  container.addEventListener('dragend', function(e) {
+    if (dragSrc) dragSrc.style.opacity = '';
+    dragSrc = null;
+    saveOrder();
+  });
+
+  function saveOrder() {
+    var panels = container.querySelectorAll('.ctrl-group[id]');
+    var order = [];
+    panels.forEach(function(p) { order.push(p.id); });
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(order)); } catch(e) {}
+  }
+
+  function restoreOrder() {
+    try {
+      var order = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      if (!order || !Array.isArray(order)) return;
+      for (var i = 0; i < order.length; i++) {
+        var el = document.getElementById(order[i]);
+        if (el && el.parentNode === container) container.appendChild(el);
+      }
+    } catch(e) {}
+  }
+
+  restoreOrder();
+  initDrag();
+})();
 </script>
 
 <script src="/pages/common.js"></script>

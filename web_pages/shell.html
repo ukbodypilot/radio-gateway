@@ -49,6 +49,13 @@
   .sb-sp { background: var(--t-accent); } .sb-an { background: #e74c3c; } .sb-mon { background: #9b59b6; } .sb-link { background: #e67e22; }
   .sb-d75 { background: #f39c12; } .sb-kv4p { background: #1abc9c; }
   #shell-status { color: #888; font-size: 0.75em; white-space: nowrap; }
+
+  /* Mobile: let bars scroll off screen for more content space */
+  @media (max-width: 768px) {
+    body { height: auto; overflow: auto; }
+    #shell-bars { flex-shrink: 1; }
+    #shell-frame { flex: none; height: calc(100vh - 40px); }
+  }
 </style>
 </head><body>
 <div id="shell-bar">

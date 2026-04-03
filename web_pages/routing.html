@@ -56,29 +56,30 @@
     padding: 2px 6px;
     font-size: 0.55rem;
   }
-  /* Bus nodes: more vertical room */
+  /* Bus nodes: match source/sink sizing */
   .drawflow .drawflow-node[class*="bus-"] .box {
     padding: 1px 5px 1px;
+    font-size: 0.49rem;
   }
   .drawflow .drawflow-node[class*="bus-"] .title-box {
-    padding: 2px 5px;
-    font-size: 0.53rem;
+    padding: 2px 6px;
+    font-size: 0.55rem;
   }
   .drawflow .drawflow-node[class*="bus-"] .proc-btn {
-    width: 17px;
-    height: 14px;
-    font-size: 0.51rem;
-    line-height: 14px;
+    width: 14px;
+    height: 12px;
+    font-size: 0.45rem;
+    line-height: 12px;
   }
   .drawflow .drawflow-node[class*="bus-"] .proc-buttons {
-    gap: 2px;
-    margin-top: 2px;
+    gap: 1px;
+    margin-top: 1px;
   }
   .drawflow .drawflow-node[class*="bus-"] .mute-btn {
-    width: 17px;
-    height: 14px;
-    font-size: 0.51rem;
-    line-height: 14px;
+    width: 14px;
+    height: 12px;
+    font-size: 0.45rem;
+    line-height: 12px;
   }
   .drawflow .connection .main-path {
     stroke: var(--t-accent);
@@ -202,8 +203,8 @@
     overflow: hidden;
   }
   .drawflow-node[class*="bus-"] .level-bar {
-    height: 5px;
-    margin-top: 3px;
+    height: 3px;
+    margin-top: 1px;
   }
   .level-fill {
     height: 100%;
@@ -277,52 +278,196 @@ editor = new Drawflow(container);
 editor.reroute = true;
 editor.start();
 
-// Auto-arrange nodes using Dagre hierarchical layout (LR: sources → busses → sinks)
+// Prevent Drawflow node drag from stealing slider/button interactions
+container.addEventListener('mousedown', function(e) {
+  if (e.target.closest('.gain-slider, .mute-btn, .proc-btn, button, input')) {
+    e.stopPropagation();
+  }
+}, true);
+container.addEventListener('pointerdown', function(e) {
+  if (e.target.closest('.gain-slider, .mute-btn, .proc-btn, button, input')) {
+    e.stopPropagation();
+  }
+}, true);
+
+// Auto-arrange: 3-column layout with connection-aware ordering
+// Rules:
+//  1. Sources left, buses middle, sinks right (fixed columns)
+//  2. Connected nodes at top, unconnected at bottom sorted alphabetically
+//  3. No wire crossings — nodes ordered to match bus positions
+//  4. First source → bus → first sink on same horizontal line
+//  5. Additional connected nodes stack below
+//  6. Minimum gap between all nodes
 function autoArrange() {
   var data = editor.export().drawflow.Home.data;
+  var GAP = 12;
+  var MARGIN = 15;
+  var COL_GAP = 90;
 
-  // Build Dagre graph from Drawflow nodes + connections
-  var g = new dagre.graphlib.Graph({ directed: true });
-  g.setGraph({
-    rankdir: 'LR',
-    ranksep: 80,
-    nodesep: 30,
-    marginx: 30,
-    marginy: 20,
-    ranker: 'network-simplex'
-  });
-  g.setDefaultEdgeLabel(function() { return {}; });
-
-  // Add nodes — measure actual rendered size for accuracy
+  // ── Step 1: Classify nodes ──
+  var sources = [], buses = [], sinks = [];
+  var nodeInfo = {}; // nid -> {h, w, name}
   for (var nid in data) {
+    var node = data[nid];
     var el = document.querySelector('#node-' + nid);
-    var w = el ? el.offsetWidth : 160;
-    var h = el ? el.offsetHeight : 60;
-    g.setNode('n' + nid, { width: w, height: h });
+    var h = el ? el.offsetHeight : 55;
+    var w = el ? el.offsetWidth : 140;
+    var entry = { nid: nid, name: node.name || node.data.id || '', cls: node.class || '', h: h, w: w };
+    nodeInfo[nid] = entry;
+    if (entry.cls.indexOf('source') >= 0) sources.push(entry);
+    else if (entry.cls.indexOf('bus') >= 0) buses.push(entry);
+    else sinks.push(entry);
   }
 
-  // Add edges from Drawflow connections
+  // ── Step 2: Build connection maps ──
+  var busSourceMap = {}, busSinkMap = {};
+  var srcToBus = {}, sinkToBus = {};
   for (var nid in data) {
     var outputs = data[nid].outputs || {};
     for (var okey in outputs) {
       var conns = outputs[okey].connections || [];
       for (var j = 0; j < conns.length; j++) {
-        g.setEdge('n' + nid, 'n' + conns[j].node);
+        var fromNid = nid, toNid = conns[j].node;
+        var fromCls = data[fromNid].class || '';
+        var toCls = data[toNid].class || '';
+        if (fromCls.indexOf('source') >= 0 && toCls.indexOf('bus') >= 0) {
+          if (!busSourceMap[toNid]) busSourceMap[toNid] = [];
+          busSourceMap[toNid].push(fromNid);
+          srcToBus[fromNid] = toNid;
+        } else if (fromCls.indexOf('bus') >= 0 && toCls.indexOf('bus') < 0) {
+          if (!busSinkMap[fromNid]) busSinkMap[fromNid] = [];
+          busSinkMap[fromNid].push(toNid);
+          sinkToBus[toNid] = fromNid;
+        }
       }
     }
   }
 
-  // Run layout
-  dagre.layout(g);
+  // ── Step 3: Split connected/unconnected, sort unconnected alphabetically ──
+  var connSources = [], unconnSources = [];
+  var connSinks = [], unconnSinks = [];
+  for (var i = 0; i < sources.length; i++) {
+    if (srcToBus[sources[i].nid]) connSources.push(sources[i]);
+    else unconnSources.push(sources[i]);
+  }
+  for (var i = 0; i < sinks.length; i++) {
+    if (sinkToBus[sinks[i].nid]) connSinks.push(sinks[i]);
+    else unconnSinks.push(sinks[i]);
+  }
+  unconnSources.sort(function(a, b) { return a.name.localeCompare(b.name); });
+  unconnSinks.sort(function(a, b) { return a.name.localeCompare(b.name); });
 
-  // Apply computed positions (Dagre gives center coords, Drawflow uses top-left)
-  for (var nid in data) {
-    var dn = g.node('n' + nid);
-    if (!dn) continue;
-    var x = Math.round(dn.x - dn.width / 2);
-    var y = Math.round(dn.y - dn.height / 2);
-    if (x < 10) x = 10;
-    if (y < 10) y = 10;
+  // ── Step 4: Column X positions ──
+  var maxSrcW = 0, maxBusW = 0;
+  for (var i = 0; i < sources.length; i++) maxSrcW = Math.max(maxSrcW, sources[i].w);
+  for (var i = 0; i < buses.length; i++) maxBusW = Math.max(maxBusW, buses[i].w);
+  var colSrc = MARGIN;
+  var colBus = colSrc + maxSrcW + COL_GAP;
+  var colSink = colBus + maxBusW + COL_GAP;
+
+  // ── Step 5: Layout bus groups top-down ──
+  // Each bus group: first source, bus, first sink on same Y (straight line)
+  // Additional sources/sinks stack below
+  var positions = {};
+  var curY = MARGIN;  // shared Y cursor across all three columns
+
+  // Sort buses by most connected first
+  buses.sort(function(a, b) {
+    var ac = (busSourceMap[a.nid] || []).length + (busSinkMap[a.nid] || []).length;
+    var bc = (busSourceMap[b.nid] || []).length + (busSinkMap[b.nid] || []).length;
+    return bc - ac;
+  });
+
+  var placedSrc = {}, placedSink = {};
+
+  for (var bi = 0; bi < buses.length; bi++) {
+    var b = buses[bi];
+    var bSrcs = busSourceMap[b.nid] || [];
+    var bSnks = busSinkMap[b.nid] || [];
+
+    // First row: first source, bus, first sink — all at curY
+    var rowY = curY;
+    positions[b.nid] = { x: colBus, y: rowY, h: b.h, w: b.w };
+
+    if (bSrcs.length > 0 && nodeInfo[bSrcs[0]]) {
+      var s = nodeInfo[bSrcs[0]];
+      positions[s.nid] = { x: colSrc, y: rowY, h: s.h, w: s.w };
+      placedSrc[s.nid] = true;
+    }
+    if (bSnks.length > 0 && nodeInfo[bSnks[0]]) {
+      var s = nodeInfo[bSnks[0]];
+      positions[s.nid] = { x: colSink, y: rowY, h: s.h, w: s.w };
+      placedSink[s.nid] = true;
+    }
+
+    // Find max height of first row to advance curY
+    var rowH = b.h;
+    if (bSrcs.length > 0 && nodeInfo[bSrcs[0]]) rowH = Math.max(rowH, nodeInfo[bSrcs[0]].h);
+    if (bSnks.length > 0 && nodeInfo[bSnks[0]]) rowH = Math.max(rowH, nodeInfo[bSnks[0]].h);
+    curY = rowY + rowH + GAP;
+
+    // Stack additional sources below
+    for (var si = 1; si < bSrcs.length; si++) {
+      var s = nodeInfo[bSrcs[si]];
+      if (s && !placedSrc[s.nid]) {
+        positions[s.nid] = { x: colSrc, y: curY, h: s.h, w: s.w };
+        placedSrc[s.nid] = true;
+        curY = Math.max(curY, curY);
+        // Only advance curY if this source row is taller than what's already there
+        var nextY = positions[s.nid].y + s.h + GAP;
+        if (nextY > curY) curY = nextY;
+      }
+    }
+
+    // Stack additional sinks below (use separate tracker to not conflict)
+    var sinkY = rowY + rowH + GAP;
+    for (var si = 1; si < bSnks.length; si++) {
+      var s = nodeInfo[bSnks[si]];
+      if (s && !placedSink[s.nid]) {
+        positions[s.nid] = { x: colSink, y: sinkY, h: s.h, w: s.w };
+        placedSink[s.nid] = true;
+        sinkY += s.h + GAP;
+        if (sinkY > curY) curY = sinkY;
+      }
+    }
+
+    // Add gap between bus groups
+    curY += GAP;
+  }
+
+  // ── Step 6: Append unconnected nodes below ──
+  // Sources
+  for (var i = 0; i < unconnSources.length; i++) {
+    var s = unconnSources[i];
+    if (!placedSrc[s.nid]) {
+      positions[s.nid] = { x: colSrc, y: curY, h: s.h, w: s.w };
+      // Don't advance curY for every unconnected — use column-local Y
+    }
+  }
+  // Layout unconnected sources from curY
+  var ucSrcY = curY;
+  for (var i = 0; i < unconnSources.length; i++) {
+    var s = unconnSources[i];
+    if (!placedSrc[s.nid]) {
+      positions[s.nid] = { x: colSrc, y: ucSrcY, h: s.h, w: s.w };
+      ucSrcY += s.h + GAP;
+    }
+  }
+  // Sinks
+  var ucSinkY = curY;
+  for (var i = 0; i < unconnSinks.length; i++) {
+    var s = unconnSinks[i];
+    if (!placedSink[s.nid]) {
+      positions[s.nid] = { x: colSink, y: ucSinkY, h: s.h, w: s.w };
+      ucSinkY += s.h + GAP;
+    }
+  }
+
+  // ── Step 7: Apply positions to Drawflow ──
+  for (var nid in positions) {
+    var p = positions[nid];
+    var x = Math.round(p.x);
+    var y = Math.round(p.y);
     editor.drawflow.drawflow.Home.data[nid].pos_x = x;
     editor.drawflow.drawflow.Home.data[nid].pos_y = y;
     var el = document.querySelector('#node-' + nid);
@@ -454,8 +599,7 @@ function rebuildEditor() {
     var cls = 'bus-' + b.type;
     var proc = b.processing || {};
     var busMuted = b.muted ? ' muted' : '';
-    var html = '<div class="box">' + b.type + ' bus'
-      + '<div class="proc-buttons">'
+    var html = '<div class="box"><div class="proc-buttons">'
       + '<button class="proc-btn' + (proc.gate ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'gate\')" id="proc-' + b.id + '-gate" title="Noise Gate">G</button>'
       + '<button class="proc-btn' + (proc.hpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'hpf\')" id="proc-' + b.id + '-hpf" title="High Pass Filter">H</button>'
       + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
@@ -471,7 +615,7 @@ function rebuildEditor() {
       + '</div>';
     var pos = savedPositions['bus-' + b.id] || {x: xBus, y: yBus};
     var busCls = cls + (b.muted ? ' node-muted' : '');
-    var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, busCls, {id: b.id, type: b.type}, b.name + '\n' + html);
+    var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, busCls, {id: b.id, type: b.type}, b.name + ' <span style="opacity:0.5;font-weight:400">(' + b.type + ')</span>\n' + html);
     _nodeMap['bus-' + b.id] = nodeId;
     yBus += spacing + 20;
   }

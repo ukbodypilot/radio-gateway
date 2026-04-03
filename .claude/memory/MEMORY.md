@@ -79,8 +79,8 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 ## Machine — user-optiplex3020 (Arch Linux)
 - Python 3.14, sudo password: `user`, Git user: ukbodypilot
 - AIOC: `/dev/ttyACM0`, KV4P: `/dev/kv4p`, Relay: `/dev/relay_radio`
-- D75: link endpoint on 192.168.2.134 via BT proxy
-- FTM-150: AIOC link endpoint on 192.168.2.121 (name: `ftm-150`)
+- D75: link endpoint on 192.168.2.134 via BT proxy (crontab @reboot, autologin, MX Linux/Debian 12)
+- FTM-150: AIOC link endpoint on 192.168.2.121 (name: `ftm-150`, crontab @reboot)
 
 ## See Also
 - [bugs.md](bugs.md) — bug history

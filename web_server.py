@@ -1595,11 +1595,12 @@ class WebConfigServer:
                     plugin.audio_boost = value / 100.0
                 # Persist link endpoint gains
                 _ep_name = getattr(plugin, 'endpoint_name', '')
-                if _ep_name and gw:
+                _gw = self.gateway
+                if _ep_name and _gw:
                     _key = 'tx_boost' if _is_tx else 'rx_boost'
-                    settings = gw.link_endpoint_settings.setdefault(_ep_name, {})
+                    settings = _gw.link_endpoint_settings.setdefault(_ep_name, {})
                     settings[_key] = value
-                    gw._save_link_settings()
+                    _gw._save_link_settings()
                 return {'ok': True, 'gain': value}
             return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
 
