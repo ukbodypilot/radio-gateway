@@ -350,7 +350,7 @@ class BusManager:
             return gw.kv4p_plugin
         elif sink_id == 'd75' and gw.d75_plugin:
             return gw.d75_plugin
-        elif sink_id in ('tnc_tx', 'tnc') and getattr(gw, 'packet_plugin', None):
+        elif sink_id in ('tnc_rx', 'tnc') and getattr(gw, 'packet_plugin', None):
             return gw.packet_plugin
         # Check link endpoints for D75 (when using link endpoint instead of plugin)
         if sink_id in ('d75_tx', 'd75') and not gw.d75_plugin:
@@ -388,7 +388,7 @@ class BusManager:
             return gw.mumble_source
         elif source_id == 'remote_audio' and getattr(gw, 'remote_audio_source', None):
             return gw.remote_audio_source
-        elif source_id == 'tnc' and getattr(gw, 'packet_plugin', None):
+        elif source_id == 'tnc_tx' and getattr(gw, 'packet_plugin', None):
             return gw.packet_plugin
         # Generic link endpoint lookup by sanitised name
         import re as _re
@@ -484,6 +484,11 @@ class BusManager:
                             gw.remote_audio_tx_level = int(getattr(gw, 'remote_audio_tx_level', 0) * 0.7 + _audio_level * 0.3)
                     except Exception:
                         pass
+
+            # TNC RX sink — deliver audio to packet plugin for decoding
+            elif sink_id == 'tnc_rx' and getattr(gw, 'packet_plugin', None):
+                gw.packet_plugin.put_audio(audio)
+                gw.packet_plugin.tx_audio_level = _audio_level if _audio_level and _audio_level > gw.packet_plugin.tx_audio_level else int(gw.packet_plugin.tx_audio_level * 0.7 + (_audio_level or 0) * 0.3)
 
             # Radio TX sinks — SoloBus Phase 3 already calls put_audio(),
             # so here we only track TX level for the routing page display.

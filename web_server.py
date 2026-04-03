@@ -1357,7 +1357,7 @@ class WebConfigServer:
                 sources.append({**{'id': 'remote_audio', 'name': 'Remote Audio [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.remote_audio_source)})
             if getattr(gw, 'packet_plugin', None):
-                sources.append({**{'id': 'tnc', 'name': 'TNC [RX]', 'enabled': True,
+                sources.append({**{'id': 'tnc_tx', 'name': 'TNC [TX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': True}, **_src_info(gw.packet_plugin)})
             # Generic link endpoints (skip D75 — handled above with special ID mapping)
             _covered_ids = set()
@@ -1401,7 +1401,7 @@ class WebConfigServer:
             if getattr(gw, 'th9800_plugin', None):
                 sinks.append({**{'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.th9800_plugin)})
             if getattr(gw, 'packet_plugin', None):
-                sinks.append({**{'id': 'tnc_tx', 'name': 'TNC [TX]', 'type': 'Packet', 'enabled': True}, **_src_info(gw.packet_plugin)})
+                sinks.append({**{'id': 'tnc_rx', 'name': 'TNC [RX]', 'type': 'Packet', 'enabled': True}, **_src_info(gw.packet_plugin)})
             # Generic link endpoint TX sinks (skip D75 — handled above)
             for _ep_name, _ep_src in gw.link_endpoints.items():
                 if _ep_name in _covered_ids:
@@ -1671,8 +1671,8 @@ class WebConfigServer:
             'monitor': getattr(gw, 'web_monitor_source', None),
             'mumble_rx': getattr(gw, 'mumble_source', None),
             'remote_audio': getattr(gw, 'remote_audio_source', None),
-            'tnc': getattr(gw, 'packet_plugin', None),
             'tnc_tx': getattr(gw, 'packet_plugin', None),
+            'tnc_rx': getattr(gw, 'packet_plugin', None),
         }
         result = _map.get(id)
         # Fallback to link endpoints for D75 when plugin is None

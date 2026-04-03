@@ -227,12 +227,14 @@ class PacketRadioPlugin:
         return chunk, True  # True = trigger PTT
 
     def put_audio(self, pcm):
-        """Receive radio RX audio from the bus and forward to Direwolf via UDP.
-
-        Resamples from 48kHz to 44100Hz before sending.
-        """
+        """Receive radio RX audio from the bus and forward to Direwolf via UDP."""
         if not self._running or not self._direwolf_proc or not self._udp_rx_sock:
             return
+        if not hasattr(self, '_put_count'):
+            self._put_count = 0
+        self._put_count += 1
+        if self._put_count <= 5 or self._put_count % 200 == 0:
+            print(f"  [Packet] put_audio #{self._put_count}, {len(pcm)} bytes, mode={self._mode}, dw={self._direwolf_proc is not None}")
 
         # TX level metering (audio going into Direwolf)
         try:
@@ -254,12 +256,9 @@ class PacketRadioPlugin:
             arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
             pcm = np.clip(arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
 
-        # Resample 48kHz → 44100Hz
-        pcm_44 = self._resample(pcm, self._resample_ratio_48_to_44, '_resample_48_to_44_pos')
-
-        # Send to Direwolf via UDP
+        # Send to Direwolf via UDP (48kHz native — no resample needed)
         try:
-            self._udp_rx_sock.sendto(pcm_44, ('127.0.0.1', self._udp_rx_port))
+            self._udp_rx_sock.sendto(pcm, ('127.0.0.1', self._udp_rx_port))
         except Exception:
             pass
 
@@ -304,6 +303,8 @@ class PacketRadioPlugin:
             "bbs_connected": self._bbs_connected,
             "bbs_callsign": self._bbs_callsign,
             "uptime": round(time.monotonic() - self._start_time, 1) if self._start_time else 0,
+            "rx_audio_level": self.tx_audio_level,   # audio going INTO Direwolf (TNC RX)
+            "tx_audio_level": self.audio_level,       # audio coming FROM Direwolf (TNC TX)
         }
 
     # ── Direwolf lifecycle ────────────────────────────────────────────
@@ -339,8 +340,8 @@ class PacketRadioPlugin:
         loopback_out = f"plughw:{self._loopback_card},0,0"
 
         lines = [
-            f"ADEVICE udp:{self._udp_rx_port} {loopback_out}",
-            f"ARATE 44100",
+            f"ADEVICE udp:{self._udp_rx_port} null",
+            f"ARATE 48000",
             f"ACHANNELS 1",
             f"",
             f"CHANNEL 0",
@@ -385,10 +386,12 @@ class PacketRadioPlugin:
         # Spawn Direwolf
         try:
             self._direwolf_proc = subprocess.Popen(
-                [self._direwolf_path, '-c', conf_path, '-t', '0', '-q', 'dx'],
+                [self._direwolf_path, '-c', conf_path, '-t', '0', '-d', 'o'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
+                env={**os.environ, 'PYTHONUNBUFFERED': '1'},
             )
             print(f"  [Packet] Direwolf started (PID {self._direwolf_proc.pid})")
         except Exception as e:
@@ -466,9 +469,9 @@ class PacketRadioPlugin:
             self._udp_tx_capture = self._pa.open(
                 format=pyaudio.paInt16,
                 channels=1,
-                rate=44100,
+                rate=48000,
                 input=True,
-                frames_per_buffer=2205,  # ~50ms at 44100Hz
+                frames_per_buffer=2400,  # 50ms at 48kHz
                 stream_callback=self._loopback_capture_callback,
                 **kwargs,
             )
@@ -478,13 +481,10 @@ class PacketRadioPlugin:
             print(f"  [Packet] Loopback capture error: {e}")
 
     def _loopback_capture_callback(self, in_data, frame_count, time_info, status):
-        """PyAudio callback — receives Direwolf TX audio from loopback, resamples to 48kHz."""
+        """PyAudio callback — receives Direwolf TX audio from loopback at 48kHz."""
         import pyaudio
         if in_data and self._running:
-            # Resample 44100Hz → 48kHz
-            pcm_48 = self._resample(in_data, self._resample_ratio_44_to_48, '_resample_44_to_48_pos')
-            if pcm_48:
-                self._rx_queue.append(pcm_48)
+            self._rx_queue.append(in_data)
         return (None, pyaudio.paContinue)
 
     # ── Resampling ────────────────────────────────────────────────────
