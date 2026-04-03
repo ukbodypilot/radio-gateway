@@ -1343,6 +1343,18 @@ class WebConfigServer:
             if getattr(gw, 'remote_audio_source', None):
                 sources.append({**{'id': 'remote_audio', 'name': 'Remote Audio [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.remote_audio_source)})
+            # Generic link endpoints (skip D75 — handled above with special ID mapping)
+            _covered_ids = set()
+            if gw.d75_plugin or any('d75' in n.lower() for n in gw.link_endpoints):
+                _covered_ids.update(n for n in gw.link_endpoints if 'd75' in n.lower())
+            for _ep_name, _ep_src in gw.link_endpoints.items():
+                if _ep_name in _covered_ids:
+                    continue
+                import re as _re
+                _ep_id = _re.sub(r'[^a-z0-9_]', '_', _ep_name.lower())
+                _ep_label = _ep_name.replace('-', ' ').replace('_', ' ').title()
+                sources.append({**{'id': _ep_id, 'name': f'{_ep_label} [RX]', 'enabled': True,
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(_ep_src)})
 
         # Build sink list (passive consumers + TX-capable radios)
         sinks = []
@@ -1372,6 +1384,18 @@ class WebConfigServer:
                     sinks.append({**{'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(_d75_src)})
             if getattr(gw, 'th9800_plugin', None):
                 sinks.append({**{'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.th9800_plugin)})
+            # Generic link endpoint TX sinks (skip D75 — handled above)
+            for _ep_name, _ep_src in gw.link_endpoints.items():
+                if _ep_name in _covered_ids:
+                    continue
+                import re as _re
+                _ep_id = _re.sub(r'[^a-z0-9_]', '_', _ep_name.lower())
+                _ep_label = _ep_name.replace('-', ' ').replace('_', ' ').title()
+                _caps = getattr(_ep_src, '_endpoint_caps', {})
+                if _caps.get('ptt') or _caps.get('audio_tx', True):
+                    _tx_gain = int(getattr(_ep_src, 'tx_audio_boost', 1.0) * 100)
+                    sinks.append({'id': f'{_ep_id}_tx', 'name': f'{_ep_label} [TX]', 'type': 'Radio TX',
+                                  'enabled': True, 'muted': getattr(_ep_src, 'muted', False), 'gain': _tx_gain})
 
         # Load bus config
         busses, connections, saved_layout = self._load_routing_config()
@@ -1564,7 +1588,18 @@ class WebConfigServer:
             value = int(data.get('value', 100))
             plugin = self._get_plugin_by_id(target_id)
             if plugin:
-                plugin.audio_boost = value / 100.0
+                _is_tx = target_id.endswith('_tx')
+                if _is_tx and hasattr(plugin, 'tx_audio_boost'):
+                    plugin.tx_audio_boost = value / 100.0
+                else:
+                    plugin.audio_boost = value / 100.0
+                # Persist link endpoint gains
+                _ep_name = getattr(plugin, 'endpoint_name', '')
+                if _ep_name and gw:
+                    _key = 'tx_boost' if _is_tx else 'rx_boost'
+                    settings = gw.link_endpoint_settings.setdefault(_ep_name, {})
+                    settings[_key] = value
+                    gw._save_link_settings()
                 return {'ok': True, 'gain': value}
             return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
 
@@ -1623,6 +1658,13 @@ class WebConfigServer:
         if result is None and id in ('d75', 'd75_tx'):
             for name, src in gw.link_endpoints.items():
                 if 'd75' in name.lower():
+                    return src
+        # Generic link endpoint lookup: match by sanitised endpoint name
+        if result is None:
+            import re as _re
+            _base = id[:-3] if id.endswith('_tx') else id
+            for name, src in gw.link_endpoints.items():
+                if _re.sub(r'[^a-z0-9_]', '_', name.lower()) == _base:
                     return src
         return result
 

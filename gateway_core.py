@@ -1604,12 +1604,20 @@ class RadioGateway:
                         # Restore saved settings
                         saved = self.link_endpoint_settings.get(name, {})
                         src.muted = saved.get('rx_muted', False)
+                        if 'rx_boost' in saved:
+                            src.audio_boost = saved['rx_boost'] / 100.0
+                        if 'tx_boost' in saved:
+                            src.tx_audio_boost = saved['tx_boost'] / 100.0
                         src.server_connected = True
+                        # Store endpoint capabilities for routing UI
+                        src._endpoint_caps = info.get('capabilities', {})
                         self.link_endpoints[name] = src
                         # Only add to primary mixer if this source is on the primary listen bus.
                         # Otherwise BusManager handles it via the solo/duplex bus, and adding
                         # to the primary mixer causes queue competition (both call get_audio).
-                        if hasattr(self, '_source_on_listen_bus') and self._source_on_listen_bus('d75' if 'd75' in name.lower() else name):
+                        import re as _re
+                        _source_id = 'd75' if 'd75' in name.lower() else _re.sub(r'[^a-z0-9_]', '_', name.lower())
+                        if hasattr(self, '_source_on_listen_bus') and self._source_on_listen_bus(_source_id):
                             self.mixer.add_source(src, bus_priority=int(getattr(self.config, 'LINK_AUDIO_PRIORITY', 3)) + 10, duckable=getattr(self.config, 'LINK_AUDIO_DUCK', False))
                             print(f"  [Link] {name} added to primary mixer (listen bus)")
                         else:
@@ -1618,6 +1626,25 @@ class RadioGateway:
                         self._link_last_status[name] = {}
                         self._link_tx_levels[name] = 0
                         print(f"  [Link] Endpoint registered: {name} ({info.get('plugin', '?')})")
+                        # Hot-swap bus radio references for reconnecting endpoints
+                        if hasattr(self, 'bus_manager') and self.bus_manager:
+                            try:
+                                # Try targeted swap first (no teardown)
+                                self.bus_manager.update_radio_reference(_source_id)
+                                # If no bus has this endpoint yet, full reload to create it
+                                _found = any(
+                                    getattr(getattr(b, '_radio', None), 'endpoint_name', '') == name
+                                    for b in self.bus_manager._busses.values()
+                                ) or any(
+                                    getattr(s.source, 'endpoint_name', '') == name
+                                    for b in self.bus_manager._busses.values()
+                                    for s in getattr(b, '_tx_sources', [])
+                                )
+                                if not _found:
+                                    self.bus_manager.reload()
+                                    print(f"  [Link] Bus manager reloaded (first registration of {name})")
+                            except Exception as _bme:
+                                print(f"  [Link] Bus update error: {_bme}")
                         return src  # server stores src.push_audio as audio callback
 
                     def _link_on_disconnect(name):
@@ -2547,7 +2574,9 @@ class RadioGateway:
                     _vad_t = getattr(self.config, 'VAD_THRESHOLD', -40)
                     for _ep_name in list(self.link_endpoints.keys()):
                         # Only send listen bus audio if this endpoint's TX sink is on the listen bus
-                        _tx_sink_ids = {_ep_name + '_tx', _ep_name, 'd75_tx' if 'd75' in _ep_name.lower() else _ep_name + '_tx'}
+                        import re as _re
+                        _ep_san = _re.sub(r'[^a-z0-9_]', '_', _ep_name.lower())
+                        _tx_sink_ids = {_ep_san + '_tx', _ep_san, _ep_name + '_tx', _ep_name, 'd75_tx' if 'd75' in _ep_name.lower() else _ep_san + '_tx'}
                         if not _tx_sink_ids & _listen_sinks_for_link:
                             self._link_tx_levels[_ep_name] = max(0, int(self._link_tx_levels.get(_ep_name, 0) * 0.7))
                             continue

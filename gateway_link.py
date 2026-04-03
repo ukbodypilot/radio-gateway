@@ -832,6 +832,13 @@ class AudioPlugin(RadioPlugin):
         self._rx_gain_db = 0.0
         self._tx_gain_db = 0.0
         self._settings_file = os.path.expanduser('~/.config/link-endpoint/settings.json')
+        # Noise gate — squelch AIOC noise floor when radio squelch is closed
+        self._gate_enabled = True
+        self._gate_threshold_db = -48.0   # dB below full-scale (AIOC noise floor ~-44.5)
+        self._gate_envelope = 0.0         # smoothed RMS level
+        self._gate_open = False
+        self._gate_attack = 0.3           # envelope rise speed (0-1)
+        self._gate_release = 0.05         # envelope fall speed (0-1)
 
     def setup(self, config):
         """Open PyAudio input + output streams.
@@ -858,29 +865,48 @@ class AudioPlugin(RadioPlugin):
         fmt = pyaudio.paInt16
 
         dev_index = self._find_device(self._device_name)
-        kwargs = {}
+        # Find separate input/output indices — some backends (PipeWire)
+        # enumerate different indices for input vs output capability
+        in_index = None
+        out_index = None
         if dev_index is not None:
-            kwargs['input_device_index'] = dev_index
-            kwargs['output_device_index'] = dev_index
+            in_index = dev_index
+            out_index = dev_index
+        if self._pa and self._device_name:
+            _dn = self._device_name.lower()
+            for i in range(self._pa.get_device_count()):
+                try:
+                    info = self._pa.get_device_info_by_index(i)
+                    if _dn in info.get('name', '').lower():
+                        if info.get('maxInputChannels', 0) > 0 and in_index is None:
+                            in_index = i
+                        if info.get('maxOutputChannels', 0) > 0 and out_index is None:
+                            out_index = i
+                except Exception:
+                    continue
+            if in_index != out_index or in_index != dev_index:
+                print(f"  [Link] AudioPlugin: separate I/O indices: in={in_index} out={out_index}")
 
         try:
+            kw_in = {'input_device_index': in_index} if in_index is not None else {}
             self._in_stream = self._pa.open(
                 format=fmt, channels=channels, rate=rate,
                 input=True, frames_per_buffer=self.CHUNK_FRAMES,
-                **{k: v for k, v in kwargs.items() if 'input' in k})
+                **kw_in)
             print(f"  [Link] AudioPlugin: input stream opened"
-                  f" (device={self._device_name or 'default'}, rate={rate})")
+                  f" (device={self._device_name or 'default'}, idx={in_index}, rate={rate})")
         except Exception as e:
             print(f"  [Link] AudioPlugin: failed to open input stream: {e}")
             self._in_stream = None
 
         try:
+            kw_out = {'output_device_index': out_index} if out_index is not None else {}
             self._out_stream = self._pa.open(
                 format=fmt, channels=channels, rate=rate,
                 output=True, frames_per_buffer=self.CHUNK_FRAMES,
-                **{k: v for k, v in kwargs.items() if 'output' in k})
+                **kw_out)
             print(f"  [Link] AudioPlugin: output stream opened"
-                  f" (device={self._device_name or 'default'}, rate={rate})")
+                  f" (device={self._device_name or 'default'}, idx={out_index}, rate={rate})")
         except Exception as e:
             print(f"  [Link] AudioPlugin: failed to open output stream: {e}")
             self._out_stream = None
@@ -906,13 +932,31 @@ class AudioPlugin(RadioPlugin):
         print("  [Link] AudioPlugin: teardown complete")
 
     def get_audio(self, chunk_size=None):
-        """Read one 50 ms chunk from the input stream, applying RX gain."""
+        """Read one 50 ms chunk from the input stream, applying RX gain and noise gate."""
         if not self._in_stream:
             return None, False
         try:
             data = self._in_stream.read(self.CHUNK_FRAMES, exception_on_overflow=False)
             if data and self._rx_gain_db != 0.0:
                 data = self._apply_volume(data, self._db_to_linear(self._rx_gain_db))
+            # Noise gate — suppress AIOC noise floor
+            if data and self._gate_enabled:
+                import struct as _st, math as _m
+                n = len(data) // 2
+                samples = _st.unpack(f'<{n}h', data)
+                rms = _m.sqrt(sum(s * s for s in samples) / n) if n else 0
+                db = 20 * _m.log10(rms / 32767.0) if rms > 0 else -100.0
+                # Smooth envelope
+                if db > self._gate_envelope:
+                    self._gate_envelope += (db - self._gate_envelope) * self._gate_attack
+                else:
+                    self._gate_envelope += (db - self._gate_envelope) * self._gate_release
+                if self._gate_envelope > self._gate_threshold_db:
+                    self._gate_open = True
+                elif self._gate_envelope < self._gate_threshold_db - 3:  # 3 dB hysteresis
+                    self._gate_open = False
+                if not self._gate_open:
+                    return None, False
             return data, False
         except Exception as e:
             print(f"  [Link] AudioPlugin: read error: {e}")
@@ -942,6 +986,13 @@ class AudioPlugin(RadioPlugin):
             self._save_settings()
             print(f"  [Link] AudioPlugin: TX gain set to {self._tx_gain_db:+.1f} dB")
             return {"ok": True, "tx_gain_db": self._tx_gain_db}
+        if action == 'gate':
+            if 'enabled' in cmd:
+                self._gate_enabled = bool(cmd['enabled'])
+            if 'threshold' in cmd:
+                self._gate_threshold_db = max(-60, min(-10, float(cmd['threshold'])))
+            return {"ok": True, "gate_enabled": self._gate_enabled,
+                    "gate_threshold_db": self._gate_threshold_db}
         if action == 'status':
             return {"ok": True, "status": self.get_status()}
         return {"ok": False, "error": f"unknown command: {action}"}
@@ -955,6 +1006,9 @@ class AudioPlugin(RadioPlugin):
             "output_active": self._out_stream is not None,
             "rx_gain_db": self._rx_gain_db,
             "tx_gain_db": self._tx_gain_db,
+            "gate_enabled": self._gate_enabled,
+            "gate_threshold_db": self._gate_threshold_db,
+            "gate_open": self._gate_open,
         }
 
     @staticmethod

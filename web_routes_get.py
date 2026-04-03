@@ -864,6 +864,15 @@ def handle_routing_levels(handler, parent):
             data['mumble_rx'] = getattr(gw, 'rx_audio_level', 0)
         if getattr(gw, 'remote_audio_source', None):
             data['remote_audio'] = gw.remote_audio_source.audio_level
+        # Generic link endpoint RX levels (skip D75 — handled above)
+        import re as _re
+        for _ln, _ls in gw.link_endpoints.items():
+            if 'd75' in _ln.lower():
+                continue
+            _ep_id = _re.sub(r'[^a-z0-9_]', '_', _ln.lower())
+            # Decay level each poll so it drops to zero when gate blocks
+            _ls.audio_level = max(0, int(getattr(_ls, 'audio_level', 0) * 0.8))
+            data[_ep_id] = _ls.audio_level
         # TX levels (radio destinations)
         if gw.kv4p_plugin:
             data['kv4p_tx'] = getattr(gw.kv4p_plugin, 'tx_audio_level', 0)
@@ -876,6 +885,12 @@ def handle_routing_levels(handler, parent):
                     break
         if getattr(gw, 'th9800_plugin', None):
             data['aioc_tx'] = getattr(gw.th9800_plugin, 'tx_audio_level', 0)
+        # Generic link endpoint TX levels
+        for _ln, _ls in gw.link_endpoints.items():
+            if 'd75' in _ln.lower():
+                continue
+            _ep_id = _re.sub(r'[^a-z0-9_]', '_', _ln.lower())
+            data[_ep_id + '_tx'] = gw._link_tx_levels.get(_ln, 0)
         # Passive sinks — only show level if connected to a bus
         _all_sinks = getattr(gw, '_bus_sinks', {})
         _all_connected = set()

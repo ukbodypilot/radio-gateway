@@ -1613,6 +1613,7 @@ class LinkAudioSource(AudioSource):
         self.volume = 1.0
         self.mix_ratio = 1.0
         self.duck = getattr(config, 'LINK_AUDIO_DUCK', False)
+        self.tx_audio_boost = 1.0     # separate TX gain for put_audio path
         self.audio_boost = float(getattr(config, 'LINK_AUDIO_BOOST', 1.0))
         self.display_gain = float(getattr(config, 'LINK_AUDIO_DISPLAY_GAIN', 1.0))
         self.server_connected = False
@@ -1696,6 +1697,9 @@ class LinkAudioSource(AudioSource):
         """Send TX audio to the remote endpoint (SoloBus radio interface)."""
         if self.gateway and self.gateway.link_server:
             try:
+                if self.tx_audio_boost != 1.0:
+                    _arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                    pcm = np.clip(_arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
                 self.gateway.link_server.send_audio_to(self.endpoint_name, pcm)
             except Exception:
                 pass

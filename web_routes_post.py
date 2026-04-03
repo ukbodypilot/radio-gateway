@@ -253,7 +253,25 @@ def handle_mixer(handler, parent):
                     gw._save_link_settings()
                     result = {'ok': True, 'muted': want}
             else:
-                result = {'ok': False, 'error': f'unknown source: {source}'}
+                # Try generic link endpoint by sanitised name
+                import re as _re
+                _ep_src = None
+                _ep_name = None
+                for _n, _s in gw.link_endpoints.items():
+                    if _re.sub(r'[^a-z0-9_]', '_', _n.lower()) == source:
+                        _ep_src = _s
+                        _ep_name = _n
+                        break
+                if _ep_src:
+                    current = getattr(_ep_src, 'muted', False)
+                    want = not current if action == 'toggle' else (action == 'mute')
+                    _ep_src.muted = want
+                    settings = gw.link_endpoint_settings.setdefault(_ep_name, {})
+                    settings['rx_muted'] = want
+                    gw._save_link_settings()
+                    result = {'ok': True, 'source': source, 'muted': want}
+                else:
+                    result = {'ok': False, 'error': f'unknown source: {source}'}
 
         elif action == 'volume':
             # Set absolute INPUT_VOLUME
@@ -301,7 +319,19 @@ def handle_mixer(handler, parent):
                 else:
                     result = {'ok': False, 'error': f'{source} not available'}
             else:
-                result = {'ok': False, 'error': f'boost not supported for: {source}'}
+                # Try generic link endpoint by sanitised name (strip _tx suffix)
+                import re as _re
+                _ep_src = None
+                _base = source[:-3] if source.endswith('_tx') else source
+                for _n, _s in gw.link_endpoints.items():
+                    if _re.sub(r'[^a-z0-9_]', '_', _n.lower()) == _base:
+                        _ep_src = _s
+                        break
+                if _ep_src and hasattr(_ep_src, 'audio_boost'):
+                    _ep_src.audio_boost = max(0, min(5.0, float(pct) / 100.0))
+                    result = {'ok': True, 'source': source, 'boost_pct': int(_ep_src.audio_boost * 100)}
+                else:
+                    result = {'ok': False, 'error': f'boost not supported for: {source}'}
 
         elif action == 'flag':
             # Toggle or set a mixer flag (vad, agc, echo_cancel, rebroadcast)

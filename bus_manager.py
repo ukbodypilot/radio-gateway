@@ -153,6 +153,63 @@ class BusManager:
         self._busses.clear()
         self.start()
 
+    def update_radio_reference(self, source_id):
+        """Hot-swap a bus's radio reference when a link endpoint reconnects.
+
+        Finds any bus whose radio matches *source_id* (sanitised) and
+        replaces it with the current object from gw.link_endpoints.
+        Also re-checks the routing config to catch TX-only buses where
+        the old radio object may have been garbage collected on disconnect.
+        No bus teardown — just swaps the pointer.
+        """
+        import re as _re, json as _json
+        gw = self.gateway
+        new_radio = None
+        ep_name = None
+        for name, src in gw.link_endpoints.items():
+            if _re.sub(r'[^a-z0-9_]', '_', name.lower()) == source_id:
+                new_radio = src
+                ep_name = name
+                break
+        if not new_radio:
+            return
+
+        # Load routing config to find which buses use this endpoint
+        _tx_sink_id = source_id + '_tx'
+        try:
+            with open(self._config_path) as f:
+                cfg = _json.load(f)
+            connections = cfg.get('connections', [])
+        except Exception:
+            connections = []
+
+        # Find bus IDs that have this endpoint as source or TX sink
+        _bus_ids_for_ep = set()
+        for c in connections:
+            if c['type'] == 'source-bus' and c['from'] == source_id:
+                _bus_ids_for_ep.add(c['to'])
+            if c['type'] == 'bus-sink' and c['to'] == _tx_sink_id:
+                _bus_ids_for_ep.add(c['from'])
+
+        for bus_id, bus in self._busses.items():
+            # Match by endpoint_name on current radio (if it's still alive)
+            if hasattr(bus, '_radio') and bus._radio is not None:
+                old_id = getattr(bus._radio, 'endpoint_name', '')
+                if old_id == ep_name:
+                    bus.set_radio(new_radio)
+                    print(f"  [BusManager] Hot-swapped radio on bus '{bus_id}': {ep_name}")
+                    continue
+            # Match by routing config (catches stale/None radio references)
+            if bus_id in _bus_ids_for_ep and hasattr(bus, '_radio'):
+                bus.set_radio(new_radio)
+                print(f"  [BusManager] Hot-swapped radio on bus '{bus_id}': {ep_name} (from routing)")
+            # Also check TX source slots
+            for slot in getattr(bus, '_tx_sources', []):
+                old_id = getattr(slot.source, 'endpoint_name', '')
+                if old_id == ep_name:
+                    slot.source = new_radio
+                    print(f"  [BusManager] Hot-swapped TX source on bus '{bus_id}': {ep_name}")
+
     def _load_and_create_busses(self):
         """Read routing_config.json and create bus instances."""
         try:
@@ -205,12 +262,11 @@ class BusManager:
                         source = self._get_source(c['from'])
                         if source and source is not _solo_radio:
                             bus.add_tx_source(source)
-                # Add non-radio sinks
+                # Add non-radio sinks (and radio TX sink for level display)
                 for c in connections:
                     if c['type'] == 'bus-sink' and c['from'] == bus_id:
                         sink_id = c['to']
-                        if not sink_id.endswith('_tx'):
-                            bus.add_sink(sink_id)
+                        bus.add_sink(sink_id)
 
             elif bus_type == 'duplex':
                 bus = DuplexRepeaterBus(bus_name, self.config)
@@ -299,6 +355,12 @@ class BusManager:
             for name, src in gw.link_endpoints.items():
                 if 'd75' in name.lower():
                     return src
+        # Generic link endpoint lookup by sanitised name
+        import re as _re
+        _base = sink_id[:-3] if sink_id.endswith('_tx') else sink_id
+        for name, src in gw.link_endpoints.items():
+            if _re.sub(r'[^a-z0-9_]', '_', name.lower()) == _base:
+                return src
         return None
 
     def _get_source(self, source_id):
@@ -324,6 +386,11 @@ class BusManager:
             return gw.mumble_source
         elif source_id == 'remote_audio' and getattr(gw, 'remote_audio_source', None):
             return gw.remote_audio_source
+        # Generic link endpoint lookup by sanitised name
+        import re as _re
+        for name, src in gw.link_endpoints.items():
+            if _re.sub(r'[^a-z0-9_]', '_', name.lower()) == source_id:
+                return src
         return None
 
     def _apply_processing(self, audio, bus_id):
@@ -414,13 +481,19 @@ class BusManager:
                     except Exception:
                         pass
 
-            # Radio TX sinks
-            elif sink_id == 'kv4p_tx' and gw.kv4p_plugin:
-                gw.kv4p_plugin.put_audio(audio)
-            elif sink_id == 'd75_tx' and gw.d75_plugin:
-                gw.d75_plugin.put_audio(audio)
-            elif sink_id == 'aioc_tx' and getattr(gw, 'th9800_plugin', None):
-                gw.th9800_plugin.put_audio(audio)
+            # Radio TX sinks — SoloBus Phase 3 already calls put_audio(),
+            # so here we only track TX level for the routing page display.
+            elif sink_id in ('kv4p_tx', 'd75_tx', 'aioc_tx') or self._get_radio_plugin(sink_id):
+                # Update link endpoint TX level for routing display
+                import re as _re2
+                _base2 = sink_id[:-3] if sink_id.endswith('_tx') else sink_id
+                for _eln, _els in gw.link_endpoints.items():
+                    if _re2.sub(r'[^a-z0-9_]', '_', _eln.lower()) == _base2:
+                        if _audio_level and _audio_level > gw._link_tx_levels.get(_eln, 0):
+                            gw._link_tx_levels[_eln] = _audio_level
+                        else:
+                            gw._link_tx_levels[_eln] = int(gw._link_tx_levels.get(_eln, 0) * 0.7 + (_audio_level or 0) * 0.3)
+                        break
 
         # Per-bus PCM/MP3: deposit into shared buffer for main loop to mix & push.
         proc_cfg = bus_cfg

@@ -688,7 +688,8 @@ class SoloBus(AudioBus):
 
         # ── Phase 5: Build output ──
         # If no radio, route TX audio directly to sinks (e.g. Mumble TX as sink)
-        _output_audio = rx_audio if self._radio else tx_audio
+        # For tx_only buses, use tx_audio so sink level bars show activity
+        _output_audio = rx_audio if (self._radio and not getattr(self, '_tx_only', False)) else tx_audio
         audio_dict = {sink: _output_audio for sink in self.sink_names}
         if not self.sink_names:
             audio_dict['_default'] = _output_audio
