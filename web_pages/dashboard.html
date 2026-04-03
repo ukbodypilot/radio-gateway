@@ -266,6 +266,13 @@ function updateStatus() {
           if(est.transmitting !== undefined) eh += '<div class="st-item"><span class="st-label">TX:</span><span class="st-val '+(est.transmitting?'red':'green')+'">'+(est.transmitting?'ON':'off')+'</span></div>';
           if(est.battery_level !== undefined) eh += '<div class="st-item"><span class="st-label">Batt:</span><span class="st-val '+(est.battery_level>1?'green':'red')+'">'+est.battery_level+'</span></div>';
           if(est.firmware) eh += '<div class="st-item"><span class="st-label">FW:</span><span class="st-val white">'+est.firmware+'</span></div>';
+          // AIOC-specific: PTT, HID, gate, audio I/O
+          if(est.hid_connected !== undefined) eh += '<div class="st-item"><span class="st-label">HID:</span><span class="st-val '+(est.hid_connected?'green':'red')+'">'+(est.hid_connected?'Yes':'No')+'</span></div>';
+          if(est.ptt_active !== undefined) eh += '<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(est.ptt_active?'red':'green')+'">'+(est.ptt_active?'ON':'off')+'</span></div>';
+          if(est.input_active !== undefined && est.audio_connected === undefined) eh += '<div class="st-item"><span class="st-label">Audio:</span><span class="st-val '+(est.input_active && est.output_active?'green':'red')+'">'+(est.input_active?'In':'—')+'/'+(est.output_active?'Out':'—')+'</span></div>';
+          if(est.gate_enabled !== undefined) eh += '<div class="st-item"><span class="st-label">Gate:</span><span class="st-val '+(est.gate_open?'green':'yellow')+'">'+(est.gate_open?'Open':'Closed')+'</span></div>';
+          if(est.rx_gain_db !== undefined) eh += '<div class="st-item"><span class="st-label">RX:</span><span class="st-val white">'+(est.rx_gain_db>=0?'+':'')+est.rx_gain_db.toFixed(1)+' dB</span></div>';
+          if(est.tx_gain_db !== undefined) eh += '<div class="st-item"><span class="st-label">TX:</span><span class="st-val white">'+(est.tx_gain_db>=0?'+':'')+est.tx_gain_db.toFixed(1)+' dB</span></div>';
           // Band frequencies
           if(est.band && Array.isArray(est.band)) {
             for(var b=0; b<est.band.length; b++) {
@@ -274,6 +281,14 @@ function updateStatus() {
             }
           }
           if(eh) lh += '<div class="st-row">'+eh+'</div>';
+          // System stats row (CPU, RAM, disk, temp)
+          var sh = '';
+          if(est.cpu_pct !== undefined) sh += '<div class="st-item"><span class="st-label">CPU:</span><span class="st-val '+(est.cpu_pct>80?'red':est.cpu_pct>50?'yellow':'green')+'">'+est.cpu_pct+'%</span></div>';
+          if(est.cpu_temp_c !== undefined) sh += '<div class="st-item"><span class="st-label">Temp:</span><span class="st-val '+(est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')+'">'+est.cpu_temp_c+'°</span></div>';
+          if(est.ram_pct !== undefined) sh += '<div class="st-item"><span class="st-label">RAM:</span><span class="st-val '+(est.ram_pct>85?'red':est.ram_pct>70?'yellow':'green')+'">'+est.ram_pct+'%</span></div>';
+          if(est.disk_pct !== undefined) sh += '<div class="st-item"><span class="st-label">Disk:</span><span class="st-val '+(est.disk_pct>90?'red':est.disk_pct>75?'yellow':'green')+'">'+est.disk_pct+'%</span></div>';
+          if(est.uptime !== undefined) { var _ut = est.uptime; var _uh = Math.floor(_ut/3600); var _um = Math.floor((_ut%3600)/60); sh += '<div class="st-item"><span class="st-label">Up:</span><span class="st-val white">'+_uh+'h'+_um+'m</span></div>'; }
+          if(sh) lh += '<div class="st-row">'+sh+'</div>';
         }
         document.getElementById('link-info').innerHTML = lh;
         document.getElementById('link-status-badge').innerHTML = '<span style="color:#2ecc71">'+eps.length+' connected</span>';

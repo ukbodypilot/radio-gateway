@@ -80,6 +80,7 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - Python 3.14, sudo password: `user`, Git user: ukbodypilot
 - AIOC: `/dev/ttyACM0`, KV4P: `/dev/kv4p`, Relay: `/dev/relay_radio`
 - D75: link endpoint on 192.168.2.134 via BT proxy
+- FTM-150: AIOC link endpoint on 192.168.2.121 (name: `ftm-150`)
 
 ## See Also
 - [bugs.md](bugs.md) — bug history
@@ -90,3 +91,4 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [feedback_no_gateway_restart.md](feedback_no_gateway_restart.md) — Claude can restart gateway
 - [project_d75_cleanup.md](project_d75_cleanup.md) — legacy D75 removal target ~2026-04-08
 - [reference_gdrive_backup.md](reference_gdrive_backup.md) — rclone backup to Google Drive
+- [project_ftm150_endpoint.md](project_ftm150_endpoint.md) — FTM-150 AIOC endpoint on Pi 192.168.2.121

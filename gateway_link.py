@@ -832,6 +832,7 @@ class AudioPlugin(RadioPlugin):
         self._rx_gain_db = 0.0
         self._tx_gain_db = 0.0
         self._settings_file = os.path.expanduser('~/.config/link-endpoint/settings.json')
+        self._start_time = time.monotonic()
         # Noise gate — squelch AIOC noise floor when radio squelch is closed
         self._gate_enabled = True
         self._gate_threshold_db = -48.0   # dB below full-scale (AIOC noise floor ~-44.5)
@@ -998,7 +999,7 @@ class AudioPlugin(RadioPlugin):
         return {"ok": False, "error": f"unknown command: {action}"}
 
     def get_status(self):
-        return {
+        status = {
             "plugin": self.name,
             "device": self._device_name or "default",
             "rate": self.RATE,
@@ -1010,6 +1011,56 @@ class AudioPlugin(RadioPlugin):
             "gate_threshold_db": self._gate_threshold_db,
             "gate_open": self._gate_open,
         }
+        status['uptime'] = round(time.monotonic() - self._start_time, 1)
+        # System stats — CPU, RAM, disk for endpoint machine health
+        status.update(self._get_system_stats())
+        return status
+
+    @staticmethod
+    def _get_system_stats():
+        """Get CPU, RAM, and disk usage for the endpoint machine."""
+        stats = {}
+        try:
+            # CPU load (1-min average, normalised to core count)
+            with open('/proc/loadavg') as f:
+                load1 = float(f.read().split()[0])
+            cores = os.cpu_count() or 1
+            stats['cpu_pct'] = round(min(100, load1 / cores * 100), 1)
+        except Exception:
+            pass
+        try:
+            # RAM usage from /proc/meminfo
+            mem = {}
+            with open('/proc/meminfo') as f:
+                for line in f:
+                    parts = line.split()
+                    if parts[0] in ('MemTotal:', 'MemAvailable:'):
+                        mem[parts[0]] = int(parts[1]) * 1024  # kB to bytes
+            total = mem.get('MemTotal:', 0)
+            avail = mem.get('MemAvailable:', 0)
+            if total > 0:
+                stats['ram_pct'] = round((1 - avail / total) * 100, 1)
+                stats['ram_mb'] = round((total - avail) / 1048576)
+                stats['ram_total_mb'] = round(total / 1048576)
+        except Exception:
+            pass
+        try:
+            # Disk usage for root filesystem
+            st = os.statvfs('/')
+            total = st.f_blocks * st.f_frsize
+            free = st.f_bavail * st.f_frsize
+            if total > 0:
+                stats['disk_pct'] = round((1 - free / total) * 100, 1)
+                stats['disk_free_gb'] = round(free / 1073741824, 1)
+        except Exception:
+            pass
+        try:
+            # CPU temperature (RPi / thermal zone)
+            with open('/sys/class/thermal/thermal_zone0/temp') as f:
+                stats['cpu_temp_c'] = round(int(f.read().strip()) / 1000, 1)
+        except Exception:
+            pass
+        return stats
 
     @staticmethod
     def _apply_volume(pcm, gain):

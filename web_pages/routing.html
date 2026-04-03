@@ -19,11 +19,11 @@
   .drawflow .drawflow-node {
     background: var(--t-panel);
     border: 1px solid var(--t-border);
-    border-radius: 8px;
+    border-radius: 6px;
     color: #e0e0e0;
-    min-width: 200px;
+    min-width: 160px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-    font-size: 0.85rem;
+    font-size: 0.72rem;
   }
   .drawflow .drawflow-node.selected {
     border-color: #f39c12 !important;
@@ -31,54 +31,54 @@
     background: rgba(243,156,18,0.1) !important;
   }
   .drawflow .drawflow-node .title-box {
-    padding: 5px 10px;
+    padding: 3px 7px;
     border-bottom: 1px solid var(--t-border);
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: 0.72rem;
   }
   .drawflow .drawflow-node .box {
-    padding: 1px 8px 2px;
-    font-size: 0.75rem;
+    padding: 1px 6px 2px;
+    font-size: 0.62rem;
     color: #aaa;
   }
   /* Source/sink nodes */
   .drawflow .drawflow-node.source,
   .drawflow .drawflow-node.sink {
-    min-width: 232px;
+    min-width: 185px;
   }
   .drawflow .drawflow-node.source .box,
   .drawflow .drawflow-node.sink .box {
-    padding: 1px 8px 1px;
-    font-size: 0.7rem;
+    padding: 1px 6px 1px;
+    font-size: 0.58rem;
   }
   .drawflow .drawflow-node.source .title-box,
   .drawflow .drawflow-node.sink .title-box {
-    padding: 4px 10px;
-    font-size: 0.8rem;
+    padding: 2px 7px;
+    font-size: 0.65rem;
   }
   /* Bus nodes: more vertical room */
   .drawflow .drawflow-node[class*="bus-"] .box {
-    padding: 2px 8px 2px;
+    padding: 1px 6px 2px;
   }
   .drawflow .drawflow-node[class*="bus-"] .title-box {
-    padding: 3px 8px;
-    font-size: 0.75rem;
+    padding: 2px 6px;
+    font-size: 0.62rem;
   }
   .drawflow .drawflow-node[class*="bus-"] .proc-btn {
-    width: 26px;
-    height: 22px;
-    font-size: 0.75rem;
-    line-height: 22px;
+    width: 20px;
+    height: 17px;
+    font-size: 0.6rem;
+    line-height: 17px;
   }
   .drawflow .drawflow-node[class*="bus-"] .proc-buttons {
-    gap: 4px;
-    margin-top: 4px;
+    gap: 3px;
+    margin-top: 3px;
   }
   .drawflow .drawflow-node[class*="bus-"] .mute-btn {
-    width: 26px;
-    height: 22px;
-    font-size: 0.75rem;
-    line-height: 22px;
+    width: 20px;
+    height: 17px;
+    font-size: 0.6rem;
+    line-height: 17px;
   }
   .drawflow .connection .main-path {
     stroke: var(--t-accent);
@@ -104,22 +104,22 @@
   .node-controls {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     margin-bottom: 0px;
     padding: 1px 0;
   }
   .mute-btn {
-    width: 24px;
-    height: 20px;
+    width: 19px;
+    height: 16px;
     border: 1px solid #555;
     border-radius: 3px;
     background: #2a2a3e;
     color: #888;
-    font-size: 0.7rem;
+    font-size: 0.56rem;
     font-weight: bold;
     cursor: pointer;
     padding: 0;
-    line-height: 20px;
+    line-height: 16px;
     text-align: center;
     flex-shrink: 0;
   }
@@ -130,9 +130,9 @@
     border-color: #c0392b;
   }
   .gain-slider {
-    width: 80px;
+    width: 60px;
     flex-shrink: 0;
-    height: 6px;
+    height: 5px;
     -webkit-appearance: none;
     appearance: none;
     background: #444;
@@ -141,16 +141,16 @@
   }
   .gain-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 14px;
-    height: 14px;
+    width: 11px;
+    height: 11px;
     border-radius: 50%;
     background: var(--t-accent);
     cursor: pointer;
   }
   .gain-val {
-    font-size: 0.7rem;
+    font-size: 0.56rem;
     color: #aaa;
-    min-width: 35px;
+    min-width: 28px;
     text-align: right;
     flex-shrink: 0;
   }
@@ -162,18 +162,18 @@
     margin-top: 2px;
   }
   .proc-btn {
-    width: 24px;
-    height: 20px;
+    width: 19px;
+    height: 16px;
     border: 1px solid #555;
     border-radius: 3px;
     background: #2a2a3e;
     color: #666;
-    font-size: 0.7rem;
+    font-size: 0.56rem;
     font-weight: bold;
     cursor: pointer;
     padding: 0;
     text-align: center;
-    line-height: 14px;
+    line-height: 12px;
   }
   .proc-btn:hover { border-color: var(--t-accent); color: var(--t-accent); }
   .proc-btn.on {
@@ -187,11 +187,11 @@
   }
 
   /* Wider nodes to fit controls */
-  .drawflow .drawflow-node { min-width: 170px; }
-  .drawflow .drawflow-node[class*="bus-"] { min-width: 260px; }
-  .drawflow .drawflow-node .title-box { padding: 2px 6px; font-size: 0.7rem; }
+  .drawflow .drawflow-node { min-width: 140px; }
+  .drawflow .drawflow-node[class*="bus-"] { min-width: 210px; }
+  .drawflow .drawflow-node .title-box { padding: 2px 5px; font-size: 0.58rem; }
   .drawflow .drawflow-node.source .title-box,
-  .drawflow .drawflow-node.sink .title-box { padding: 1px 6px; }
+  .drawflow .drawflow-node.sink .title-box { padding: 1px 5px; }
 
   /* Level bars inside nodes */
   .level-bar {
@@ -278,8 +278,8 @@ editor.start();
 
 // Auto-arrange nodes in three columns: sources | busses | sinks
 function autoArrange() {
-  var xSource = 50, xBus = 380, xSink = 740;
-  var spacing = 80;
+  var xSource = 40, xBus = 300, xSink = 590;
+  var spacing = 65;
   var ySource = 20, yBus = 20, ySink = 20;
 
   var data = editor.export().drawflow.Home.data;

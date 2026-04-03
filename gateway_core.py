@@ -1665,7 +1665,9 @@ class RadioGateway:
                         if cmd == 'ptt' and isinstance(result, dict):
                             self._link_ptt_active[name] = result.get('ptt', False)
                         elif cmd == 'status' and isinstance(result, dict):
-                            self._link_last_status[name] = result.get('status', result)
+                            if name not in self._link_last_status:
+                                self._link_last_status[name] = {}
+                            self._link_last_status[name].update(result.get('status', result))
                         elif cmd in ('rx_gain', 'tx_gain') and isinstance(result, dict):
                             if name not in self._link_last_status:
                                 self._link_last_status[name] = {}
@@ -1676,7 +1678,9 @@ class RadioGateway:
                     def _link_on_endpoint_status(name, status):
                         """Called when an endpoint sends a STATUS frame."""
                         if isinstance(status, dict) and status.get('type') != 'heartbeat':
-                            self._link_last_status[name] = status
+                            if name not in self._link_last_status:
+                                self._link_last_status[name] = {}
+                            self._link_last_status[name].update(status)
 
                     self.link_server = GatewayLinkServer(
                         port=link_port,
