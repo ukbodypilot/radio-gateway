@@ -276,6 +276,9 @@ class RadioGateway:
         self._trace_recording = False  # toggled by 'i' key
         self._spk_trace = _collections_mod.deque(maxlen=12000)  # speaker thread trace
         self._trace_events = _collections_mod.deque(maxlen=500)  # key presses / mode changes
+        # Per-stream chunk-level trace (all 4 streams)
+        from stream_trace import StreamTrace
+        self._stream_trace = StreamTrace(maxlen=60000)
         
         # Audio processing state (legacy — kept for backwards compat)
         self.gate_envelope = 0.0  # For noise gate smoothing
@@ -1257,11 +1260,19 @@ class RadioGateway:
             # Absorb hw/sw clock drift: drain excess when queue gets deep.
             _spk_qd = self.speaker_queue.qsize()
             if _spk_qd >= 4:
+                _dropped = 0
                 while self.speaker_queue.qsize() > 2:
                     try:
                         self.speaker_queue.get_nowait()
+                        _dropped += 1
                     except Exception:
                         break
+                # Track drops for audio quality trace
+                if not hasattr(self, '_spk_drop_count'):
+                    self._spk_drop_count = 0
+                    self._spk_drop_total = 0
+                self._spk_drop_count += _dropped
+                self._spk_drop_total += _dropped
             self.speaker_queue.put_nowait(spk)
         except Exception:
             pass
@@ -1353,6 +1364,10 @@ class RadioGateway:
                     print("Initializing SDR plugin (RSPduo dual tuner)...")
                     self.sdr_plugin = SDRPlugin()
                     if self.sdr_plugin.setup(self.config):
+                        # Wire stream trace to SDR tuner captures
+                        for _t in [self.sdr_plugin.get_tuner(1), self.sdr_plugin.get_tuner(2)]:
+                            if _t:
+                                _t._stream_trace = self._stream_trace
                         if self._source_on_listen_bus('sdr'):
                             self.mixer.add_source(self.sdr_plugin, bus_priority=11, duckable=getattr(self.config, 'SDR_DUCK', True))
                             print("✓ SDR plugin added to mixer (listen bus)")
@@ -1375,6 +1390,7 @@ class RadioGateway:
                 print("Initializing TH-9800 plugin...")
                 self.th9800_plugin = TH9800Plugin()
                 if self.th9800_plugin.setup(self.config, gateway=self):
+                    self.th9800_plugin._stream_trace = self._stream_trace
                     # Only add to primary ListenBus if routed there (not to a solo/other bus)
                     if self._source_on_listen_bus('aioc'):
                         self.mixer.add_source(self.th9800_plugin, bus_priority=1, duckable=False)
@@ -1580,6 +1596,7 @@ class RadioGateway:
                     print(f"Initializing KV4P plugin...")
                     self.kv4p_plugin = KV4PPlugin()
                     if self.kv4p_plugin.setup(self.config):
+                        self.kv4p_plugin._stream_trace = self._stream_trace
                         # NOT added to primary ListenBus — routed via BusManager
                         print("✓ KV4P plugin initialized (routed via bus manager)")
                     else:
@@ -2196,6 +2213,21 @@ class RadioGateway:
     def on_text_message(self, text_message):
         from text_commands import on_text_message as _on_text_message
         _on_text_message(self, text_message)
+    def _get_cross_clock_drift_ms(self):
+        """Measure drift between main loop and BusManager clocks.
+
+        Compares wall-clock timestamps of the most recent tick from each.
+        Positive = BM ticked after main (BM lagging).
+        """
+        if not self.bus_manager:
+            return 0.0
+        bm_tick, bm_mono = self.bus_manager._bm_tick_mono
+        if bm_tick == 0 or bm_mono == 0.0:
+            return 0.0
+        # Both clocks target 50ms ticks. Compare when they last ticked.
+        main_mono = time.monotonic()  # we're inside the main tick right now
+        return (main_mono - bm_mono) * 1000  # ms since BM last ticked
+
     def audio_transmit_loop(self):
         """Continuously capture audio from sources and send to Mumble via mixer"""
         # Elevate this thread to realtime scheduling so the 50ms tick isn't
@@ -2212,7 +2244,20 @@ class RadioGateway:
                 pass  # best-effort
         if self.config.VERBOSE_LOGGING:
             print("✓ Audio transmit thread started (with mixer)")
-        
+
+        # ── GC control: disable automatic collection in this hot path ──
+        import gc as _gc
+        _gc.disable()
+        self._gc_events_main = []  # GC pause records for trace
+        def _gc_cb(phase, info):
+            if phase == 'start':
+                _gc_cb._t0 = time.monotonic()
+            elif phase == 'stop' and hasattr(_gc_cb, '_t0'):
+                dur_ms = (time.monotonic() - _gc_cb._t0) * 1000
+                self._gc_events_main.append((time.monotonic(), info.get('generation', -1), dur_ms))
+        _gc.callbacks.append(_gc_cb)
+        print("  Audio thread: GC disabled, manual gen-0 every 5s")
+
         consecutive_errors = 0
         max_consecutive_errors = 10
 
@@ -2340,6 +2385,9 @@ class RadioGateway:
                     # Drain BusManager PCM/MP3 once per tick (don't call twice!)
                     _bm_pcm = self.bus_manager.drain_pcm() if self.bus_manager else None
                     _bm_mp3 = self.bus_manager.drain_mp3() if self.bus_manager else None
+                    # Copy drain count for trace (BusManager sets it, main loop reads it)
+                    if self.bus_manager:
+                        self._last_pcm_drain_n = getattr(self.bus_manager, '_last_pcm_drain_n', 0)
 
                     # Early sink delivery — before VAD/signal gates so monitoring
                     # sinks always receive audio (SDR scanner feeds etc.)
@@ -2537,7 +2585,7 @@ class RadioGateway:
                 # ── Common: reset error count and send to Mumble ─────────────────
                 consecutive_errors = 0
 
-                # Trace: compute data RMS and output-side sample discontinuity
+                # Trace: compute data RMS, output discontinuity, and repeat detection
                 if self._trace_recording and data:
                     _tr_arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
                     _tr_data_rms = float(np.sqrt(np.mean(_tr_arr * _tr_arr))) if len(_tr_arr) > 0 else 0.0
@@ -2547,6 +2595,15 @@ class RadioGateway:
                     if len(_i16arr) > 0:
                         _out_disc = float(abs(int(_i16arr[0]) - _out_last_sample))
                         _out_last_sample = int(_i16arr[-1])
+                    # Repeated chunk detection: flag when output is identical to previous
+                    _prev_hash = getattr(self, '_tr_prev_chunk_hash', None)
+                    _cur_hash = hash(data)
+                    self._tr_prev_chunk_hash = _cur_hash
+                    if _prev_hash is not None and _cur_hash == _prev_hash and _tr_data_rms > 10:
+                        if not hasattr(self, '_tr_repeat_count'):
+                            self._tr_repeat_count = 0
+                        self._tr_repeat_count += 1
+                        self._trace_events.append((time.monotonic(), 'repeat_chunk', f'#{self._tr_repeat_count} rms={_tr_data_rms:.0f}'))
 
                 # Output click suppressor: detect sharp sample-to-sample jumps
                 # in the mixed output and interpolate over a 4-sample window.
@@ -2729,8 +2786,19 @@ class RadioGateway:
                         self.announcement_delay_active and not (str(getattr(self.config, 'TX_RADIO', '')).lower() == 'kv4p' and bool(self.kv4p_plugin)),  # 47: TX to KV4P silenced by PTT settle delay (False when TX_RADIO=kv4p, fix in place)
                         0.0,  # 48: SDR2 sample discontinuity (abs delta)
                         -1,  # 49: SDR2 sub-buffer bytes after serve
+                        # === Audio quality diagnostics (50+) ===
+                        getattr(self, '_spk_drop_count', 0),        # 50: speaker queue drops this tick
+                        getattr(self, '_last_pcm_drain_n', 0),      # 51: PCM drain chunk count (1=good, 2+=drift)
+                        self._get_cross_clock_drift_ms(),            # 52: BusManager cross-clock drift (ms)
+                        len(self._gc_events_main),                   # 53: cumulative GC events (main loop)
                     ))
-    
+                # Reset per-tick counters
+                self._spk_drop_count = 0
+                self._last_pcm_drain_n = 0
+                # Manual GC: gen-0 only, every 100 ticks (~5s), during sleep window
+                if self._tx_loop_tick % 100 == 0:
+                    _gc.collect(0)
+
     def _find_darkice_pid(self):
         from stream_stats import find_darkice_pid
         return find_darkice_pid(self)

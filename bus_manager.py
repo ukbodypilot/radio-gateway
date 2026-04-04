@@ -8,6 +8,8 @@ This allows testing new bus types with pluginized radios (KV4P, D75)
 without modifying the AIOC-entangled main loop.
 """
 
+import collections
+import gc
 import json
 import math
 import os
@@ -36,9 +38,15 @@ class BusManager:
         self._tick_interval = 0.05  # 50ms = 20 ticks/sec (matches main loop)
         # Shared PCM/MP3 buffer — BusManager deposits mixed audio here,
         # main loop picks it up and mixes with listen bus output before pushing.
-        self._pcm_queue = []        # PCM audio chunks from non-listen busses (list, not single buffer)
-        self._mp3_queue = []        # MP3 audio chunks from non-listen busses
+        self._pcm_queue = collections.deque(maxlen=8)  # thread-safe bounded deque
+        self._mp3_queue = collections.deque(maxlen=8)
         self._bus_levels = {}       # bus_id → audio level (0-100) for routing page
+
+        # ── Audio quality diagnostics ──────────────────────────────────────
+        self._bm_tick_count = 0           # tick counter for cross-clock correlation
+        self._bm_tick_mono = (0, 0.0)     # (tick_number, monotonic_time) at last tick
+        self._tick_trace = collections.deque(maxlen=6000)  # per-tick timing records
+        self._gc_events = collections.deque(maxlen=200)    # GC pause records
 
     def get_bus_sinks(self):
         """Return per-bus connected sink IDs from routing config.
@@ -65,16 +73,25 @@ class BusManager:
         if not self._pcm_queue:
             return None
         from audio_bus import additive_mix
-        chunks = list(self._pcm_queue)
-        self._pcm_queue.clear()
-        # DIAG: log when we drain multiple or zero chunks (indicates clock drift)
+        # Drain deque atomically — popleft is thread-safe on CPython
+        chunks = []
+        while self._pcm_queue:
+            try:
+                chunks.append(self._pcm_queue.popleft())
+            except IndexError:
+                break
+        if not chunks:
+            return None
+        # DIAG: log when we drain multiple chunks (indicates clock drift)
         if not hasattr(self, '_pcm_drain_count'):
             self._pcm_drain_count = 0
             self._pcm_drain_multi = 0
+            self._pcm_drain_zero = 0
             self._pcm_drain_diag = time.time()
         self._pcm_drain_count += 1
         if len(chunks) > 1:
             self._pcm_drain_multi += 1
+        self._last_pcm_drain_n = len(chunks)  # exposed for trace
         if time.time() - self._pcm_drain_diag > 10.0:
             print(f"  [PCM-DIAG] drains={self._pcm_drain_count} multi={self._pcm_drain_multi} ({self._pcm_drain_multi*100//max(1,self._pcm_drain_count)}% double)")
             self._pcm_drain_count = 0
@@ -87,9 +104,13 @@ class BusManager:
         if not self._mp3_queue:
             return None
         from audio_bus import additive_mix
-        chunks = list(self._mp3_queue)
-        self._mp3_queue.clear()
-        return additive_mix(chunks)
+        chunks = []
+        while self._mp3_queue:
+            try:
+                chunks.append(self._mp3_queue.popleft())
+            except IndexError:
+                break
+        return additive_mix(chunks) if chunks else None
 
     def get_listen_bus_id(self):
         """Return the ID of the first listen-type bus in routing config."""
@@ -406,6 +427,7 @@ class BusManager:
         """Deliver a bus's audio output to connected sinks + PCM/MP3 streams."""
         gw = self.gateway
         bus_cfg = self._bus_config.get(bus_id, {})
+        _st = getattr(gw, '_stream_trace', None)
 
         _muted_sinks = getattr(gw, '_muted_sinks', set())
         _audio_level = None  # cached: all sinks get same processed audio
@@ -423,6 +445,8 @@ class BusManager:
             # Compute level once for level-tracking sinks
             if _audio_level is None:
                 _audio_level = gw.calculate_audio_level(audio)
+
+            _t_sink = time.monotonic()
 
             # Passive sinks
             if sink_id == 'mumble' and gw.mumble:
@@ -452,13 +476,22 @@ class BusManager:
                     if not hasattr(self, '_mumble_err_logged'):
                         self._mumble_err_logged = True
                         print(f"  [Mumble-TX] ERROR: {_me}")
+                _mumble_ms = (time.monotonic() - _t_sink) * 1000
+                if _st:
+                    _extra = f'mumble {_mumble_ms:.1f}ms' if _mumble_ms > 5 else ''
+                    _st.record(f'{bus_id}_deliver', 'mumble', audio, -1, _extra)
             elif sink_id == 'speaker':
                 gw._speaker_enqueue(audio)
+                if _st:
+                    _st.record(f'{bus_id}_deliver', 'speaker', audio)
             elif sink_id == 'broadcastify' and getattr(gw, 'stream_output', None):
                 try:
                     gw.stream_output.send_audio(audio)
                 except Exception:
                     pass
+                _bcast_ms = (time.monotonic() - _t_sink) * 1000
+                if _st and _bcast_ms > 5:
+                    _st.record(f'{bus_id}_deliver', 'broadcastify', audio, -1, f'{_bcast_ms:.1f}ms')
             elif sink_id == 'recording':
                 pass  # TODO: recording sink
             elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
@@ -504,24 +537,77 @@ class BusManager:
             if proc_cfg.get('mp3', False):
                 self._mp3_queue.append(mixed)
 
+    def _gc_callback(self, phase, info):
+        """Record GC pause events for diagnostics."""
+        if phase == 'start':
+            self._gc_start = time.monotonic()
+        elif phase == 'stop' and hasattr(self, '_gc_start'):
+            dur_ms = (time.monotonic() - self._gc_start) * 1000
+            self._gc_events.append((time.monotonic(), info.get('generation', -1), dur_ms))
+
+    def dump_tick_trace(self):
+        """Return tick trace data for analysis.  Called by audio_trace dump."""
+        return list(self._tick_trace)
+
     def _tick_loop(self):
-        """Main bus tick loop — runs all non-primary busses."""
+        """Main bus tick loop — runs all non-primary busses.
+
+        Uses accumulative timing (matching the main audio loop) to prevent
+        systematic clock drift.  Previous code reset next_tick after each
+        iteration, causing period = tick_interval + processing_time.
+        """
         chunk_size = getattr(self.config, 'AUDIO_CHUNK_SIZE', 2400)
-        next_tick = time.monotonic()
+
+        # ── GC control: disable automatic collection in this hot path ──
+        gc.disable()
+        gc.callbacks.append(self._gc_callback)
+        print("  [BusManager] GC disabled in tick loop, manual gen-0 every 5s")
+
+        # ── Accumulative self-clock (matches gateway_core.audio_transmit_loop) ──
+        _next_tick = time.monotonic()
+        _prev_tick_time = _next_tick
+        _tick_num = 0
 
         while self._running:
-            now = time.monotonic()
-            if next_tick > now:
-                time.sleep(next_tick - now)
-            next_tick = time.monotonic() + self._tick_interval
+            _tick_num += 1
+            # ── Timing: sleep until next tick, accumulate (never reset) ──
+            _now = time.monotonic()
+            if _next_tick > _now:
+                time.sleep(_next_tick - _now)
+            elif _now - _next_tick > self._tick_interval:
+                # Snap forward: skip ALL missed ticks, don't play catch-up.
+                # Without this, after a 600ms stall the loop runs 12 ticks
+                # back-to-back with 0ms gaps, causing TX stutter.
+                _missed = int((_now - _next_tick) / self._tick_interval)
+                _next_tick = _now
+                if self._tick_trace is not None:
+                    self._tick_trace.append((
+                        _now, 0.0, 0.0, _tick_num,
+                        len(self._pcm_queue),
+                        {'_stall_skip': _missed},
+                    ))
+            _next_tick += self._tick_interval
 
+            _tick_start = time.monotonic()
+            _tick_dt = (_tick_start - _prev_tick_time) * 1000  # ms since last tick
+            _prev_tick_time = _tick_start
+
+            # Cross-clock correlation: main loop reads this to measure drift
+            self._bm_tick_count = _tick_num
+            self._bm_tick_mono = (_tick_num, _tick_start)
+
+            # ── Per-bus tick + deliver ──────────────────────────────────────
+            _bus_timings = {}
             for bus_id, bus in self._busses.items():
                 try:
                     # Skip muted busses
                     if self._bus_config.get(bus_id, {}).get('muted', False):
                         self._bus_levels[bus_id] = 0
                         continue
+                    _t0 = time.monotonic()
                     output = bus.tick(chunk_size)
+                    _t_tick = (time.monotonic() - _t0) * 1000
+
                     # Track bus output level
                     _mixed = output.mixed_audio
                     if _mixed is not None:
@@ -529,13 +615,40 @@ class BusManager:
                         _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
                         _lv = int(max(0, min(100, (20 * math.log10(_rms / 32767.0) + 60) * (100 / 60)))) if _rms > 0 else 0
                     else:
-                        # Check TX audio for solo busses
                         _tx_active = output.status.get('tx_audio_active', False)
                         _lv = 50 if _tx_active else 0
                     _prev = self._bus_levels.get(bus_id, 0)
                     self._bus_levels[bus_id] = _lv if _lv > _prev else max(0, int(_prev * 0.7))
 
+                    _t1 = time.monotonic()
                     self._deliver_audio(output, bus_id)
+                    _t_deliver = (time.monotonic() - _t1) * 1000
+
+                    _bus_timings[bus_id] = (_t_tick, _t_deliver, _lv)
+
+                    # Stream trace: record bus tick + deliver with timing
+                    _st = getattr(self.gateway, '_stream_trace', None)
+                    if _st and (_t_tick > 5 or _t_deliver > 5):
+                        _st.record(f'{bus_id}_bus', 'tick_slow',
+                                   output.mixed_audio, -1,
+                                   f'tick={_t_tick:.1f}ms deliver={_t_deliver:.1f}ms')
+
                 except Exception as e:
                     print(f"  [BusManager] {bus_id} tick error: {e}")
                     import traceback; traceback.print_exc()
+
+            _tick_total = (time.monotonic() - _tick_start) * 1000
+
+            # ── Record trace row ───────────────────────────────────────────
+            self._tick_trace.append((
+                _tick_start,          # 0: monotonic timestamp
+                _tick_dt,             # 1: actual interval (ms), target=50.0
+                _tick_total,          # 2: total processing time (ms)
+                _tick_num,            # 3: tick number
+                len(self._pcm_queue), # 4: PCM queue depth after deposit
+                _bus_timings,         # 5: {bus_id: (tick_ms, deliver_ms, level)}
+            ))
+
+            # ── Manual GC: gen-0 only, every 100 ticks (5s) in sleep window ──
+            if _tick_num % 100 == 0:
+                gc.collect(0)

@@ -102,6 +102,7 @@ class TH9800Plugin(RadioPlugin):
         # Stream health (reader thread manages lifecycle)
         self._last_audio_capture_time = 0
         self._stream_restart_count = 0
+        self._stream_trace = None  # set by gateway after setup
 
     def setup(self, config, gateway=None):
         """Initialize all TH-9800 hardware: AIOC, CAT, relays, audio streams."""
@@ -126,7 +127,10 @@ class TH9800Plugin(RadioPlugin):
             return False
 
         # Start RX reader thread
-        self._rx_queue = _queue_mod.Queue(maxsize=16)
+        # Small queue (3 chunks = 150ms) keeps latency tight.
+        # Reader discards oldest on overflow, consumer always gets fresh audio.
+        self._rx_queue = _queue_mod.Queue(maxsize=3)
+        self._rx_queue_primed = False  # flush stale data on first consumer read
         self._rx_running = True
         self._rx_thread = threading.Thread(target=self._rx_reader_loop, daemon=True, name="TH9800-rx")
         self._rx_thread.start()
@@ -193,11 +197,29 @@ class TH9800Plugin(RadioPlugin):
         if not self.enabled or self.muted:
             return None, False
 
+        # First consumer read: flush stale chunks that accumulated before
+        # the BusManager started ticking.
+        if not self._rx_queue_primed:
+            self._rx_queue_primed = True
+            _flushed = 0
+            while self._rx_queue.qsize() > 1:
+                try:
+                    self._rx_queue.get_nowait()
+                    _flushed += 1
+                except _queue_mod.Empty:
+                    break
+            if _flushed:
+                print(f"  [TH9800-RX] Flushed {_flushed} stale chunks from queue")
+
         data = None
+        _qd = self._rx_queue.qsize()
         try:
             data = self._rx_queue.get_nowait()
         except _queue_mod.Empty:
             self.audio_level = max(0, int(self.audio_level * 0.7))
+            _st = self._stream_trace
+            if _st:
+                _st.record('aioc_rx', 'queue_get', None, _qd, 'empty')
             return None, False
 
         # Level metering
@@ -215,6 +237,10 @@ class TH9800Plugin(RadioPlugin):
         except Exception:
             pass
 
+        _st = self._stream_trace
+        if _st:
+            _st.record('aioc_rx', 'queue_get', data, _qd)
+
         return data, False
 
     def put_audio(self, pcm):
@@ -230,7 +256,11 @@ class TH9800Plugin(RadioPlugin):
                 arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
                 pcm = np.clip(arr * self._config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
             # Queue for writer thread — never blocks the caller
+            _qd = len(self._tx_queue)
             self._tx_queue.append(pcm)
+            _st = self._stream_trace
+            if _st:
+                _st.record('aioc_tx', 'queue_put', pcm, _qd)
             # TX level metering
             arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
             rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
@@ -256,6 +286,9 @@ class TH9800Plugin(RadioPlugin):
             except IndexError:
                 time.sleep(0.005)  # 5ms idle poll
                 continue
+            _st = self._stream_trace
+            if _st:
+                _st.record('aioc_tx', 'hw_write', pcm, len(self._tx_queue))
             try:
                 try:
                     self._output_stream.write(pcm, exception_on_overflow=False)
@@ -391,76 +424,67 @@ class TH9800Plugin(RadioPlugin):
             return False
 
     def _rx_reader_loop(self):
-        """Read audio from AIOC input stream — fully self-contained lifecycle.
+        """Read audio from AIOC via arecord subprocess (raw ALSA).
 
-        This thread owns the PortAudio input stream entirely: open, start,
-        read, close, restart.  No external code touches the stream.
-        The only interface to the rest of the system is self._rx_queue.
+        WirePlumber disables the AIOC so PipeWire/PyAudio/sounddevice all
+        read DC silence even when specifying hw:N,0.  The only reliable
+        path is arecord which uses raw ALSA without the PipeWire ALSA plugin.
 
-        Reads 4× chunk_size (200ms) per call to match AIOC USB delivery,
-        then slices into individual chunks and queues each one.
+        This thread owns the subprocess lifecycle: start, read stdout, kill,
+        restart.  The only interface to the rest of the system is self._rx_queue.
         """
-        import pyaudio as _pa
+        import subprocess
 
         chunk_size = self._config.AUDIO_CHUNK_SIZE
         chunk_bytes = chunk_size * 2  # 16-bit mono
-        # Read one chunk (50ms) at a time — matches ALSA period size.
-        # Reading more than the buffer causes overruns and glitches.
-        read_size = chunk_size
+        rate = self._config.AUDIO_RATE
+        channels = self._config.AUDIO_CHANNELS
+        name_match = str(getattr(self._config, 'AIOC_DEVICE_NAME', 'All-In-One')).lower()
 
         while self._rx_running:
-            # ── Phase 1: Open stream ──
-            stream = None
+            # ── Phase 1: Find ALSA device and start arecord ──
+            proc = None
+            alsa_card = self._find_alsa_card(name_match)
+            if alsa_card is None:
+                print("  [TH9800-RX] AIOC not found in /proc/asound/cards — retrying in 5s")
+                time.sleep(5)
+                continue
+
+            alsa_dev = f"hw:{alsa_card},0"
             try:
-                input_idx, _ = self._find_aioc_device()
-                if input_idx is None:
-                    print("  [TH9800-RX] AIOC device not found — retrying in 5s")
-                    time.sleep(5)
-                    continue
-                stream = self._pyaudio.open(
-                    format=_pa.paInt16,
-                    channels=self._config.AUDIO_CHANNELS,
-                    rate=self._config.AUDIO_RATE,
-                    input=True,
-                    input_device_index=input_idx,
-                    frames_per_buffer=chunk_size * 4)  # larger buffer prevents boundary artifacts
-                self._input_stream = stream  # expose for is_active() checks
+                proc = subprocess.Popen(
+                    ['arecord', '-D', alsa_dev, '-f', 'S16_LE',
+                     '-r', str(rate), '-c', str(channels), '-t', 'raw',
+                     '--buffer-size', str(chunk_size * 4)],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                self._input_stream = proc  # expose for is_active() checks
                 self._stream_restart_count += 1
-                print(f"  [TH9800-RX] Stream opened (restart #{self._stream_restart_count})")
+                print(f"  [TH9800-RX] arecord opened on {alsa_dev} pid={proc.pid} (restart #{self._stream_restart_count})")
             except Exception as e:
-                print(f"  [TH9800-RX] Failed to open stream: {e} — retrying in 2s")
-                # Reinitialize PyAudio if it died (e.g. after gateway shutdown race)
-                if 'not initialized' in str(e).lower():
-                    try:
-                        import pyaudio as _pa_mod
-                        self._pyaudio = _pa_mod.PyAudio()
-                        print("  [TH9800-RX] PyAudio reinitialized")
-                    except Exception as e2:
-                        print(f"  [TH9800-RX] PyAudio reinit failed: {e2}")
+                print(f"  [TH9800-RX] Failed to start arecord on {alsa_dev}: {e} — retrying in 2s")
                 time.sleep(2)
                 continue
 
-            # ── Phase 2: Read loop — runs until error ──
+            # ── Phase 2: Read loop — read fixed-size chunks from stdout ──
             _consecutive_errors = 0
             while self._rx_running:
                 try:
-                    data = stream.read(read_size, exception_on_overflow=False)
-                    if not data:
-                        continue
+                    data = proc.stdout.read(chunk_bytes)
+                    if not data or len(data) == 0:
+                        break  # arecord died
 
                     self._last_audio_capture_time = time.time()
                     _consecutive_errors = 0
 
-                    # One chunk per read — no slicing needed
                     chunk = data
                     if len(chunk) < chunk_bytes:
                         chunk = chunk + b'\x00' * (chunk_bytes - len(chunk))
 
-                    # Apply audio processing
-                    if self._processor:
-                        chunk = self._processor.process(chunk)
+                    _st = self._stream_trace
+                    if _st:
+                        _st.record('aioc_rx', 'arecord_read', chunk)
 
-                    # Track level
+                    # Track level on RAW audio (before processing)
                     try:
                         arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
                         rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
@@ -475,10 +499,20 @@ class TH9800Plugin(RadioPlugin):
                     except Exception:
                         pass
 
+                    # Apply audio processing (HPF, gate, etc.)
+                    if self._processor:
+                        chunk = self._processor.process(chunk)
+
+                    if _st:
+                        _st.record('aioc_rx', 'post_proc', chunk)
+
                     # Queue for get_audio()
+                    _qd = self._rx_queue.qsize()
+                    _overflow = False
                     try:
                         self._rx_queue.put_nowait(chunk)
                     except _queue_mod.Full:
+                        _overflow = True
                         try:
                             self._rx_queue.get_nowait()
                         except _queue_mod.Empty:
@@ -488,55 +522,98 @@ class TH9800Plugin(RadioPlugin):
                         except _queue_mod.Full:
                             pass
 
-                except IOError as e:
-                    err_code = getattr(e, 'errno', None)
-                    if err_code == -9981:  # paInputOverflowed — recoverable
-                        try:
-                            stream.read(read_size, exception_on_overflow=False)
-                        except Exception:
-                            pass
-                        continue
-                    _consecutive_errors += 1
-                    if _consecutive_errors <= 3:
-                        print(f"  [TH9800-RX] IOError: {e} (errno={err_code}) [{_consecutive_errors}]")
-                    if _consecutive_errors >= 5:
-                        print(f"  [TH9800-RX] {_consecutive_errors} consecutive errors — closing stream")
-                        break  # exit inner loop → close → reopen
-                    time.sleep(0.1)
+                    if _st:
+                        _st.record('aioc_rx', 'queue_put', chunk, _qd,
+                                   'overflow' if _overflow else '')
 
                 except Exception as e:
                     _consecutive_errors += 1
                     if _consecutive_errors <= 3:
-                        print(f"  [TH9800-RX] Exception: {e} [{_consecutive_errors}]")
+                        print(f"  [TH9800-RX] Read error: {e} [{_consecutive_errors}]")
                     if _consecutive_errors >= 5:
-                        print(f"  [TH9800-RX] {_consecutive_errors} consecutive errors — closing stream")
-                        break  # exit inner loop → close → reopen
+                        print(f"  [TH9800-RX] {_consecutive_errors} consecutive errors — killing arecord")
+                        break
                     time.sleep(0.1)
 
-            # ── Phase 3: Close stream and retry ──
+            # ── Phase 3: Kill arecord and retry ──
             self._input_stream = None
-            try:
-                stream.stop_stream()
-                stream.close()
-            except Exception:
-                pass
+            if proc:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
             if self._rx_running:
-                print("  [TH9800-RX] Stream closed — reopening in 1s")
+                print("  [TH9800-RX] arecord stopped — reopening in 1s")
                 time.sleep(1)
 
     def _find_aioc_device(self):
-        """Find AIOC audio device indices by name."""
+        """Find AIOC audio device indices.
+
+        WirePlumber disables the AIOC (99-disable-loopback.conf) so
+        PipeWire/PyAudio can't see it by name.  We scan /proc/asound/cards
+        for the ALSA card number, then match PyAudio devices by 'hw:N'.
+        Falls back to PyAudio name search if ALSA scan fails.
+        """
         if not self._pyaudio:
             return None, None
         name_match = str(getattr(self._config, 'AIOC_DEVICE_NAME', 'All-In-One')).lower()
+
+        # Pass 1: find ALSA card number from /proc/asound/cards.
+        # This is the reliable path — immune to PipeWire/WirePlumber state.
+        alsa_card = self._find_alsa_card(name_match)
+        if alsa_card is not None:
+            hw_prefix = f"(hw:{alsa_card},"
+            for i in range(self._pyaudio.get_device_count()):
+                try:
+                    info = self._pyaudio.get_device_info_by_index(i)
+                    if hw_prefix in info.get('name', ''):
+                        print(f"  [TH9800] AIOC found: ALSA card {alsa_card} → PyAudio device {i}: {info['name']}")
+                        return i, i
+                except Exception:
+                    continue
+            # hw: device not in PyAudio list — reinitialize to force rescan
+            try:
+                import pyaudio as _pa_mod
+                self._pyaudio.terminate()
+                self._pyaudio = _pa_mod.PyAudio()
+                print(f"  [TH9800] PyAudio reinitialized — rescanning for AIOC hw:{alsa_card}")
+                for i in range(self._pyaudio.get_device_count()):
+                    try:
+                        info = self._pyaudio.get_device_info_by_index(i)
+                        if hw_prefix in info.get('name', '') or name_match in info.get('name', '').lower():
+                            print(f"  [TH9800] AIOC found after rescan → device {i}: {info['name']}")
+                            return i, i
+                    except Exception:
+                        continue
+            except Exception as e:
+                print(f"  [TH9800] PyAudio reinit failed: {e}")
+
+        # Pass 2: fallback — PyAudio name search (works if WirePlumber hasn't disabled it)
         for i in range(self._pyaudio.get_device_count()):
             try:
                 info = self._pyaudio.get_device_info_by_index(i)
                 if name_match in info.get('name', '').lower():
-                    return i, i  # AIOC uses same device for input and output
+                    return i, i
             except Exception:
                 continue
+
         return None, None
+
+    @staticmethod
+    def _find_alsa_card(name_match):
+        """Find ALSA card number by scanning /proc/asound/cards."""
+        try:
+            with open('/proc/asound/cards') as f:
+                for line in f:
+                    if name_match in line.lower():
+                        # Line format: " 2 [AllInOneCable  ]: USB-Audio - ..."
+                        card_num = line.strip().split()[0]
+                        if card_num.isdigit():
+                            return int(card_num)
+        except Exception:
+            pass
+        return None
 
     # -- Internal: CAT client --
 

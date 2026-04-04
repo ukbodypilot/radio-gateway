@@ -923,28 +923,61 @@ class FilePlaybackSource(AudioSource):
             return None
     
     def check_periodic_announcement(self):
-        """Check if it's time for a periodic announcement"""
+        """Check if it's time for a periodic announcement.
+
+        IMPORTANT: This runs inside get_audio() on the BusManager tick thread.
+        We must NOT call queue_file() here because _decode_file() does disk I/O
+        and audio decoding that blocks for 150-450ms, stalling all buses.
+        Instead we use the pre-decoded cache (_station_id_pcm).
+        """
         # Use auto-detected station_id file (key 0)
         if self.announcement_interval <= 0 or not self.file_status['0']['exists']:
             return
-        
+
         current_time = time.time()
         if self.last_announcement_time == 0:
             self.last_announcement_time = current_time
+            # Pre-decode station ID so we never decode in the audio thread
+            self._ensure_station_id_cached()
             return
-        
+
         # Check if enough time has passed
         elapsed = current_time - self.last_announcement_time
         if elapsed >= self.announcement_interval:
             # Check if radio is idle
             if not self.gateway.vad_active:
-                # Queue the station_id file
                 station_id_path = self.file_status['0']['path']
                 if station_id_path:
-                    self.queue_file(station_id_path)
+                    # Use cached PCM — never decode in audio thread
+                    pcm = self._get_station_id_cached(station_id_path)
+                    if pcm is not None:
+                        self.playlist.append((station_id_path, pcm))
                     self.last_announcement_time = current_time
                     if self.gateway.config.VERBOSE_LOGGING:
                         print(f"\n[Playback] Periodic station ID triggered (every {self.announcement_interval}s)")
+
+    def _ensure_station_id_cached(self):
+        """Pre-decode station ID file so periodic announcements never block."""
+        path = self.file_status.get('0', {}).get('path')
+        if path and not hasattr(self, '_station_id_pcm'):
+            pcm = self._decode_file(path)
+            if pcm:
+                self._station_id_pcm = pcm
+                self._station_id_path = path
+
+    def _get_station_id_cached(self, path):
+        """Return cached station ID PCM, re-decoding only if path changed."""
+        if hasattr(self, '_station_id_pcm') and getattr(self, '_station_id_path', '') == path:
+            return self._station_id_pcm
+        # Path changed — decode in background (return None this tick, decode for next)
+        import threading
+        def _bg_decode():
+            pcm = self._decode_file(path)
+            if pcm:
+                self._station_id_pcm = pcm
+                self._station_id_path = path
+        threading.Thread(target=_bg_decode, daemon=True).start()
+        return None
     
     def get_audio(self, chunk_size):
         """Get audio chunk from file playback"""

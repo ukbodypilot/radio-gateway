@@ -181,6 +181,8 @@ def dump_audio_trace(gw):
         KV4P_GOT, KV4P_RMS, KV4P_QLEN, KV4P_DECERR, \
         KV4P_TXF, KV4P_TXDROP, KV4P_TXRMS, KV4P_TXERR, KV4P_TXANN, \
         SDR2_DISC, SDR2_SBA = range(50)
+    # Audio quality diagnostics (50+) — may not be present in older traces
+    SPK_DROPS, PCM_DRAIN_N, CLOCK_DRIFT, GC_EVENTS = 50, 51, 52, 53
 
     with open(out_path, 'w') as f:
         dur = trace[-1][T] - trace[0][T] if len(trace) > 1 else 0
@@ -555,6 +557,76 @@ def dump_audio_trace(gw):
                     f"sig={r_sig} ({100*r_sig/n:.1f}%)  "
                     f"hold={r_hold} ({100*r_hold/n:.1f}%)  "
                     f"idle={r_idle} ({100*r_idle/n:.1f}%)\n\n")
+
+        # ── Audio quality diagnostics (new columns 50-53) ──
+        has_aq = len(trace[0]) > SPK_DROPS if trace else False
+        if has_aq:
+            spk_drops = [r[SPK_DROPS] for r in trace if len(r) > SPK_DROPS]
+            pcm_drains = [r[PCM_DRAIN_N] for r in trace if len(r) > PCM_DRAIN_N]
+            clock_drifts = [r[CLOCK_DRIFT] for r in trace if len(r) > CLOCK_DRIFT]
+            gc_events_final = trace[-1][GC_EVENTS] if len(trace[-1]) > GC_EVENTS else 0
+
+            f.write("AUDIO QUALITY DIAGNOSTICS\n")
+
+            # Speaker drops
+            total_drops = sum(spk_drops)
+            drop_ticks = sum(1 for d in spk_drops if d > 0)
+            f.write(f"  Speaker queue drops: {total_drops} chunks across {drop_ticks} ticks\n")
+            if total_drops > 0:
+                f.write(f"    *** {total_drops * 50}ms of audio silently discarded ***\n")
+
+            # PCM drain (BusManager → main loop)
+            if pcm_drains:
+                multi = sum(1 for d in pcm_drains if d > 1)
+                zero = sum(1 for d in pcm_drains if d == 0)
+                f.write(f"  PCM drain: {len(pcm_drains)} drains, {multi} multi-chunk ({multi*100//max(1,len(pcm_drains))}%), "
+                        f"{zero} empty ({zero*100//max(1,len(pcm_drains))}%)\n")
+                if multi > len(pcm_drains) * 0.05:
+                    f.write(f"    *** >5% multi-drain — BusManager clock drifting ***\n")
+
+            # Cross-clock drift
+            if clock_drifts:
+                f.write(f"  Cross-clock drift: mean={statistics.mean(clock_drifts):.1f}ms  "
+                        f"min={min(clock_drifts):.1f}ms  max={max(clock_drifts):.1f}ms  "
+                        f"stdev={statistics.stdev(clock_drifts):.1f}ms\n")
+                if max(abs(d) for d in clock_drifts) > 100:
+                    f.write(f"    *** Drift >100ms — main loop and BusManager severely out of sync ***\n")
+
+            # GC events
+            f.write(f"  GC events (main loop): {gc_events_final} total during trace\n")
+
+            # BusManager per-tick timing (if available)
+            bm = getattr(gw, 'bus_manager', None)
+            if bm:
+                bm_trace = bm.dump_tick_trace()
+                if bm_trace:
+                    bm_dts = [r[1] for r in bm_trace]  # actual interval ms
+                    bm_totals = [r[2] for r in bm_trace]  # processing time ms
+                    f.write(f"\n  BusManager tick timing ({len(bm_trace)} ticks, target: 50.0ms):\n")
+                    f.write(f"    interval: mean={statistics.mean(bm_dts):.1f}ms  "
+                            f"stdev={statistics.stdev(bm_dts):.1f}ms  "
+                            f"min={min(bm_dts):.1f}ms  max={max(bm_dts):.1f}ms\n")
+                    bm_over60 = sum(1 for d in bm_dts if d > 60)
+                    bm_over80 = sum(1 for d in bm_dts if d > 80)
+                    bm_over100 = sum(1 for d in bm_dts if d > 100)
+                    f.write(f"    >60ms: {bm_over60}  >80ms: {bm_over80}  >100ms: {bm_over100}\n")
+                    f.write(f"    processing: mean={statistics.mean(bm_totals):.2f}ms  "
+                            f"max={max(bm_totals):.2f}ms\n")
+                    # Per-bus breakdown from last tick that had timings
+                    for row in reversed(bm_trace):
+                        if row[5]:  # _bus_timings dict
+                            f.write(f"    per-bus (last tick):\n")
+                            for bid, (t_tick, t_del, lv) in row[5].items():
+                                f.write(f"      {bid}: tick={t_tick:.2f}ms  deliver={t_del:.2f}ms  level={lv}\n")
+                            break
+
+                # GC events from BusManager
+                bm_gc = list(bm._gc_events)
+                if bm_gc:
+                    f.write(f"    GC events (BusManager): {len(bm_gc)} — "
+                            f"durations: {', '.join(f'{e[2]:.1f}ms' for e in bm_gc[-10:])}\n")
+
+            f.write("\n")
 
         # ── Per-tick detail (first 200 + any anomalies) ──
         #

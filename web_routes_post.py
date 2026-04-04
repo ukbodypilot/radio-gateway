@@ -1026,10 +1026,21 @@ def handle_tracecmd(handler, parent):
             _gw._trace_events.clear()
             import time as _trace_time
             _gw._audio_trace_t0 = _trace_time.monotonic()
+            # Start stream-level trace
+            if hasattr(_gw, '_stream_trace'):
+                _gw._stream_trace.start()
             print(f"\n[Trace] Recording STARTED (via web UI)")
         else:
+            # Stop stream-level trace and dump
+            if hasattr(_gw, '_stream_trace'):
+                _gw._stream_trace.stop()
             print(f"\n[Trace] Recording STOPPED ({len(_gw._audio_trace)} ticks captured)")
             _gw._dump_audio_trace()
+            # Dump stream trace
+            if hasattr(_gw, '_stream_trace'):
+                import os as _os
+                _st_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'tools', 'stream_trace.txt')
+                _gw._stream_trace.dump(_st_path)
         import time as _trace_time2
         _gw._trace_events.append((_trace_time2.monotonic(), 'trace', 'on' if _gw._trace_recording else 'off'))
         result = {'ok': True, 'active': _gw._trace_recording}

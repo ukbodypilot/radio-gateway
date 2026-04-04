@@ -613,6 +613,26 @@ class SoloBus(AudioBus):
         self._tx_sources.append(slot)
         self._tx_sources.sort(key=lambda s: s.bus_priority)
 
+    def _fire_ptt(self, state):
+        """Fire-and-forget PTT — never block the bus tick loop.
+
+        CAT RTS switching + HID write can take 150-600ms (measured),
+        which stalls ALL buses if done synchronously.
+        """
+        import threading
+        radio = self._radio
+        def _do():
+            try:
+                if hasattr(radio, 'execute'):
+                    radio.execute({'cmd': 'ptt', 'state': state})
+                elif state and hasattr(radio, 'ptt_on'):
+                    radio.ptt_on()
+                elif not state and hasattr(radio, 'ptt_off'):
+                    radio.ptt_off()
+            except Exception as e:
+                print(f"  [SoloBus:{self.name}] PTT error: {e}")
+        threading.Thread(target=_do, daemon=True, name=f"PTT-{self.name}").start()
+
     def tick(self, chunk_size):
         """Process one audio cycle.
 
@@ -648,24 +668,18 @@ class SoloBus(AudioBus):
                 tx_audio = mix_audio_streams(tx_audio, audio)
 
         # ── Phase 2: PTT management ──
+        # PTT calls (CAT RTS switch, HID write) can block for 150-600ms,
+        # stalling ALL buses.  Fire-and-forget in a background thread.
         if ptt_needed:
             self._ptt_hold_until = current_time + self._ptt_release_delay
             if not self._ptt_active and self._radio:
-                # Key PTT
                 self._ptt_active = True
                 print(f"  [SoloBus:{self.name}] PTT ON via {self._radio.name if hasattr(self._radio, 'name') else type(self._radio).__name__}")
-                if hasattr(self._radio, 'execute'):
-                    self._radio.execute({'cmd': 'ptt', 'state': True})
-                elif hasattr(self._radio, 'ptt_on'):
-                    self._radio.ptt_on()
+                self._fire_ptt(True)
 
         if self._ptt_active and current_time > self._ptt_hold_until:
-            # Release PTT
             self._ptt_active = False
-            if self._radio and hasattr(self._radio, 'execute'):
-                self._radio.execute({'cmd': 'ptt', 'state': False})
-            elif self._radio and hasattr(self._radio, 'ptt_off'):
-                self._radio.ptt_off()
+            self._fire_ptt(False)
 
         # ── Phase 3: Send TX audio to radio ──
         if tx_audio is not None and self._radio and self._ptt_active:

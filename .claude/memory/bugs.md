@@ -1,5 +1,26 @@
 # Bug History — Radio Gateway
 
+## AIOC reader gets silence through PipeWire (2026-04-04)
+**Symptom:** `aioc` level permanently 0 despite radio receiving. Stream opened successfully but read DC silence (RMS ~116, all samples negative).
+**Root cause:** WirePlumber disables AIOC (`device.disabled=true` in `99-disable-loopback.conf`). PyAudio and sounddevice both use PipeWire's ALSA plugin which returns silence for disabled devices, even with explicit `hw:N,0`. Only raw `arecord` bypasses PipeWire.
+**Fix:** Replaced PyAudio reader with `arecord` subprocess. Device discovery via `/proc/asound/cards` instead of PyAudio name search.
+
+## SoloBus PTT blocks BusManager 150-600ms (2026-04-04)
+**Symptom:** Audio stutters on file play/stop. BusManager stalls up to 601ms. AIOC RX queue overflows (45-60 per trace). Cross-clock drift spikes to 590ms.
+**Root cause:** SoloBus.tick() called `radio.execute({'cmd': 'ptt'})` synchronously. AIOC PTT does CAT `_pause_drain()` + `set_rts()` + HID write = 150-600ms blocking the entire BusManager thread.
+**Fix:** `_fire_ptt()` runs PTT in background thread (fire-and-forget). Same pattern as D75 PTT.
+**Trace proof:** monitor_bus tick_slow went from 9 events (max 601ms) to 0. BusManager max interval from 601ms to 91ms.
+
+## BusManager clock drift (2026-04-04)
+**Symptom:** PCM drain showed occasional multi-chunk events. BusManager systematically slower than main loop.
+**Root cause:** `_tick_loop()` used reset timing (`next_tick = monotonic() + interval`) instead of accumulative (`next_tick += interval`). Actual period = interval + processing_time.
+**Fix:** Accumulative timing with snap-forward that skips all missed ticks.
+
+## AIOC RX 800ms stale audio latency (2026-04-04)
+**Symptom:** Audio from TH-9800 heard in Mumble ~800ms after it happened.
+**Root cause:** RX queue `maxsize=16` filled during 130s startup before BusManager began consuming. Queue never drained below 15.
+**Fix:** Reduced to `maxsize=3`. Flush stale chunks on first consumer read. Latency now ~250ms.
+
 ## Gateway main loop crash: missing early attribute inits (2026-04-03)
 **Symptom:** All audio levels 0, gateway silently dead. Main loop crashed on first tick.
 **Root cause:** `bus_manager`, `_bus_sinks`, `_bus_stream_flags`, `_listen_bus_id` accessed in main audio loop before `_setup_routing` initialized them. `self.bus_manager` raised `AttributeError` even though `if self.bus_manager` was used — attribute didn't exist at all.

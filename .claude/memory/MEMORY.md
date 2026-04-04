@@ -84,6 +84,13 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - GPS: u-blox GNSS on `/dev/gps` (udev rule), real position for APRS/repeaters
 - `packet_radio.py` — KISS client + APRS parser only (local Direwolf removed)
 
+## Audio Quality (2026-04-04, branch: audio-quality)
+- AIOC reader: `arecord` subprocess bypasses PipeWire (PyAudio/sounddevice read silence)
+- BusManager: accumulative clock, fire-and-forget PTT, GC disabled
+- Stream trace: `stream_trace.py` records per-chunk at every handoff, dumps to `tools/stream_trace.txt`
+- Research: `docs/audio-quality-research.md` — Python limits, Rust/JACK/PipeWire alternatives
+- Final metrics: all streams 50.0ms stdev <2ms, zero overflows/drops/clicks
+
 ## See Also
 - [bugs.md](bugs.md) — bug history
 - [bugs_2026_03_30.md](bugs_2026_03_30.md) — v2.0 routing bugs
@@ -91,6 +98,8 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [feedback_config_safety.md](feedback_config_safety.md) — config damage prevention
 - [feedback_single_source_config.md](feedback_single_source_config.md) — GUI changes write to config file, not separate JSON
 - [feedback_no_gateway_restart.md](feedback_no_gateway_restart.md) — Claude can restart gateway
+- [feedback_instrument_not_guess.md](feedback_instrument_not_guess.md) — measure before fixing audio issues
+- [project_audio_quality.md](project_audio_quality.md) — audio quality fixes, trace system, full details
 - [project_d75_cleanup.md](project_d75_cleanup.md) — legacy D75 removal target ~2026-04-08
 - [reference_gdrive_backup.md](reference_gdrive_backup.md) — rclone backup to Google Drive
 - [project_ftm150_endpoint.md](project_ftm150_endpoint.md) — FTM-150 AIOC endpoint on Pi 192.168.2.121

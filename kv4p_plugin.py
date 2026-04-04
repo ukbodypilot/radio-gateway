@@ -97,6 +97,9 @@ class KV4PPlugin(RadioPlugin):
         self._dc_remover_frame = None
         self._vol_ramp = None
 
+        # Stream trace (set by gateway)
+        self._stream_trace = None
+
         # Audio RX state
         self._chunk_queue = collections.deque(maxlen=16)
         self._sub_buffer = b''
@@ -325,6 +328,9 @@ class KV4PPlugin(RadioPlugin):
         """Encode 48kHz PCM to Opus and send to radio for TX."""
         if not self._encoder or not self._radio:
             return
+        _st = self._stream_trace
+        if _st:
+            _st.record('kv4p_tx', 'put_audio', pcm_48k, len(self._tx_buf))
         try:
             frame_bytes = 1920 * 2  # 40ms at 48kHz mono
             self._tx_buf += pcm_48k

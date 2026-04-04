@@ -58,6 +58,7 @@ class _TunerCapture:
         self._sub_buffer_after = 0
         self.total_reads = 0
         self.last_read_time = 0
+        self._stream_trace = None  # set by gateway
 
         self._audio_rate = getattr(config, 'AUDIO_RATE', 48000)
         self._chunk_size = getattr(config, 'AUDIO_CHUNK_SIZE', 2400)
@@ -162,9 +163,12 @@ class _TunerCapture:
                         self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
                 except Exception:
                     pass
+                _qd = self._chunk_queue.qsize()
+                _overflow = False
                 try:
                     self._chunk_queue.put_nowait(data)
                 except _queue_mod.Full:
+                    _overflow = True
                     try:
                         self._chunk_queue.get_nowait()
                     except _queue_mod.Empty:
@@ -173,6 +177,11 @@ class _TunerCapture:
                         self._chunk_queue.put_nowait(data)
                     except _queue_mod.Full:
                         pass
+                _st = self._stream_trace
+                if _st:
+                    _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
+                    _st.record(_sid, 'parec_read', data, _qd,
+                               'overflow' if _overflow else '')
             except Exception:
                 if self._reader_running:
                     time.sleep(0.01)
@@ -255,6 +264,11 @@ class _TunerCapture:
         # Apply audio processing (HPF, LPF, notch, gate)
         if self.processor:
             raw = self.processor.process(raw)
+
+        _st = self._stream_trace
+        if _st:
+            _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
+            _st.record(_sid, 'get_chunk', raw, self._chunk_queue.qsize())
 
         return raw
 
