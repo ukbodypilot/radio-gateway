@@ -1440,6 +1440,11 @@ class AIOCPlugin(AudioPlugin):
 
         print(f"  [Link] AIOCPlugin: mode {self._mode} -> {new_mode}", flush=True)
 
+        # Set mode FIRST to prevent get_audio() race — it checks _mode
+        # before reading _in_stream.  Without this, the main loop sees
+        # _mode='audio' + _in_stream=None and tries to reopen, crashing.
+        self._mode = new_mode
+
         if new_mode == 'data':
             # Close PyAudio input to release AIOC for Direwolf
             if self._in_stream:
@@ -1462,7 +1467,6 @@ class AIOCPlugin(AudioPlugin):
             time.sleep(0.5)
             self.reopen_audio()
 
-        self._mode = new_mode
         return {"ok": True, "mode": new_mode}
 
     def _start_direwolf(self):

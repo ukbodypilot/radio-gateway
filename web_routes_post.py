@@ -1463,6 +1463,10 @@ def handle_packet_cmd(handler, parent):
             result = pp.execute({'cmd': 'bbs_disconnect'})
         elif action == 'bbs_send':
             result = pp.execute({'cmd': 'bbs_send', 'text': data.get('text', '')})
+        elif action == 'winlink/compose':
+            result = _winlink_compose(data)
+        elif action == 'winlink/connect':
+            result = _winlink_connect(data)
         else:
             result = {"ok": False, "error": f"unknown action: {action}"}
 
@@ -1472,3 +1476,70 @@ def handle_packet_cmd(handler, parent):
     handler.send_header('Content-Length', str(len(resp)))
     handler.end_headers()
     handler.wfile.write(resp)
+
+
+def _winlink_compose(data):
+    """Queue a Winlink message via Pat CLI."""
+    import subprocess, shutil
+    pat = shutil.which('pat')
+    if not pat:
+        return {"ok": False, "error": "pat not installed"}
+    to = data.get('to', '').strip()
+    cc = data.get('cc', '').strip()
+    subject = data.get('subject', '').strip()
+    body = data.get('body', '')
+    if not to or not subject:
+        return {"ok": False, "error": "to and subject required"}
+    cmd = [pat, 'compose', '-s', subject]
+    if cc:
+        cmd += ['-c', cc]
+    cmd.append(to)
+    try:
+        proc = subprocess.run(cmd, input=body.encode(), capture_output=True, timeout=10)
+        if proc.returncode == 0:
+            return {"ok": True}
+        return {"ok": False, "error": proc.stderr.decode().strip() or f"exit code {proc.returncode}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+_winlink_log = ''  # shared log buffer for polling
+
+def _winlink_connect(data):
+    """Connect to a Winlink gateway via Pat CLI + AGW."""
+    global _winlink_log
+    import subprocess, shutil, threading
+    pat = shutil.which('pat')
+    if not pat:
+        return {"ok": False, "error": "pat not installed"}
+    gateway = data.get('gateway', '').strip()
+    if not gateway:
+        return {"ok": False, "error": "gateway callsign required"}
+    _winlink_log = f"Connecting to {gateway}...\n"
+    try:
+        proc = subprocess.Popen(
+            [pat, 'connect', f'ax25+agwpe:///{gateway}'],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+        # Read output line-by-line into shared buffer
+        def _reader():
+            global _winlink_log
+            for line in proc.stdout:
+                text = line.decode('utf-8', errors='replace').rstrip()
+                if text:
+                    _winlink_log += text + '\n'
+            proc.wait()
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+        t.join(timeout=180)
+        if proc.poll() is None:
+            proc.kill()
+            _winlink_log += '\n[TIMEOUT — killed after 180s]\n'
+            return {"ok": False, "error": "timeout (180s)"}
+        if proc.returncode == 0:
+            _winlink_log += '\nSync complete.\n'
+            return {"ok": True, "result": "sync complete"}
+        _winlink_log += f'\nExit code: {proc.returncode}\n'
+        return {"ok": False, "error": f"exit code {proc.returncode}"}
+    except Exception as e:
+        _winlink_log += f'\nError: {e}\n'
+        return {"ok": False, "error": str(e)}

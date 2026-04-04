@@ -62,6 +62,9 @@ class PacketRadioPlugin:
         self._kiss_sock = None
         self._kiss_connected = False
 
+        # Pat Winlink client subprocess
+        self._pat_proc = None
+
         # Packet data
         self._decoded_packets = collections.deque(maxlen=500)
         self._aprs_stations = {}      # callsign → {lat, lon, symbol, comment, last_heard, ...}
@@ -151,10 +154,45 @@ class PacketRadioPlugin:
         except Exception as e:
             print(f"  [Packet] Failed to send mode to '{target}': {e}")
 
+    def _start_pat(self):
+        """Start Pat Winlink client as a subprocess."""
+        import subprocess, shutil
+        pat_bin = shutil.which('pat')
+        if not pat_bin:
+            print("  [Packet] Pat not found — install from https://getpat.io/")
+            return False
+        if self._pat_proc and self._pat_proc.poll() is None:
+            return True  # already running
+        try:
+            self._pat_proc = subprocess.Popen(
+                [pat_bin, 'http'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"  [Packet] Pat started (PID {self._pat_proc.pid}, web UI on port {self._pat_port})")
+            return True
+        except Exception as e:
+            print(f"  [Packet] Pat start failed: {e}")
+            return False
+
+    def _stop_pat(self):
+        """Stop Pat subprocess."""
+        if self._pat_proc:
+            try:
+                self._pat_proc.terminate()
+                self._pat_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    self._pat_proc.kill()
+                    self._pat_proc.wait(timeout=2)
+                except Exception:
+                    pass
+            print(f"  [Packet] Pat stopped")
+            self._pat_proc = None
+
     def teardown(self):
         """Stop everything and clean up."""
         self._running = False
         self._disconnect_kiss()
+        self._stop_pat()
         print("  [Packet] Teardown complete")
 
     # ── Audio interface (stubs — audio handled by endpoint) ──────────
@@ -214,6 +252,8 @@ class PacketRadioPlugin:
             "tx_audio_level": 0,
             "dw_audio_level": self._dw_audio_level,
             "dw_audio_peak": self._dw_audio_peak,
+            "pat_port": self._pat_port,
+            "pat_running": self._pat_proc is not None and self._pat_proc.poll() is None,
             "log_tail": list(self._direwolf_log)[-15:],
         }
 
@@ -233,6 +273,7 @@ class PacketRadioPlugin:
         self._mode = mode
 
         if mode == 'idle':
+            self._stop_pat()
             self._send_endpoint_mode('audio')
             return {"ok": True, "mode": "idle"}
 
@@ -245,7 +286,24 @@ class PacketRadioPlugin:
         # Connect KISS TCP to remote Direwolf
         threading.Thread(target=self._kiss_connect_loop, daemon=True,
                          name="KISSConnect").start()
+        # Pat Winlink: no need to start pat http — our own UI calls pat CLI directly.
+        # Direwolf + AGW port is all that's needed.
         return {"ok": True, "mode": mode}
+
+    def _delayed_pat_start(self):
+        """Wait for Direwolf AGW port then start Pat."""
+        import socket as _sock
+        for _attempt in range(15):
+            time.sleep(2)
+            try:
+                s = _sock.socket()
+                s.settimeout(2)
+                s.connect((self._remote_tnc, 8010))
+                s.close()
+                break
+            except Exception:
+                continue
+        self._start_pat()
 
     def _disconnect_kiss(self):
         """Close KISS TCP connection."""

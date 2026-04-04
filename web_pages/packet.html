@@ -28,15 +28,15 @@
   .pkt-val.red { color: #e74c3c; }
   .pkt-val.yellow { color: #f39c12; }
   .pkt-val.cyan { color: var(--t-accent); }
-  #pkt-log { max-height: 300px; overflow-y: auto; font-size: 0.8em; color: #aaa;
+  #pkt-log { max-height: 300px; overflow-y: auto; font-size: 0.95em; color: #aaa;
     background: #0a0a1a; border-radius: 4px; padding: 8px; }
   #pkt-log div { white-space: nowrap; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 1px 0; }
   #aprs-map { height: 400px; border-radius: 6px; margin-bottom: 10px; }
-  #aprs-stations { max-height: 250px; overflow-y: auto; font-size: 0.8em; }
+  #aprs-stations { max-height: 250px; overflow-y: auto; font-size: 0.95em; }
   #aprs-stations table { width: 100%; border-collapse: collapse; }
   #aprs-stations th { color: #888; text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--t-border); }
   #aprs-stations td { padding: 3px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-  #bbs-term { background: #000; color: #0f0; font-family: 'Courier New', monospace; font-size: 0.85em;
+  #bbs-term { background: #000; color: #0f0; font-family: 'Courier New', monospace; font-size: 0.95em;
     height: 400px; overflow-y: auto; padding: 8px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
   #bbs-input { width: 100%; padding: 6px; background: #111; color: #0f0; border: 1px solid #333;
     font-family: 'Courier New', monospace; font-size: 0.9em; margin-top: 4px; border-radius: 4px; }
@@ -98,10 +98,10 @@
       <span>Direwolf Log</span>
       <span style="cursor:pointer; color:var(--t-accent);" onclick="toggleDwLog()">hide</span>
     </div>
-    <div id="dw-log" style="max-height:180px; overflow-y:auto; font-size:0.78em; color:#888; background:#0a0a1a; border-radius:4px; padding:6px; white-space:pre-wrap; word-break:break-all;"></div>
+    <div id="dw-log" style="max-height:180px; overflow-y:auto; font-size:0.95em; color:#888; background:#0a0a1a; border-radius:4px; padding:6px; white-space:pre-wrap; word-break:break-all;"></div>
   </div>
   <div style="margin-top:4px;">
-    <span style="cursor:pointer; color:#555; font-size:0.85em; display:none;" onclick="toggleDwLog()" id="dw-log-show">show direwolf log</span>
+    <span style="cursor:pointer; color:#555; font-size:0.95em; display:none;" onclick="toggleDwLog()" id="dw-log-show">show direwolf log</span>
   </div>
 </div>
 
@@ -117,14 +117,14 @@
     </div>
   </div>
   <div class="pkt-card" id="aprs-stations">
-    <div style="color:#888; margin-bottom:4px; font-size:0.85em;">Positioned Stations</div>
+    <div style="color:#888; margin-bottom:4px; font-size:0.95em;">Positioned Stations</div>
     <table>
       <thead><tr><th>Callsign</th><th>Lat</th><th>Lon</th><th>Type</th><th>Comment</th><th>Last Heard</th></tr></thead>
       <tbody id="aprs-tbody"></tbody>
     </table>
   </div>
   <div class="pkt-card" id="aprs-heard-card" style="display:none;">
-    <div style="color:#888; margin-bottom:4px; font-size:0.85em;">Also Heard (no position)</div>
+    <div style="color:#888; margin-bottom:4px; font-size:0.95em;">Also Heard (no position)</div>
     <table>
       <thead><tr><th>Callsign</th><th>Type</th><th>Info</th><th>Last Heard</th></tr></thead>
       <tbody id="aprs-heard-tbody"></tbody>
@@ -134,12 +134,55 @@
 
 <!-- Winlink Tab -->
 <div id="tab-winlink" class="pkt-panel">
-  <div class="pkt-card">
-    <p style="color:#888;">Winlink requires Pat client. When Winlink mode is active, Pat's web UI will be available below.</p>
-    <div id="winlink-frame-container" style="margin-top:10px;">
-      <iframe id="winlink-frame" style="width:100%; height:500px; border:1px solid var(--t-border); border-radius:4px; display:none;"></iframe>
-      <div id="winlink-status" style="color:#888; font-style:italic;">Switch to Winlink mode to start Pat.</div>
+  <!-- Toolbar -->
+  <div class="pkt-card" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <button class="pkt-btn" onclick="wlCompose()">Compose</button>
+    <button class="pkt-btn" onclick="wlConnect()" id="wl-connect-btn">Connect &amp; Sync</button>
+    <select id="wl-gateway" style="background:var(--t-input-bg);color:var(--t-fg);border:1px solid var(--t-border);padding:4px 8px;border-radius:3px;">
+      <option value="KM6RTE-12">KM6RTE-12 (144.970)</option>
+    </select>
+    <span id="wl-status" style="margin-left:auto;color:#888;font-size:0.95em;">idle</span>
+  </div>
+  <!-- Compose form (hidden by default) -->
+  <div id="wl-compose" class="pkt-card" style="display:none;">
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <input id="wl-to" placeholder="To (email or callsign)" style="flex:1;background:var(--t-input-bg);color:var(--t-fg);border:1px solid var(--t-border);padding:6px 8px;border-radius:3px;">
+      <input id="wl-cc" placeholder="CC (optional)" style="flex:1;background:var(--t-input-bg);color:var(--t-fg);border:1px solid var(--t-border);padding:6px 8px;border-radius:3px;">
     </div>
+    <input id="wl-subject" placeholder="Subject" style="width:100%;box-sizing:border-box;background:var(--t-input-bg);color:var(--t-fg);border:1px solid var(--t-border);padding:6px 8px;border-radius:3px;margin-bottom:6px;">
+    <textarea id="wl-body" rows="6" placeholder="Message body..." style="width:100%;box-sizing:border-box;background:var(--t-input-bg);color:var(--t-fg);border:1px solid var(--t-border);padding:6px 8px;border-radius:3px;resize:vertical;font-family:monospace;"></textarea>
+    <div style="margin-top:6px;display:flex;gap:8px;">
+      <button class="pkt-btn" onclick="wlSend()">Queue Message</button>
+      <button class="pkt-btn" onclick="document.getElementById('wl-compose').style.display='none'">Cancel</button>
+    </div>
+  </div>
+  <!-- Mailbox tabs -->
+  <div class="pkt-card">
+    <div style="display:flex;gap:4px;margin-bottom:8px;">
+      <button class="pkt-btn active" id="wl-tab-in" onclick="wlFolder('in')">Inbox</button>
+      <button class="pkt-btn" id="wl-tab-out" onclick="wlFolder('out')">Outbox</button>
+      <button class="pkt-btn" id="wl-tab-sent" onclick="wlFolder('sent')">Sent</button>
+    </div>
+    <div id="wl-messages" style="font-family:monospace;font-size:0.95em;max-height:400px;overflow-y:auto;">
+      <div style="color:#888;">Switch to Winlink mode and click a folder.</div>
+    </div>
+  </div>
+  <!-- Message viewer -->
+  <div id="wl-viewer" class="pkt-card" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <strong id="wl-view-subject" style="color:var(--t-accent);"></strong>
+      <button class="pkt-btn" onclick="document.getElementById('wl-viewer').style.display='none'">&times;</button>
+    </div>
+    <div id="wl-view-meta" style="color:#888;font-size:0.95em;margin-bottom:6px;"></div>
+    <pre id="wl-view-body" style="white-space:pre-wrap;color:var(--t-fg);margin:0;"></pre>
+  </div>
+  <!-- Connection log -->
+  <div class="pkt-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+      <span style="color:#888;font-size:0.95em;font-weight:bold;">Connection Log</span>
+      <button class="pkt-btn" onclick="document.getElementById('wl-log').textContent=''" style="font-size:0.9em;">Clear</button>
+    </div>
+    <pre id="wl-log" style="background:var(--t-input-bg);color:#2ecc71;font-family:monospace;font-size:0.95em;padding:8px;border-radius:3px;max-height:200px;overflow-y:auto;margin:0;white-space:pre-wrap;"></pre>
   </div>
 </div>
 
@@ -234,15 +277,9 @@ function pollStatus() {
       }
     });
 
-    // Winlink iframe
-    if (s.mode === 'winlink') {
-      var wf = document.getElementById('winlink-frame');
-      if (wf && !wf.src) {
-        wf.src = 'http://' + location.hostname + ':' + (s.pat_port || 8082);
-        wf.style.display = '';
-        document.getElementById('winlink-status').style.display = 'none';
-      }
-    }
+    // Winlink status
+    var wlSt = document.getElementById('wl-status');
+    if (wlSt) wlSt.textContent = s.mode === 'winlink' ? (s.pat_running ? 'ready' : 'starting...') : 'switch to winlink mode';
 
     // BBS status
     document.getElementById('bbs-status').textContent = s.bbs_connected ? 'connected to ' + s.bbs_callsign : 'disconnected';
@@ -515,6 +552,91 @@ function bbsSend() {
   if (!text) return;
   pktPost('bbs_send', {text: text});
   input.value = '';
+}
+
+// ── Winlink functions ──
+var _wlFolder = 'in';
+function wlCompose() {
+  document.getElementById('wl-compose').style.display = '';
+  document.getElementById('wl-to').value = '';
+  document.getElementById('wl-cc').value = '';
+  document.getElementById('wl-subject').value = '';
+  document.getElementById('wl-body').value = '';
+  document.getElementById('wl-to').focus();
+}
+function wlSend() {
+  var to = document.getElementById('wl-to').value.trim();
+  var cc = document.getElementById('wl-cc').value.trim();
+  var subject = document.getElementById('wl-subject').value.trim();
+  var body = document.getElementById('wl-body').value;
+  if (!to || !subject) { alert('To and Subject are required'); return; }
+  pktPost('winlink/compose', {to: to, cc: cc, subject: subject, body: body}).then(function(r) {
+    if (r.ok) {
+      document.getElementById('wl-compose').style.display = 'none';
+      wlFolder('out');
+    } else {
+      alert('Error: ' + (r.error || 'unknown'));
+    }
+  });
+}
+var _wlLogPoll = null;
+function wlConnect() {
+  var gw = document.getElementById('wl-gateway').value;
+  var btn = document.getElementById('wl-connect-btn');
+  var st = document.getElementById('wl-status');
+  var log = document.getElementById('wl-log');
+  btn.disabled = true;
+  st.textContent = 'connecting to ' + gw + '...';
+  log.textContent = 'Connecting to ' + gw + '...\n';
+  // Start polling log
+  if (_wlLogPoll) clearInterval(_wlLogPoll);
+  _wlLogPoll = setInterval(function() {
+    pktGet('winlink/log').then(function(r) {
+      if (r.log) {
+        log.textContent = r.log;
+        log.scrollTop = log.scrollHeight;
+      }
+    });
+  }, 500);
+  pktPost('winlink/connect', {gateway: gw}).then(function(r) {
+    btn.disabled = false;
+    clearInterval(_wlLogPoll); _wlLogPoll = null;
+    // Final log fetch
+    pktGet('winlink/log').then(function(r2) {
+      if (r2.log) { log.textContent = r2.log; log.scrollTop = log.scrollHeight; }
+    });
+    st.textContent = r.ok ? r.result || 'done' : 'error: ' + (r.error || 'unknown');
+    wlFolder(_wlFolder);
+  });
+}
+function wlFolder(name) {
+  _wlFolder = name;
+  ['in','out','sent'].forEach(function(f) {
+    var t = document.getElementById('wl-tab-' + f);
+    if (t) t.className = 'pkt-btn' + (f === name ? ' active' : '');
+  });
+  pktGet('winlink/messages?folder=' + name).then(function(r) {
+    var el = document.getElementById('wl-messages');
+    if (!r.messages || r.messages.length === 0) {
+      el.innerHTML = '<div style="color:#888;">No messages.</div>';
+      return;
+    }
+    el.innerHTML = r.messages.map(function(m) {
+      return '<div onclick="wlRead(\'' + m.mid + '\',\'' + _wlFolder + '\')" style="padding:4px 6px;cursor:pointer;border-bottom:1px solid var(--t-border);">' +
+        '<span style="color:var(--t-accent);">' + (m.subject || '(no subject)') + '</span>' +
+        '<span style="float:right;color:#888;font-size:0.95em;">' + (m.date || '') + '</span>' +
+        '<div style="color:#888;font-size:0.95em;">' + (m.from || '') + ' → ' + (m.to || '') + '</div></div>';
+    }).join('');
+  });
+}
+function wlRead(mid, folder) {
+  pktGet('winlink/read?mid=' + mid + '&folder=' + folder).then(function(r) {
+    if (!r.ok) return;
+    document.getElementById('wl-view-subject').textContent = r.subject || '';
+    document.getElementById('wl-view-meta').textContent = (r.from || '') + ' → ' + (r.to || '') + '  ' + (r.date || '');
+    document.getElementById('wl-view-body').textContent = r.body || '';
+    document.getElementById('wl-viewer').style.display = '';
+  });
 }
 
 // ── Polling loop ──

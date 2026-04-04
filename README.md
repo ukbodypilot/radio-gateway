@@ -118,6 +118,7 @@ WEB_THEME = blue             # blue, red, green, purple, amber, teal, pink
 | Recordings | `/recordings` | Browse, play, download, delete recorded audio; filter by source/date |
 | Transcribe | `/transcribe` | Live voice-to-text with Whisper, freq-tagged output, Mumble/Telegram forwarding |
 | Config | `/config` | INI editor with collapsible sections, Save & Restart |
+| Packet | `/packet` | Packet radio: Direwolf TNC, APRS map, Winlink email, BBS terminal |
 | Logs | `/logs` | Live scrolling log viewer with regex filter, Audio Trace, Watchdog Trace |
 | Voice | `/voice` | Voice relay to Claude Code via tmux |
 
@@ -358,6 +359,49 @@ python3 tools/link_endpoint.py --server 192.168.2.140:9700 --name pi-aioc --plug
 ENABLE_GATEWAY_LINK = true
 LINK_PORT = 9700
 ```
+
+## Packet Radio / Winlink
+
+Packet radio via Direwolf TNC on the FTM-150 link endpoint. The endpoint switches between audio mode (normal radio RX/TX) and data mode (Direwolf owns the AIOC for packet decode/encode). APRS decode and Winlink email are both supported.
+
+### Architecture
+
+```
+Gateway                          Pi Endpoint (192.168.2.121)
+  packet_radio.py                  AIOCPlugin (gateway_link.py)
+  +-- KISS TCP client                +-- audio/data mode switch
+  +-- APRS decoder                   +-- Direwolf TNC subprocess
+  +-- Pat CLI (compose/connect)      +-- CM108 PTT via HID GPIO
+  +-- Web UI (packet.html)           +-- AGW port 8010, KISS port 8001
+```
+
+### Winlink Email
+
+Compose and receive email over VHF packet radio through Winlink CMS gateways. Uses Pat (getpat.io) as the B2F protocol engine, controlled via CLI from the gateway's web UI.
+
+- **Compose** -- To, CC, Subject, Body form. Messages queued locally via `pat compose`.
+- **Connect & Sync** -- Connects to a Winlink RMS gateway via `pat connect ax25+agwpe:///CALLSIGN`. Sends queued outbound, receives inbound. Live connection log shows B2F protocol exchange in real-time.
+- **Inbox / Outbox / Sent** -- Reads Pat's local mailbox. Click to view full message.
+- **Tested gateway:** KM6RTE-12 on 144.970 MHz (Loma Ridge, Orange County, CA) at 1200 baud.
+
+```ini
+[packet]
+ENABLE_PACKET = true
+PACKET_CALLSIGN = YOURCALL
+PACKET_SSID = 1
+PACKET_MODEM = 1200
+PACKET_REMOTE_TNC = 192.168.2.121
+```
+
+Pat config (with Winlink password) lives at `~/.config/pat/config.json` -- not in the repo.
+
+### APRS
+
+Decodes all standard APRS position formats (uncompressed, compressed, MIC-E, timestamped), weather reports, status messages, objects, and telemetry. Digipeater path extraction with relay lines on the map.
+
+### Packet Web Page
+
+`/packet` with four tabs: **Status** (Direwolf log, KISS state, packet count), **APRS** (Leaflet map with station markers and relay paths), **Winlink** (compose, inbox, connect & sync), **BBS** (terminal -- planned).
 
 ## MCP Server
 

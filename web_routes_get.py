@@ -750,6 +750,62 @@ def handle_recordingsdownload(handler, parent):
         pass
 
 
+def handle_pat_proxy(handler, parent):
+    """GET /pat or /pat/* — reverse proxy to Pat Winlink web UI."""
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    _pat_port = 8082
+    if parent.gateway and parent.gateway.packet_plugin:
+        _pat_port = getattr(parent.gateway.packet_plugin, '_pat_port', 8082)
+    # Strip /pat prefix — /pat → /ui, /pat/ui → /ui, /pat/dist/x → /dist/x
+    _proxy_path = handler.path[4:] or '/ui'
+    if _proxy_path == '/' or _proxy_path == '':
+        _proxy_path = '/ui'
+    # Pass query string through
+    if '?' in handler.path:
+        _qs = handler.path.split('?', 1)[1]
+        _proxy_path = _proxy_path.split('?')[0] + '?' + _qs
+    _target = f'http://127.0.0.1:{_pat_port}{_proxy_path}'
+    try:
+        # Read POST body if present
+        _content_len = int(handler.headers.get('Content-Length', 0))
+        _body = handler.rfile.read(_content_len) if _content_len > 0 else None
+        _method = handler.command or 'GET'
+        _req = _ureq.Request(_target, data=_body, method=_method)
+        for _h in ('Accept', 'Accept-Language', 'Accept-Encoding', 'Content-Type'):
+            _v = handler.headers.get(_h)
+            if _v:
+                _req.add_header(_h, _v)
+        with _ureq.urlopen(_req, timeout=10) as _resp:
+            _body = _resp.read()
+            _ctype = _resp.headers.get('Content-Type', 'application/octet-stream')
+            # Inject <base href="/pat/"> into HTML so relative asset paths resolve
+            # through the proxy (dist/js/app.js → /pat/dist/js/app.js)
+            if 'text/html' in _ctype and b'<head>' in _body:
+                _body = _body.replace(b'<head>', b'<head><base href="/pat/">', 1)
+            handler.send_response(200)
+            handler.send_header('Content-Type', _ctype)
+            handler.send_header('Content-Length', str(len(_body)))
+            handler.end_headers()
+            handler.wfile.write(_body)
+    except _uerr.HTTPError as _e:
+        try:
+            handler.send_response(_e.code)
+            handler.end_headers()
+        except BrokenPipeError:
+            pass
+    except Exception:
+        _err = b'<html><body style="background:#1a1a1a;color:#888;text-align:center;padding-top:80px"><h3>Pat not running</h3><p>Switch to Winlink mode to start Pat.</p></body></html>'
+        try:
+            handler.send_response(503)
+            handler.send_header('Content-Type', 'text/html')
+            handler.send_header('Content-Length', str(len(_err)))
+            handler.end_headers()
+            handler.wfile.write(_err)
+        except BrokenPipeError:
+            pass
+
+
 def handle_adsb_proxy(handler, parent):
     """GET /adsb or /adsb/*"""
     # Reverse proxy to dump1090-fa web interface
@@ -983,6 +1039,81 @@ def _pkt_json(handler, data):
     handler.send_header('Content-Length', str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+def handle_winlink_api(handler, parent):
+    """GET /packet/winlink/* — Winlink mailbox API."""
+    import json as _json, email, glob as _glob
+    path = handler.path.split('?')[0]
+    params = {}
+    if '?' in handler.path:
+        for p in handler.path.split('?')[1].split('&'):
+            k, _, v = p.partition('=')
+            params[k] = v
+
+    callsign = 'WA6NKR'
+    if parent.gateway and parent.gateway.packet_plugin:
+        callsign = parent.gateway.packet_plugin._callsign
+    mailbox = os.path.expanduser(f'~/.local/share/pat/mailbox/{callsign}')
+
+    if path == '/packet/winlink/messages':
+        folder = params.get('folder', 'in')
+        folder_path = os.path.join(mailbox, folder)
+        messages = []
+        if os.path.isdir(folder_path):
+            for f in sorted(_glob.glob(os.path.join(folder_path, '*.b2f')), reverse=True):
+                try:
+                    with open(f, 'rb') as fh:
+                        raw = fh.read()
+                    # Parse MIME-like message
+                    msg = email.message_from_bytes(raw)
+                    mid = os.path.basename(f).replace('.b2f', '')
+                    messages.append({
+                        'mid': mid,
+                        'from': msg.get('From', ''),
+                        'to': msg.get('To', ''),
+                        'subject': msg.get('Subject', ''),
+                        'date': msg.get('Date', ''),
+                    })
+                except Exception:
+                    pass
+        _pkt_json(handler, {"ok": True, "messages": messages})
+
+    elif path == '/packet/winlink/read':
+        mid = params.get('mid', '')
+        folder = params.get('folder', 'in')
+        msg_path = os.path.join(mailbox, folder, f'{mid}.b2f')
+        if not os.path.exists(msg_path):
+            _pkt_json(handler, {"ok": False, "error": "not found"})
+            return
+        try:
+            with open(msg_path, 'rb') as fh:
+                raw = fh.read()
+            msg = email.message_from_bytes(raw)
+            body = ''
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == 'text/plain':
+                        body = part.get_payload(decode=True).decode('utf-8', errors='replace')
+                        break
+            else:
+                body = msg.get_payload(decode=True).decode('utf-8', errors='replace')
+            _pkt_json(handler, {
+                "ok": True,
+                "from": msg.get('From', ''),
+                "to": msg.get('To', ''),
+                "subject": msg.get('Subject', ''),
+                "date": msg.get('Date', ''),
+                "body": body,
+            })
+        except Exception as e:
+            _pkt_json(handler, {"ok": False, "error": str(e)})
+    elif path == '/packet/winlink/log':
+        from web_routes_post import _winlink_log
+        _pkt_json(handler, {"ok": True, "log": _winlink_log})
+
+    else:
+        _pkt_json(handler, {"ok": False, "error": "unknown endpoint"})
+
 
 def handle_packet_status(handler, parent):
     """GET /packet/status"""

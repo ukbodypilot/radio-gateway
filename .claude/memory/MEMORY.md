@@ -60,6 +60,14 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - 15-min health check: relaunches cloudflared if dead, emails new URL
 - `on_url_changed` callback → EmailNotifier.send_tunnel_changed()
 
+### Packet Radio + Winlink (2026-04-04)
+- Remote Direwolf TNC on FTM-150 Pi endpoint (192.168.2.121), TX + CM108 PTT + AGW port
+- Pat Winlink client on Pi, AGW connected-mode for Winlink (KISS only does UI frames)
+- Web UI: compose, inbox/outbox/sent, connect & sync, live connection log
+- Successful email exchange via KM6RTE-12 on 144.970 MHz (Loma Ridge, OC, CA)
+- Pat config at ~/.config/pat/config.json — NEVER commit (contains Winlink password)
+- See [project_packet_radio.md](project_packet_radio.md) for full details
+
 ### KV4P Frequency Validation
 - `_FREQ_RANGES`: SA818_VHF (134-174 MHz), SA818_UHF (400-480 MHz)
 - Rejects out-of-band tunes, warns at startup. Unknown modules permissive.
@@ -82,7 +90,7 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - D75: link endpoint on 192.168.2.134 via BT proxy (crontab @reboot, autologin, MX Linux/Debian 12)
 - FTM-150: AIOC link endpoint on 192.168.2.121 (systemd user service, audio/data mode)
 - GPS: u-blox GNSS on `/dev/gps` (udev rule), real position for APRS/repeaters
-- `packet_radio.py` — KISS client + APRS parser only (local Direwolf removed)
+- `packet_radio.py` — KISS client, APRS parser, Pat Winlink lifecycle (local Direwolf removed)
 
 ## Audio Quality (2026-04-04, branch: audio-quality)
 - AIOC reader: `arecord` subprocess bypasses PipeWire (PyAudio/sounddevice read silence)
@@ -103,4 +111,4 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [project_d75_cleanup.md](project_d75_cleanup.md) — legacy D75 removal target ~2026-04-08
 - [reference_gdrive_backup.md](reference_gdrive_backup.md) — rclone backup to Google Drive
 - [project_ftm150_endpoint.md](project_ftm150_endpoint.md) — FTM-150 AIOC endpoint on Pi 192.168.2.121
-- [project_packet_radio.md](project_packet_radio.md) — Packet Radio (Direwolf TNC) WIP
+- [project_packet_radio.md](project_packet_radio.md) — Packet Radio (Direwolf TNC) + Winlink email

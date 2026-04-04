@@ -767,6 +767,8 @@ class WebConfigServer:
                     _rg.handle_recordingsdownload(self, parent)
                 elif self.path == '/adsb' or self.path.startswith('/adsb/'):
                     _rg.handle_adsb_proxy(self, parent)
+                elif self.path.startswith('/pat') or self.path.startswith('/pat/'):
+                    _rg.handle_pat_proxy(self, parent)
                 elif self.path == '/config':
                     _rg.handle_config(self, parent)
                 elif self.path == '/routing/status':
@@ -787,6 +789,8 @@ class WebConfigServer:
                     _rg.handle_packet_bbs_buffer(self, parent)
                 elif self.path == '/packet/log':
                     _rg.handle_packet_log(self, parent)
+                elif self.path.startswith('/packet/winlink/'):
+                    _rg.handle_winlink_api(self, parent)
 
             def do_POST(self):
                 if not self._check_auth():
@@ -849,6 +853,8 @@ class WebConfigServer:
                     _rp.handle_voice_send(self, parent)
                 elif self.path == '/voice/session':
                     _rp.handle_voice_session(self, parent)
+                elif self.path.startswith('/pat') or self.path.startswith('/pat/'):
+                    _rg.handle_pat_proxy(self, parent)
                 elif self.path.startswith('/packet/'):
                     _rp.handle_packet_cmd(self, parent)
                 else:

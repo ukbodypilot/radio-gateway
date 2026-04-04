@@ -1,5 +1,11 @@
 # Bug History — Radio Gateway
 
+## Endpoint mode switch race — PyAudio reopen crash (2026-04-04)
+**Symptom:** Switching AIOC endpoint from audio to data mode crashed the endpoint. PyAudio stream reopened immediately after being closed, conflicting with Direwolf's exclusive ALSA access.
+**Root cause:** `AIOCPlugin._set_mode()` closed PyAudio streams before setting `self._mode = 'data'`. The `get_audio()` method saw audio mode + no stream and triggered `reopen_audio()`, which crashed because Direwolf already had exclusive ALSA access.
+**Fix:** Set `self._mode = 'data'` BEFORE closing streams, so `get_audio()` returns None instead of trying to reopen. Also close BOTH input AND output PyAudio streams (Direwolf needs exclusive ALSA access to both directions for TX audio).
+**File:** `gateway_link.py` (AIOCPlugin._set_mode), also deployed to Pi at `/home/user/link/gateway_link.py`.
+
 ## AIOC reader gets silence through PipeWire (2026-04-04)
 **Symptom:** `aioc` level permanently 0 despite radio receiving. Stream opened successfully but read DC silence (RMS ~116, all samples negative).
 **Root cause:** WirePlumber disables AIOC (`device.disabled=true` in `99-disable-loopback.conf`). PyAudio and sounddevice both use PipeWire's ALSA plugin which returns silence for disabled devices, even with explicit `hw:N,0`. Only raw `arecord` bypasses PipeWire.
