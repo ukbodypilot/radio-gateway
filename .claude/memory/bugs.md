@@ -1,5 +1,30 @@
 # Bug History — Radio Gateway
 
+## Gateway main loop crash: missing early attribute inits (2026-04-03)
+**Symptom:** All audio levels 0, gateway silently dead. Main loop crashed on first tick.
+**Root cause:** `bus_manager`, `_bus_sinks`, `_bus_stream_flags`, `_listen_bus_id` accessed in main audio loop before `_setup_routing` initialized them. `self.bus_manager` raised `AttributeError` even though `if self.bus_manager` was used — attribute didn't exist at all.
+**Fix:** Added early `None`/empty defaults for all 6 attributes in `RadioGateway.__init__`.
+
+## Link endpoint stale PyAudio stream (2026-04-03)
+**Symptom:** FTM-150 endpoint connected, responding to commands, audio level permanently 0.
+**Root cause:** PyAudio stream went stale. Wrapper script's pkill via SSH failed silently, stale process persisted.
+**Fix:** reopen_audio() with full PyAudio terminate+reinit, systemd service replaces wrapper, on_connect callback reopens on gateway reconnect, zero-read watchdog, data mode check prevents reopen during Direwolf use.
+
+## TH-9800 TX/RX gain crosstalk (2026-04-03)
+**Symptom:** TH-9800 TX slider on routing page changed RX audio volume.
+**Root cause:** `tx_audio_boost` attribute didn't exist on TH9800Plugin. Gain handler fell through to `audio_boost` (RX gain) for both sliders.
+**Fix:** Added `tx_audio_boost` attribute, applied in `put_audio()` before AIOC write.
+
+## TH-9800 TX blocking caused RX PCM stutter (2026-04-03)
+**Symptom:** PCM stream and TX audio stuttered during file playback through TH-9800.
+**Root cause:** `put_audio()` called `stream.write()` synchronously on the bus tick thread. Blocked until ALSA accepted data, stalling the entire tick cycle including RX.
+**Fix:** `put_audio` queues to deque, dedicated `_tx_writer_loop` thread does blocking writes independently.
+
+## Config section wiped by web Save (2026-04-03)
+**Symptom:** `[packet]` section disappeared from config after using web Save button.
+**Root cause:** `_CONFIG_LAYOUT` is the master list — Save only writes keys listed there. Packet section wasn't registered.
+**Fix:** Added `[packet]` section with all keys to `_CONFIG_LAYOUT` in web_server.py.
+
 ## ADS-B map broken: stray `, false)` in layers.js (2026-03-26)
 **Symptom:** ADS-B map page failed to load — JavaScript syntax error in layers.js.
 **Root cause:** `europe.push(...)` calls in layers.js had stray `, false)` appended, creating invalid JS syntax.

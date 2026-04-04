@@ -83,7 +83,7 @@
   }
   .drawflow .connection .main-path {
     stroke: var(--t-accent);
-    stroke-width: 2;
+    stroke-width: 3;
   }
   .drawflow .drawflow-node .input, .drawflow .drawflow-node .output {
     background: var(--t-accent);
@@ -770,6 +770,31 @@ function saveRouting() {
     });
 }
 
+// Validate connections: only source→bus and bus→sink allowed
+editor.on('connectionCreated', function(info) {
+  var fromNode = editor.drawflow.drawflow.Home.data[info.output_id];
+  var toNode = editor.drawflow.drawflow.Home.data[info.input_id];
+  if (!fromNode || !toNode) return;
+  var fromClass = fromNode.class || '';
+  var toClass = toNode.class || '';
+  var fromIsBus = fromClass.indexOf('bus') >= 0;
+  var toIsBus = toClass.indexOf('bus') >= 0;
+  var fromIsSource = fromClass === 'source';
+  var toIsSink = toClass === 'sink';
+  // Valid: source→bus or bus→sink
+  var valid = (fromIsSource && toIsBus) || (fromIsBus && toIsSink);
+  if (!valid) {
+    setTimeout(function() {
+      editor.removeSingleConnection(info.output_id, info.input_id, info.output_class, info.input_class);
+    }, 0);
+    var msg = fromIsSource && toIsSink ? 'Source must connect through a bus, not directly to a sink'
+            : fromIsBus && toIsBus ? 'Cannot connect bus to bus'
+            : toIsSource ? 'Cannot connect to a source input'
+            : 'Invalid connection';
+    setStatus(msg);
+  }
+});
+
 // Handle node deletion
 editor.on('nodeRemoved', function(nodeId) {
   var reverseMap = {};
@@ -846,6 +871,19 @@ function toggleBusMute(busId) {
 function setGain(id, value) {
   var label = document.getElementById('gain-val-' + id);
   if (label) label.textContent = value + '%';
+  // Update slider DOM attribute so drawflow export captures it
+  var slider = document.querySelector('.gain-slider[oninput*="' + id + '"]');
+  if (slider) slider.setAttribute('value', value);
+  // Update drawflow node's stored HTML so save persists the value
+  var prefix = id.endsWith('_tx') || id === 'tnc_rx' ? 'sink-' : 'src-';
+  // Try both prefixes since we may not know which type
+  var dfId = _nodeMap[prefix + id] || _nodeMap['src-' + id] || _nodeMap['sink-' + id];
+  if (dfId && editor) {
+    try {
+      var nodeEl = document.querySelector('#node-' + dfId + ' .drawflow_content_node');
+      if (nodeEl) editor.drawflow.drawflow.Home.data[dfId].html = nodeEl.innerHTML;
+    } catch(e) {}
+  }
   // Debounce — only send after slider stops moving
   clearTimeout(setGain._timer);
   setGain._timer = setTimeout(function() {

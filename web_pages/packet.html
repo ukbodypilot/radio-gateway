@@ -62,12 +62,25 @@
       <span><span class="pkt-label">Modem:</span> <span id="st-modem" class="pkt-val">—</span></span>
       <span><span class="pkt-label">Direwolf:</span> <span id="st-dw" class="pkt-val red">stopped</span></span>
       <span><span class="pkt-label">KISS:</span> <span id="st-kiss" class="pkt-val red">no</span></span>
-      <span><span class="pkt-label">Packets:</span> <span id="st-pkts" class="pkt-val">0</span></span>
-      <span><span class="pkt-label">Stations:</span> <span id="st-stns" class="pkt-val">0</span></span>
     </div>
     <div class="pkt-row">
-      <span><span class="pkt-label">DW Level:</span> <span id="st-dw-level" class="pkt-val cyan">—</span></span>
-      <span id="st-dw-bar" style="font-family:monospace; color:#2ecc71; letter-spacing:1px;"></span>
+      <span><span class="pkt-label">Packets:</span> <span id="st-pkts" class="pkt-val">0</span></span>
+      <span><span class="pkt-label">Stations:</span> <span id="st-stns" class="pkt-val">0</span></span>
+      <span><span class="pkt-label">Positioned:</span> <span id="st-positioned" class="pkt-val cyan">0</span></span>
+    </div>
+    <div class="pkt-row" style="align-items:center;">
+      <span style="min-width:7em; color:#888;">Radio→TNC:</span>
+      <div style="flex:1; max-width:200px; background:#111; height:8px; border-radius:4px; border:1px solid #333; overflow:hidden;">
+        <div id="st-rx-bar" style="height:100%; width:0%; background:#2ecc71; transition:width 0.3s;"></div>
+      </div>
+      <span id="st-rx-level" class="pkt-val" style="min-width:3em; text-align:right;">0</span>
+    </div>
+    <div class="pkt-row" style="align-items:center;">
+      <span style="min-width:7em; color:#888;">DW decode:</span>
+      <div style="flex:1; max-width:200px; background:#111; height:8px; border-radius:4px; border:1px solid #333; overflow:hidden;">
+        <div id="st-dw-bar2" style="height:100%; width:0%; background:var(--t-accent); transition:width 0.3s;"></div>
+      </div>
+      <span id="st-dw-level" class="pkt-val cyan" style="min-width:3em; text-align:right;">—</span>
     </div>
     <div class="pkt-row">
       <button class="pkt-btn" id="btn-aprs" onclick="setMode('aprs')">APRS</button>
@@ -79,6 +92,16 @@
   <div class="pkt-card">
     <div style="margin-bottom:6px; color:#888;">Decoded Packets</div>
     <div id="pkt-log"></div>
+  </div>
+  <div class="pkt-card" id="dw-log-card">
+    <div style="margin-bottom:6px; color:#888; display:flex; justify-content:space-between;">
+      <span>Direwolf Log</span>
+      <span style="cursor:pointer; color:var(--t-accent);" onclick="toggleDwLog()">hide</span>
+    </div>
+    <div id="dw-log" style="max-height:180px; overflow-y:auto; font-size:0.78em; color:#888; background:#0a0a1a; border-radius:4px; padding:6px; white-space:pre-wrap; word-break:break-all;"></div>
+  </div>
+  <div style="margin-top:4px;">
+    <span style="cursor:pointer; color:#555; font-size:0.85em; display:none;" onclick="toggleDwLog()" id="dw-log-show">show direwolf log</span>
   </div>
 </div>
 
@@ -94,9 +117,17 @@
     </div>
   </div>
   <div class="pkt-card" id="aprs-stations">
+    <div style="color:#888; margin-bottom:4px; font-size:0.85em;">Positioned Stations</div>
     <table>
-      <thead><tr><th>Callsign</th><th>Lat</th><th>Lon</th><th>Comment</th><th>Last Heard</th></tr></thead>
+      <thead><tr><th>Callsign</th><th>Lat</th><th>Lon</th><th>Type</th><th>Comment</th><th>Last Heard</th></tr></thead>
       <tbody id="aprs-tbody"></tbody>
+    </table>
+  </div>
+  <div class="pkt-card" id="aprs-heard-card" style="display:none;">
+    <div style="color:#888; margin-bottom:4px; font-size:0.85em;">Also Heard (no position)</div>
+    <table>
+      <thead><tr><th>Callsign</th><th>Type</th><th>Info</th><th>Last Heard</th></tr></thead>
+      <tbody id="aprs-heard-tbody"></tbody>
     </table>
   </div>
 </div>
@@ -156,6 +187,14 @@ function setMode(mode) {
   });
 }
 
+// ── Direwolf log toggle ──
+var _dwLogVisible = true;
+function toggleDwLog() {
+  _dwLogVisible = !_dwLogVisible;
+  document.getElementById('dw-log-card').style.display = _dwLogVisible ? '' : 'none';
+  document.getElementById('dw-log-show').style.display = _dwLogVisible ? 'none' : '';
+}
+
 // ── Status polling ──
 function pollStatus() {
   pktGet('status').then(function(s) {
@@ -170,8 +209,22 @@ function pollStatus() {
     document.getElementById('st-kiss').className = 'pkt-val ' + (s.kiss_connected ? 'green' : 'red');
     document.getElementById('st-pkts').textContent = s.packet_count || 0;
     document.getElementById('st-stns').textContent = s.station_count || 0;
-    document.getElementById('st-dw-level').textContent = s.dw_audio_level !== undefined ? s.dw_audio_level : '—';
-    document.getElementById('st-dw-bar').textContent = s.dw_audio_peak || '';
+    document.getElementById('st-positioned').textContent = s.positioned_count || 0;
+
+    // Audio level bars
+    var rxLvl = s.rx_audio_level || 0;
+    document.getElementById('st-rx-bar').style.width = Math.min(100, rxLvl) + '%';
+    document.getElementById('st-rx-level').textContent = rxLvl;
+    var dwLvl = s.dw_audio_level || 0;
+    document.getElementById('st-dw-bar2').style.width = Math.min(100, dwLvl) + '%';
+    document.getElementById('st-dw-level').textContent = dwLvl || '—';
+
+    // Direwolf log tail
+    if (s.log_tail && _dwLogVisible) {
+      var logEl = document.getElementById('dw-log');
+      logEl.textContent = s.log_tail.join('\n');
+      logEl.scrollTop = logEl.scrollHeight;
+    }
 
     // Mode buttons
     ['aprs','winlink','bbs'].forEach(function(m) {
@@ -312,6 +365,8 @@ function aprsMarkerIcon(symbolStr) {
 
 // ── APRS Map ──
 var _aprsMap, _aprsMarkers = {};
+var _aprsPathLines = [];  // active relay path polylines
+var _aprsStationData = {};  // cached station data for path drawing
 window._aprsMapInit = false;
 
 function initAprsMap() {
@@ -322,42 +377,105 @@ function initAprsMap() {
     maxZoom: 18,
     attribution: '&copy; OpenStreetMap'
   }).addTo(_aprsMap);
+  _aprsMap.on('click', clearPathLines);
   setTimeout(function() { _aprsMap.invalidateSize(); }, 200);
+}
+
+function clearPathLines() {
+  for (var i = 0; i < _aprsPathLines.length; i++) {
+    _aprsMap.removeLayer(_aprsPathLines[i]);
+  }
+  _aprsPathLines = [];
+}
+
+function showRelayPath(call) {
+  if (!_aprsMap) return;
+  clearPathLines();
+  var st = _aprsStationData[call];
+  if (!st || !st.lat || !st.path || !st.path.length) return;
+
+  var srcLatLng = [st.lat, st.lon];
+  // Draw lines from this station to each digi in its path that has a known position
+  for (var i = 0; i < st.path.length; i++) {
+    var digi = _aprsStationData[st.path[i]];
+    if (digi && digi.lat !== null && digi.lat !== undefined) {
+      var line = L.polyline([srcLatLng, [digi.lat, digi.lon]], {
+        color: '#f39c12', weight: 2, opacity: 0.7, dashArray: '6,4'
+      }).addTo(_aprsMap);
+      _aprsPathLines.push(line);
+    }
+  }
+  // Also check if any OTHER station was relayed through this one
+  for (var other in _aprsStationData) {
+    var os = _aprsStationData[other];
+    if (os && os.lat !== null && os.path && os.path.indexOf(call) >= 0) {
+      var line2 = L.polyline([[os.lat, os.lon], srcLatLng], {
+        color: '#e74c3c', weight: 2, opacity: 0.5, dashArray: '4,6'
+      }).addTo(_aprsMap);
+      _aprsPathLines.push(line2);
+    }
+  }
 }
 
 function pollAprsStations() {
   pktGet('aprs_stations').then(function(d) {
     var stations = d.stations || {};
+    _aprsStationData = stations;  // cache for path drawing
     var tbody = document.getElementById('aprs-tbody');
-    var html = '';
+    var heardTbody = document.getElementById('aprs-heard-tbody');
+    var posHtml = '', heardHtml = '';
     var now = Date.now() / 1000;
+    var heardCount = 0;
+
     for (var call in stations) {
       var st = stations[call];
       var age = Math.round(now - st.last_heard);
-      var ageStr = age < 60 ? age + 's' : Math.round(age / 60) + 'm';
+      var ageStr = age < 60 ? age + 's' : (age < 3600 ? Math.round(age / 60) + 'm' : Math.round(age / 3600) + 'h');
       var si = aprsIcon(st.symbol);
-      html += '<tr><td style="color:var(--t-accent);">' + si.emoji + ' ' + call + '</td>'
-        + '<td>' + (st.lat ? st.lat.toFixed(4) : '—') + '</td>'
-        + '<td>' + (st.lon ? st.lon.toFixed(4) : '—') + '</td>'
-        + '<td style="color:#888;">' + (st.comment || '') + '</td>'
-        + '<td>' + ageStr + ' ago</td></tr>';
+      var typeLabel = st.type || '';
+      var pathStr = (st.path && st.path.length) ? ' via ' + st.path.join(',') : '';
 
-      // Map markers with APRS symbol icons
-      if (_aprsMap && st.lat && st.lon) {
-        if (_aprsMarkers[call]) {
-          _aprsMarkers[call].setLatLng([st.lat, st.lon]);
-          _aprsMarkers[call].setIcon(aprsMarkerIcon(st.symbol));
-        } else {
-          _aprsMarkers[call] = L.marker([st.lat, st.lon], {icon: aprsMarkerIcon(st.symbol)})
-            .bindPopup('<b>' + si.emoji + ' ' + call + '</b><br><em>' + si.label + '</em><br>' + (st.comment || ''))
-            .addTo(_aprsMap);
+      if (st.lat !== null && st.lat !== undefined) {
+        // Positioned station
+        posHtml += '<tr><td style="color:var(--t-accent);">' + si.emoji + ' ' + call + '</td>'
+          + '<td>' + st.lat.toFixed(4) + '</td>'
+          + '<td>' + (st.lon !== null ? st.lon.toFixed(4) : '—') + '</td>'
+          + '<td style="color:#555;">' + typeLabel + '</td>'
+          + '<td style="color:#888; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + (st.comment || '') + '<span style="color:#f39c12;">' + pathStr + '</span></td>'
+          + '<td>' + ageStr + '</td></tr>';
+
+        // Map markers with APRS symbol icons
+        if (_aprsMap && st.lon !== null) {
+          var popupHtml = '<b>' + si.emoji + ' ' + call + '</b><br><em>' + si.label + '</em>'
+            + (pathStr ? '<br><span style="color:#f39c12;">Path:' + pathStr + '</span>' : '')
+            + '<br>' + (st.comment || '');
+          if (_aprsMarkers[call]) {
+            _aprsMarkers[call].setLatLng([st.lat, st.lon]);
+            _aprsMarkers[call].setIcon(aprsMarkerIcon(st.symbol));
+            _aprsMarkers[call].setPopupContent(popupHtml);
+          } else {
+            _aprsMarkers[call] = L.marker([st.lat, st.lon], {icon: aprsMarkerIcon(st.symbol)})
+              .bindPopup(popupHtml)
+              .on('click', (function(c) { return function() { showRelayPath(c); }; })(call))
+              .addTo(_aprsMap);
+          }
+          // Fade old markers
+          var opacity = Math.max(0.3, 1.0 - age / 3600);
+          _aprsMarkers[call].setOpacity(opacity);
         }
-        // Fade old markers
-        var opacity = Math.max(0.3, 1.0 - age / 3600);
-        _aprsMarkers[call].setOpacity(opacity);
+      } else {
+        // Heard-only station (no position data)
+        heardHtml += '<tr><td style="color:#999;">' + call + '</td>'
+          + '<td style="color:#555;">' + typeLabel + '</td>'
+          + '<td style="color:#666; max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + (st.comment || st.raw || '') + '</td>'
+          + '<td>' + ageStr + '</td></tr>';
+        heardCount++;
       }
     }
-    tbody.innerHTML = html;
+
+    tbody.innerHTML = posHtml || '<tr><td colspan="6" style="color:#444; text-align:center;">no positioned stations</td></tr>';
+    heardTbody.innerHTML = heardHtml;
+    document.getElementById('aprs-heard-card').style.display = heardCount > 0 ? '' : 'none';
   });
 }
 

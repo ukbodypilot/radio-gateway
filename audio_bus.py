@@ -674,9 +674,9 @@ class SoloBus(AudioBus):
             elif hasattr(self._radio, 'write_tx_audio'):
                 self._radio.write_tx_audio(tx_audio)
 
-        # ── Phase 4: Get RX audio from radio (skip if TX-only) ──
+        # ── Phase 4: Get RX audio from radio (skip during TX and if TX-only) ──
         rx_audio = None
-        if self._radio and not self._tx_only:
+        if self._radio and not self._tx_only and not self._ptt_active:
             rx_audio, _rx_ptt = self._radio.get_audio(chunk_size)
             if rx_audio is not None:
                 # Apply per-source gain

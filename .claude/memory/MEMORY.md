@@ -32,7 +32,7 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - `gateway_mcp.py` — MCP server (stdio, 55+ tools, talks to HTTP API on port 8080)
 
 ## Web UI Pages
-`/` shell, `/dashboard`, `/routing`, `/controls`, `/radio`, `/d75`, `/kv4p`, `/sdr`, `/gps`, `/repeaters`, `/aircraft`, `/telegram`, `/monitor`, `/recordings`, `/transcribe`, `/config`, `/logs`, `/voice`
+`/` shell, `/dashboard`, `/routing`, `/controls`, `/radio`, `/d75`, `/kv4p`, `/sdr`, `/gps`, `/repeaters`, `/aircraft`, `/telegram`, `/monitor`, `/recordings`, `/transcribe`, `/packet`, `/config`, `/logs`, `/voice`
 
 ## Key Subsystems
 
@@ -80,7 +80,9 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - Python 3.14, sudo password: `user`, Git user: ukbodypilot
 - AIOC: `/dev/ttyACM0`, KV4P: `/dev/kv4p`, Relay: `/dev/relay_radio`
 - D75: link endpoint on 192.168.2.134 via BT proxy (crontab @reboot, autologin, MX Linux/Debian 12)
-- FTM-150: AIOC link endpoint on 192.168.2.121 (name: `ftm-150`, crontab @reboot)
+- FTM-150: AIOC link endpoint on 192.168.2.121 (systemd user service, audio/data mode)
+- GPS: u-blox GNSS on `/dev/gps` (udev rule), real position for APRS/repeaters
+- `packet_radio.py` — KISS client + APRS parser only (local Direwolf removed)
 
 ## See Also
 - [bugs.md](bugs.md) — bug history
@@ -92,3 +94,4 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [project_d75_cleanup.md](project_d75_cleanup.md) — legacy D75 removal target ~2026-04-08
 - [reference_gdrive_backup.md](reference_gdrive_backup.md) — rclone backup to Google Drive
 - [project_ftm150_endpoint.md](project_ftm150_endpoint.md) — FTM-150 AIOC endpoint on Pi 192.168.2.121
+- [project_packet_radio.md](project_packet_radio.md) — Packet Radio (Direwolf TNC) WIP

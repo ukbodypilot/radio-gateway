@@ -405,6 +405,7 @@ class Config:
             'PACKET_SSID': 0,
             'PACKET_MODEM': 1200,
             'PACKET_DIREWOLF_PATH': '/usr/bin/direwolf',
+            'PACKET_REMOTE_TNC': '',
             'PACKET_UDP_RX_PORT': 7355,
             'PACKET_KISS_PORT': 8001,
             'PACKET_AGW_PORT': 8000,

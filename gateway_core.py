@@ -370,6 +370,12 @@ class RadioGateway:
         self.kv4p_plugin = None           # KV4PCATClient instance
         self.kv4p_plugin = None  # KV4PAudioSource instance
         self.packet_plugin = None         # PacketRadioPlugin instance
+        self.bus_manager = None           # BusManager (created in _setup_routing)
+        self._bus_sinks = {}              # {bus_id: set(sink_ids)} — populated by _setup_routing
+        self._bus_stream_flags = {}       # {bus_id: {pcm, mp3, vad}} — populated by _setup_routing
+        self._listen_bus_id = 'listen'    # Primary listen bus ID — set by _setup_routing
+        self._listen_bus_muted = False    # Primary listen bus mute — set by _setup_routing
+        self._muted_sinks = set()         # Set of muted sink IDs
         self.kv4p_muted = False        # KV4P audio mute toggle
         self.kv4p_processor = AudioProcessor("kv4p", config)
 
@@ -1684,6 +1690,17 @@ class RadioGateway:
                     def _link_on_endpoint_status(name, status):
                         """Called when an endpoint sends a STATUS frame."""
                         if isinstance(status, dict) and status.get('type') != 'heartbeat':
+                            # Forward Direwolf log lines to packet plugin
+                            if status.get('type') == 'direwolf_log' and self.packet_plugin:
+                                self.packet_plugin._direwolf_log.append(status.get('line', ''))
+                                # Parse audio level from Direwolf log
+                                line = status.get('line', '')
+                                if 'audio level' in line:
+                                    import re as _dw_re
+                                    m = _dw_re.search(r'audio level\s*=\s*(\d+)', line)
+                                    if m:
+                                        self.packet_plugin._dw_audio_level = int(m.group(1))
+                                return
                             if name not in self._link_last_status:
                                 self._link_last_status[name] = {}
                             self._link_last_status[name].update(status)

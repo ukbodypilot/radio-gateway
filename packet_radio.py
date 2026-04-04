@@ -1,33 +1,20 @@
 """Packet Radio Plugin — Direwolf TNC integration for APRS, Winlink, and BBS.
 
-Appears as both a source (TNC [RX] — modulated TX audio from Direwolf) and
-a sink (TNC [TX] — radio RX audio fed to Direwolf for decoding) on the
-routing page.  The user wires the TNC to any radio via buses.
+Direwolf runs on the remote endpoint (Pi) reading the AIOC directly for
+clean packet decode.  The gateway connects to Direwolf's KISS TCP port
+and handles APRS parsing, station tracking, and UI.
 
-Audio flow:
-  RX: Radio audio → bus → put_audio() → UDP → Direwolf → decoded packets
-  TX: Direwolf → ALSA loopback → capture thread → get_audio(ptt=True) → bus → radio
-
-Direwolf runs as a child process on the gateway machine.  Config is generated
-dynamically based on the current mode (APRS / Winlink / BBS / idle).
+The endpoint's AIOC plugin switches between audio mode (normal radio
+streaming) and data mode (Direwolf owns the AIOC) via link protocol
+commands.  Mode switching is triggered by the /packet page.
 """
 
 import collections
 import math
-import os
-import queue
-import signal
+import re
 import socket
-import struct
-import subprocess
 import threading
 import time
-
-import numpy as np
-
-# Optional — imported lazily to avoid hard dependency at import time
-_kiss3 = None
-_aprs3 = None
 
 
 class PacketRadioPlugin:
@@ -35,9 +22,9 @@ class PacketRadioPlugin:
 
     name = "tnc"
     capabilities = {
-        "audio_rx": True,
-        "audio_tx": True,
-        "ptt": True,
+        "audio_rx": False,
+        "audio_tx": False,
+        "ptt": False,
         "frequency": False,
         "ctcss": False,
         "power": False,
@@ -52,14 +39,14 @@ class PacketRadioPlugin:
     def __init__(self):
         # Plugin contract attributes
         self.enabled = True
-        self.ptt_control = True       # TNC source triggers PTT when transmitting
+        self.ptt_control = False
         self.priority = 5
         self.sdr_priority = 5
         self.volume = 1.0
         self.duck = False
         self.muted = False
-        self.audio_level = 0          # RX level (audio from Direwolf TX)
-        self.tx_audio_level = 0       # TX level (audio into Direwolf)
+        self.audio_level = 0
+        self.tx_audio_level = 0
         self.audio_boost = 1.0
         self.tx_audio_boost = 1.0
         self.server_connected = False
@@ -68,23 +55,16 @@ class PacketRadioPlugin:
         self._config = None
         self._gateway = None
         self._mode = 'idle'           # idle / aprs / winlink / bbs
-        self._direwolf_proc = None
         self._direwolf_log = collections.deque(maxlen=200)
-
-        # Audio bridge
-        self._udp_rx_sock = None      # Sends audio TO Direwolf (RX port)
-        self._udp_tx_capture = None   # PyAudio stream capturing Direwolf TX from loopback
-        self._pa = None               # PyAudio instance
-        self._rx_queue = collections.deque(maxlen=32)   # Direwolf TX audio → source
         self._running = False
 
-        # Direwolf connection
+        # KISS connection to remote Direwolf
         self._kiss_sock = None
         self._kiss_connected = False
 
         # Packet data
         self._decoded_packets = collections.deque(maxlen=500)
-        self._aprs_stations = {}      # callsign → {lat, lon, symbol, comment, last_heard, raw}
+        self._aprs_stations = {}      # callsign → {lat, lon, symbol, comment, last_heard, ...}
         self._bbs_buffer = collections.deque(maxlen=2000)
         self._bbs_connected = False
         self._bbs_callsign = ''
@@ -93,36 +73,22 @@ class PacketRadioPlugin:
 
         # Config values (set in setup)
         self._dw_audio_level = 0        # Direwolf's reported audio level
-        self._dw_audio_peak = ''         # Direwolf's level bar string
+        self._dw_audio_peak = ''
         self._callsign = 'N0CALL'
         self._ssid = 0
         self._modem_rate = 1200
-        self._direwolf_path = '/usr/bin/direwolf'
-        self._udp_rx_port = 7355
+        self._remote_tnc = ''           # Remote endpoint IP (required)
         self._kiss_port = 8001
-        self._agw_port = 8000
         self._pat_port = 8082
-        self._loopback_card = 'Loopback_1'
         self._aprs_comment = 'Radio Gateway'
         self._aprs_symbol = '/#'
         self._aprs_beacon_interval = 600
         self._digipeat = True
-        self._aprs_is = False
-        self._aprs_is_server = 'noam.aprs2.net'
-        self._aprs_is_passcode = ''
-        self._lat = ''
-        self._lon = ''
-
-        # Resampling state (48kHz ↔ 44100Hz)
-        self._resample_48_to_44_pos = 0.0
-        self._resample_44_to_48_pos = 0.0
-        self._resample_ratio_48_to_44 = 44100.0 / 48000.0  # ~0.91875
-        self._resample_ratio_44_to_48 = 48000.0 / 44100.0  # ~1.08844
 
     # ── Setup / Teardown ──────────────────────────────────────────────
 
     def setup(self, config, gateway=None):
-        """Initialize plugin — read config, create UDP socket. Don't start Direwolf yet."""
+        """Initialize plugin — read config."""
         if isinstance(config, dict):
             return False
 
@@ -134,130 +100,72 @@ class PacketRadioPlugin:
         self._callsign = str(getattr(config, 'PACKET_CALLSIGN', 'N0CALL')).strip().upper()
         self._ssid = int(getattr(config, 'PACKET_SSID', 0))
         self._modem_rate = int(getattr(config, 'PACKET_MODEM', 1200))
-        self._direwolf_path = str(getattr(config, 'PACKET_DIREWOLF_PATH', '/usr/bin/direwolf'))
-        self._udp_rx_port = int(getattr(config, 'PACKET_UDP_RX_PORT', 7355))
+        self._remote_tnc = str(getattr(config, 'PACKET_REMOTE_TNC', '')).strip()
         self._kiss_port = int(getattr(config, 'PACKET_KISS_PORT', 8001))
-        self._agw_port = int(getattr(config, 'PACKET_AGW_PORT', 8000))
         self._pat_port = int(getattr(config, 'PACKET_PAT_PORT', 8082))
-        self._loopback_card = str(getattr(config, 'PACKET_LOOPBACK_CARD', 'Loopback_1'))
         self._aprs_comment = str(getattr(config, 'PACKET_APRS_COMMENT', 'Radio Gateway'))
         self._aprs_symbol = str(getattr(config, 'PACKET_APRS_SYMBOL', '/#'))
         self._aprs_beacon_interval = int(getattr(config, 'PACKET_APRS_BEACON_INTERVAL', 600))
         self._digipeat = bool(getattr(config, 'PACKET_DIGIPEAT', True))
-        self._aprs_is = bool(getattr(config, 'PACKET_APRS_IS', False))
-        self._aprs_is_server = str(getattr(config, 'PACKET_APRS_IS_SERVER', 'noam.aprs2.net'))
-        self._aprs_is_passcode = str(getattr(config, 'PACKET_APRS_IS_PASSCODE', ''))
 
-        # GPS position (from gateway GPS manager if available)
-        if gateway and hasattr(gateway, 'gps_manager') and gateway.gps_manager:
-            gps = gateway.gps_manager
-            self._lat = getattr(gps, 'latitude', '')
-            self._lon = getattr(gps, 'longitude', '')
-
-        # Verify direwolf binary exists
-        if not os.path.isfile(self._direwolf_path):
-            print(f"  [Packet] WARNING: direwolf not found at {self._direwolf_path}")
-            print(f"  [Packet] Install with: yay -S direwolf")
-
-        # Create UDP socket for sending audio TO Direwolf
-        self._udp_rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if not self._remote_tnc:
+            print(f"  [Packet] WARNING: PACKET_REMOTE_TNC not set — no endpoint for Direwolf")
 
         self._running = True
         self.server_connected = True
-        print(f"  [Packet] Plugin initialized (callsign={self._callsign}-{self._ssid}, modem={self._modem_rate})")
+        print(f"  [Packet] Plugin initialized (callsign={self._callsign}-{self._ssid}, "
+              f"modem={self._modem_rate}, endpoint={self._remote_tnc or 'NONE'})")
         return True
+
+    def _send_endpoint_mode(self, mode):
+        """Send mode command to the remote AIOC endpoint via the link server."""
+        if not self._gateway or not self._gateway.link_server:
+            return
+        target = None
+        for name in self._gateway.link_endpoints:
+            ep = self._gateway.link_server._endpoints.get(name)
+            if ep:
+                try:
+                    peer = ep.sock.getpeername()[0]
+                    if peer == self._remote_tnc:
+                        target = name
+                        break
+                except Exception:
+                    pass
+        if not target:
+            for name in self._gateway.link_endpoints:
+                if 'ftm' in name.lower() or 'aioc' in name.lower():
+                    target = name
+                    break
+        if not target:
+            print(f"  [Packet] No endpoint found matching {self._remote_tnc}")
+            return
+        cmd = {
+            'cmd': 'mode', 'mode': mode,
+            'callsign': self._callsign, 'ssid': self._ssid,
+            'modem': self._modem_rate, 'kiss_port': self._kiss_port,
+        }
+        try:
+            self._gateway.link_server.send_command_to(target, cmd)
+            print(f"  [Packet] Sent mode={mode} to endpoint '{target}'")
+        except Exception as e:
+            print(f"  [Packet] Failed to send mode to '{target}': {e}")
 
     def teardown(self):
         """Stop everything and clean up."""
         self._running = False
-        self._stop_direwolf()
-        if self._udp_rx_sock:
-            try:
-                self._udp_rx_sock.close()
-            except Exception:
-                pass
-        if self._pa:
-            try:
-                if self._udp_tx_capture:
-                    self._udp_tx_capture.stop_stream()
-                    self._udp_tx_capture.close()
-                self._pa.terminate()
-            except Exception:
-                pass
-        self._pa = None
-        self._udp_tx_capture = None
+        self._disconnect_kiss()
         print("  [Packet] Teardown complete")
 
-    # ── Audio interface (RadioPlugin contract) ────────────────────────
+    # ── Audio interface (stubs — audio handled by endpoint) ──────────
 
     def get_audio(self, chunk_size=None):
-        """Return modulated TX audio from Direwolf (for transmission via radio).
-
-        Returns (pcm_bytes, True) when Direwolf is transmitting — the True
-        flag tells the SoloBus to key PTT on the connected radio.
-        """
-        if not self.enabled or self.muted or not self._running:
-            self.audio_level = max(0, int(self.audio_level * 0.7))
-            return None, False
-
-        try:
-            chunk = self._rx_queue.popleft()
-        except IndexError:
-            self.audio_level = max(0, int(self.audio_level * 0.7))
-            return None, False
-
-        # Level metering
-        try:
-            arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                level = max(0, min(100, (20.0 * math.log10(rms / 32767.0) + 60) * (100 / 60)))
-            else:
-                level = 0
-            if level > self.audio_level:
-                self.audio_level = int(level)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + level * 0.3)
-        except Exception:
-            pass
-
-        # Apply boost
-        if self.audio_boost != 1.0:
-            arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-            chunk = np.clip(arr * self.audio_boost, -32768, 32767).astype(np.int16).tobytes()
-
-        return chunk, True  # True = trigger PTT
+        return None, False
 
     def put_audio(self, pcm):
-        """Receive radio RX audio from the bus and pipe to Direwolf stdin."""
-        if not self._running or not self._direwolf_proc:
-            return
-        # TX level metering (audio going into Direwolf)
-        try:
-            arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                level = max(0, min(100, (20.0 * math.log10(rms / 32767.0) + 60) * (100 / 60)))
-            else:
-                level = 0
-            if level > self.tx_audio_level:
-                self.tx_audio_level = int(level)
-            else:
-                self.tx_audio_level = int(self.tx_audio_level * 0.7 + level * 0.3)
-        except Exception:
-            pass
+        pass
 
-        # Apply TX boost
-        if self.tx_audio_boost != 1.0:
-            arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-            pcm = np.clip(arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
-
-        # Write to Direwolf stdin
-        try:
-            self._direwolf_proc.stdin.write(pcm)
-            self._direwolf_proc.stdin.flush()
-        except Exception:
-            pass
+    # ── Commands ──────────────────────────────────────────────────────
 
     def execute(self, cmd):
         """Handle commands from the gateway."""
@@ -268,8 +176,7 @@ class PacketRadioPlugin:
         if action == 'status':
             return {"ok": True, "status": self.get_status()}
         elif action == 'set_mode':
-            mode = cmd.get('mode', 'idle')
-            return self._set_mode(mode)
+            return self._set_mode(cmd.get('mode', 'idle'))
         elif action == 'aprs_beacon':
             return self._send_aprs_beacon()
         elif action == 'aprs_send':
@@ -288,128 +195,60 @@ class PacketRadioPlugin:
 
     def get_status(self):
         """Return current TNC state."""
+        positioned = sum(1 for s in self._aprs_stations.values() if s.get('lat') is not None)
         return {
             "plugin": self.name,
             "mode": self._mode,
             "callsign": f"{self._callsign}-{self._ssid}",
             "modem": self._modem_rate,
-            "direwolf_running": self._direwolf_proc is not None and self._direwolf_proc.poll() is None,
+            "direwolf_running": self._mode != 'idle',
+            "remote_tnc": self._remote_tnc or None,
             "kiss_connected": self._kiss_connected,
             "packet_count": self._packet_count,
             "station_count": len(self._aprs_stations),
+            "positioned_count": positioned,
             "bbs_connected": self._bbs_connected,
             "bbs_callsign": self._bbs_callsign,
             "uptime": round(time.monotonic() - self._start_time, 1) if self._start_time else 0,
-            "rx_audio_level": self.tx_audio_level,   # audio going INTO Direwolf (TNC RX)
-            "tx_audio_level": self.audio_level,       # audio coming FROM Direwolf (TNC TX)
-            "dw_audio_level": self._dw_audio_level,   # Direwolf's reported decode level
-            "dw_audio_peak": self._dw_audio_peak,     # Direwolf's level bar
+            "rx_audio_level": 0,
+            "tx_audio_level": 0,
+            "dw_audio_level": self._dw_audio_level,
+            "dw_audio_peak": self._dw_audio_peak,
+            "log_tail": list(self._direwolf_log)[-15:],
         }
 
-    # ── Direwolf lifecycle ────────────────────────────────────────────
+    # ── Mode switching ────────────────────────────────────────────────
 
     def _set_mode(self, mode):
-        """Switch TNC mode — stops/restarts Direwolf with new config."""
+        """Switch TNC mode — tells endpoint to start/stop Direwolf."""
         if mode not in ('idle', 'aprs', 'winlink', 'bbs'):
             return {"ok": False, "error": f"invalid mode: {mode}"}
-
         if mode == self._mode:
             return {"ok": True, "mode": self._mode}
 
-        print(f"  [Packet] Mode: {self._mode} → {mode}")
+        print(f"  [Packet] Mode: {self._mode} -> {mode}")
 
-        # Stop current
-        self._stop_direwolf()
+        # Disconnect current KISS
+        self._disconnect_kiss()
         self._mode = mode
 
         if mode == 'idle':
+            self._send_endpoint_mode('audio')
             return {"ok": True, "mode": "idle"}
 
-        # Start Direwolf with mode-specific config
-        ok = self._start_direwolf(mode)
-        if not ok:
+        if not self._remote_tnc:
             self._mode = 'idle'
-            return {"ok": False, "error": "failed to start direwolf"}
+            return {"ok": False, "error": "PACKET_REMOTE_TNC not configured"}
 
+        # Tell endpoint to switch to data mode (starts Direwolf)
+        self._send_endpoint_mode('data')
+        # Connect KISS TCP to remote Direwolf
+        threading.Thread(target=self._kiss_connect_loop, daemon=True,
+                         name="KISSConnect").start()
         return {"ok": True, "mode": mode}
 
-    def _generate_config(self, mode):
-        """Generate direwolf.conf content for the given mode."""
-        mycall = f"{self._callsign}-{self._ssid}" if self._ssid else self._callsign
-        loopback_out = f"plughw:{self._loopback_card},0,0"
-
-        lines = [
-            f"ADEVICE stdin null",
-            f"ARATE 48000",
-            f"ACHANNELS 1",
-            f"",
-            f"CHANNEL 0",
-            f"MYCALL {mycall}",
-            f"MODEM {self._modem_rate}",
-            f"",
-            f"# Better decode: try multiple decoders in parallel",
-            f"FIX_BITS 1 AX.25+FX.25",
-            f"",
-            f"KISSPORT {self._kiss_port}",
-            f"AGWPORT {self._agw_port}",
-            f"",
-            f"# PTT handled externally by gateway",
-        ]
-
-        if mode == 'aprs':
-            if self._digipeat:
-                lines.append(f"DIGIPEAT 0 0 ^WIDE[3-7]-[1-7]$|^TEST$ ^WIDE[12]-[12]$")
-            if self._lat and self._lon:
-                lines.append(f"PBEACON DELAY=0:30 EVERY={self._aprs_beacon_interval // 60}:{self._aprs_beacon_interval % 60:02d}"
-                             f" LAT={self._lat} LONG={self._lon}"
-                             f" SYMBOL={self._aprs_symbol}"
-                             f" COMMENT=\"{self._aprs_comment}\"")
-            if self._aprs_is and self._aprs_is_passcode:
-                lines.append(f"IGSERVER {self._aprs_is_server}")
-                lines.append(f"IGLOGIN {self._callsign} {self._aprs_is_passcode}")
-
-        return '\n'.join(lines) + '\n'
-
-    def _start_direwolf(self, mode):
-        """Start Direwolf process and connect KISS TCP."""
-        # Generate config
-        conf_path = '/tmp/direwolf_gateway.conf'
-        try:
-            with open(conf_path, 'w') as f:
-                f.write(self._generate_config(mode))
-            print(f"  [Packet] Config written to {conf_path}")
-        except Exception as e:
-            print(f"  [Packet] Config write error: {e}")
-            return False
-
-        # Start loopback capture thread (reads Direwolf TX audio)
-        self._start_loopback_capture()
-
-        # Spawn Direwolf
-        try:
-            self._direwolf_proc = subprocess.Popen(
-                [self._direwolf_path, '-c', conf_path, '-t', '0', '-'],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                bufsize=0,
-            )
-            print(f"  [Packet] Direwolf started (PID {self._direwolf_proc.pid})")
-        except Exception as e:
-            print(f"  [Packet] Direwolf start error: {e}")
-            return False
-
-        # Start log reader thread
-        threading.Thread(target=self._direwolf_log_reader, daemon=True, name="DirewolfLog").start()
-
-        # Connect KISS TCP (with retries)
-        threading.Thread(target=self._kiss_connect_loop, daemon=True, name="KISSConnect").start()
-
-        return True
-
-    def _stop_direwolf(self):
-        """Stop Direwolf process and clean up connections."""
-        # Close KISS
+    def _disconnect_kiss(self):
+        """Close KISS TCP connection."""
         if self._kiss_sock:
             try:
                 self._kiss_sock.close()
@@ -418,136 +257,37 @@ class PacketRadioPlugin:
             self._kiss_sock = None
             self._kiss_connected = False
 
-        # Stop loopback capture
-        if self._udp_tx_capture and self._pa:
-            try:
-                self._udp_tx_capture.stop_stream()
-                self._udp_tx_capture.close()
-            except Exception:
-                pass
-            self._udp_tx_capture = None
-
-        # Kill Direwolf
-        if self._direwolf_proc:
-            try:
-                if self._direwolf_proc.stdin:
-                    self._direwolf_proc.stdin.close()
-            except Exception:
-                pass
-            try:
-                self._direwolf_proc.send_signal(signal.SIGTERM)
-                self._direwolf_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._direwolf_proc.kill()
-                self._direwolf_proc.wait(timeout=2)
-            except Exception:
-                pass
-            print(f"  [Packet] Direwolf stopped")
-            self._direwolf_proc = None
-
-        self._rx_queue.clear()
-
-    # ── ALSA loopback capture (reads Direwolf TX audio) ───────────────
-
-    def _start_loopback_capture(self):
-        """Open PyAudio capture on the loopback mirror to read Direwolf TX audio."""
-        try:
-            import pyaudio
-            if not self._pa:
-                self._pa = pyaudio.PyAudio()
-
-            # Find the loopback capture device (mirror side: subdevice 1)
-            loopback_name = f"plughw:{self._loopback_card},1,0"
-            dev_idx = None
-            for i in range(self._pa.get_device_count()):
-                info = self._pa.get_device_info_by_index(i)
-                if self._loopback_card in info.get('name', '') and info.get('maxInputChannels', 0) > 0:
-                    # Look for subdevice 1 (the capture mirror)
-                    if ',1' in info.get('name', ''):
-                        dev_idx = i
-                        break
-
-            # Open capture stream at 44100Hz (Direwolf's output rate)
-            kwargs = {}
-            if dev_idx is not None:
-                kwargs['input_device_index'] = dev_idx
-
-            self._udp_tx_capture = self._pa.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=48000,
-                input=True,
-                frames_per_buffer=2400,  # 50ms at 48kHz
-                stream_callback=self._loopback_capture_callback,
-                **kwargs,
-            )
-            self._udp_tx_capture.start_stream()
-            print(f"  [Packet] Loopback capture started ({loopback_name}, idx={dev_idx})")
-        except Exception as e:
-            print(f"  [Packet] Loopback capture error: {e}")
-
-    def _loopback_capture_callback(self, in_data, frame_count, time_info, status):
-        """PyAudio callback — receives Direwolf TX audio from loopback at 48kHz."""
-        import pyaudio
-        if in_data and self._running:
-            self._rx_queue.append(in_data)
-        return (None, pyaudio.paContinue)
-
-    # ── Resampling ────────────────────────────────────────────────────
-
-    def _resample(self, pcm, ratio, pos_attr):
-        """Resample 16-bit mono PCM by the given ratio using linear interpolation."""
-        try:
-            in_samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-            n_in = len(in_samples)
-            if n_in < 2:
-                return pcm
-
-            n_out = int(n_in * ratio)
-            pos = getattr(self, pos_attr)
-
-            positions = pos + np.arange(n_out) * (1.0 / ratio)
-            indices = positions.astype(np.intp)
-            fracs = positions - indices
-            np.clip(indices, 0, n_in - 2, out=indices)
-
-            out = in_samples[indices] * (1.0 - fracs) + in_samples[indices + 1] * fracs
-
-            consumed = int(positions[-1]) + 1
-            setattr(self, pos_attr, positions[-1] + (1.0 / ratio) - consumed)
-
-            return np.clip(out, -32768, 32767).astype(np.int16).tobytes()
-        except Exception:
-            return pcm
-
     # ── KISS TCP client ───────────────────────────────────────────────
 
     def _kiss_connect_loop(self):
-        """Connect to Direwolf's KISS TCP port with retries."""
-        for attempt in range(30):
-            if not self._running or not self._direwolf_proc:
-                return
+        """Connect to remote Direwolf's KISS TCP port with retries."""
+        kiss_host = self._remote_tnc
+        attempt = 0
+        while self._running and self._mode != 'idle':
+            attempt += 1
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(2)
-                sock.connect(('127.0.0.1', self._kiss_port))
+                sock.settimeout(5)
+                sock.connect((kiss_host, self._kiss_port))
                 self._kiss_sock = sock
                 self._kiss_connected = True
-                print(f"  [Packet] KISS connected (port {self._kiss_port})")
-                # Start reader
+                print(f"  [Packet] KISS connected ({kiss_host}:{self._kiss_port})")
                 self._kiss_reader()
+                # Reader returned = disconnected
+                self._kiss_connected = False
+                if self._running and self._mode != 'idle':
+                    print(f"  [Packet] KISS disconnected, reconnecting in 5s...")
+                    time.sleep(5)
+                    continue
                 return
             except Exception:
-                time.sleep(1)
-        print(f"  [Packet] KISS connect failed after 30 attempts")
+                if attempt % 10 == 1:
+                    print(f"  [Packet] KISS connect to {kiss_host}:{self._kiss_port} attempt {attempt}...")
+                time.sleep(2)
 
     def _kiss_reader(self):
         """Read KISS frames from Direwolf and dispatch to mode handler."""
-        FEND = 0xC0
-        FESC = 0xDB
-        TFEND = 0xDC
-        TFESC = 0xDD
-
+        FEND, FESC, TFEND, TFESC = 0xC0, 0xDB, 0xDC, 0xDD
         buf = bytearray()
         in_frame = False
 
@@ -559,16 +299,13 @@ class PacketRadioPlugin:
                 for byte in data:
                     if byte == FEND:
                         if in_frame and len(buf) > 1:
-                            # buf[0] is KISS command byte (0x00 = data frame channel 0)
-                            cmd_byte = buf[0]
-                            if (cmd_byte & 0x0F) == 0:  # Data frame
-                                ax25_frame = bytes(buf[1:])
-                                self._handle_ax25_frame(ax25_frame)
+                            if (buf[0] & 0x0F) == 0:  # Data frame
+                                self._handle_ax25_frame(bytes(buf[1:]))
                         buf = bytearray()
                         in_frame = True
                     elif in_frame:
                         if byte == FESC:
-                            pass  # Next byte is escaped
+                            pass
                         elif len(buf) > 0 and buf[-1] == FESC:
                             buf[-1] = TFEND if byte == TFEND else (TFESC if byte == TFESC else byte)
                         else:
@@ -582,37 +319,38 @@ class PacketRadioPlugin:
         self._kiss_connected = False
         print(f"  [Packet] KISS disconnected")
 
+    # ── AX.25 frame parsing ───────────────────────────────────────────
+
     def _handle_ax25_frame(self, frame):
         """Parse and dispatch an AX.25 frame."""
         self._packet_count += 1
-
         try:
-            # Parse AX.25 header (minimum 14 bytes for src+dst addresses)
             if len(frame) < 14:
                 return
 
-            # Destination (7 bytes: 6 callsign + 1 SSID)
             dst_call = ''.join(chr(b >> 1) for b in frame[0:6]).strip()
             dst_ssid = (frame[6] >> 1) & 0x0F
-
-            # Source (7 bytes)
             src_call = ''.join(chr(b >> 1) for b in frame[7:13]).strip()
             src_ssid = (frame[13] >> 1) & 0x0F
 
-            # Info field (after control + PID bytes)
+            # Digipeater path
+            path = []
             info_start = 14
-            # Skip digipeater addresses
-            if not (frame[13] & 0x01):  # More addresses follow
+            if not (frame[13] & 0x01):
                 pos = 14
                 while pos + 7 <= len(frame):
-                    if frame[pos + 6] & 0x01:  # Last address
+                    digi_call = ''.join(chr(b >> 1) for b in frame[pos:pos+6]).strip()
+                    digi_ssid = (frame[pos + 6] >> 1) & 0x0F
+                    h_bit = bool(frame[pos + 6] & 0x80)
+                    digi = f"{digi_call}-{digi_ssid}" if digi_ssid else digi_call
+                    path.append({'call': digi, 'used': h_bit})
+                    if frame[pos + 6] & 0x01:
                         info_start = pos + 7
                         break
                     pos += 7
                 else:
                     info_start = pos
 
-            # Control + PID (2 bytes typically)
             if info_start + 2 <= len(frame):
                 info = frame[info_start + 2:]
             else:
@@ -620,29 +358,36 @@ class PacketRadioPlugin:
 
             src = f"{src_call}-{src_ssid}" if src_ssid else src_call
             dst = f"{dst_call}-{dst_ssid}" if dst_ssid else dst_call
+            path_str = ','.join(p['call'] + ('*' if p['used'] else '') for p in path)
 
-            packet_str = f"{src}>{dst}: {info.decode('ascii', errors='replace')}"
-            self._decoded_packets.append({
+            pkt = {
                 'time': time.time(),
-                'src': src,
-                'dst': dst,
+                'src': src, 'dst': dst,
+                'path': path_str,
                 'info': info.decode('ascii', errors='replace'),
-                'raw': packet_str,
-            })
+            }
 
-            # Mode-specific handling
             if self._mode == 'aprs':
-                self._handle_aprs_packet(src, dst, info)
+                self._handle_aprs_packet(src, dst, info, path)
+                st = self._aprs_stations.get(src, {})
+                if st.get('type') and st['type'] != 'unknown':
+                    summary = st['type']
+                    if st.get('lat') is not None:
+                        summary += f" [{st['lat']:.3f},{st['lon']:.3f}]"
+                    if st.get('comment'):
+                        summary += f" {st['comment']}"
+                    pkt['info'] = summary
             elif self._mode == 'bbs':
                 self._handle_bbs_packet(src, info)
 
+            self._decoded_packets.append(pkt)
         except Exception as e:
             self._direwolf_log.append(f"[parse-err] {e}")
 
     # ── APRS handling ─────────────────────────────────────────────────
 
-    def _handle_aprs_packet(self, src, dst, info):
-        """Parse APRS position from info field — handles uncompressed, compressed, and MIC-E."""
+    def _handle_aprs_packet(self, src, dst, info, path=None):
+        """Parse APRS position from info field."""
         try:
             info_str = info.decode('latin-1', errors='replace')
             lat, lon, symbol, comment = None, None, '', ''
@@ -653,102 +398,198 @@ class PacketRadioPlugin:
 
             dtype = info_str[0]
 
-            # ── Try aprs3 library first (handles uncompressed + compressed well) ──
-            if dtype in '!/=@':
-                try:
-                    import aprs
-                    full = f"{src}>{dst}:{info_str}"
-                    frame = aprs.APRSFrame.from_str(full)
-                    if hasattr(frame.info, '_position') and frame.info._position:
-                        pos = frame.info._position
-                        lat = float(pos.lat) if pos.lat else None
-                        lon = float(pos.long) if pos.long else None
-                        sym_table = (pos.sym_table_id or b'/').decode('latin-1', errors='replace')
-                        sym_code = (pos.symbol_code or b'?').decode('latin-1', errors='replace')
-                        symbol = sym_table + sym_code
-                    comment = (getattr(frame.info, 'comment', b'') or b'').decode('latin-1', errors='replace')
-                    ptype = 'position'
-                except Exception:
-                    # Fall back to manual uncompressed parsing
-                    try:
-                        if len(info_str) >= 20:
-                            lat_str = info_str[1:9]
-                            lon_str = info_str[10:19]
-                            if lat_str[-1] in 'NS' and lon_str[-1] in 'EW':
-                                lat = int(lat_str[0:2]) + float(lat_str[2:7]) / 60.0
-                                if lat_str[-1] == 'S': lat = -lat
-                                lon = int(lon_str[0:3]) + float(lon_str[3:8]) / 60.0
-                                if lon_str[-1] == 'W': lon = -lon
-                                symbol = info_str[9] + info_str[19]
-                                comment = info_str[20:].strip()
-                                ptype = 'position'
-                    except (ValueError, IndexError):
-                        pass
-
-            # ── MIC-E: position encoded in destination address ──
-            elif dtype in '`\x1c\x1d':
+            if dtype in '`\x1c\x1d\'':
                 try:
                     lat, lon, symbol, comment = self._parse_mice(dst, info)
                     if lat is not None:
                         ptype = 'mic-e'
                 except Exception:
                     pass
-
-            # ── Status report ──
+            elif dtype in '!/=@':
+                lat, lon, symbol, comment, ptype = self._parse_position(info_str)
             elif dtype == '>':
                 comment = info_str[1:].strip()
                 ptype = 'status'
-
-            # ── Message ──
             elif dtype == ':':
                 comment = info_str[1:].strip()
                 ptype = 'message'
-
-            # ── Object/Item ──
+            elif dtype == 'T':
+                comment = info_str[1:].strip()
+                ptype = 'telemetry'
             elif dtype == ';':
-                # Object report: ;NAME_____*DDMM.MMN/DDDMM.MMW...
-                try:
-                    if len(info_str) >= 27:
-                        pos_start = 10  # after ";NAME_____*"
-                        lat_str = info_str[pos_start + 1:pos_start + 9]
-                        lon_str = info_str[pos_start + 10:pos_start + 19]
-                        if lat_str[-1] in 'NS' and lon_str[-1] in 'EW':
-                            lat = int(lat_str[0:2]) + float(lat_str[2:7]) / 60.0
-                            if lat_str[-1] == 'S': lat = -lat
-                            lon = int(lon_str[0:3]) + float(lon_str[3:8]) / 60.0
-                            if lon_str[-1] == 'W': lon = -lon
-                            symbol = info_str[pos_start + 9] + info_str[pos_start + 19]
-                            comment = info_str[pos_start + 20:].strip()
-                            ptype = 'object'
-                except (ValueError, IndexError):
-                    pass
+                lat, lon, symbol, comment, ptype = self._parse_object(info_str)
+            elif dtype == ')':
+                comment = info_str[1:].strip()
+                ptype = 'item'
+            elif dtype == '}':
+                comment = info_str[1:].strip()
+                ptype = 'third-party'
+
+            # Parse weather data
+            if comment and ptype in ('position', 'weather'):
+                wx = self._parse_weather(comment)
+                if wx:
+                    comment = wx
+                    ptype = 'weather'
+
+            # Clean encoded junk from comments
+            if comment and ptype not in ('weather',):
+                comment = re.sub(r'\|[!-{]{2,}?\|', '', comment)
+                comment = re.sub(r'![!-{]{2}[!-{]?!', '', comment)
+                comment = comment.strip()
+
+            relayed_by = [p['call'] for p in (path or []) if p.get('used')]
 
             self._aprs_stations[src] = {
-                'lat': lat,
-                'lon': lon,
-                'symbol': symbol,
-                'comment': comment[:100] if comment else '',
+                'lat': lat, 'lon': lon, 'symbol': symbol,
+                'comment': comment[:120] if comment else '',
                 'last_heard': time.time(),
                 'type': ptype,
                 'raw': info_str[:120],
+                'path': relayed_by,
             }
+
+            for digi_call in relayed_by:
+                if digi_call not in self._aprs_stations:
+                    self._aprs_stations[digi_call] = {
+                        'lat': None, 'lon': None, 'symbol': '/#',
+                        'comment': 'digipeater (heard relaying)',
+                        'last_heard': time.time(),
+                        'type': 'digi', 'raw': '', 'path': [],
+                    }
+                else:
+                    self._aprs_stations[digi_call]['last_heard'] = time.time()
         except Exception:
             pass
 
     @staticmethod
-    def _parse_mice(dst, info):
-        """Parse MIC-E encoded position from destination + info fields.
+    def _parse_position(info_str):
+        """Parse APRS position from ! / = @ data types."""
+        lat, lon, symbol, comment = None, None, '', ''
+        dtype = info_str[0]
 
-        MIC-E encodes latitude in the destination address (6 chars) and
-        longitude + speed/course in the info field.
-        """
+        if dtype in '@/':
+            pos_str = info_str[8:]
+        else:
+            pos_str = info_str[1:]
+
+        if not pos_str:
+            return lat, lon, symbol, comment, 'unknown'
+
+        # Compressed format
+        if len(pos_str) >= 13 and pos_str[0] in '/\\' and not pos_str[1].isdigit():
+            try:
+                sym_table = pos_str[0]
+                y = sum((ord(pos_str[1 + i]) - 33) * (91 ** (3 - i)) for i in range(4))
+                x = sum((ord(pos_str[5 + i]) - 33) * (91 ** (3 - i)) for i in range(4))
+                lat = 90.0 - y / 380926.0
+                lon = -180.0 + x / 190463.0
+                sym_code = pos_str[9]
+                symbol = sym_table + sym_code
+                comment = pos_str[13:].strip()
+                return lat, lon, symbol, comment, 'position'
+            except (ValueError, IndexError):
+                pass
+
+        # Uncompressed format
+        if len(pos_str) >= 19:
+            try:
+                lat_str = pos_str[0:8]
+                sym_table = pos_str[8]
+                lon_str = pos_str[9:18]
+                sym_code = pos_str[18]
+                if lat_str[-1] in 'NS' and lon_str[-1] in 'EW':
+                    lat = int(lat_str[0:2]) + float(lat_str[2:7]) / 60.0
+                    if lat_str[-1] == 'S': lat = -lat
+                    lon = int(lon_str[0:3]) + float(lon_str[3:8]) / 60.0
+                    if lon_str[-1] == 'W': lon = -lon
+                    symbol = sym_table + sym_code
+                    comment = pos_str[19:].strip()
+                    return lat, lon, symbol, comment, 'position'
+            except (ValueError, IndexError):
+                pass
+
+        return lat, lon, symbol, comment, 'unknown'
+
+    @staticmethod
+    def _parse_object(info_str):
+        """Parse APRS object report."""
+        lat, lon, symbol, comment = None, None, '', ''
+        try:
+            if len(info_str) < 27:
+                return lat, lon, symbol, comment, 'object'
+            after_name = info_str[11:]
+            if len(after_name) >= 7 and after_name[6] in 'zh/':
+                pos_str = after_name[7:]
+            else:
+                pos_str = after_name
+            if len(pos_str) >= 19:
+                lat_str = pos_str[0:8]
+                sym_table = pos_str[8]
+                lon_str = pos_str[9:18]
+                sym_code = pos_str[18]
+                if lat_str[-1] in 'NS' and lon_str[-1] in 'EW':
+                    lat = int(lat_str[0:2]) + float(lat_str[2:7]) / 60.0
+                    if lat_str[-1] == 'S': lat = -lat
+                    lon = int(lon_str[0:3]) + float(lon_str[3:8]) / 60.0
+                    if lon_str[-1] == 'W': lon = -lon
+                    symbol = sym_table + sym_code
+                    comment = pos_str[19:].strip()
+        except (ValueError, IndexError):
+            pass
+        return lat, lon, symbol, comment, 'object'
+
+    @staticmethod
+    def _parse_weather(comment):
+        """Try to parse APRS weather data from a position comment."""
+        if not comment or len(comment) < 10:
+            return None
+        s = comment
+        if s[0] == '_':
+            s = s[1:]
+        if len(s) < 7 or s[3] != '/' or not s[0:3].isdigit() or not s[4:7].isdigit():
+            return None
+        wx_fields = sum(1 for tag in ('g', 't', 'r', 'p', 'P', 'h', 'b', 'L', 'l', 's') if tag in s[7:])
+        if wx_fields < 2:
+            return None
+        parts = [f"wind {s[0:3]}/{s[4:7]}mph"]
+        rest = s[7:]
+        idx = 0
+        while idx < len(rest):
+            c = rest[idx]
+            if c == 'g' and idx + 3 <= len(rest):
+                parts.append(f"gust {rest[idx+1:idx+4]}mph"); idx += 4
+            elif c == 't' and idx + 3 <= len(rest):
+                val = rest[idx+1:idx+4]
+                if val.strip('.'): parts.append(f"temp {val}F")
+                idx += 4
+            elif c == 'r' and idx + 3 <= len(rest):
+                parts.append(f"rain/1h {rest[idx+1:idx+4]}"); idx += 4
+            elif c == 'p' and idx + 3 <= len(rest):
+                parts.append(f"rain/24h {rest[idx+1:idx+4]}"); idx += 4
+            elif c == 'P' and idx + 3 <= len(rest):
+                parts.append(f"rain/mid {rest[idx+1:idx+4]}"); idx += 4
+            elif c == 'h' and idx + 2 <= len(rest):
+                parts.append(f"hum {rest[idx+1:idx+3]}%"); idx += 3
+            elif c == 'b' and idx + 5 <= len(rest):
+                try: parts.append(f"baro {float(rest[idx+1:idx+6]) / 10.0:.1f}mb")
+                except ValueError: pass
+                idx += 6
+            else:
+                tail = rest[idx:].strip()
+                if tail: parts.append(tail)
+                break
+        return ' '.join(parts)
+
+    @staticmethod
+    def _parse_mice(dst, info):
+        """Parse MIC-E encoded position from destination + info fields."""
         info_str = info.decode('latin-1', errors='replace')
-        dst_str = dst.split('-')[0]  # strip SSID
+        dst_str = dst.split('-')[0]
 
         if len(dst_str) < 6 or len(info_str) < 9:
             return None, None, '', ''
 
-        # Decode latitude from destination address
         _mice_digits = {
             '0': (0, False, False), '1': (1, False, False), '2': (2, False, False),
             '3': (3, False, False), '4': (4, False, False), '5': (5, False, False),
@@ -774,100 +615,88 @@ class PacketRadioPlugin:
                 return None, None, '', ''
             d, custom, msg_bit = _mice_digits[c]
             digits.append(d)
-            if i == 3: north = custom       # bit 3: custom=North, std=South
-            if i == 4: lon_offset = 100 if custom else 0  # bit 4: lon offset
-            if i == 5: west = custom      # bit 5: custom=West, std=East
+            if i == 3: north = custom
+            if i == 4: lon_offset = 100 if custom else 0
+            if i == 5: west = custom
 
         lat_deg = digits[0] * 10 + digits[1]
         lat_min = digits[2] * 10 + digits[3] + (digits[4] * 10 + digits[5]) / 100.0
         lat = lat_deg + lat_min / 60.0
-        if not north:
-            lat = -lat
+        if not north: lat = -lat
 
-        # Decode longitude from info field bytes 1-3 (after data type byte)
         d28 = ord(info_str[1]) - 28
         m28 = ord(info_str[2]) - 28
         h28 = ord(info_str[3]) - 28
 
         lon_deg = d28 + lon_offset
-        if 180 <= lon_deg <= 189:
-            lon_deg -= 80
-        elif 190 <= lon_deg <= 199:
-            lon_deg -= 190
+        if 180 <= lon_deg <= 189: lon_deg -= 80
+        elif 190 <= lon_deg <= 199: lon_deg -= 190
 
         lon_min = m28
-        if lon_min >= 60:
-            lon_min -= 60
+        if lon_min >= 60: lon_min -= 60
 
-        lon_hun = h28
-        lon = lon_deg + (lon_min + lon_hun / 100.0) / 60.0
-        if west:
-            lon = -lon
+        lon = lon_deg + (lon_min + h28 / 100.0) / 60.0
+        if west: lon = -lon
 
-        # Symbol: table from info[7], code from info[8]
         symbol = ''
         if len(info_str) >= 9:
-            symbol = info_str[8] + info_str[7]  # table + code (reversed in MIC-E)
+            symbol = info_str[8] + info_str[7]
 
-        # Comment: after symbol bytes (index 9+)
-        # MIC-E status text starts with a type byte then optional text
         comment = ''
         if len(info_str) > 9:
-            tail = info_str[9:]
-            # Strip MIC-E type indicator bytes and binary prefixes
-            # Common patterns: `text, 'text, >text, ]text
-            # Also strip Kenwood/Yaesu radio type codes (e.g. "7V}, "8k})
-            # Look for printable ASCII text after stripping leading control bytes
-            stripped = tail
-            # Remove leading MIC-E type byte
-            if stripped and stripped[0] in '`\'">=]':
-                stripped = stripped[1:]
-            # Remove Kenwood D7/D700/D710 type codes ("Xn} pattern)
-            if len(stripped) >= 3 and stripped[0] == '"' and stripped[2] == '}':
-                stripped = stripped[3:]
-            # What remains is the actual comment
-            comment = stripped.strip()
-            # Remove trailing MIC-E suffixes
-            for suffix in ['_4', '_5', '_6', '_7', '_8', '_#']:
-                if comment.endswith(suffix):
-                    comment = comment[:-len(suffix)].strip()
-                    break
+            comment = PacketRadioPlugin._clean_mice_comment(info_str[9:])
 
         return lat, lon, symbol, comment
 
-    def _send_aprs_beacon(self):
-        """Trigger an APRS position beacon via KISS."""
-        # Direwolf handles beaconing via config — this forces an immediate one
-        # by sending a UI frame via KISS
-        if not self._kiss_connected or not self._kiss_sock:
-            return {"ok": False, "error": "KISS not connected"}
+    @staticmethod
+    def _clean_mice_comment(tail):
+        """Strip MIC-E type bytes, radio codes, telemetry, and binary junk."""
+        if not tail:
+            return ''
+        s = tail
+        # Remove leading MIC-E type/status byte (NOT " which starts Kenwood codes)
+        if s and s[0] in '`\'>=]\x1c\x1d':
+            s = s[1:]
+        # Remove Kenwood/Yaesu radio type codes: "XX} pattern
+        s = re.sub(r'^"[^"]{1,3}\}', '', s)
+        # Remove Base91 telemetry blocks: |....|
+        s = re.sub(r'\|[!-{]{2,}?\|', '', s)
+        # Remove DAO precision extensions: !xx!
+        s = re.sub(r'![!-{]{2}[!-{]?!', '', s)
+        # Remove trailing MIC-E device suffixes
+        s = re.sub(r'_[0-9#"()]+$', '', s)
+        # Remove orphan pipe-delimited fragments
+        s = re.sub(r'\|[^|]{0,6}$', '', s)
+        # Strip non-printable chars
+        s = ''.join(c for c in s if ' ' <= c < '\x7f')
+        s = s.strip()
+        if len(s) <= 2 and not any(c.isalnum() for c in s):
+            s = ''
+        return s
 
-        # Build simple beacon frame
-        # For now, rely on Direwolf's built-in PBEACON
+    # ── APRS TX (stubs) ──────────────────────────────────────────────
+
+    def _send_aprs_beacon(self):
+        if not self._kiss_connected:
+            return {"ok": False, "error": "KISS not connected"}
         return {"ok": True, "note": "beacon sent via Direwolf config timer"}
 
     def _send_aprs_message(self, to_call, message):
-        """Send an APRS message via KISS."""
         if not to_call or not message:
             return {"ok": False, "error": "to and message required"}
-        if not self._kiss_connected or not self._kiss_sock:
+        if not self._kiss_connected:
             return {"ok": False, "error": "KISS not connected"}
-
-        # TODO: build and send APRS message frame via KISS
         return {"ok": False, "error": "not yet implemented"}
 
     # ── BBS handling ──────────────────────────────────────────────────
 
     def _handle_bbs_packet(self, src, info):
-        """Append incoming BBS data to the terminal buffer."""
         try:
-            text = info.decode('ascii', errors='replace')
-            self._bbs_buffer.append(text)
+            self._bbs_buffer.append(info.decode('ascii', errors='replace'))
         except Exception:
             pass
 
     def _bbs_connect(self, callsign):
-        """Initiate AX.25 connection to a BBS."""
         if not callsign:
             return {"ok": False, "error": "callsign required"}
         if not self._kiss_connected:
@@ -876,52 +705,18 @@ class PacketRadioPlugin:
         self._bbs_connected = True
         self._bbs_buffer.clear()
         self._bbs_buffer.append(f"*** Connecting to {self._bbs_callsign}...")
-        # TODO: send AX.25 SABM frame via KISS
         return {"ok": True, "callsign": self._bbs_callsign}
 
     def _bbs_disconnect(self):
-        """Disconnect from BBS."""
         self._bbs_connected = False
         self._bbs_buffer.append("*** Disconnected")
         self._bbs_callsign = ''
-        # TODO: send AX.25 DISC frame via KISS
         return {"ok": True}
 
     def _bbs_send(self, text):
-        """Send text to connected BBS."""
         if not self._bbs_connected:
             return {"ok": False, "error": "not connected"}
         if not text:
             return {"ok": False, "error": "text required"}
         self._bbs_buffer.append(f"> {text}")
-        # TODO: send as AX.25 I-frame via KISS
         return {"ok": True}
-
-    # ── Direwolf log reader ───────────────────────────────────────────
-
-    def _direwolf_log_reader(self):
-        """Read Direwolf stdout/stderr and store in log buffer."""
-        proc = self._direwolf_proc
-        if not proc or not proc.stdout:
-            return
-        import re as _re
-        _level_re = _re.compile(r'audio level\s*=\s*(\d+)\((\d+)/(\d+)\)\s+([\s_|]+)')
-        try:
-            buf = b''
-            while self._running:
-                chunk = proc.stdout.read(1)
-                if not chunk:
-                    break
-                if chunk == b'\n':
-                    line = buf.decode('utf-8', errors='replace')
-                    self._direwolf_log.append(line)
-                    # Parse audio level
-                    m = _level_re.search(line)
-                    if m:
-                        self._dw_audio_level = int(m.group(1))
-                        self._dw_audio_peak = m.group(4).strip()
-                    buf = b''
-                else:
-                    buf += chunk
-        except Exception:
-            pass

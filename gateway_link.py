@@ -534,7 +534,8 @@ class GatewayLinkClient:
     """
 
     def __init__(self, host, port, name, capabilities, plugin_name="audio",
-                 on_audio=None, on_command=None, on_status=None):
+                 on_audio=None, on_command=None, on_status=None,
+                 on_connect=None, on_disconnect=None):
         self._host = host
         self._port = port
         self._name = name
@@ -544,6 +545,8 @@ class GatewayLinkClient:
         self._on_audio = on_audio
         self._on_command = on_command
         self._on_status = on_status
+        self._on_connect = on_connect
+        self._on_disconnect = on_disconnect
 
         self._sock = None
         self._send_lock = threading.Lock()
@@ -665,6 +668,13 @@ class GatewayLinkClient:
                     break
                 continue
 
+            # Notify caller that we're connected (reopen audio etc.)
+            if self._on_connect:
+                try:
+                    self._on_connect()
+                except Exception as e:
+                    print(f"  [Link] on_connect callback error: {e}")
+
             # Start client heartbeat thread
             hb_stop = threading.Event()
             def _client_heartbeat():
@@ -682,6 +692,13 @@ class GatewayLinkClient:
             hb_stop.set()
             self._close()  # Clean up socket before reconnect
             print(f"  [Link] Connection closed, stop={self._stop.is_set()}")
+
+            # Notify caller of disconnect
+            if self._on_disconnect:
+                try:
+                    self._on_disconnect()
+                except Exception as e:
+                    print(f"  [Link] on_disconnect callback error: {e}")
 
             # Disconnected — retry
             if not self._stop.is_set():
@@ -840,6 +857,11 @@ class AudioPlugin(RadioPlugin):
         self._gate_open = False
         self._gate_attack = 0.3           # envelope rise speed (0-1)
         self._gate_release = 0.05         # envelope fall speed (0-1)
+        # Stream health — auto-reopen on stale/dead PyAudio stream
+        self._read_errors = 0             # consecutive read exceptions
+        self._zero_reads = 0              # consecutive zero-level reads (peak < 5)
+        self._reopen_count = 0            # total reopens for logging
+        self._last_config = None          # saved config for reopen
 
     def setup(self, config):
         """Open PyAudio input + output streams.
@@ -850,6 +872,7 @@ class AudioPlugin(RadioPlugin):
             channels (int) — channel count (default 1)
         """
         import pyaudio
+        self._last_config = dict(config)  # save for stream reopen
 
         # Load saved gain settings
         saved = self._load_settings()
@@ -867,12 +890,11 @@ class AudioPlugin(RadioPlugin):
 
         dev_index = self._find_device(self._device_name)
         # Find separate input/output indices — some backends (PipeWire)
-        # enumerate different indices for input vs output capability
+        # enumerate different indices for input vs output capability.
+        # dev_index may point to a device with only input OR only output,
+        # so always scan for the correct capability.
         in_index = None
         out_index = None
-        if dev_index is not None:
-            in_index = dev_index
-            out_index = dev_index
         if self._pa and self._device_name:
             _dn = self._device_name.lower()
             for i in range(self._pa.get_device_count()):
@@ -885,8 +907,13 @@ class AudioPlugin(RadioPlugin):
                             out_index = i
                 except Exception:
                     continue
-            if in_index != out_index or in_index != dev_index:
-                print(f"  [Link] AudioPlugin: separate I/O indices: in={in_index} out={out_index}")
+        # Fall back to generic find if name scan didn't match
+        if in_index is None and dev_index is not None:
+            in_index = dev_index
+        if out_index is None and dev_index is not None:
+            out_index = dev_index
+        if in_index != out_index:
+            print(f"  [Link] AudioPlugin: separate I/O indices: in={in_index} out={out_index}")
 
         try:
             kw_in = {'input_device_index': in_index} if in_index is not None else {}
@@ -934,10 +961,34 @@ class AudioPlugin(RadioPlugin):
 
     def get_audio(self, chunk_size=None):
         """Read one 50 ms chunk from the input stream, applying RX gain and noise gate."""
+        # In data mode, Direwolf owns the capture device — don't read or reopen
+        if getattr(self, '_mode', 'audio') == 'data':
+            return None, False
         if not self._in_stream:
+            # Stream is dead — try to reopen if we have config
+            if self._last_config and self._pa:
+                self.reopen_audio()
             return None, False
         try:
             data = self._in_stream.read(self.CHUNK_FRAMES, exception_on_overflow=False)
+            self._read_errors = 0  # reset on successful read
+
+            # Detect dead stream: all-zero audio for 10s (200 reads at 50ms)
+            # AIOC always produces noise, so sustained silence = dead hardware
+            if data and not self._gate_enabled:
+                import struct as _st2
+                _pk = max(abs(x) for x in _st2.unpack(f'<{len(data)//2}h', data))
+                if _pk < 5:
+                    self._zero_reads += 1
+                    if self._zero_reads >= 200:
+                        print(f"  [Link] AudioPlugin: 200 consecutive zero reads — reopening stream", flush=True)
+                        self.reopen_audio()
+                        return None, False
+                else:
+                    self._zero_reads = 0
+            elif data:
+                self._zero_reads = 0
+
             if data and self._rx_gain_db != 0.0:
                 data = self._apply_volume(data, self._db_to_linear(self._rx_gain_db))
             # Noise gate — suppress AIOC noise floor
@@ -960,8 +1011,89 @@ class AudioPlugin(RadioPlugin):
                     return None, False
             return data, False
         except Exception as e:
-            print(f"  [Link] AudioPlugin: read error: {e}")
+            self._read_errors += 1
+            if getattr(self, '_mode', 'audio') == 'data':
+                return None, False  # expected — stream was closed for data mode
+            if self._read_errors <= 3 or self._read_errors % 50 == 0:
+                print(f"  [Link] AudioPlugin: read error: {e} [{self._read_errors}]", flush=True)
+            if self._read_errors >= 5:
+                print(f"  [Link] AudioPlugin: {self._read_errors} consecutive errors — reopening stream", flush=True)
+                self.reopen_audio()
             return None, False
+
+    def reopen_audio(self):
+        """Close and reopen audio streams on the existing PyAudio instance.
+
+        Called on gateway reconnect or stale stream detection.
+        Does NOT terminate PyAudio — PipeWire loses device enumeration on re-init.
+        """
+        import pyaudio
+        print(f"  [Link] AudioPlugin: reopening audio streams", flush=True)
+        self._reopen_count += 1
+        self._read_errors = 0
+        self._zero_reads = 0
+        # Close existing streams
+        for stream in (self._in_stream, self._out_stream):
+            if stream:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+        self._in_stream = None
+        self._out_stream = None
+        # Terminate and reinit PyAudio to fully release ALSA device handles.
+        # PipeWire may lose some device enumeration, but we search by name anyway.
+        if self._pa:
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+            self._pa = None
+        time.sleep(1)  # pause for ALSA to release device
+
+        if not self._pa:
+            self._pa = pyaudio.PyAudio()
+
+        config = self._last_config or {}
+        rate = int(config.get('rate', self.RATE))
+        channels = int(config.get('channels', self.CHANNELS))
+
+        # Find device indices — scan for correct input/output capability
+        in_index = None
+        out_index = None
+        if self._device_name:
+            _dn = self._device_name.lower()
+            for i in range(self._pa.get_device_count()):
+                try:
+                    info = self._pa.get_device_info_by_index(i)
+                    if _dn in info.get('name', '').lower():
+                        if info.get('maxInputChannels', 0) > 0 and in_index is None:
+                            in_index = i
+                        if info.get('maxOutputChannels', 0) > 0 and out_index is None:
+                            out_index = i
+                except Exception:
+                    continue
+
+        try:
+            kw_in = {'input_device_index': in_index} if in_index is not None else {}
+            self._in_stream = self._pa.open(
+                format=pyaudio.paInt16, channels=channels, rate=rate,
+                input=True, frames_per_buffer=self.CHUNK_FRAMES, **kw_in)
+            print(f"  [Link] AudioPlugin: input stream reopened (idx={in_index})", flush=True)
+        except Exception as e:
+            print(f"  [Link] AudioPlugin: input reopen failed: {e}", flush=True)
+            self._in_stream = None
+
+        try:
+            kw_out = {'output_device_index': out_index} if out_index is not None else {}
+            self._out_stream = self._pa.open(
+                format=pyaudio.paInt16, channels=channels, rate=rate,
+                output=True, frames_per_buffer=self.CHUNK_FRAMES, **kw_out)
+            print(f"  [Link] AudioPlugin: output stream reopened (idx={out_index})", flush=True)
+        except Exception as e:
+            print(f"  [Link] AudioPlugin: output reopen failed: {e}", flush=True)
+            self._out_stream = None
 
     def put_audio(self, pcm):
         """Write PCM audio to the output stream, applying TX gain."""
@@ -1145,6 +1277,11 @@ class AIOCPlugin(AudioPlugin):
     device. Audio flows through the sound card (same as AudioPlugin).
     PTT is controlled via HID GPIO output (5-byte report).
 
+    Supports two modes:
+        audio — (default) streams RX audio to gateway via link protocol
+        data  — runs Direwolf TNC locally, AIOC capture goes directly to
+                Direwolf for packet decode. KISS TCP on port 8001.
+
     Config keys (in addition to AudioPlugin keys):
         vid (str)         — USB vendor ID hex (default '1209')
         pid (str)         — USB product ID hex (default '7388')
@@ -1175,6 +1312,15 @@ class AIOCPlugin(AudioPlugin):
         self._ptt_timeout = 60  # seconds — safety auto-unkey
         self._ptt_timer = None
         self._ptt_timer_lock = threading.Lock()
+        # Data mode (Direwolf TNC)
+        self._mode = 'audio'             # 'audio' or 'data'
+        self._direwolf_proc = None
+        self._direwolf_conf_path = '/tmp/direwolf_endpoint.conf'
+        self._direwolf_path = '/usr/bin/direwolf'
+        self._dw_callsign = 'N0CALL'
+        self._dw_modem = 1200
+        self._dw_kiss_port = 8001
+        self._aioc_hw = None             # ALSA device name (e.g. 'hw:3,0')
 
     def setup(self, config):
         """Open AIOC audio device + HID for PTT."""
@@ -1202,6 +1348,9 @@ class AIOCPlugin(AudioPlugin):
             config['device'] = aioc_hw or 'All-In-One'
             if aioc_hw:
                 print(f"  [Link] AIOCPlugin: found AIOC at {aioc_hw}")
+                self._aioc_hw = aioc_hw
+        else:
+            self._aioc_hw = config.get('device', '')
 
         # Open audio streams via parent class
         super().setup(config)
@@ -1217,10 +1366,11 @@ class AIOCPlugin(AudioPlugin):
             self._hid = None
 
     def teardown(self):
-        """Unkey PTT, cancel safety timer, and close HID + audio."""
+        """Unkey PTT, cancel safety timer, stop Direwolf, and close HID + audio."""
         self._cancel_ptt_timer()
         if self._ptt_on:
             self._set_ptt(False)
+        self._stop_direwolf()
         if self._hid:
             try:
                 self._hid.close()
@@ -1241,6 +1391,8 @@ class AIOCPlugin(AudioPlugin):
                 else:
                     self._cancel_ptt_timer()
             return result
+        if action == 'mode':
+            return self._set_mode(cmd)
         # rx_gain, tx_gain, and status handled by AudioPlugin.execute
         return super().execute(cmd)
 
@@ -1253,8 +1405,159 @@ class AIOCPlugin(AudioPlugin):
             "ptt_channel": self._ptt_channel,
             "audio_input": self._in_stream is not None,
             "audio_output": self._out_stream is not None,
+            "mode": self._mode,
+            "direwolf_running": self._direwolf_proc is not None and self._direwolf_proc.poll() is None,
+            "direwolf_kiss_port": self._dw_kiss_port if self._mode == 'data' else None,
         })
         return status
+
+    def _set_mode(self, cmd):
+        """Switch between audio and data (Direwolf TNC) mode.
+
+        In data mode, PyAudio input is closed and Direwolf reads the AIOC
+        directly for clean packet decode. KISS TCP is exposed on the
+        configured port for the gateway to connect.
+
+        cmd keys: mode ('audio'/'data'), callsign, ssid, modem, kiss_port
+        """
+        new_mode = cmd.get('mode', 'audio')
+        if new_mode not in ('audio', 'data'):
+            return {"ok": False, "error": f"invalid mode: {new_mode}"}
+        if new_mode == self._mode:
+            return {"ok": True, "mode": self._mode}
+
+        # Read optional TNC config from command
+        if 'callsign' in cmd:
+            self._dw_callsign = str(cmd['callsign']).strip().upper()
+        if 'ssid' in cmd:
+            ssid = int(cmd['ssid'])
+            if ssid:
+                self._dw_callsign = self._dw_callsign.split('-')[0] + f'-{ssid}'
+        if 'modem' in cmd:
+            self._dw_modem = int(cmd['modem'])
+        if 'kiss_port' in cmd:
+            self._dw_kiss_port = int(cmd['kiss_port'])
+
+        print(f"  [Link] AIOCPlugin: mode {self._mode} -> {new_mode}", flush=True)
+
+        if new_mode == 'data':
+            # Close PyAudio input to release AIOC for Direwolf
+            if self._in_stream:
+                try:
+                    self._in_stream.stop_stream()
+                    self._in_stream.close()
+                except Exception:
+                    pass
+                self._in_stream = None
+            time.sleep(0.5)
+            # Start Direwolf
+            ok = self._start_direwolf()
+            if not ok:
+                # Reopen audio on failure
+                self.reopen_audio()
+                return {"ok": False, "error": "failed to start direwolf"}
+        else:
+            # Stop Direwolf, reopen PyAudio
+            self._stop_direwolf()
+            time.sleep(0.5)
+            self.reopen_audio()
+
+        self._mode = new_mode
+        return {"ok": True, "mode": new_mode}
+
+    def _start_direwolf(self):
+        """Start Direwolf as a subprocess reading directly from AIOC."""
+        import subprocess as _sp, signal as _sig
+        # Find AIOC ALSA device
+        aioc_dev = self._aioc_hw
+        if not aioc_dev:
+            try:
+                with open('/proc/asound/cards') as f:
+                    for line in f:
+                        if 'AllInOneCable' in line or 'All-In-One' in line:
+                            aioc_dev = f'plughw:{line.strip().split()[0]},0'
+                            break
+            except Exception:
+                pass
+        if not aioc_dev:
+            print("  [Link] AIOCPlugin: AIOC device not found for Direwolf", flush=True)
+            return False
+        if not aioc_dev.startswith('plughw:'):
+            aioc_dev = f'plughw:{aioc_dev.replace("hw:", "")}'
+
+        # Generate config
+        conf = (
+            f"ADEVICE {aioc_dev} null\n"
+            f"ARATE 48000\n"
+            f"ACHANNELS 1\n\n"
+            f"CHANNEL 0\n"
+            f"MYCALL {self._dw_callsign}\n"
+            f"MODEM {self._dw_modem}\n\n"
+            f"FIX_BITS 1\n\n"
+            f"KISSPORT {self._dw_kiss_port}\n"
+            f"AGWPORT 0\n\n"
+            f"DIGIPEAT 0 0 ^WIDE[3-7]-[1-7]$|^TEST$ ^WIDE[12]-[12]$\n"
+        )
+        try:
+            with open(self._direwolf_conf_path, 'w') as f:
+                f.write(conf)
+        except Exception as e:
+            print(f"  [Link] AIOCPlugin: config write error: {e}", flush=True)
+            return False
+
+        # Spawn Direwolf
+        try:
+            self._direwolf_proc = _sp.Popen(
+                [self._direwolf_path, '-c', self._direwolf_conf_path, '-t', '0'],
+                stdout=_sp.PIPE, stderr=_sp.STDOUT, bufsize=0,
+            )
+            print(f"  [Link] AIOCPlugin: Direwolf started (PID {self._direwolf_proc.pid}, "
+                  f"KISS port {self._dw_kiss_port})", flush=True)
+            # Start log reader thread
+            threading.Thread(target=self._direwolf_log_reader, daemon=True,
+                             name="DirewolfLog").start()
+            return True
+        except Exception as e:
+            print(f"  [Link] AIOCPlugin: Direwolf start error: {e}", flush=True)
+            return False
+
+    def _stop_direwolf(self):
+        """Stop Direwolf subprocess if running."""
+        import signal as _sig
+        if self._direwolf_proc:
+            try:
+                self._direwolf_proc.send_signal(_sig.SIGTERM)
+                self._direwolf_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    self._direwolf_proc.kill()
+                    self._direwolf_proc.wait(timeout=2)
+                except Exception:
+                    pass
+            print(f"  [Link] AIOCPlugin: Direwolf stopped", flush=True)
+            self._direwolf_proc = None
+
+    def _direwolf_log_reader(self):
+        """Read Direwolf stdout, print locally, and forward to gateway."""
+        proc = self._direwolf_proc
+        if not proc or not proc.stdout:
+            return
+        try:
+            for line in iter(proc.stdout.readline, b''):
+                if not line:
+                    break
+                text = line.decode('utf-8', errors='replace').rstrip()
+                if text:
+                    print(f"  [Direwolf] {text}", flush=True)
+                    # Forward to gateway via link protocol
+                    client = getattr(self, '_link_client', None)
+                    if client and client.connected:
+                        try:
+                            client.send_status({"type": "direwolf_log", "line": text})
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
     def _set_ptt(self, state_on):
         """Key or unkey the radio via AIOC HID GPIO."""

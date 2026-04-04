@@ -864,9 +864,7 @@ def handle_routing_levels(handler, parent):
             data['mumble_rx'] = getattr(gw, 'rx_audio_level', 0)
         if getattr(gw, 'remote_audio_source', None):
             data['remote_audio'] = gw.remote_audio_source.audio_level
-        if getattr(gw, 'packet_plugin', None):
-            data['tnc_tx'] = gw.packet_plugin.audio_level       # TNC TX source (modulated audio out)
-            data['tnc_rx'] = getattr(gw.packet_plugin, 'tx_audio_level', 0)  # TNC RX sink (audio in)
+        # TNC levels removed — Direwolf runs on remote endpoint
         # Generic link endpoint RX levels (skip D75 — handled above)
         import re as _re
         for _ln, _ls in gw.link_endpoints.items():

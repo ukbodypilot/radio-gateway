@@ -249,15 +249,15 @@ class GPSManager:
     def _parse_gsv(self, fields):
         """Parse GSV — satellites in view with signal strength.
 
-        GSV comes in multi-sentence groups: $GPGSV,total,seq,...
-        We buffer until we have all sentences, then update the satellite list.
+        GSV comes in multi-sentence groups per constellation: $GPGSV, $GLGSV, $GAGSV...
+        Buffer each constellation separately. Merge all constellations whenever the
+        last constellation group (by arrival order) completes a full cycle.
         """
         if len(fields) < 4:
             return
         try:
             total_msgs = int(fields[1])
             msg_num = int(fields[2])
-            # Each sentence has up to 4 satellites starting at field 4
             sats = []
             i = 4
             while i + 3 < len(fields):
@@ -268,23 +268,20 @@ class GPSManager:
                 sats.append({'prn': prn, 'elevation': elev, 'azimuth': azim, 'snr': snr})
                 i += 4
 
-            constellation = fields[0]  # e.g. GPGSV, GLGSV
-            key = constellation
+            key = fields[0]  # e.g. GPGSV, GLGSV, GAGSV
             if msg_num == 1:
                 self._gsv_buf[key] = sats
             else:
                 self._gsv_buf.setdefault(key, []).extend(sats)
 
             if msg_num == total_msgs:
-                # Complete group — merge all constellations and update
+                # This constellation is complete — merge all buffered constellations
                 all_sats = []
-                for v in self._gsv_buf.values():
+                for k, v in self._gsv_buf.items():
                     all_sats.extend(v)
-                # Sort by SNR descending
                 all_sats.sort(key=lambda s: s['snr'], reverse=True)
                 with self._lock:
                     self.satellites = all_sats
-                self._gsv_buf[key] = []
         except (ValueError, IndexError):
             pass
 

@@ -67,6 +67,8 @@ class TH9800Plugin(RadioPlugin):
         self._input_stream = None
         self._output_stream = None
         self._aioc_available = False
+        self._tx_queue = None           # TX audio queue for non-blocking writes
+        self._tx_thread = None
 
         # CAT control
         self._cat_client = None
@@ -93,7 +95,9 @@ class TH9800Plugin(RadioPlugin):
         self.duck = False  # not duckable — it's the primary radio
         self.muted = False
         self.audio_level = 0
+        self.tx_audio_level = 0
         self.audio_boost = 1.0
+        self.tx_audio_boost = 1.0
 
         # Stream health (reader thread manages lifecycle)
         self._last_audio_capture_time = 0
@@ -214,17 +218,19 @@ class TH9800Plugin(RadioPlugin):
         return data, False
 
     def put_audio(self, pcm):
-        """Send TX audio to AIOC output stream (radio mic input)."""
-        if not self._output_stream or self.muted:
+        """Queue TX audio for non-blocking write to AIOC output stream."""
+        if not self._output_stream or self.muted or self._tx_queue is None:
             return
         try:
+            # Apply TX boost from routing page slider
+            if self.tx_audio_boost != 1.0:
+                arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                pcm = np.clip(arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
             if self._config.OUTPUT_VOLUME != 1.0:
                 arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
                 pcm = np.clip(arr * self._config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
-            try:
-                self._output_stream.write(pcm, exception_on_overflow=False)
-            except TypeError:
-                self._output_stream.write(pcm)
+            # Queue for writer thread — never blocks the caller
+            self._tx_queue.append(pcm)
             # TX level metering
             arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
             rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
@@ -233,10 +239,30 @@ class TH9800Plugin(RadioPlugin):
                 level = max(0, min(100, (db + 60) * (100 / 60)))
             else:
                 level = 0
-            self.tx_audio_level = int(level) if level > getattr(self, 'tx_audio_level', 0) else int(getattr(self, 'tx_audio_level', 0) * 0.7 + level * 0.3)
+            self.tx_audio_level = int(level) if level > self.tx_audio_level else int(self.tx_audio_level * 0.7 + level * 0.3)
         except Exception as e:
             if getattr(self._config, 'VERBOSE_LOGGING', False):
                 print(f"  [TH-9800] TX write error: {e}")
+
+    def _tx_writer_loop(self):
+        """Dedicated thread for writing TX audio to AIOC output stream.
+
+        Decouples put_audio() from the blocking stream.write() so the main
+        audio loop isn't stalled by USB I/O contention with the RX reader.
+        """
+        while self._output_stream:
+            try:
+                pcm = self._tx_queue.popleft()
+            except IndexError:
+                time.sleep(0.005)  # 5ms idle poll
+                continue
+            try:
+                try:
+                    self._output_stream.write(pcm, exception_on_overflow=False)
+                except TypeError:
+                    self._output_stream.write(pcm)
+            except Exception:
+                pass
 
     def execute(self, cmd):
         """Handle commands: ptt, mute, status, power_relay, cat_cmd."""
@@ -351,6 +377,12 @@ class TH9800Plugin(RadioPlugin):
                 output=True, output_device_index=output_idx,
                 frames_per_buffer=chunk)
 
+            # Start non-blocking TX writer thread
+            import collections as _col
+            self._tx_queue = _col.deque(maxlen=16)
+            self._tx_thread = threading.Thread(target=self._tx_writer_loop, daemon=True, name="TH9800-tx")
+            self._tx_thread.start()
+
             # Input stream opened by reader thread — not here
             print(f"  TH-9800: Audio output opened (device {output_idx})")
             return True
@@ -397,6 +429,14 @@ class TH9800Plugin(RadioPlugin):
                 print(f"  [TH9800-RX] Stream opened (restart #{self._stream_restart_count})")
             except Exception as e:
                 print(f"  [TH9800-RX] Failed to open stream: {e} — retrying in 2s")
+                # Reinitialize PyAudio if it died (e.g. after gateway shutdown race)
+                if 'not initialized' in str(e).lower():
+                    try:
+                        import pyaudio as _pa_mod
+                        self._pyaudio = _pa_mod.PyAudio()
+                        print("  [TH9800-RX] PyAudio reinitialized")
+                    except Exception as e2:
+                        print(f"  [TH9800-RX] PyAudio reinit failed: {e2}")
                 time.sleep(2)
                 continue
 

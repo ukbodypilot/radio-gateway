@@ -404,6 +404,13 @@ class WebConfigServer:
             'MUMBLE_SERVER_2_REGISTER_NAME', 'MUMBLE_SERVER_2_ALLOW_HTML',
             'MUMBLE_SERVER_2_OPUS_THRESHOLD', 'MUMBLE_SERVER_2_AUTOSTART',
         ]),
+        ('packet', 'Packet Radio (Direwolf TNC)', [
+            'ENABLE_PACKET', 'PACKET_CALLSIGN', 'PACKET_SSID', 'PACKET_MODEM',
+            'PACKET_REMOTE_TNC', 'PACKET_DIREWOLF_PATH',
+            'PACKET_KISS_PORT', 'PACKET_AGW_PORT',
+            'PACKET_APRS_COMMENT', 'PACKET_APRS_SYMBOL',
+            'PACKET_APRS_BEACON_INTERVAL', 'PACKET_DIGIPEAT',
+        ]),
         ('ptt', 'PTT (Push-to-Talk)', [
             'TX_RADIO', 'PTT_METHOD', 'PTT_RELAY_DEVICE', 'PTT_RELAY_BAUD',
             'PTT_RELEASE_DELAY', 'PTT_ACTIVATION_DELAY',
@@ -1356,9 +1363,7 @@ class WebConfigServer:
             if getattr(gw, 'remote_audio_source', None):
                 sources.append({**{'id': 'remote_audio', 'name': 'Remote Audio [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.remote_audio_source)})
-            if getattr(gw, 'packet_plugin', None):
-                sources.append({**{'id': 'tnc_tx', 'name': 'TNC [TX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': True}, **_src_info(gw.packet_plugin)})
+            # TNC source/sink removed — Direwolf runs on remote endpoint
             # Generic link endpoints (skip D75 — handled above with special ID mapping)
             _covered_ids = set()
             if gw.d75_plugin or any('d75' in n.lower() for n in gw.link_endpoints):
@@ -1400,8 +1405,7 @@ class WebConfigServer:
                     sinks.append({**{'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(_d75_src)})
             if getattr(gw, 'th9800_plugin', None):
                 sinks.append({**{'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.th9800_plugin)})
-            if getattr(gw, 'packet_plugin', None):
-                sinks.append({**{'id': 'tnc_rx', 'name': 'TNC [RX]', 'type': 'Packet', 'enabled': True}, **_src_info(gw.packet_plugin)})
+            # TNC sink removed — Direwolf runs on remote endpoint
             # Generic link endpoint TX sinks (skip D75 — handled above)
             for _ep_name, _ep_src in gw.link_endpoints.items():
                 if _ep_name in _covered_ids:
@@ -1671,8 +1675,6 @@ class WebConfigServer:
             'monitor': getattr(gw, 'web_monitor_source', None),
             'mumble_rx': getattr(gw, 'mumble_source', None),
             'remote_audio': getattr(gw, 'remote_audio_source', None),
-            'tnc_tx': getattr(gw, 'packet_plugin', None),
-            'tnc_rx': getattr(gw, 'packet_plugin', None),
         }
         result = _map.get(id)
         # Fallback to link endpoints for D75 when plugin is None
