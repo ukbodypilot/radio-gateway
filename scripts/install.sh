@@ -54,6 +54,7 @@ if [ "$DISTRO" = "arch" ]; then
         libsndfile \
         ffmpeg \
         opus \
+        alsa-utils \
         git \
         tmux \
         avahi \
@@ -73,6 +74,7 @@ else
         libopus-dev \
         git \
         tmux \
+        alsa-utils \
         avahi-daemon \
         avahi-utils
 fi
@@ -294,6 +296,46 @@ _pip mcp 2>/dev/null \
     && echo "  ✓ mcp installed (MCP server for AI control)" \
     || echo "  ⚠ Could not pip install mcp — gateway_mcp.py will not work (run: pip install mcp)"
 set -e
+
+# sounddevice — CFFI-based audio I/O (used as fallback for direct ALSA access)
+set +e
+_pip sounddevice 2>/dev/null \
+    && echo "  ✓ sounddevice installed" \
+    || echo "  ⚠ Could not pip install sounddevice — not critical, arecord used as primary"
+set -e
+
+# Pat Winlink client — packet radio email (optional)
+if command -v pat &>/dev/null; then
+    echo "  ✓ Pat Winlink client already installed ($(pat version 2>/dev/null | head -1))"
+else
+    echo "  Installing Pat Winlink client..."
+    _PAT_VER="0.19.2"
+    _PAT_ARCH="$(uname -m)"
+    case "$_PAT_ARCH" in
+        x86_64)  _PAT_ARCH="amd64" ;;
+        aarch64) _PAT_ARCH="arm64" ;;
+        armv7l)  _PAT_ARCH="armhf" ;;
+        armv6l)  _PAT_ARCH="armhf" ;;
+    esac
+    _PAT_URL="https://github.com/la5nta/pat/releases/download/v${_PAT_VER}/pat_${_PAT_VER}_linux_${_PAT_ARCH}.tar.gz"
+    if curl -sL "$_PAT_URL" -o /tmp/pat.tar.gz && tar xzf /tmp/pat.tar.gz -C /tmp/; then
+        _PAT_BIN="$(find /tmp -name pat -type f -executable 2>/dev/null | head -1)"
+        if [ -z "$_PAT_BIN" ]; then
+            _PAT_BIN="$(find /tmp/pat_* -name pat -type f 2>/dev/null | head -1)"
+        fi
+        if [ -n "$_PAT_BIN" ]; then
+            sudo cp "$_PAT_BIN" /usr/local/bin/pat
+            sudo chmod +x /usr/local/bin/pat
+            echo "  ✓ Pat v${_PAT_VER} installed to /usr/local/bin/pat"
+        else
+            echo "  ⚠ Pat binary not found in archive"
+        fi
+        rm -f /tmp/pat.tar.gz
+    else
+        echo "  ⚠ Could not download Pat — Winlink email will not work"
+        echo "    Download manually: https://github.com/la5nta/pat/releases"
+    fi
+fi
 
 # faster-whisper — local voice-to-text transcription engine (optional, ~500MB model download on first use)
 set +e
