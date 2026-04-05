@@ -1446,14 +1446,16 @@ class AIOCPlugin(AudioPlugin):
         self._mode = new_mode
 
         if new_mode == 'data':
-            # Close PyAudio input to release AIOC for Direwolf
-            if self._in_stream:
-                try:
-                    self._in_stream.stop_stream()
-                    self._in_stream.close()
-                except Exception:
-                    pass
-                self._in_stream = None
+            # Close BOTH input AND output streams — Direwolf needs exclusive ALSA access
+            for _sa in ('_in_stream', '_out_stream'):
+                _s = getattr(self, _sa, None)
+                if _s:
+                    try:
+                        _s.stop_stream()
+                        _s.close()
+                    except Exception:
+                        pass
+                    setattr(self, _sa, None)
             time.sleep(0.5)
             # Start Direwolf
             ok = self._start_direwolf()
@@ -1489,17 +1491,35 @@ class AIOCPlugin(AudioPlugin):
         if not aioc_dev.startswith('plughw:'):
             aioc_dev = f'plughw:{aioc_dev.replace("hw:", "")}'
 
-        # Generate config
+        # Auto-detect AIOC HID for CM108 PTT (VID 1209 = AIOC)
+        _ptt_line = ''
+        try:
+            import os as _os
+            for hid in sorted(_os.listdir('/sys/class/hidraw')):
+                uevent = f'/sys/class/hidraw/{hid}/device/uevent'
+                if _os.path.exists(uevent):
+                    with open(uevent) as _f:
+                        if '00001209' in _f.read():
+                            _hid_path = f'/dev/{hid}'
+                            _gpio = self._ptt_channel  # AIOC channel maps directly to CM108 GPIO
+                            _ptt_line = f'PTT CM108 {_hid_path} {_gpio}\n'
+                            print(f'  [Link] Direwolf PTT: CM108 {_hid_path} GPIO {_gpio}', flush=True)
+                            break
+        except Exception:
+            pass
+
+        # Generate config — TX audio + PTT + AGW for Winlink connected mode
         conf = (
-            f"ADEVICE {aioc_dev} null\n"
+            f"ADEVICE {aioc_dev} {aioc_dev}\n"
             f"ARATE 48000\n"
             f"ACHANNELS 1\n\n"
             f"CHANNEL 0\n"
             f"MYCALL {self._dw_callsign}\n"
             f"MODEM {self._dw_modem}\n\n"
+            f"{_ptt_line}"
             f"FIX_BITS 1\n\n"
             f"KISSPORT {self._dw_kiss_port}\n"
-            f"AGWPORT 0\n\n"
+            f"AGWPORT 8010\n\n"
             f"DIGIPEAT 0 0 ^WIDE[3-7]-[1-7]$|^TEST$ ^WIDE[12]-[12]$\n"
         )
         try:
