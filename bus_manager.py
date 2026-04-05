@@ -507,6 +507,10 @@ class BusManager:
                 if gw.remote_audio_server.connected:
                     try:
                         gw.remote_audio_server.send_audio(audio)
+                        _ra_ms = (time.monotonic() - _t_sink) * 1000
+                        if _st:
+                            _extra = f'remote_tx {_ra_ms:.1f}ms' if _ra_ms > 5 else ''
+                            _st.record(f'{bus_id}_deliver', 'remote_audio_tx', audio, -1, _extra)
                         if _audio_level > getattr(gw, 'remote_audio_tx_level', 0):
                             gw.remote_audio_tx_level = _audio_level
                         else:
