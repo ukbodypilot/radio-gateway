@@ -83,6 +83,7 @@ class PacketRadioPlugin:
         self._ssid = 0
         self._modem_rate = 1200
         self._remote_tnc = ''           # Remote endpoint IP (required)
+        self._cached_endpoint = None    # Cached endpoint name (avoid repeated getpeername)
         self._kiss_port = 8001
         self._pat_port = 8082
         self._aprs_comment = 'Radio Gateway'
@@ -122,29 +123,39 @@ class PacketRadioPlugin:
               f"modem={self._modem_rate}, endpoint={self._remote_tnc or 'NONE'})")
         return True
 
-    def _send_endpoint_mode(self, mode):
-        """Send mode command to the remote AIOC endpoint via the link server."""
+    def _find_endpoint(self, force=False):
+        """Find the target endpoint name for mode commands.
+        Caches result; pass force=True to re-scan."""
+        if not force and self._cached_endpoint:
+            # Verify still connected
+            if self._gateway and self._cached_endpoint in self._gateway.link_endpoints:
+                return self._cached_endpoint
+            self._cached_endpoint = None
         if not self._gateway or not self._gateway.link_server:
-            return
-        target = None
+            return None
         for name in self._gateway.link_endpoints:
             ep = self._gateway.link_server._endpoints.get(name)
             if ep:
                 try:
                     peer = ep.sock.getpeername()[0]
                     if peer == self._remote_tnc:
-                        target = name
-                        break
+                        self._cached_endpoint = name
+                        return name
                 except Exception:
                     pass
-        if not target:
-            for name in self._gateway.link_endpoints:
-                if 'ftm' in name.lower() or 'aioc' in name.lower():
-                    target = name
-                    break
+        for name in self._gateway.link_endpoints:
+            if 'ftm' in name.lower() or 'aioc' in name.lower():
+                self._cached_endpoint = name
+                return name
+        return None
+
+    def _send_endpoint_mode(self, mode):
+        """Send mode command to the remote AIOC endpoint via the link server.
+        Returns True on success, False on failure."""
+        target = self._find_endpoint(force=True)
         if not target:
             print(f"  [Packet] No endpoint found matching {self._remote_tnc}")
-            return
+            return False
         cmd = {
             'cmd': 'mode', 'mode': mode,
             'callsign': self._callsign, 'ssid': self._ssid,
@@ -153,8 +164,27 @@ class PacketRadioPlugin:
         try:
             self._gateway.link_server.send_command_to(target, cmd)
             print(f"  [Packet] Sent mode={mode} to endpoint '{target}'")
+            return True
         except Exception as e:
             print(f"  [Packet] Failed to send mode to '{target}': {e}")
+            return False
+
+    def get_endpoint_status(self):
+        """Return the actual endpoint mode/direwolf status from link layer."""
+        target = self._find_endpoint()
+        if not target or not self._gateway:
+            return {"endpoint_name": None, "connected": False}
+        st = self._gateway._link_last_status.get(target, {})
+        return {
+            "endpoint_name": target,
+            "connected": True,
+            "endpoint_mode": st.get('mode', 'unknown'),
+            "direwolf_running": st.get('direwolf_running', False),
+            "audio_input": st.get('audio_input', False),
+            "audio_output": st.get('audio_output', False),
+            "hid_connected": st.get('hid_connected', False),
+            "ptt_active": st.get('ptt_active', False),
+        }
 
     def _start_pat(self):
         """Start Pat Winlink client as a subprocess."""
@@ -227,6 +257,10 @@ class PacketRadioPlugin:
             return self._bbs_disconnect()
         elif action == 'bbs_send':
             return self._bbs_send(cmd.get('text', ''))
+        elif action == 'force_audio':
+            ok = self._send_endpoint_mode('audio')
+            return {"ok": ok, "sent": "audio",
+                    "error": None if ok else "failed to reach endpoint"}
         elif action == 'mute':
             self.muted = not self.muted
             return {"ok": True, "muted": self.muted}
@@ -236,6 +270,7 @@ class PacketRadioPlugin:
     def get_status(self):
         """Return current TNC state."""
         positioned = sum(1 for s in self._aprs_stations.values() if s.get('lat') is not None)
+        ep = self.get_endpoint_status()
         return {
             "plugin": self.name,
             "mode": self._mode,
@@ -257,6 +292,7 @@ class PacketRadioPlugin:
             "pat_port": self._pat_port,
             "pat_running": self._pat_proc is not None and self._pat_proc.poll() is None,
             "log_tail": list(self._direwolf_log)[-15:],
+            "endpoint": ep,
         }
 
     # ── Mode switching ────────────────────────────────────────────────
@@ -276,7 +312,9 @@ class PacketRadioPlugin:
 
         if mode == 'idle':
             self._stop_pat()
-            self._send_endpoint_mode('audio')
+            if not self._send_endpoint_mode('audio'):
+                return {"ok": False, "mode": "idle",
+                        "warning": "mode set to idle but failed to send audio command to endpoint"}
             return {"ok": True, "mode": "idle"}
 
         if not self._remote_tnc:
@@ -284,7 +322,9 @@ class PacketRadioPlugin:
             return {"ok": False, "error": "PACKET_REMOTE_TNC not configured"}
 
         # Tell endpoint to switch to data mode (starts Direwolf)
-        self._send_endpoint_mode('data')
+        if not self._send_endpoint_mode('data'):
+            self._mode = 'idle'
+            return {"ok": False, "error": "failed to send data mode command to endpoint"}
         # Connect KISS TCP to remote Direwolf
         threading.Thread(target=self._kiss_connect_loop, daemon=True,
                          name="KISSConnect").start()

@@ -1463,6 +1463,8 @@ def handle_packet_cmd(handler, parent):
             result = pp.execute({'cmd': 'bbs_disconnect'})
         elif action == 'bbs_send':
             result = pp.execute({'cmd': 'bbs_send', 'text': data.get('text', '')})
+        elif action == 'force_audio':
+            result = pp.execute({'cmd': 'force_audio'})
         elif action == 'winlink/compose':
             result = _winlink_compose(data)
         elif action == 'winlink/connect':

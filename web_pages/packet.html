@@ -82,11 +82,23 @@
       </div>
       <span id="st-dw-level" class="pkt-val cyan" style="min-width:3em; text-align:right;">—</span>
     </div>
+    <div class="pkt-row" style="border-top:1px solid var(--t-border); padding-top:8px; margin-top:4px;">
+      <span><span class="pkt-label">Endpoint:</span> <span id="st-ep-name" class="pkt-val">—</span></span>
+      <span><span class="pkt-label">EP Mode:</span> <span id="st-ep-mode" class="pkt-val">—</span></span>
+      <span><span class="pkt-label">DW Proc:</span> <span id="st-ep-dw" class="pkt-val">—</span></span>
+      <span><span class="pkt-label">Audio I/O:</span> <span id="st-ep-audio" class="pkt-val">—</span></span>
+      <span><span class="pkt-label">PTT HID:</span> <span id="st-ep-hid" class="pkt-val">—</span></span>
+    </div>
+    <div id="ep-mismatch" class="pkt-row" style="display:none; background:#5c1a1a; border-radius:4px; padding:8px; align-items:center;">
+      <span style="color:#ff6b6b; flex:1;">Endpoint still in data mode — Direwolf holding AIOC. TX audio blocked.</span>
+      <button class="pkt-btn danger" onclick="forceAudio()">Force Audio Mode</button>
+    </div>
     <div class="pkt-row">
       <button class="pkt-btn" id="btn-aprs" onclick="setMode('aprs')">APRS</button>
       <button class="pkt-btn" id="btn-winlink" onclick="setMode('winlink')">Winlink</button>
       <button class="pkt-btn" id="btn-bbs" onclick="setMode('bbs')">BBS</button>
       <button class="pkt-btn danger" id="btn-stop" onclick="setMode('idle')">Stop</button>
+      <button class="pkt-btn" id="btn-force-audio" onclick="forceAudio()" style="margin-left:auto;">Force Audio</button>
     </div>
   </div>
   <div class="pkt-card">
@@ -237,6 +249,14 @@ function setMode(mode) {
   });
 }
 
+// ── Force audio mode ──
+function forceAudio() {
+  pktPost('force_audio', {}).then(function(d) {
+    if (d.error) alert('Error: ' + d.error);
+    pollStatus();
+  });
+}
+
 // ── Direwolf log toggle ──
 var _dwLogVisible = true;
 function toggleDwLog() {
@@ -283,6 +303,24 @@ function pollStatus() {
         btn.className = 'pkt-btn' + (s.mode === m ? ' active' : '');
       }
     });
+
+    // Endpoint status
+    var ep = s.endpoint || {};
+    document.getElementById('st-ep-name').textContent = ep.endpoint_name || '—';
+    document.getElementById('st-ep-name').className = 'pkt-val ' + (ep.connected ? 'green' : 'red');
+    var epMode = ep.endpoint_mode || 'unknown';
+    document.getElementById('st-ep-mode').textContent = epMode;
+    document.getElementById('st-ep-mode').className = 'pkt-val ' + (epMode === 'audio' ? 'green' : epMode === 'data' ? 'yellow' : 'red');
+    document.getElementById('st-ep-dw').textContent = ep.direwolf_running ? 'running' : 'stopped';
+    document.getElementById('st-ep-dw').className = 'pkt-val ' + (ep.direwolf_running ? 'yellow' : 'green');
+    var aIO = (ep.audio_input ? 'IN' : '--') + '/' + (ep.audio_output ? 'OUT' : '--');
+    document.getElementById('st-ep-audio').textContent = aIO;
+    document.getElementById('st-ep-audio').className = 'pkt-val ' + (ep.audio_input && ep.audio_output ? 'green' : 'red');
+    document.getElementById('st-ep-hid').textContent = ep.hid_connected ? 'yes' : 'no';
+    document.getElementById('st-ep-hid').className = 'pkt-val ' + (ep.hid_connected ? 'green' : 'red');
+    // Mismatch warning: gateway idle but endpoint still in data mode
+    var mismatch = s.mode === 'idle' && ep.connected && epMode === 'data';
+    document.getElementById('ep-mismatch').style.display = mismatch ? 'flex' : 'none';
 
     // Winlink status
     var wlSt = document.getElementById('wl-status');

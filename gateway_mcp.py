@@ -1654,6 +1654,499 @@ def gateway_restart() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tools — D75 Endpoint Management (SSH)
+# ---------------------------------------------------------------------------
+
+def _ssh_cmd(host: str, user: str, password: str, cmd: str, timeout: int = 15) -> str:
+    """Run a command on a remote host via sshpass + SSH."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ['sshpass', '-p', password, 'ssh',
+             '-o', 'StrictHostKeyChecking=no',
+             '-o', 'ConnectTimeout=5',
+             f'{user}@{host}', cmd],
+            capture_output=True, text=True, timeout=timeout)
+        out = (r.stdout.strip() + '\n' + r.stderr.strip()).strip()
+        if r.returncode == 0:
+            return out or 'OK'
+        return f"Exit {r.returncode}: {out}"
+    except subprocess.TimeoutExpired:
+        return f"SSH timeout ({timeout}s)"
+    except FileNotFoundError:
+        return "Error: sshpass not installed"
+    except Exception as e:
+        return f"SSH error: {e}"
+
+
+def _load_endpoint_config() -> dict:
+    """Read endpoint SSH settings from gateway_config.txt."""
+    cfg = {
+        'd75_host': '192.168.2.134', 'd75_user': 'user', 'd75_pass': 'user',
+        'ftm150_host': '192.168.2.121', 'ftm150_user': 'user', 'ftm150_pass': 'user',
+    }
+    cfg_path = os.path.join(os.path.dirname(__file__), 'gateway_config.txt')
+    if os.path.isfile(cfg_path):
+        with open(cfg_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, _, v = line.partition('=')
+                k = k.strip(); v = v.strip()
+                if k == 'D75_ENDPOINT_HOST':
+                    cfg['d75_host'] = v
+                elif k == 'D75_ENDPOINT_USER':
+                    cfg['d75_user'] = v
+                elif k == 'D75_ENDPOINT_PASS':
+                    cfg['d75_pass'] = v
+                elif k == 'FTM150_ENDPOINT_HOST':
+                    cfg['ftm150_host'] = v
+                elif k == 'FTM150_ENDPOINT_USER':
+                    cfg['ftm150_user'] = v
+                elif k == 'FTM150_ENDPOINT_PASS':
+                    cfg['ftm150_pass'] = v
+    return cfg
+
+
+@mcp.tool()
+def endpoint_reboot(endpoint: str = 'd75') -> str:
+    """
+    Reboot a remote endpoint Pi via SSH.
+
+    Args:
+        endpoint: Which endpoint — 'd75' (192.168.2.134) or 'ftm150' (192.168.2.121).
+    """
+    endpoint = endpoint.lower().strip()
+    ep = _load_endpoint_config()
+    if endpoint == 'd75':
+        host, user, pw = ep['d75_host'], ep['d75_user'], ep['d75_pass']
+    elif endpoint in ('ftm150', 'ftm-150'):
+        host, user, pw = ep['ftm150_host'], ep['ftm150_user'], ep['ftm150_pass']
+    else:
+        return f"Error: unknown endpoint '{endpoint}' — use 'd75' or 'ftm150'"
+    result = _ssh_cmd(host, user, pw,
+                      f'echo {pw} | sudo -S reboot', timeout=10)
+    return f"Reboot sent to {endpoint} ({host}): {result}"
+
+
+@mcp.tool()
+def endpoint_ssh(
+    command: str,
+    endpoint: str = 'd75',
+) -> str:
+    """
+    Run a shell command on a remote endpoint Pi via SSH.
+
+    Args:
+        command:  Shell command to execute (e.g. 'uptime', 'systemctl status d75-cat').
+        endpoint: Which endpoint — 'd75' or 'ftm150' (default 'd75').
+    """
+    endpoint = endpoint.lower().strip()
+    ep = _load_endpoint_config()
+    if endpoint == 'd75':
+        host, user, pw = ep['d75_host'], ep['d75_user'], ep['d75_pass']
+    elif endpoint in ('ftm150', 'ftm-150'):
+        host, user, pw = ep['ftm150_host'], ep['ftm150_user'], ep['ftm150_pass']
+    else:
+        return f"Error: unknown endpoint '{endpoint}' — use 'd75' or 'ftm150'"
+    return _ssh_cmd(host, user, pw, command)
+
+
+@mcp.tool()
+def endpoint_ping(endpoint: str = 'd75') -> str:
+    """
+    Ping a remote endpoint to check if it's reachable.
+
+    Args:
+        endpoint: Which endpoint — 'd75' or 'ftm150'.
+    """
+    import subprocess
+    endpoint = endpoint.lower().strip()
+    ep = _load_endpoint_config()
+    if endpoint == 'd75':
+        host = ep['d75_host']
+    elif endpoint in ('ftm150', 'ftm-150'):
+        host = ep['ftm150_host']
+    else:
+        return f"Error: unknown endpoint '{endpoint}'"
+    try:
+        r = subprocess.run(['ping', '-c', '3', '-W', '2', host],
+                          capture_output=True, text=True, timeout=15)
+        return r.stdout.strip() if r.returncode == 0 else f"Unreachable: {r.stdout.strip()}"
+    except Exception as e:
+        return f"Ping error: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Tools — Packet Radio
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def packet_status() -> str:
+    """
+    Get packet radio (Direwolf TNC) status: mode, KISS connection,
+    packet count, APRS stations heard, BBS state, and Pat Winlink status.
+    """
+    return json.dumps(_get('/packet/status'), indent=2)
+
+
+@mcp.tool()
+def packet_mode(mode: str) -> str:
+    """
+    Switch the packet radio TNC mode. This tells the remote endpoint to
+    start/stop Direwolf and switches between audio and data mode.
+
+    Args:
+        mode: One of 'idle' (audio mode, no TNC), 'aprs' (APRS decode/beacon),
+              'winlink' (Winlink email via Pat), 'bbs' (BBS connect mode).
+    """
+    mode = mode.lower().strip()
+    if mode not in ('idle', 'aprs', 'winlink', 'bbs'):
+        return f"Error: mode must be idle, aprs, winlink, or bbs"
+    result = _post('/packet/set_mode', {'cmd': 'set_mode', 'mode': mode})
+    if result.get('ok'):
+        return f"Packet mode set to: {mode}"
+    return f"Failed: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def packet_aprs_stations() -> str:
+    """
+    List APRS stations heard by the packet radio TNC.
+    Returns callsign, position, symbol, comment, and last-heard time.
+    """
+    data = _get('/packet/aprs_stations')
+    stations = data.get('stations', {})
+    if not stations:
+        return "No APRS stations heard (is packet mode set to 'aprs'?)"
+    lines = [f"{len(stations)} stations heard:"]
+    for call, info in sorted(stations.items(), key=lambda x: x[1].get('last_heard', 0), reverse=True):
+        lat = info.get('lat', '')
+        lon = info.get('lon', '')
+        pos = f" ({lat:.4f}, {lon:.4f})" if lat and lon else ""
+        comment = info.get('comment', '')
+        lines.append(f"  {call}{pos} — {comment[:60]}")
+    return '\n'.join(lines)
+
+
+@mcp.tool()
+def packet_send_aprs(to: str, message: str) -> str:
+    """
+    Send an APRS message to a station.
+
+    Args:
+        to:      Destination callsign (e.g. 'N6ABC-7').
+        message: Message text (max 67 characters for APRS).
+    """
+    if not to.strip():
+        return "Error: destination callsign required"
+    if not message.strip():
+        return "Error: message required"
+    result = _post('/packet/aprs_send', {
+        'cmd': 'aprs_send', 'to': to.strip().upper(), 'message': message[:67]
+    })
+    if result.get('ok'):
+        return f"APRS message sent to {to}: {message[:67]}"
+    return f"Failed: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def packet_log(lines: int = 30) -> str:
+    """
+    Get recent Direwolf TNC log output.
+
+    Args:
+        lines: Number of recent lines to return (default 30).
+    """
+    data = _get('/packet/log')
+    log_lines = data.get('lines', [])
+    if not log_lines:
+        return "No TNC log lines (packet mode may be idle)"
+    return '\n'.join(log_lines[-lines:])
+
+
+@mcp.tool()
+def packet_decoded() -> str:
+    """
+    Get recently decoded packets from the TNC.
+    Returns raw decoded APRS/AX.25 frames.
+    """
+    data = _get('/packet/packets')
+    packets = data.get('packets', [])
+    if not packets:
+        return "No decoded packets"
+    lines = [f"{len(packets)} decoded packets (newest last):"]
+    for p in packets[-20:]:
+        if isinstance(p, dict):
+            lines.append(f"  {p.get('from', '?')}>{p.get('to', '?')}: {p.get('info', '')[:80]}")
+        else:
+            lines.append(f"  {str(p)[:100]}")
+    if len(packets) > 20:
+        lines.append(f"  ... {len(packets) - 20} older packets not shown")
+    return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Tools — Winlink Email
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def winlink_messages(folder: str = 'in') -> str:
+    """
+    List Winlink email messages.
+
+    Args:
+        folder: Mailbox folder — 'in' (inbox), 'out' (outbox/drafts),
+                'sent' (sent messages). Default 'in'.
+    """
+    folder = folder.lower().strip()
+    if folder not in ('in', 'out', 'sent'):
+        return "Error: folder must be 'in', 'out', or 'sent'"
+    data = _get(f'/packet/winlink/messages?folder={folder}')
+    messages = data.get('messages', [])
+    if not messages:
+        return f"No messages in {folder}"
+    lines = [f"{len(messages)} messages in '{folder}':"]
+    for m in messages:
+        lines.append(
+            f"  {m.get('date', '?'):16s}  {m.get('from', '?'):12s} → {m.get('to', '?'):12s}  "
+            f"{m.get('subject', '(no subject)')[:50]}"
+        )
+    return '\n'.join(lines)
+
+
+@mcp.tool()
+def winlink_read(message_id: str, folder: str = 'in') -> str:
+    """
+    Read a specific Winlink email message.
+
+    Args:
+        message_id: Message ID (from winlink_messages output).
+        folder:     Folder the message is in — 'in', 'out', 'sent'.
+    """
+    data = _get(f'/packet/winlink/read?folder={folder}&id={message_id}')
+    if data.get('error'):
+        return f"Error: {data['error']}"
+    msg = data.get('message', data)
+    lines = [
+        f"From:    {msg.get('from', '?')}",
+        f"To:      {msg.get('to', '?')}",
+        f"Date:    {msg.get('date', '?')}",
+        f"Subject: {msg.get('subject', '(none)')}",
+        f"",
+        msg.get('body', '(empty)'),
+    ]
+    return '\n'.join(lines)
+
+
+@mcp.tool()
+def winlink_compose(to: str, subject: str, body: str) -> str:
+    """
+    Compose and queue a Winlink email message. The message is saved to the
+    outbox and will be sent on the next winlink_connect sync.
+
+    Args:
+        to:      Recipient email or callsign (e.g. 'user@example.com' or 'N6ABC').
+        subject: Email subject line.
+        body:    Email body text.
+    """
+    if not to.strip() or not subject.strip():
+        return "Error: 'to' and 'subject' are required"
+    result = _post('/packet/winlink/compose', {
+        'to': to.strip(),
+        'subject': subject.strip(),
+        'body': body,
+    })
+    if result.get('ok'):
+        return f"Message queued to {to}: \"{subject}\" — sync with winlink_connect to send"
+    return f"Failed: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def winlink_connect(gateway_callsign: str = '') -> str:
+    """
+    Connect to a Winlink gateway via packet radio to send/receive email.
+    Uses Pat CLI with AGW protocol through the remote Direwolf TNC.
+
+    Args:
+        gateway_callsign: Winlink gateway callsign to connect to
+                          (e.g. 'KM6RTE-12'). Leave empty to use the
+                          last-used or nearest gateway.
+    """
+    payload = {}
+    if gateway_callsign.strip():
+        payload['gateway'] = gateway_callsign.strip().upper()
+    result = _post('/packet/winlink/connect', payload, timeout=30)
+    if result.get('ok'):
+        return f"Winlink connect initiated" + (f" to {gateway_callsign}" if gateway_callsign else "")
+    return f"Failed: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def winlink_gateways() -> str:
+    """
+    List nearby Winlink packet radio gateways from Pat's cached RMS list.
+    Shows callsign, frequency, distance, and grid square.
+    """
+    data = _get('/packet/winlink/gateways')
+    if data.get('error'):
+        return f"Error: {data['error']}"
+    gws = data.get('gateways', [])
+    if not gws:
+        return "No Winlink gateways found"
+    lines = [f"{len(gws)} nearby Winlink packet gateways:"]
+    for g in gws[:20]:
+        lines.append(
+            f"  {g.get('callsign', '?'):12s} {g.get('frequency', '?'):>10s} MHz  "
+            f"{g.get('distance', '?'):>5s} km  {g.get('grid', '')}"
+        )
+    return '\n'.join(lines)
+
+
+@mcp.tool()
+def winlink_log() -> str:
+    """
+    Get the Winlink connection log from the most recent Pat sync session.
+    Shows connect progress, message transfer, and any errors.
+    """
+    data = _get('/packet/winlink/log')
+    log = data.get('log', '')
+    if not log:
+        return "No Winlink connection log available"
+    return log
+
+
+# ---------------------------------------------------------------------------
+# Tools — Stream Trace (Audio Quality Diagnostics)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def stream_trace_toggle() -> str:
+    """
+    Toggle the per-stream audio chunk trace on or off. When active, records
+    every audio handoff with timing, RMS, queue depth, and anomalies.
+    When stopped, dumps analysis to tools/stream_trace.txt.
+    Separate from the main audio trace (audio_trace_toggle).
+    """
+    url = GW_BASE_URL + '/tracecmd'
+    body = b'type=stream'
+    headers = {**_auth_headers(), 'Content-Type': 'application/x-www-form-urlencoded'}
+    req = urllib.request.Request(url, data=body, headers=headers, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = json.loads(resp.read())
+    except Exception as e:
+        return f"Error: {e}"
+    active = result.get('active', False)
+    return f"Stream trace {'STARTED' if active else 'STOPPED and dumped to tools/stream_trace.txt'}"
+
+
+@mcp.tool()
+def stream_trace_read(lines: int = 100) -> str:
+    """
+    Read the most recent stream trace dump (tools/stream_trace.txt).
+    Shows per-stream timing statistics, interval analysis, and anomalies.
+
+    Args:
+        lines: Number of lines to return from the trace file (default 100).
+    """
+    trace_path = os.path.join(os.path.dirname(__file__), 'tools', 'stream_trace.txt')
+    if not os.path.isfile(trace_path):
+        return "No stream trace file found — run stream_trace_toggle to capture one"
+    try:
+        with open(trace_path) as f:
+            all_lines = f.readlines()
+        if not all_lines:
+            return "Stream trace file is empty"
+        # Return first N lines (summary is at the top)
+        return ''.join(all_lines[:lines])
+    except Exception as e:
+        return f"Error reading trace: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Tools — Automation Scheme Management
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def automation_scheme_read() -> str:
+    """
+    Read the current automation scheme file. Shows all configured tasks
+    with their schedules, actions, and options. The scheme file uses a
+    simple text format: one task per line with schedule, action, and options.
+    """
+    # Find scheme file path from config
+    cfg_path = os.path.join(os.path.dirname(__file__), 'gateway_config.txt')
+    scheme_file = 'automation_scheme.txt'
+    if os.path.isfile(cfg_path):
+        with open(cfg_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('AUTOMATION_SCHEME_FILE'):
+                    _, _, v = line.partition('=')
+                    v = v.strip()
+                    if v:
+                        scheme_file = v
+                    break
+    if not os.path.isabs(scheme_file):
+        scheme_file = os.path.join(os.path.dirname(__file__), scheme_file)
+    if not os.path.isfile(scheme_file):
+        return f"Scheme file not found: {scheme_file}"
+    try:
+        with open(scheme_file) as f:
+            content = f.read()
+        return f"Scheme file: {scheme_file}\n{'='*60}\n{content}"
+    except Exception as e:
+        return f"Error reading scheme: {e}"
+
+
+@mcp.tool()
+def automation_scheme_edit(content: str) -> str:
+    """
+    Replace the automation scheme file with new content, then reload.
+    Use automation_scheme_read first to see the current scheme.
+
+    The scheme format is one task per line:
+      <name> <schedule> <action> [options...]
+
+    Schedule types: every <duration>, at <HH:MM>, cron <expr>
+    Actions: tune, record, announce, scan, beacon, sleep
+
+    Example:
+      weather  every 30m  announce  prompt="current weather" voice=1
+      scan_2m  every 1h   scan      band=2m duration=60s
+
+    Args:
+        content: The complete new scheme file content.
+    """
+    cfg_path = os.path.join(os.path.dirname(__file__), 'gateway_config.txt')
+    scheme_file = 'automation_scheme.txt'
+    if os.path.isfile(cfg_path):
+        with open(cfg_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('AUTOMATION_SCHEME_FILE'):
+                    _, _, v = line.partition('=')
+                    v = v.strip()
+                    if v:
+                        scheme_file = v
+                    break
+    if not os.path.isabs(scheme_file):
+        scheme_file = os.path.join(os.path.dirname(__file__), scheme_file)
+    try:
+        with open(scheme_file, 'w') as f:
+            f.write(content)
+    except Exception as e:
+        return f"Error writing scheme: {e}"
+    # Reload via gateway API
+    result = _post('/automationcmd', {'cmd': 'reload'})
+    if result.get('ok'):
+        return f"Scheme saved and reloaded: {result.get('tasks', 0)} tasks"
+    return f"Scheme saved to {scheme_file} but reload failed: {result.get('error', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

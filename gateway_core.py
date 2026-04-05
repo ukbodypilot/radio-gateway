@@ -3134,6 +3134,9 @@ class RadioGateway:
                     'playing': v.get('playing', False),
                 }
 
+        # Pre-scan for D75 link endpoint (avoid repeated scans in dict below)
+        _d75_link = next((src for n, src in self.link_endpoints.items() if 'd75' in n.lower()), None)
+
         return {
             'uptime': uptime_str,
             'mumble': mumble_ok,
@@ -3188,11 +3191,11 @@ class RadioGateway:
             'ms1_state': self.mumble_server_1.state if self.mumble_server_1 else None,
             'ms2_state': self.mumble_server_2.state if self.mumble_server_2 else None,
             'cat_enabled': bool(self.cat_client) or getattr(self.config, 'ENABLE_CAT_CONTROL', False),
-            'd75_enabled': bool(self.d75_plugin) or getattr(self.config, 'ENABLE_D75', False) or any('d75' in n.lower() for n in self.link_endpoints.keys()),
-            'd75_connected': bool(self.d75_plugin and getattr(self.d75_plugin, '_serial_connected', False)) or any('d75' in n.lower() for n in self.link_endpoints.keys()),
-            'd75_audio_connected': bool(self.d75_plugin and self.d75_plugin.server_connected) or any('d75' in n.lower() for n in self.link_endpoints.keys()),
-            'd75_mode': 'link_endpoint' if any('d75' in n.lower() for n in self.link_endpoints.keys()) else str(getattr(self.config, 'D75_CONNECTION', 'bluetooth')).lower().strip(),
-            'd75_level': self.d75_plugin.audio_level if self.d75_plugin else next((src.audio_level for n, src in self.link_endpoints.items() if 'd75' in n.lower()), 0),
+            'd75_enabled': bool(self.d75_plugin) or getattr(self.config, 'ENABLE_D75', False) or bool(_d75_link),
+            'd75_connected': bool(self.d75_plugin and getattr(self.d75_plugin, '_serial_connected', False)) or bool(_d75_link),
+            'd75_audio_connected': bool(self.d75_plugin and self.d75_plugin.server_connected) or bool(_d75_link),
+            'd75_mode': 'link_endpoint' if _d75_link else str(getattr(self.config, 'D75_CONNECTION', 'bluetooth')).lower().strip(),
+            'd75_level': self.d75_plugin.audio_level if self.d75_plugin else (_d75_link.audio_level if _d75_link else 0),
             'd75_muted': getattr(self, 'd75_muted', False),
             'kv4p_enabled': bool(self.kv4p_plugin),
             'kv4p_level': self.kv4p_plugin.audio_level if self.kv4p_plugin else 0,
@@ -3208,8 +3211,8 @@ class RadioGateway:
                 {
                     'name': name,
                     'connected': True,
-                    'plugin': (self.link_server.get_endpoint_info(name) or {}).get('plugin', '') if self.link_server else '',
-                    'capabilities': (self.link_server.get_endpoint_info(name) or {}).get('capabilities', {}) if self.link_server else {},
+                    'plugin': _ep_info.get('plugin', ''),
+                    'capabilities': _ep_info.get('capabilities', {}),
                     'level': src.audio_level,
                     'rx_muted': src.muted,
                     'tx_muted': self.link_endpoint_settings.get(name, {}).get('tx_muted', False),
@@ -3218,6 +3221,7 @@ class RadioGateway:
                     'endpoint_status': self._link_last_status.get(name, {}),
                 }
                 for name, src in list(self.link_endpoints.items())
+                for _ep_info in [(self.link_server.get_endpoint_info(name) or {}) if self.link_server else {}]
             ],
             'files': file_slots,
             'playback_enabled': bool(self.playback_source),
