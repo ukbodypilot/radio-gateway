@@ -18,7 +18,6 @@ v2.0 is a full architectural rewrite of the audio engine:
 - **Direct Icecast streaming** -- internal ffmpeg pipes directly to Icecast. No DarkIce, no ALSA loopback, no external processes.
 - **Mumble as routable source/sink** -- Mumble RX and Mumble TX appear as nodes in the routing page.
 - **MCP routing tools** -- AI can create busses, wire connections, mute sinks, and read levels programmatically.
-- **~5000 lines of dead code removed** -- old console UI, terminal status bar, keyboard handler, legacy mixer, and unused generator methods all gone.
 
 ## Screenshots
 
