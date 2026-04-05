@@ -236,7 +236,7 @@ class _TunerCapture:
 
         self._sub_buffer_after = self._chunk_queue.qsize() * self._chunk_bytes
 
-        # Level metering
+        # Level metering + noise gate
         if len(arr) > 0:
             farr = arr.astype(np.float32)
             rms = float(np.sqrt(np.mean(farr * farr)))
@@ -244,6 +244,7 @@ class _TunerCapture:
                 db = 20.0 * _math_mod.log10(rms / 32767.0)
                 raw_level = max(0, min(100, (db + 60) * (100 / 60)))
             else:
+                db = -100.0
                 raw_level = 0
 
             display_gain_key = 'SDR2_DISPLAY_GAIN' if '2' in self.name else 'SDR_DISPLAY_GAIN'
@@ -348,7 +349,7 @@ class SDRPlugin(RadioPlugin):
         'dab_notch': (bool, False),
         'iq_correction': (bool, True),
         'external_ref': (bool, False),
-        'continuous': (bool, True),
+        'continuous': (bool, False),
         # SDR2 (Tuner 2)
         'frequency2': (float, 462.550),
         'modulation2': (str, 'nfm'),
@@ -364,7 +365,7 @@ class SDRPlugin(RadioPlugin):
         'notch2': (float, 0.0),
         'notch_q2': (float, 10.0),
         'channel_bw2': (float, 0.0),
-        'continuous2': (bool, True),
+        'continuous2': (bool, False),
     }
 
     def __init__(self):
@@ -912,7 +913,7 @@ devices:
           type = "pulse";
           stream_name = "SDR {self.frequency:.3f} MHz";
           sink = "sdr_capture";
-          continuous = {'true' if self.continuous else 'false'};
+          continuous = false;
         }}
       );
     }}
@@ -975,7 +976,7 @@ devices:
           type = "pulse";
           stream_name = "SDR2 {self.frequency2:.3f} MHz";
           sink = "sdr_capture2";
-          continuous = {'true' if self.continuous2 else 'false'};
+          continuous = false;
         }}
       );
     }}

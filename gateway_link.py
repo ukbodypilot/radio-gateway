@@ -1446,7 +1446,8 @@ class AIOCPlugin(AudioPlugin):
         self._mode = new_mode
 
         if new_mode == 'data':
-            # Close BOTH input AND output streams — Direwolf needs exclusive ALSA access
+            # Close streams AND terminate PyAudio — Direwolf needs exclusive ALSA access.
+            # Just closing streams isn't enough; PyAudio holds ALSA handles until terminated.
             for _sa in ('_in_stream', '_out_stream'):
                 _s = getattr(self, _sa, None)
                 if _s:
@@ -1456,7 +1457,13 @@ class AIOCPlugin(AudioPlugin):
                     except Exception:
                         pass
                     setattr(self, _sa, None)
-            time.sleep(0.5)
+            if self._pa:
+                try:
+                    self._pa.terminate()
+                except Exception:
+                    pass
+                self._pa = None
+            time.sleep(1.0)
             # Start Direwolf
             ok = self._start_direwolf()
             if not ok:
