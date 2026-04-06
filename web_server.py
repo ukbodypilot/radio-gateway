@@ -19,7 +19,7 @@ import math as _math_mod
 import re
 import numpy as np
 
-from audio_sources import generate_cw_pcm
+from audio_sources import generate_cw_pcm, AudioProcessor
 from smart_announce import SmartAnnouncementManager
 from cat_client import RadioCATClient
 
@@ -1570,8 +1570,26 @@ class WebConfigServer:
                         bus_flags = flags.setdefault(bus_id, {'pcm': False, 'mp3': False, 'vad': False})
                         bus_flags[filt] = proc[filt]
                     bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
-                    if bm and bus_id in bm._bus_config:
-                        bm._bus_config[bus_id][filt] = proc[filt]
+                    if bm:
+                        if bus_id in bm._bus_config:
+                            bm._bus_config[bus_id][filt] = proc[filt]
+                        # Update the live AudioProcessor (create if needed)
+                        if filt in ('gate', 'hpf', 'lpf', 'notch'):
+                            _bp = bm._bus_processors.get(bus_id)
+                            if not _bp:
+                                _bp = AudioProcessor(f"bus_{bus_id}", self.gateway.config)
+                                bm._bus_processors[bus_id] = _bp
+                            setattr(_bp, 'enable_noise_gate' if filt == 'gate' else f'enable_{filt}', proc[filt])
+                    # Primary listen bus: update gateway's radio_processor
+                    gw = self.gateway
+                    if gw and filt in ('gate', 'hpf', 'lpf', 'notch'):
+                        _listen_id = getattr(gw, '_listen_bus_id', None)
+                        if bus_id == _listen_id:
+                            _rp = getattr(gw, '_listen_bus_processor', None)
+                            if not _rp:
+                                _rp = AudioProcessor(f"bus_{bus_id}", gw.config)
+                                gw._listen_bus_processor = _rp
+                            setattr(_rp, 'enable_noise_gate' if filt == 'gate' else f'enable_{filt}', proc[filt])
                     return {'ok': True, 'state': proc[filt]}
             return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
@@ -1629,6 +1647,14 @@ class WebConfigServer:
                     settings = _gw.link_endpoint_settings.setdefault(_ep_name, {})
                     settings[_key] = value
                     _gw._save_link_settings()
+                return {'ok': True, 'gain': value}
+            # Passive sinks (mumble, broadcastify, speaker, recording, etc.)
+            _passive_sinks = ('mumble', 'broadcastify', 'speaker', 'recording',
+                              'transcription', 'remote_audio_tx')
+            if target_id in _passive_sinks and self.gateway:
+                if not hasattr(self.gateway, '_sink_gains'):
+                    self.gateway._sink_gains = {}
+                self.gateway._sink_gains[target_id] = value / 100.0
                 return {'ok': True, 'gain': value}
             return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
 

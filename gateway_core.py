@@ -2392,6 +2392,10 @@ class RadioGateway:
                     # Early sink delivery — before VAD/signal gates so monitoring
                     # sinks always receive audio (SDR scanner feeds etc.)
                     _early_audio = data if data is not None else sdr_only_audio
+                    # Apply listen bus processing (gate/HPF/LPF/notch from routing UI)
+                    _lbp = getattr(self, '_listen_bus_processor', None)
+                    if _lbp and _early_audio is not None:
+                        _early_audio = _lbp.process(_early_audio)
                     # Suppress all sink delivery when primary listen bus is muted
                     if getattr(self, '_listen_bus_muted', False):
                         _early_audio = None
@@ -2479,7 +2483,7 @@ class RadioGateway:
                         # Push listen bus + BusManager PCM mixed to WebSocket.
                         _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
                         _listen_pcm_on = _listen_flags.get('pcm', False) and not getattr(self, '_listen_bus_muted', False)
-                        _ws_pcm = data if (_listen_pcm_on and data is not None) else None
+                        _ws_pcm = _early_audio if (_listen_pcm_on and _early_audio is not None) else None
                         if _bm_pcm is not None:
                             from audio_bus import mix_audio_streams
                             _ws_pcm = mix_audio_streams(_ws_pcm, _bm_pcm) if _ws_pcm is not None else _bm_pcm
@@ -3499,6 +3503,14 @@ class RadioGateway:
             self._bus_sinks = self.bus_manager.get_bus_sinks()
             self._listen_bus_id = self.bus_manager.get_listen_bus_id()
             self._listen_bus_muted = self.bus_manager.is_bus_muted(self._listen_bus_id)
+            # Initialize listen bus processor from saved processing config
+            _lbp_cfg = self.bus_manager.get_bus_processing(self._listen_bus_id)
+            if _lbp_cfg and any(_lbp_cfg.get(k) for k in ('gate', 'hpf', 'lpf', 'notch')):
+                self._listen_bus_processor = AudioProcessor(f"bus_{self._listen_bus_id}", self.config)
+                self._listen_bus_processor.enable_noise_gate = _lbp_cfg.get('gate', False)
+                self._listen_bus_processor.enable_hpf = _lbp_cfg.get('hpf', False)
+                self._listen_bus_processor.enable_lpf = _lbp_cfg.get('lpf', False)
+                self._listen_bus_processor.enable_notch = _lbp_cfg.get('notch', False)
             # Reconcile mixer sources with routing config now that bus_manager exists
             self.sync_mixer_sources()
         except Exception as e:

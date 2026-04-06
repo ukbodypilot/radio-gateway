@@ -23,8 +23,20 @@
   #shell-bar a.active { font-weight: bold; border-bottom: 2px solid var(--t-accent); }
   #shell-bar a.nav-disabled { color: #555; cursor: default; pointer-events: none; text-decoration: none; }
   .shell-nav { display: flex; flex-wrap: wrap; gap: 0; align-items: center; }
-  .shell-nav a { padding: 3px 10px; }
-  .shell-nav a + a { border-left: 1px solid #444; }
+  .shell-nav > a { padding: 3px 10px; }
+  .shell-nav > a + a, .shell-nav > a + .nav-group, .shell-nav > .nav-group + a, .shell-nav > .nav-group + .nav-group { border-left: 1px solid #444; }
+  .nav-group { position: relative; }
+  .nav-group > .nav-label { padding: 3px 10px; color: #888; font-size: 0.8em; cursor: pointer; user-select: none; }
+  .nav-group > .nav-label:hover { color: var(--t-accent); }
+  .nav-group > .nav-label::after { content: ' \25BE'; font-size: 0.7em; }
+  .nav-group.open > .nav-label { color: var(--t-accent); }
+  .nav-drop { display: none; position: absolute; top: 100%; left: 0; background: var(--t-panel);
+    border: 1px solid var(--t-border); border-radius: 0 0 4px 4px; min-width: 130px; z-index: 200;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4); padding: 2px 0; }
+  .nav-group.open > .nav-drop { display: block; }
+  .nav-drop a { display: block; padding: 5px 14px; border-left: none !important; white-space: nowrap; }
+  .nav-drop a:hover { background: var(--t-btn-hover); }
+  .nav-drop a.active { background: var(--t-btn-active); }
   .shell-pcm { display: inline-flex; gap: 4px; align-items: center; padding-left: 6px; border-left: 1px solid #444; margin-left: 2px; }
   .shell-pcm button {
     background: var(--t-btn); border: 1px solid var(--t-btn-border); color: #e0e0e0;
@@ -60,7 +72,28 @@
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><a href="/routing" target="content" onclick="setActive(this)">Routing</a><a href="/controls" target="content" onclick="setActive(this)">Controls</a><a href="/radio" target="content" onclick="setActive(this)" id="nav-radio">TH-9800</a><a href="/d75" target="content" onclick="setActive(this)" id="nav-d75">TH-D75</a><a href="/kv4p" target="content" onclick="setActive(this)" id="nav-kv4p">KV4P</a><a href="/sdr" target="content" onclick="setActive(this)" id="nav-sdr">SDR</a><a href="/gps" target="content" onclick="setActive(this)" id="nav-gps">GPS</a><a href="/repeaters" target="content" onclick="setActive(this)" id="nav-repeaters">Repeaters</a><a href="/aircraft" target="content" onclick="setActive(this)" id="nav-adsb">ADS-B</a><a href="/telegram" target="content" onclick="setActive(this)" id="nav-telegram">Telegram</a><a href="/monitor" target="content" onclick="setActive(this)">Monitor</a><a href="/packet" target="content" onclick="setActive(this)" id="nav-packet">Packet</a><a href="/recordings" target="content" onclick="setActive(this)">Recordings</a><a href="/transcribe" target="content" onclick="setActive(this)">Transcribe</a><a href="/config" target="content" onclick="setActive(this)">Config</a><a href="/logs" target="content" onclick="setActive(this)">Logs</a><a href="/voice" target="content" onclick="setActive(this)">Voice</a>
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Audio</span><div class="nav-drop">
+      <a href="/routing" target="content" onclick="setActive(this)">Routing</a>
+      <a href="/controls" target="content" onclick="setActive(this)">Controls</a>
+      <a href="/monitor" target="content" onclick="setActive(this)">Monitor</a>
+      <a href="/recordings" target="content" onclick="setActive(this)">Recordings</a>
+      <a href="/transcribe" target="content" onclick="setActive(this)">Transcribe</a>
+      <a href="/voice" target="content" onclick="setActive(this)">Voice</a>
+    </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Radios</span><div class="nav-drop">
+      <a href="/radio" target="content" onclick="setActive(this)" id="nav-radio">TH-9800</a>
+      <a href="/d75" target="content" onclick="setActive(this)" id="nav-d75">TH-D75</a>
+      <a href="/kv4p" target="content" onclick="setActive(this)" id="nav-kv4p">KV4P</a>
+      <a href="/sdr" target="content" onclick="setActive(this)" id="nav-sdr">SDR</a>
+    </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Data</span><div class="nav-drop">
+      <a href="/gps" target="content" onclick="setActive(this)" id="nav-gps">GPS</a>
+      <a href="/repeaters" target="content" onclick="setActive(this)" id="nav-repeaters">Repeaters</a>
+      <a href="/aircraft" target="content" onclick="setActive(this)" id="nav-adsb">ADS-B</a>
+      <a href="/telegram" target="content" onclick="setActive(this)" id="nav-telegram">Telegram</a>
+      <a href="/packet" target="content" onclick="setActive(this)" id="nav-packet">Packet</a>
+    </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">System</span><div class="nav-drop">
+      <a href="/config" target="content" onclick="setActive(this)">Config</a>
+      <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
+    </div></div>
     <span class="shell-pcm">
       <button id="play-btn" onclick="toggleStream()" style="min-width:52px; text-align:center;">&#9654; MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
@@ -86,7 +119,22 @@ var _T = {accent:'#00d4ff',btnBorder:'#1b3a5c'};
 function setActive(el) {
   document.querySelectorAll('.shell-nav a').forEach(function(a){ a.classList.remove('active'); });
   el.classList.add('active');
+  // Close all dropdowns after clicking a link
+  document.querySelectorAll('.nav-group').forEach(function(g){ g.classList.remove('open'); });
 }
+function toggleGroup(g) {
+  // If the click was on an <a> inside the dropdown, don't toggle
+  if (event && event.target.tagName === 'A') return;
+  var wasOpen = g.classList.contains('open');
+  document.querySelectorAll('.nav-group').forEach(function(x){ x.classList.remove('open'); });
+  if (!wasOpen) g.classList.add('open');
+}
+// Close dropdowns when clicking outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.nav-group')) {
+    document.querySelectorAll('.nav-group').forEach(function(g){ g.classList.remove('open'); });
+  }
+});
 function shellCmd(key) {
   fetch('/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:key})});
 }
@@ -157,6 +205,11 @@ document.getElementById('shell-frame').addEventListener('load', function() {
     var path = this.contentWindow.location.pathname;
     document.querySelectorAll('.shell-nav a').forEach(function(a) {
       a.classList.toggle('active', a.getAttribute('href') === path);
+    });
+    // Highlight parent group label when child is active
+    document.querySelectorAll('.nav-group').forEach(function(g) {
+      var hasActive = g.querySelector('a.active');
+      g.querySelector('.nav-label').style.color = hasActive ? 'var(--t-accent)' : '';
     });
   } catch(e) {}
 });

@@ -128,6 +128,18 @@ class BusManager:
         """Check if a bus is muted."""
         return self._bus_config.get(bus_id, {}).get('muted', False)
 
+    def get_bus_processing(self, bus_id):
+        """Return processing config dict for a bus from the routing JSON."""
+        try:
+            with open(self._config_path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+        for bus_cfg in data.get('busses', []):
+            if bus_cfg.get('id') == bus_id:
+                return bus_cfg.get('processing', {})
+        return {}
+
     def get_bus_stream_flags(self):
         """Return per-bus stream flags from routing config.
 
@@ -430,17 +442,31 @@ class BusManager:
         _st = getattr(gw, '_stream_trace', None)
 
         _muted_sinks = getattr(gw, '_muted_sinks', set())
+        _sink_gains = getattr(gw, '_sink_gains', {})
         _audio_level = None  # cached: all sinks get same processed audio
+
+        # Apply bus processing ONCE (IIR filters are stateful — must not run per-sink).
+        _proc = self._bus_processors.get(bus_id)
+        _processed_audio = None
+        if _proc and bus_output.mixed_audio is not None:
+            _processed_audio = _proc.process(bus_output.mixed_audio)
+            # Replace per-sink audio refs (most busses send same mixed audio to all sinks)
+            for sink_id in list(bus_output.audio):
+                if bus_output.audio[sink_id] is not None:
+                    bus_output.audio[sink_id] = _processed_audio
+
         for sink_id, audio in bus_output.audio.items():
             if audio is None:
                 continue
             if sink_id in _muted_sinks:
                 continue
 
-            # Apply per-bus processing
-            audio = self._apply_processing(audio, bus_id)
-            if audio is None:
-                continue
+            # Apply per-sink gain (passive sinks like mumble, broadcastify, speaker)
+            _sg = _sink_gains.get(sink_id)
+            if _sg is not None and _sg != 1.0:
+                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+                _arr = np.clip(_arr * _sg, -32768, 32767).astype(np.int16)
+                audio = _arr.tobytes()
 
             # Compute level once for level-tracking sinks
             if _audio_level is None:
@@ -532,9 +558,9 @@ class BusManager:
                             gw._link_tx_levels[_eln] = int(gw._link_tx_levels.get(_eln, 0) * 0.7 + (_audio_level or 0) * 0.3)
                         break
 
-        # Per-bus PCM/MP3: deposit into shared buffer for main loop to mix & push.
+        # Per-bus PCM/MP3: deposit processed audio into shared buffer.
         proc_cfg = bus_cfg
-        mixed = bus_output.mixed_audio
+        mixed = _processed_audio if _processed_audio is not None else bus_output.mixed_audio
         if mixed is not None:
             if proc_cfg.get('pcm', False):
                 self._pcm_queue.append(mixed)
