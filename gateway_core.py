@@ -219,7 +219,7 @@ class RadioGateway:
         self.tx_audio_level = 0  # Transmitted audio level (Radio → Mumble)
         self.sv_audio_level = 0  # Audio level sent to remote client (SV bar)
         self.last_rx_audio_time = 0  # When we last received audio
-        self.stream_restart_count = 0
+
         self.last_stream_error = "None"
         self.restarting_stream = False  # Flag to prevent read during restart
         self.mumble_buffer_full_count = 0  # Track buffer full warnings
@@ -2849,9 +2849,9 @@ class RadioGateway:
             'stream_connected': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
             'stream_pipe_ok': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
             'darkice_running': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
-            'darkice_pid': None,
-            'darkice_restarts': 0,
-            'stream_restarts': self.stream_restart_count,
+            'darkice_pid': self._darkice_pid,
+            'darkice_restarts': self._darkice_restart_count,
+            'stream_restarts': getattr(self.th9800_plugin, '_stream_restart_count', 0) if self.th9800_plugin else 0,
             'stream_health': bool(getattr(self, 'stream_output', None) and getattr(self.stream_output, 'connected', False)),
             'darkice_stats': self._get_stream_stats(),
             'notifications': list(self._notifications),
