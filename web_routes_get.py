@@ -979,11 +979,10 @@ def handle_routing_levels(handler, parent):
         if _bm:
             for _bid, _blv in _bm._bus_levels.items():
                 data['bus_' + _bid] = _blv
-        # Primary listen bus level from mixer
-        if gw.mixer:
-            _listen_id = getattr(gw, '_listen_bus_id', 'listen')
-            _mix_audio = getattr(gw, '_last_mixer_level', 0)
-            data['bus_' + _listen_id] = _mix_audio
+        # Primary listen bus level (managed by BusManager)
+        if _bm and _bm.listen_bus:
+            _listen_id = getattr(_bm, '_listen_bus_id', 'listen')
+            data['bus_' + _listen_id] = _bm._bus_levels.get(_listen_id, 0)
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')
@@ -1229,3 +1228,138 @@ def handle_packet_log(handler, parent):
         _pkt_json(handler, {"lines": list(gw.packet_plugin._direwolf_log)})
     else:
         _pkt_json(handler, {"lines": []})
+
+
+# --------------- Loop Recorder API ---------------
+
+def handle_loop_api(handler, parent):
+    """GET /loop/* — Loop recorder API dispatcher."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(handler.path)
+    path = parsed.path
+    params = urllib.parse.parse_qs(parsed.query)
+    gw = parent.gateway if parent else None
+    lr = getattr(gw, 'loop_recorder', None) if gw else None
+
+    if path == '/loop/buses':
+        if not lr:
+            _loop_json(handler, [])
+            return
+        # Pass enabled bus IDs so buses with no data yet still appear
+        _enabled = set()
+        _bm = getattr(gw, 'bus_manager', None)
+        if _bm:
+            for _bid, _bcfg in _bm._bus_config.items():
+                if _bcfg.get('loop', False):
+                    _enabled.add(_bid)
+        _loop_json(handler, lr.get_buses(enabled_bus_ids=_enabled))
+
+    elif path == '/loop/waveform':
+        if not lr:
+            _loop_json(handler, {"error": "loop recorder not available"}, 503)
+            return
+        bus = params.get('bus', [''])[0]
+        start = params.get('start', [''])[0]
+        end = params.get('end', [''])[0]
+        if not bus or not start or not end:
+            _loop_json(handler, {"ok": False, "error": "missing bus, start, or end param"}, 400)
+            return
+        try:
+            data = lr.get_waveform(bus, float(start), float(end))
+        except Exception as e:
+            _loop_json(handler, {"ok": False, "error": str(e)}, 500)
+            return
+        _loop_json(handler, data)
+
+    elif path == '/loop/play':
+        if not lr:
+            handler.send_error(503, 'Loop recorder not available')
+            return
+        bus = params.get('bus', [''])[0]
+        start = params.get('start', [''])[0]
+        end = params.get('end', [''])[0]
+        if not bus or not start or not end:
+            handler.send_error(400, 'Missing bus, start, or end param')
+            return
+        try:
+            start_f, end_f = float(start), float(end)
+        except ValueError:
+            handler.send_error(400, 'start and end must be numeric')
+            return
+        segments = lr.get_segments(bus, start_f, end_f)
+        if not segments:
+            handler.send_error(404, 'No segments found')
+            return
+        temp_path = None
+        try:
+            if len(segments) == 1:
+                serve_path = segments[0]['path']
+            else:
+                serve_path = lr.export_range(bus, start_f, end_f, fmt='mp3')
+                if not serve_path:
+                    handler.send_error(500, 'Export failed')
+                    return
+                temp_path = serve_path
+            file_size = os.path.getsize(serve_path)
+            # Support Range requests for seeking
+            range_hdr = handler.headers.get('Range')
+            if range_hdr and range_hdr.startswith('bytes='):
+                range_spec = range_hdr[6:]
+                start_byte = 0
+                end_byte = file_size - 1
+                if '-' in range_spec:
+                    parts = range_spec.split('-', 1)
+                    if parts[0]:
+                        start_byte = int(parts[0])
+                    if parts[1]:
+                        end_byte = int(parts[1])
+                end_byte = min(end_byte, file_size - 1)
+                content_len = end_byte - start_byte + 1
+                handler.send_response(206)
+                handler.send_header('Content-Type', 'audio/mpeg')
+                handler.send_header('Content-Range', f'bytes {start_byte}-{end_byte}/{file_size}')
+                handler.send_header('Content-Length', str(content_len))
+                handler.send_header('Accept-Ranges', 'bytes')
+                handler.end_headers()
+                with open(serve_path, 'rb') as f:
+                    f.seek(start_byte)
+                    remaining = content_len
+                    while remaining > 0:
+                        chunk = f.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        handler.wfile.write(chunk)
+                        remaining -= len(chunk)
+            else:
+                handler.send_response(200)
+                handler.send_header('Content-Type', 'audio/mpeg')
+                handler.send_header('Content-Length', str(file_size))
+                handler.send_header('Accept-Ranges', 'bytes')
+                handler.end_headers()
+                with open(serve_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        handler.wfile.write(chunk)
+        except BrokenPipeError:
+            pass
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    else:
+        _loop_json(handler, {"ok": False, "error": "unknown endpoint"}, 404)
+
+
+def _loop_json(handler, data, status=200):
+    """Helper to send JSON response for loop recorder endpoints."""
+    body = json_mod.dumps(data).encode('utf-8')
+    handler.send_response(status)
+    handler.send_header('Content-Type', 'application/json')
+    handler.send_header('Content-Length', str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)

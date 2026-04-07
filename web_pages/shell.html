@@ -77,6 +77,7 @@
       <a href="/controls" target="content" onclick="setActive(this)">Controls</a>
       <a href="/monitor" target="content" onclick="setActive(this)">Monitor</a>
       <a href="/recordings" target="content" onclick="setActive(this)">Recordings</a>
+      <a href="/recorder" target="content" onclick="setActive(this)">Loop Recorder</a>
       <a href="/transcribe" target="content" onclick="setActive(this)">Transcribe</a>
       <a href="/voice" target="content" onclick="setActive(this)">Voice</a>
     </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Radios</span><div class="nav-drop">
@@ -95,19 +96,13 @@
       <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     </div></div>
     <span class="shell-pcm">
-      <button id="play-btn" onclick="toggleStream()" style="min-width:52px; text-align:center;">&#9654; MP3</button>
-      <input id="vol-slider" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
-      <span id="stream-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
-      <span id="stream-status" style="font-size:0.75em;"></span>
+      <button id="play-btn" onclick="toggleStream()" style="min-width:68px; text-align:center;">&#9654; MP3</button>
+      <input id="vol-slider" type="range" min="0" max="100" value="50" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
       <span style="color:var(--t-border);">|</span>
-      <button id="ws-btn" onclick="toggleWS()" style="min-width:52px; text-align:center;">&#9654; PCM</button>
-      <input id="ws-vol" type="range" min="0" max="100" value="100" style="width:40px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
-      <span id="ws-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:var(--t-accent); box-shadow:0 0 6px var(--t-accent);"></span>
-      <span id="ws-status" style="font-size:0.75em;"></span>
+      <button id="ws-btn" onclick="toggleWS()" style="min-width:68px; text-align:center;">&#9654; PCM</button>
+      <input id="ws-vol" type="range" min="0" max="100" value="50" style="width:40px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
       <span style="color:var(--t-border);">|</span>
-      <button id="mic-btn" onclick="toggleMic()" style="min-width:52px; text-align:center;">&#127908; MIC</button>
-      <span id="mic-indicator" style="display:none; width:8px; height:8px; border-radius:50%; background:#e74c3c; box-shadow:0 0 6px #e74c3c;"></span>
-      <span id="mic-status" style="font-size:0.75em;"></span>
+      <button id="mic-btn" onclick="toggleMic()" style="min-width:68px; text-align:center;">&#127908; MIC</button>
     </span>
   </div>
 </div>
@@ -152,11 +147,8 @@ function startStream() {
   if (_streamTimer) { clearInterval(_streamTimer); _streamTimer = null; }
 
   var btn = document.getElementById('play-btn');
-  var ind = document.getElementById('stream-indicator');
-  var st = document.getElementById('stream-status');
   _playing = true;
-  btn.innerHTML = '&#9724; MP3'; btn.style.color = '#f39c12'; btn.style.borderColor = '#f39c12';
-  st.innerHTML = '<span style="color:#f39c12">Buffering...</span>';
+  btn.innerHTML = '&#9724; ...'; btn.style.color = '#f39c12'; btn.style.borderColor = '#f39c12';
 
   _audio = new Audio('/stream');
   _audio.volume = document.getElementById('vol-slider').value / 100;
@@ -164,24 +156,20 @@ function startStream() {
   _audio.onplaying = function() {
     _playing = true;
     _streamStart = Date.now();
-    btn.innerHTML = '&#9724; MP3'; btn.style.color = _T.accent; btn.style.borderColor = _T.accent;
-    ind.style.display = 'inline-block';
-    st.innerHTML = '<span style="color:' + _T.accent + '">0:00</span>';
+    btn.innerHTML = '&#9724; 0:00'; btn.style.color = '#e74c3c'; btn.style.borderColor = '#e74c3c';
     _streamTimer = setInterval(function() {
       var s = Math.floor((Date.now() - _streamStart) / 1000);
-      st.innerHTML = '<span style="color:' + _T.accent + '">' + Math.floor(s/60) + ':' + (s%60<10?'0':'') + s%60 + '</span>';
+      btn.innerHTML = '&#9724; ' + Math.floor(s/60) + ':' + (s%60<10?'0':'') + s%60;
     }, 1000);
   };
 
   _audio.onerror = function() {
-    st.innerHTML = '<span style="color:#e74c3c">Stream error</span>';
     stopStream();
   };
 
   _audio.onended = function() { stopStream(); };
 
   _audio.play().catch(function(e) {
-    st.innerHTML = '<span style="color:#e74c3c">' + e.message + '</span>';
     stopStream();
   });
 }
@@ -192,8 +180,6 @@ function stopStream() {
   document.getElementById('play-btn').innerHTML = '&#9654; MP3';
   document.getElementById('play-btn').style.color = '#e0e0e0';
   document.getElementById('play-btn').style.borderColor = _T.btnBorder;
-  document.getElementById('stream-indicator').style.display = 'none';
-  document.getElementById('stream-status').innerHTML = '';
 }
 function setVolume(v) {
   if (_audio) _audio.volume = v / 100;
@@ -231,20 +217,17 @@ function toggleWS() {
 
 function startWS() {
   var btn = document.getElementById('ws-btn');
-  var ind = document.getElementById('ws-indicator');
-  var st = document.getElementById('ws-status');
-  btn.innerHTML = '&#9724; PCM';
+  // indicators removed — button text shows state
+  btn.innerHTML = '&#9724; ...';
   btn.style.color = '#f39c12';
   btn.style.borderColor = '#f39c12';
-  st.innerHTML = '<span style="color:#f39c12">Connecting...</span>';
 
   if (_wsCtx) { stopWS(); return; }
 
   try {
     _wsCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
   } catch(e) {
-    st.innerHTML = '<span style="color:#e74c3c">No AudioContext</span>';
-    btn.innerHTML = '&#9654; PCM'; btn.style.color = '#e0e0e0';
+    btn.innerHTML = '&#9654; PCM'; btn.style.color = '#e74c3c';
     return;
   }
   if (_wsCtx.state === 'suspended') { _wsCtx.resume(); }
@@ -283,20 +266,14 @@ function startWS() {
       _wsStart = Date.now();
       _wsBytes = 0;
       if (navigator.wakeLock) { navigator.wakeLock.request('screen').then(function(wl) { _wakeLock = wl; }).catch(function(){}); }
-      btn.innerHTML = '&#9724; PCM';
-      btn.style.color = _T.accent;
-      btn.style.borderColor = _T.accent;
-      ind.style.display = 'inline-block';
-      st.innerHTML = '<span style="color:' + _T.accent + '">0:00</span>';
+      btn.style.color = '#e74c3c';
+      btn.style.borderColor = '#e74c3c';
+      btn.innerHTML = '&#9724; 0:00';
       _wsTimer = setInterval(function() {
         var secs = Math.floor((Date.now() - _wsStart) / 1000);
         var m = Math.floor(secs / 60);
         var s = secs % 60;
-        var t = m + ':' + (s < 10 ? '0' : '') + s;
-        var kb = (_wsBytes / 1024).toFixed(0);
-        var unit = 'KB';
-        if (_wsBytes >= 1048576) { kb = (_wsBytes / 1048576).toFixed(1); unit = 'MB'; }
-        st.innerHTML = '<span style="color:' + _T.accent + '">' + t + '</span> <span style="color:#666">' + kb + unit + '</span>';
+        btn.innerHTML = '&#9724; ' + m + ':' + (s < 10 ? '0' : '') + s;
       }, 1000);
     };
 
@@ -374,8 +351,6 @@ function stopWS() {
   document.getElementById('ws-btn').innerHTML = '&#9654; PCM';
   document.getElementById('ws-btn').style.color = '#e0e0e0';
   document.getElementById('ws-btn').style.borderColor = _T.btnBorder;
-  document.getElementById('ws-indicator').style.display = 'none';
-  document.getElementById('ws-status').innerHTML = '';
 }
 
 function setWSVol(v) {
@@ -390,9 +365,8 @@ function toggleMic() {
   // Ensure clean state before starting
   stopMic();
   _micActive = true;
-  var btn=document.getElementById('mic-btn'), st=document.getElementById('mic-status'), ind=document.getElementById('mic-indicator');
-  btn.innerHTML = '&#9724; MIC'; btn.style.color='#e74c3c'; btn.style.borderColor='#e74c3c';
-  st.textContent='...'; st.style.color='#f39c12';
+  var btn=document.getElementById('mic-btn');
+  btn.innerHTML = '&#9724; ...'; btn.style.color='#f39c12'; btn.style.borderColor='#f39c12';
 
   navigator.mediaDevices.getUserMedia({audio:{sampleRate:48000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
   .then(function(stream) {
@@ -401,8 +375,7 @@ function toggleMic() {
     _micWs = new WebSocket(proto+'//'+location.host+'/ws_mic');
     _micWs.binaryType = 'arraybuffer';
     _micWs.onopen = function() {
-      st.textContent='TX'; st.style.color='#e74c3c';
-      ind.style.display='inline-block';
+      btn.innerHTML='&#9724; TX'; btn.style.color='#e74c3c'; btn.style.borderColor='#e74c3c';
       _micCtx = new AudioContext({sampleRate:48000});
       var src = _micCtx.createMediaStreamSource(stream);
       var proc = _micCtx.createScriptProcessor(2048,1,1);
@@ -431,8 +404,6 @@ function stopMic() {
   if(_micWs){try{_micWs.close();}catch(e){}_micWs=null;}
   var btn=document.getElementById('mic-btn');
   btn.innerHTML='&#127908; MIC'; btn.style.color='#e0e0e0'; btn.style.borderColor=_T.btnBorder;
-  document.getElementById('mic-indicator').style.display='none';
-  document.getElementById('mic-status').textContent='';
 }
 
 // --- Audio level bars (always visible) ---

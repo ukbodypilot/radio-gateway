@@ -92,9 +92,20 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - GPS: u-blox GNSS on `/dev/gps` (udev rule), real position for APRS/repeaters
 - `packet_radio.py` — KISS client, APRS parser, Pat Winlink lifecycle (local Direwolf removed)
 
+## Listen Bus Unification (2026-04-06, COMPLETED on branch 3.0)
+- Primary listen bus now managed by BusManager alongside solo/duplex/simplex buses
+- Single code path for ALL bus ticks and sink delivery
+- `bus_manager.py`: `_handle_listen_tick()` for SDR rebroadcast queue, health flags, click suppression, VAD, EchoLink, automation
+- `bus_manager.py`: `_deliver_audio()` extended with VAD gating for mumble, link endpoint TX, broadcastify levels
+- `bus_manager.py`: `sync_listen_bus()` replaces old `sync_mixer_sources()` — manages source add/remove from routing config
+- `gateway_core.py`: main loop simplified to drain BusManager queues + SDR rebroadcast TX + WebSocket push
+- `gateway_core.py`: removed `self.mixer` creation, `_source_on_listen_bus()`, `sync_mixer_sources()`, all `mixer.add_source()` calls
+- `self.mixer = bus_manager.listen_bus` for backward compat (trace access)
+- Net -201 lines across 4 files
+
 ## Bus Processing (2026-04-05)
 - AudioProcessor has stateful IIR filters — MUST process once per bus tick, not per-sink
-- Primary listen bus processor: `_listen_bus_processor` on gateway_core, applied to `_early_audio`
+- ALL bus processors in `bus_manager._bus_processors` dict (including primary listen bus)
 - Passive sink gains (mumble, broadcastify, speaker, recording): `_sink_gains` dict, applied in bus_manager delivery
 - PCM streams now get processed audio (was raw)
 - SDR `continuous = false` hardcoded in rtl_airband config — silence keepalive handles Broadcastify
@@ -132,3 +143,5 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [project_packet_radio.md](project_packet_radio.md) — Packet Radio (Direwolf TNC) + Winlink email
 - [project_ftm150_reverse_eng.md](project_ftm150_reverse_eng.md) — FTM-150 control head RE (shelved)
 - [bugs_2026_04_05.md](bugs_2026_04_05.md) — bus processing, SDR noise, endpoint mode bugs
+- [project_listen_bus_unify.md](project_listen_bus_unify.md) — listen bus unification (COMPLETED, branch 3.0)
+- [project_rust_audio_core.md](project_rust_audio_core.md) — Rust audio core (future path, deferred)

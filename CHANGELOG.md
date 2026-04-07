@@ -4,6 +4,40 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [3.0.0] -- 2026-04-07
+
+### Architecture
+- **Listen bus unified into BusManager** — single code path for all bus types
+  - Primary listen bus moved from gateway_core main loop into BusManager
+  - All buses (listen, solo, duplex, simplex) share one tick loop and delivery path
+  - Main loop simplified to SDR rebroadcast TX and WebSocket push
+  - Net reduction of ~500 lines from gateway_core.py
+
+### Added
+- **Loop Recorder** — per-bus continuous recording with visual waveform review
+  - Enable with "R" button per bus in routing UI
+  - Segmented MP3 storage (5-min chunks) with configurable retention (1h to 7d)
+  - Canvas-based waveform viewer with zoom, pan, click-to-play
+  - Right-click drag to select time range for export (MP3 or WAV)
+  - Stacked multi-bus view with independent playback per bus
+  - Dashboard panel with per-bus stats (segments, disk usage, write rate)
+  - Real-time waveform from active segments (no delay for segment close)
+  - HTTP Range support for native browser seeking
+  - See [docs/loop-recorder.md](docs/loop-recorder.md) for full guide
+- **Plugin auto-discovery** — drop a .py file in `plugins/`, add config flag, restart
+  - No gateway code changes needed to add a new radio
+  - Template at `plugins/example_radio.py` with detailed comments
+  - Developer guide at [docs/plugin-development.md](docs/plugin-development.md)
+
+### Fixed
+- Status API: darkice_pid, darkice_restarts, stream_restarts were hardcoded
+- TH9800: audio_level computed after processing (noise gate now squelches level bar)
+- Shell nav bar: fixed-width buttons (no layout shift when streaming)
+
+### Changed
+- Shell nav bar: stream timer shown inside button, indicator dots removed
+- Default volume sliders at 50% (was 100%)
+
 ## [2.0.0] -- 2026-03-31
 
 ### Architecture

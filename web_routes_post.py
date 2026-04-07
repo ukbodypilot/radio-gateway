@@ -1545,3 +1545,86 @@ def _winlink_connect(data):
     except Exception as e:
         _winlink_log += f'\nError: {e}\n'
         return {"ok": False, "error": str(e)}
+
+
+# ── Loop Recorder POST handlers ──
+
+def handle_loop_export(handler, parent):
+    """POST /loop/export — export a time range as downloadable audio file."""
+    try:
+        length = int(handler.headers.get('Content-Length', 0))
+        body = handler.rfile.read(length) if length > 0 else b'{}'
+        data = json_mod.loads(body) if body else {}
+    except Exception:
+        handler.send_response(400)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(b'{"ok":false,"error":"invalid JSON body"}')
+        return
+
+    gw = parent.gateway if parent else None
+    lr = getattr(gw, 'loop_recorder', None) if gw else None
+    if not lr:
+        handler.send_response(503)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(b'{"ok":false,"error":"loop recorder not available"}')
+        return
+
+    bus = data.get('bus', '')
+    start = data.get('start')
+    end = data.get('end')
+    fmt = data.get('format', 'mp3')
+    if not bus or start is None or end is None:
+        handler.send_response(400)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(b'{"ok":false,"error":"missing bus, start, or end"}')
+        return
+    if fmt not in ('mp3', 'wav'):
+        handler.send_response(400)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(b'{"ok":false,"error":"format must be mp3 or wav"}')
+        return
+
+    temp_path = None
+    try:
+        temp_path = lr.export_range(bus, float(start), float(end), fmt=fmt)
+        if not temp_path or not os.path.isfile(temp_path):
+            handler.send_response(404)
+            handler.send_header('Content-Type', 'application/json')
+            handler.end_headers()
+            handler.wfile.write(b'{"ok":false,"error":"no audio found for range"}')
+            return
+
+        ctype = {'mp3': 'audio/mpeg', 'wav': 'audio/wav'}.get(fmt, 'application/octet-stream')
+        fname = f"loop_{bus}_{int(float(start))}_{int(float(end))}.{fmt}"
+        fsize = os.path.getsize(temp_path)
+        handler.send_response(200)
+        handler.send_header('Content-Type', ctype)
+        handler.send_header('Content-Disposition', f'attachment; filename="{fname}"')
+        handler.send_header('Content-Length', str(fsize))
+        handler.end_headers()
+        with open(temp_path, 'rb') as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+    except BrokenPipeError:
+        pass
+    except Exception as e:
+        try:
+            handler.send_response(500)
+            handler.send_header('Content-Type', 'application/json')
+            handler.end_headers()
+            handler.wfile.write(json_mod.dumps({"ok": False, "error": str(e)}).encode('utf-8'))
+        except Exception:
+            pass
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass

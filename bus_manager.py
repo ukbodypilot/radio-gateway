@@ -1,11 +1,9 @@
-"""Bus Manager — loads routing config and runs non-primary busses.
+"""Bus Manager — manages ALL audio buses including the primary listen bus.
 
-The primary ListenBus (monitor) continues to be driven by gateway_core's
-main audio loop. This manager handles additional busses (Solo, Duplex,
-Simplex) configured via the routing UI, running them in a separate thread.
-
-This allows testing new bus types with pluginized radios (KV4P, D75)
-without modifying the AIOC-entangled main loop.
+All buses (listen, solo, duplex, simplex) are created and ticked by
+BusManager in a dedicated daemon thread.  The main audio loop in
+gateway_core handles SDR rebroadcast TX and WebSocket push, draining
+audio from BusManager queues.
 """
 
 import collections
@@ -41,6 +39,12 @@ class BusManager:
         self._pcm_queue = collections.deque(maxlen=8)  # thread-safe bounded deque
         self._mp3_queue = collections.deque(maxlen=8)
         self._bus_levels = {}       # bus_id → audio level (0-100) for routing page
+
+        # ── Primary listen bus state ──────────────────────────────────────
+        self.listen_bus = None              # Primary ListenBus instance
+        self._listen_bus_id = None          # Primary listen bus ID from routing config
+        self._sdr_rebroadcast_queue = collections.deque(maxlen=4)  # (sdr_only_pcm, ptt_required)
+        self._listen_vad_pass = True        # VAD state, computed each tick
 
         # ── Audio quality diagnostics ──────────────────────────────────────
         self._bm_tick_count = 0           # tick counter for cross-clock correlation
@@ -112,6 +116,20 @@ class BusManager:
                 break
         return additive_mix(chunks) if chunks else None
 
+    def drain_sdr_rebroadcast(self):
+        """Return (sdr_only_audio, ptt_required) for SDR rebroadcast, or (None, False)."""
+        if not self._sdr_rebroadcast_queue:
+            return None, False
+        # Take the most recent entry (discard older ones)
+        sdr_audio = None
+        ptt = False
+        while self._sdr_rebroadcast_queue:
+            try:
+                sdr_audio, ptt = self._sdr_rebroadcast_queue.popleft()
+            except IndexError:
+                break
+        return sdr_audio, ptt
+
     def get_listen_bus_id(self):
         """Return the ID of the first listen-type bus in routing config."""
         try:
@@ -162,17 +180,106 @@ class BusManager:
             }
         return flags
 
+    def sync_listen_bus(self):
+        """Reconcile primary listen bus sources with routing config.
+
+        Called at startup, after routing config save, and when a new
+        source becomes available (e.g. link endpoint connects).
+        """
+        if not self.listen_bus:
+            return
+        gw = self.gateway
+        import re as _re
+
+        # Build source_map: source_id → (plugin, priority, duckable)
+        source_map = {}
+        if gw.sdr_plugin:
+            source_map['sdr'] = (gw.sdr_plugin, 11, getattr(gw.config, 'SDR_DUCK', True))
+        if getattr(gw, 'th9800_plugin', None):
+            source_map['aioc'] = (gw.th9800_plugin, 1, False)
+        if gw.kv4p_plugin:
+            source_map['kv4p'] = (gw.kv4p_plugin,
+                                  int(getattr(gw.config, 'KV4P_AUDIO_PRIORITY', 2)) + 10,
+                                  getattr(gw.config, 'KV4P_AUDIO_DUCK', True))
+        if gw.d75_plugin:
+            source_map['d75'] = (gw.d75_plugin,
+                                 int(getattr(gw.config, 'D75_AUDIO_PRIORITY', 2)) + 10,
+                                 getattr(gw.config, 'D75_AUDIO_DUCK', True))
+        if getattr(gw, 'playback_source', None):
+            source_map['playback'] = (gw.playback_source, 0, False)
+        if getattr(gw, 'web_mic_source', None):
+            source_map['webmic'] = (gw.web_mic_source, 0, False)
+        if getattr(gw, 'announce_input_source', None):
+            source_map['announce'] = (gw.announce_input_source, 0, False)
+        if getattr(gw, 'web_monitor_source', None):
+            source_map['monitor'] = (gw.web_monitor_source, 5, False)
+        if getattr(gw, 'mumble_source', None):
+            source_map['mumble_rx'] = (gw.mumble_source, 0, False)
+        if getattr(gw, 'remote_audio_source', None):
+            source_map['remote_audio'] = (gw.remote_audio_source,
+                                          int(getattr(gw.config, 'REMOTE_AUDIO_PRIORITY', 2)) + 10,
+                                          getattr(gw.config, 'REMOTE_AUDIO_DUCK', True))
+        if getattr(gw, 'echolink_source', None):
+            source_map['echolink'] = (gw.echolink_source, 2, False)
+        # Link endpoints
+        for name, src in gw.link_endpoints.items():
+            _sid = 'd75' if 'd75' in name.lower() else _re.sub(r'[^a-z0-9_]', '_', name.lower())
+            source_map[_sid] = (src,
+                                int(getattr(gw.config, 'LINK_AUDIO_PRIORITY', 3)) + 10,
+                                getattr(gw.config, 'LINK_AUDIO_DUCK', False))
+        # External plugins (auto-discovered from plugins/)
+        for pid, plugin in getattr(gw, '_external_plugins', {}).items():
+            _prio = getattr(plugin, 'priority', 5)
+            _duck = getattr(plugin, 'duck', True) if not getattr(plugin, 'ptt_control', False) else False
+            source_map[pid] = (plugin, _prio, _duck)
+
+        # Read routing config to find which sources connect to listen bus
+        try:
+            with open(self._config_path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return
+
+        should_be_on = set()
+        for c in data.get('connections', []):
+            if c['type'] == 'source-bus' and c['to'] == self._listen_bus_id:
+                if c['from'] in source_map:
+                    should_be_on.add(c['from'])
+
+        # Current sources on listen bus
+        _before = {s.source.name for s in self.listen_bus.source_slots}
+
+        # Add missing
+        for sid in should_be_on:
+            plugin, prio, duck = source_map[sid]
+            if plugin.name not in _before:
+                _det = getattr(plugin, 'ptt_control', False)
+                self.listen_bus.add_source(plugin, bus_priority=prio, duckable=duck, deterministic=_det)
+                print(f"  [sync] Added {sid} to listen bus (prio={prio} duck={duck} det={_det})")
+
+        # Remove extras (only for sources we manage)
+        for sid, (plugin, _, _) in source_map.items():
+            if sid not in should_be_on and plugin.name in _before:
+                self.listen_bus.remove_source(plugin.name)
+                print(f"  [sync] Removed {sid} from listen bus")
+
+        _after = {s.source.name for s in self.listen_bus.source_slots}
+        if _before != _after:
+            print(f"  [sync] Listen bus sources: {_after}")
+
     def start(self):
         """Load config and start the bus tick loop."""
         self._load_and_create_busses()
+        self.sync_listen_bus()
         if not self._busses:
-            print("  [BusManager] No additional busses configured")
+            print("  [BusManager] No busses configured")
             return
         self._running = True
         self._thread = threading.Thread(target=self._tick_loop, daemon=True,
                                         name="BusManager")
         self._thread.start()
-        print(f"  [BusManager] Started with {len(self._busses)} bus(ses)")
+        _types = ', '.join(f'{b.bus_type}:{bid}' for bid, b in self._busses.items())
+        print(f"  [BusManager] Started with {len(self._busses)} bus(ses): {_types}")
 
     def stop(self):
         """Stop the tick loop."""
@@ -259,12 +366,6 @@ class BusManager:
             bus_type = bus_cfg['type']
             bus_name = bus_cfg.get('name', bus_id)
 
-            # Skip the PRIMARY listen bus — the main loop's mixer handles that.
-            # Secondary listen busses are created and ticked by BusManager.
-            _primary_listen_id = self.get_listen_bus_id()
-            if bus_type == 'listen' and bus_id == _primary_listen_id:
-                continue
-
             # Create the bus
             if bus_type == 'solo':
                 bus = SoloBus(bus_name, self.config)
@@ -337,16 +438,24 @@ class BusManager:
                         bus.add_sink(c['to'])
 
             elif bus_type == 'listen':
-                # Secondary listen bus (not the primary)
                 bus = ListenBus(bus_name, self.config)
-                for c in connections:
-                    if c['type'] == 'source-bus' and c['to'] == bus_id:
-                        source = self._get_source(c['from'])
-                        if source:
-                            _duck = getattr(source, 'duck', True)
-                            _prio = getattr(source, 'sdr_priority', getattr(source, 'priority', 5))
-                            _det = getattr(source, 'ptt_control', False)  # deterministic if PTT-capable
-                            bus.add_source(source, bus_priority=_prio, duckable=_duck, deterministic=_det)
+                # Primary listen bus: sources are added by sync_listen_bus()
+                # which uses the priority map for correct values.
+                # Secondary listen buses: add sources from routing config directly.
+                _primary_id = self.get_listen_bus_id()
+                if bus_id == _primary_id:
+                    self.listen_bus = bus
+                    self._listen_bus_id = bus_id
+                else:
+                    for c in connections:
+                        if c['type'] == 'source-bus' and c['to'] == bus_id:
+                            source = self._get_source(c['from'])
+                            if source:
+                                _duck = getattr(source, 'duck', True)
+                                _prio = getattr(source, 'sdr_priority', getattr(source, 'priority', 5))
+                                _det = getattr(source, 'ptt_control', False)
+                                bus.add_source(source, bus_priority=_prio, duckable=_duck, deterministic=_det)
+                # Add sinks for all listen buses
                 for c in connections:
                     if c['type'] == 'bus-sink' and c['from'] == bus_id:
                         bus.add_sink(c['to'])
@@ -419,6 +528,10 @@ class BusManager:
             return gw.mumble_source
         elif source_id == 'remote_audio' and getattr(gw, 'remote_audio_source', None):
             return gw.remote_audio_source
+        # External plugins (auto-discovered from plugins/ directory)
+        _ext = getattr(gw, '_external_plugins', {})
+        if source_id in _ext:
+            return _ext[source_id]
         # Generic link endpoint lookup by sanitised name
         import re as _re
         for name, src in gw.link_endpoints.items():
@@ -440,6 +553,7 @@ class BusManager:
         gw = self.gateway
         bus_cfg = self._bus_config.get(bus_id, {})
         _st = getattr(gw, '_stream_trace', None)
+        _is_listen = (bus_id == self._listen_bus_id)
 
         _muted_sinks = getattr(gw, '_muted_sinks', set())
         _sink_gains = getattr(gw, '_sink_gains', {})
@@ -454,6 +568,12 @@ class BusManager:
             for sink_id in list(bus_output.audio):
                 if bus_output.audio[sink_id] is not None:
                     bus_output.audio[sink_id] = _processed_audio
+
+        # Listen bus: decay sink levels when no audio
+        if _is_listen and bus_output.mixed_audio is None:
+            gw.stream_audio_level = max(0, int(getattr(gw, 'stream_audio_level', 0) * 0.7))
+            gw.mumble_tx_level = max(0, int(getattr(gw, 'mumble_tx_level', 0) * 0.7))
+            gw.transcription_audio_level = max(0, int(getattr(gw, 'transcription_audio_level', 0) * 0.7))
 
         for sink_id, audio in bus_output.audio.items():
             if audio is None:
@@ -476,6 +596,10 @@ class BusManager:
 
             # Passive sinks
             if sink_id == 'mumble' and gw.mumble:
+                # Listen bus: gate mumble delivery with VAD
+                if _is_listen and not self._listen_vad_pass:
+                    gw.mumble_tx_level = max(0, int(getattr(gw, 'mumble_tx_level', 0) * 0.7))
+                    continue
                 try:
                     _so = getattr(gw.mumble, 'sound_output', None)
                     _ef = getattr(_so, 'encoder_framesize', None) if _so else None
@@ -513,6 +637,8 @@ class BusManager:
             elif sink_id == 'broadcastify' and getattr(gw, 'stream_output', None):
                 try:
                     gw.stream_output.send_audio(audio)
+                    if _is_listen and gw.stream_output.connected:
+                        gw.stream_audio_level = _audio_level
                 except Exception:
                     pass
                 _bcast_ms = (time.monotonic() - _t_sink) * 1000
@@ -546,12 +672,21 @@ class BusManager:
 
             # Radio TX sinks — SoloBus Phase 3 already calls put_audio(),
             # so here we only track TX level for the routing page display.
+            # Listen bus: actually send audio to link endpoints via link_server.
             elif sink_id in ('kv4p_tx', 'd75_tx', 'aioc_tx') or self._get_radio_plugin(sink_id):
-                # Update link endpoint TX level for routing display
                 import re as _re2
                 _base2 = sink_id[:-3] if sink_id.endswith('_tx') else sink_id
                 for _eln, _els in gw.link_endpoints.items():
                     if _re2.sub(r'[^a-z0-9_]', '_', _eln.lower()) == _base2:
+                        # Listen bus: send audio to link endpoint for TX
+                        if _is_listen and getattr(gw, 'link_server', None):
+                            _ep_settings = gw.link_endpoint_settings.get(_eln, {})
+                            if not _ep_settings.get('tx_muted', False):
+                                try:
+                                    gw.link_server.send_audio_to(_eln, audio)
+                                except Exception:
+                                    pass
+                        # Track TX level for routing display
                         if _audio_level and _audio_level > gw._link_tx_levels.get(_eln, 0):
                             gw._link_tx_levels[_eln] = _audio_level
                         else:
@@ -566,6 +701,90 @@ class BusManager:
                 self._pcm_queue.append(mixed)
             if proc_cfg.get('mp3', False):
                 self._mp3_queue.append(mixed)
+            # Loop recording: feed processed audio to LoopRecorder
+            if proc_cfg.get('loop', False):
+                _lr = getattr(gw, 'loop_recorder', None)
+                if _lr:
+                    # Sync per-bus retention from routing config
+                    _lh = proc_cfg.get('loop_hours', 0)
+                    if _lh and _lh != _lr.get_retention(bus_id):
+                        _lr.set_retention(bus_id, _lh)
+                    _lr.feed(bus_id, mixed)
+
+    def _handle_listen_tick(self, output, chunk_size):
+        """Handle listen-bus-specific post-tick work.
+
+        Called from _tick_loop after the primary listen bus tick, before
+        _deliver_audio.  Handles: SDR rebroadcast queue, health flags,
+        ducked states, click suppression, VAD, EchoLink, automation.
+        """
+        gw = self.gateway
+        data = output.mixed_audio
+
+        # Queue duckee_only_audio + ptt for SDR rebroadcast
+        sdr_only = output.status.get('duckee_only_audio')
+        ptt_required = output.ptt.get('_ptt_required', False)
+        self._sdr_rebroadcast_queue.append((sdr_only, ptt_required))
+
+        # Health flags
+        if data is not None:
+            gw.last_audio_capture_time = time.time()
+            gw.audio_capture_active = True
+        else:
+            gw.audio_capture_active = False
+
+        # Ducked states for status bar
+        gw.sdr_ducked = 'SDR1' in output.ducked_sources
+        gw.sdr2_ducked = 'SDR2' in output.ducked_sources
+        gw.remote_audio_ducked = 'SDRSV' in output.ducked_sources
+
+        # Mixer trace state (read by status monitor and trace dump)
+        if hasattr(self.listen_bus, '_last_trace_state'):
+            gw._last_mixer_trace_state = self.listen_bus._last_trace_state.copy()
+
+        # VAD (computed here, used by _deliver_audio for mumble gating)
+        _audio_for_vad = data
+        _proc = self._bus_processors.get(self._listen_bus_id)
+        # VAD should run on processed audio if a processor exists,
+        # but processing hasn't been applied yet (done in _deliver_audio).
+        # For now, run on raw mixer output — matches old behavior.
+        self._listen_vad_pass = (
+            gw.check_vad(_audio_for_vad)
+            if (getattr(gw.config, 'ENABLE_VAD', False) and _audio_for_vad)
+            else True
+        )
+
+        # Click suppression on mixer output
+        if data and len(data) >= 16:
+            _arr = np.frombuffer(data, dtype=np.int16)
+            _diffs = np.abs(np.diff(_arr.astype(np.int32)))
+            _clicks = np.where(_diffs > 8000)[0]
+            if len(_clicks) > 0:
+                _farr = _arr.astype(np.float32)
+                for _idx in _clicks:
+                    _lo = max(0, _idx - 2)
+                    _hi = min(len(_farr) - 1, _idx + 3)
+                    if _hi - _lo >= 2:
+                        _farr[_lo:_hi+1] = np.linspace(_farr[_lo], _farr[_hi], _hi - _lo + 1)
+                _fixed = np.clip(_farr, -32768, 32767).astype(np.int16).tobytes()
+                for sink_id in list(output.audio):
+                    if output.audio[sink_id] is not None:
+                        output.audio[sink_id] = _fixed
+
+        # Automation recorder
+        if data is not None:
+            ae = getattr(gw, 'automation_engine', None)
+            if ae and ae.recorder.is_recording():
+                ae.recorder.feed(data)
+
+        # EchoLink (legacy — not in routing config, checked by config flag)
+        if data is not None:
+            _el = getattr(gw, 'echolink_source', None)
+            if _el and getattr(gw.config, 'RADIO_TO_ECHOLINK', False):
+                try:
+                    _el.send_audio(data)
+                except Exception:
+                    pass
 
     def _gc_callback(self, phase, info):
         """Record GC pause events for diagnostics."""
@@ -628,6 +847,7 @@ class BusManager:
 
             # ── Per-bus tick + deliver ──────────────────────────────────────
             _bus_timings = {}
+            gw = self.gateway
             for bus_id, bus in self._busses.items():
                 try:
                     # Skip muted busses
@@ -637,6 +857,10 @@ class BusManager:
                     _t0 = time.monotonic()
                     output = bus.tick(chunk_size)
                     _t_tick = (time.monotonic() - _t0) * 1000
+
+                    # ── Listen bus specific handling ──
+                    if bus_id == self._listen_bus_id:
+                        self._handle_listen_tick(output, chunk_size)
 
                     # Track bus output level
                     _mixed = output.mixed_audio
@@ -657,7 +881,7 @@ class BusManager:
                     _bus_timings[bus_id] = (_t_tick, _t_deliver, _lv)
 
                     # Stream trace: record bus tick + deliver with timing
-                    _st = getattr(self.gateway, '_stream_trace', None)
+                    _st = getattr(gw, '_stream_trace', None)
                     if _st and (_t_tick > 5 or _t_deliver > 5):
                         _st.record(f'{bus_id}_bus', 'tick_slow',
                                    output.mixed_audio, -1,

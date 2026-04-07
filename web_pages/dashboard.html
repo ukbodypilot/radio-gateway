@@ -38,6 +38,15 @@
   </details>
 </div>
 
+<div id="loop-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Loop Recorder</h3>
+    <a href="/recorder" target="content" style="font-size:0.85em; color:var(--t-accent); text-decoration:none;">&rarr; Open Recorder</a>
+  </div>
+  <div id="loop-buses" style="display:flex; flex-direction:column; gap:4px;"></div>
+  <div id="loop-summary" style="margin-top:6px; color:#888; font-size:0.85em;"></div>
+</div>
+
 <div id="adsb-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
     <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">ADS-B Aircraft Tracking</h3>
@@ -921,6 +930,51 @@ function updateTelegram() {
 }
 setInterval(updateTelegram, 5000);
 updateTelegram();
+
+// --- Loop Recorder Status ---
+function updateLoopRecorder() {
+  fetch('/loop/buses').then(function(r){return r.json();}).then(function(buses) {
+    var panel = document.getElementById('loop-panel');
+    if (!buses || buses.length === 0) { panel.style.display='none'; return; }
+    panel.style.display='';
+    var html = '';
+    var totalSegs = 0, totalMB = 0;
+    for (var i = 0; i < buses.length; i++) {
+      var b = buses[i];
+      totalSegs += b.segments;
+      totalMB += (b.disk_mb || 0);
+      var dot = b.active ? '<span style="color:#c0392b;">&#x25cf;</span>' : '<span style="color:#555;">&#x25cf;</span>';
+      var durStr = '--';
+      if (b.segments > 0) {
+        var durSec = b.latest - b.earliest;
+        var durH = Math.floor(durSec / 3600);
+        var durM = Math.floor((durSec % 3600) / 60);
+        durStr = durH + 'h ' + durM + 'm';
+      }
+      var diskStr = (b.disk_mb || 0) >= 1024 ? (b.disk_mb / 1024).toFixed(1) + ' GB' : (b.disk_mb || 0).toFixed(0) + ' MB';
+      var rateStr = '';
+      if (b.segments > 0 && b.latest > b.earliest) {
+        var rateMBh = (b.disk_mb || 0) / ((b.latest - b.earliest) / 3600);
+        rateStr = rateMBh.toFixed(0) + ' MB/h';
+      }
+      html += '<div style="display:flex; gap:12px; align-items:center; padding:2px 0;">'
+        + dot + ' <span style="color:#e0e0e0; min-width:80px;">' + b.id + '</span>'
+        + '<span style="color:#aaa; min-width:60px;">' + b.segments + ' segs</span>'
+        + '<span style="color:#888; min-width:55px;">' + durStr + '</span>'
+        + '<span style="color:#2ecc71; min-width:55px;">' + diskStr + '</span>'
+        + (rateStr ? '<span style="color:#555; font-size:0.85em;">' + rateStr + '</span>' : '')
+        + '<span style="color:#555; font-size:0.85em; margin-left:auto;">ret ' + (b.retention_hours || 24) + 'h</span>'
+        + '</div>';
+    }
+    document.getElementById('loop-buses').innerHTML = html;
+    var totalStr = totalMB >= 1024 ? (totalMB / 1024).toFixed(1) + ' GB' : totalMB.toFixed(0) + ' MB';
+    document.getElementById('loop-summary').textContent =
+      buses.length + ' bus' + (buses.length > 1 ? 'es' : '') + ' recording, '
+      + totalSegs + ' segments, ' + totalStr + ' total';
+  }).catch(function(){});
+}
+setInterval(updateLoopRecorder, 5000);
+updateLoopRecorder();
 
 </script>
 

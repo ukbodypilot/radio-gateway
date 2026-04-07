@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop Recorder</title>
+<link rel="stylesheet" href="/pages/common.css">
+<style>
+  .toolbar { display:flex; align-items:center; gap:10px; padding:8px 0; font-size:0.85em; color:#aaa; }
+  .toolbar button { padding:4px 10px; background:var(--t-btn); color:#ccc; border:1px solid var(--t-btn-border);
+    border-radius:3px; cursor:pointer; font-family:monospace; }
+  .toolbar button:hover { background:var(--t-btn-hover); }
+
+  .bus-section { background:var(--t-panel); border:1px solid var(--t-btn-border); border-radius:6px;
+    padding:10px; margin-bottom:10px; }
+  .bus-header { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .bus-name { font-family:monospace; font-size:1.05em; color:#e0e0e0; font-weight:bold; }
+  .bus-dot { display:inline-block; width:8px; height:8px; border-radius:50%; }
+  .bus-dot.rec { background:#c0392b; animation: pulse-dot 1.5s infinite; }
+  .bus-dot.off { background:#555; }
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .bus-meta { font-size:0.8em; color:#666; margin-left:auto; }
+
+  .bus-canvas { position:relative; background:#0d1117; border:1px solid #1a2332; border-radius:3px;
+    overflow:hidden; cursor:crosshair; margin-bottom:6px; }
+  .bus-canvas canvas { width:100%; display:block; }
+
+  .bus-controls { display:flex; align-items:center; gap:8px; font-size:0.85em; flex-wrap:wrap; }
+  .bus-controls button { padding:3px 10px; background:var(--t-btn); color:#ccc; border:1px solid var(--t-btn-border);
+    border-radius:3px; cursor:pointer; font-family:monospace; }
+  .bus-controls button:hover { background:var(--t-btn-hover); }
+  .bus-controls input[type=range] { width:50px; }
+  .time-display { font-family:monospace; color:#aaa; font-size:0.85em; min-width:100px; }
+
+  .export-row { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:0.85em; flex-wrap:wrap; }
+  .export-row label { color:#888; }
+  .export-row input, .export-row select { background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border);
+    border-radius:3px; padding:3px 6px; font-family:monospace; font-size:0.85em; }
+  .export-row button { padding:3px 10px; background:#27ae60; color:#fff; border:none;
+    border-radius:3px; cursor:pointer; font-family:monospace; }
+  .export-row button:hover { background:#2ecc71; }
+  .export-row button:disabled { background:#555; cursor:default; }
+  .export-status { color:#888; font-size:0.8em; }
+
+  .no-data { color:#666; text-align:center; padding:60px 0; font-size:1.1em; }
+</style>
+</head>
+<body>
+
+<div class="toolbar" id="toolbar" style="display:none;">
+  <button onclick="zoomIn()">+</button>
+  <button onclick="zoomOut()">&minus;</button>
+  <button onclick="fitAll()">Fit All</button>
+  <span style="margin-left:auto;"></span>
+  <span id="time-range" style="color:#888;"></span>
+</div>
+
+<div id="buses-container"></div>
+
+<div id="no-data" class="no-data">
+  No loop recordings found.<br>
+  Enable the <b>R</b> button on a bus in the <a href="/routing" target="content">Routing</a> page to start recording.
+</div>
+
+<script>
+var buses = [];
+var busState = {};  // busId → {wfmData, player, playStart, playEnd, selStart, selEnd, lastClickTime, canvas, ctx}
+var viewStart = 0, viewEnd = 0;
+var dataStart = 0, dataEnd = 0;
+
+// Shared drag state
+var activeDragBus = null;
+var isDragging = false, dragStartX = 0, dragViewStart = 0;
+var isSelecting = false;
+
+// ── Init ──────────────────────────────────────────────────────
+function init() {
+  fetch('/loop/buses').then(function(r){return r.json();}).then(function(data) {
+    buses = data;
+    if (!buses.length) { document.getElementById('no-data').style.display=''; return; }
+    document.getElementById('no-data').style.display='none';
+    document.getElementById('toolbar').style.display='';
+    // Compute global data range
+    dataStart = Infinity; dataEnd = 0;
+    for (var i=0;i<buses.length;i++) {
+      if (buses[i].earliest < dataStart) dataStart = buses[i].earliest;
+      if (buses[i].latest > dataEnd) dataEnd = buses[i].latest;
+    }
+    viewStart = dataStart; viewEnd = dataEnd;
+    buildUI();
+    loadAllWaveforms();
+  }).catch(function(){ document.getElementById('no-data').style.display=''; });
+}
+
+function buildUI() {
+  var container = document.getElementById('buses-container');
+  var html = '';
+  for (var i=0;i<buses.length;i++) {
+    var b = buses[i];
+    var dot = b.active ? 'rec' : 'off';
+    var diskStr = (b.disk_mb||0) >= 1024 ? ((b.disk_mb/1024).toFixed(1)+' GB') : ((b.disk_mb||0).toFixed(0)+' MB');
+    html += '<div class="bus-section" id="bus-sec-'+b.id+'">'
+      + '<div class="bus-header">'
+      + '<span class="bus-dot '+dot+'"></span>'
+      + '<span class="bus-name">'+b.id+'</span>'
+      + '<span class="bus-meta">'+b.segments+' segs &middot; '+diskStr+' &middot; ret '+(b.retention_hours||24)+'h</span>'
+      + '</div>'
+      + '<div class="bus-canvas"><canvas id="cv-'+b.id+'" height="120" data-bus="'+b.id+'"></canvas></div>'
+      + '<div class="bus-controls">'
+      + '<button onclick="busPlay(\''+b.id+'\')">&#9654;</button>'
+      + '<button onclick="busStop(\''+b.id+'\')">&#9632;</button>'
+      + '<span class="time-display" id="td-'+b.id+'">--:--:-- / --:--:--</span>'
+      + '<input type="range" min="0" max="1000" value="0" id="seek-'+b.id+'" oninput="busSeek(\''+b.id+'\',this.value)">'
+      + '<span style="color:#666;font-size:0.8em;">Vol</span>'
+      + '<input type="range" min="0" max="100" value="50" style="width:40px;" id="vol-'+b.id+'" oninput="busVol(\''+b.id+'\',this.value)">'
+      + '</div>'
+      + '<div class="export-row">'
+      + '<label>Export:</label>'
+      + '<input type="text" id="es-'+b.id+'" size="8" placeholder="HH:MM:SS">'
+      + '<label>to</label>'
+      + '<input type="text" id="ee-'+b.id+'" size="8" placeholder="HH:MM:SS">'
+      + '<select id="ef-'+b.id+'"><option value="mp3">MP3</option><option value="wav">WAV</option></select>'
+      + '<button onclick="busExport(\''+b.id+'\')">Download</button>'
+      + '<span class="export-status" id="ex-'+b.id+'"></span>'
+      + '</div>'
+      + '</div>';
+    // Init per-bus state
+    busState[b.id] = {
+      wfmData:null, player:new Audio(), playStart:0, playEnd:0,
+      selStart:null, selEnd:null, lastClickTime:null, canvas:null, ctx:null
+    };
+    busState[b.id].player.preload = 'none';
+  }
+  container.innerHTML = html;
+
+  // Wire up canvases and mouse handlers
+  for (var i=0;i<buses.length;i++) {
+    var b = buses[i];
+    var cv = document.getElementById('cv-'+b.id);
+    var st = busState[b.id];
+    st.canvas = cv;
+    st.ctx = cv.getContext('2d');
+    cv.width = cv.parentElement.clientWidth;
+    wireCanvas(cv, b.id);
+    // Player ended handler
+    (function(bid){ busState[bid].player.addEventListener('ended', function(){ _highlightPlayBtn(bid,false); renderBus(bid); }); })(b.id);
+  }
+}
+
+// ── Canvas mouse handlers ─────────────────────────────────────
+function canvasX(cv, e) {
+  // Convert mouse event to canvas pixel X, accounting for CSS vs canvas size
+  var rect = cv.getBoundingClientRect();
+  return (e.clientX - rect.left) * (cv.width / rect.width);
+}
+
+function wireCanvas(cv, busId) {
+  cv.addEventListener('contextmenu', function(e){e.preventDefault();});
+  cv.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    var mx = canvasX(cv, e);
+    var pivot = pxToTime(mx, cv.width);
+    var factor = e.deltaY > 0 ? 1.3 : 0.77;
+    var dur = Math.max(10, Math.min(dataEnd-dataStart, (viewEnd-viewStart)*factor));
+    var ratio = (pivot-viewStart)/(viewEnd-viewStart);
+    viewStart = pivot - dur*ratio;
+    viewEnd = viewStart + dur;
+    clampView();
+    loadAllWaveforms();
+  });
+  cv.addEventListener('mousedown', function(e) {
+    activeDragBus = busId;
+    if (e.button === 2) {
+      isSelecting = true;
+      busState[busId].selStart = pxToTime(canvasX(cv,e), cv.width);
+      busState[busId].selEnd = busState[busId].selStart;
+    } else {
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragViewStart = viewStart;
+    }
+  });
+  cv.addEventListener('mousemove', function(e) {
+    if (isDragging && activeDragBus) {
+      var dx = e.clientX - dragStartX;
+      var dt = -dx * (viewEnd-viewStart) / cv.width;
+      viewStart = dragViewStart + dt;
+      viewEnd = viewStart + (viewEnd-viewStart);
+      renderAll();
+      updateTimeRange();
+    } else if (isSelecting && activeDragBus === busId) {
+      busState[busId].selEnd = pxToTime(canvasX(cv,e), cv.width);
+      renderBus(busId);
+      updateExportFields(busId);
+    }
+  });
+  cv.addEventListener('mouseup', function(e) {
+    if (isDragging) {
+      isDragging = false;
+      var dx = Math.abs(e.clientX - dragStartX);
+      if (dx < 4) {
+        busState[busId].lastClickTime = pxToTime(canvasX(cv,e), cv.width);
+        busPlayFrom(busId, busState[busId].lastClickTime);
+      } else {
+        clampView();
+        loadAllWaveforms();
+      }
+    } else if (isSelecting) {
+      isSelecting = false;
+      var st = busState[busId];
+      if (Math.abs(st.selEnd - st.selStart) < 1) {
+        st.selStart = null; st.selEnd = null;
+        busPlayFrom(busId, pxToTime(canvasX(cv,e), cv.width));
+      } else {
+        updateExportFields(busId);
+      }
+      renderBus(busId);
+    }
+    activeDragBus = null;
+  });
+}
+
+// ── Waveform loading ──────────────────────────────────────────
+function loadAllWaveforms() {
+  for (var i=0;i<buses.length;i++) loadWaveform(buses[i].id);
+  updateTimeRange();
+}
+
+function loadWaveform(busId) {
+  fetch('/loop/waveform?bus='+busId+'&start='+viewStart+'&end='+viewEnd)
+    .then(function(r){return r.json();})
+    .then(function(data) {
+      busState[busId].wfmData = data;
+      renderBus(busId);
+    });
+}
+
+// ── Rendering ─────────────────────────────────────────────────
+function renderAll() {
+  for (var i=0;i<buses.length;i++) renderBus(buses[i].id);
+}
+
+function renderBus(busId) {
+  var st = busState[busId];
+  if (!st || !st.canvas) return;
+  var cv = st.canvas, ctx = st.ctx, wfm = st.wfmData;
+  var w = cv.width, h = cv.height;
+  var axisH = 20;
+  var waveH = (h - axisH) / 2;
+  var centerY = waveH;
+
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0,0,w,h);
+
+  if (!wfm || !wfm.peaks || !wfm.peaks.length) {
+    if (buses.find(function(b){return b.id===busId && b.segments===0;})) {
+      ctx.fillStyle = '#444';
+      ctx.font = '12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('Waiting for audio...', w/2, h/2 - 10);
+    }
+    drawTimeAxis(ctx, 0, h-axisH, w, axisH);
+    return;
+  }
+
+  var dataOffset = viewStart - wfm.start;
+  var samplesPerPx = (viewEnd - viewStart) / w;
+
+  // Peak envelope
+  ctx.fillStyle = 'rgba(52,152,219,0.25)';
+  for (var px=0;px<w;px++) {
+    var s0 = Math.floor(dataOffset + px*samplesPerPx);
+    var s1 = Math.floor(dataOffset + (px+1)*samplesPerPx);
+    var mp = 0;
+    for (var s=s0;s<s1 && s<wfm.peaks.length;s++) { if (s>=0 && wfm.peaks[s]>mp) mp=wfm.peaks[s]; }
+    var ph = (mp/255)*waveH;
+    if (ph>0) ctx.fillRect(px, centerY-ph, 1, ph*2);
+  }
+  // RMS envelope
+  ctx.fillStyle = 'rgba(52,152,219,0.8)';
+  for (var px=0;px<w;px++) {
+    var s0 = Math.floor(dataOffset + px*samplesPerPx);
+    var s1 = Math.floor(dataOffset + (px+1)*samplesPerPx);
+    var mr = 0;
+    for (var s=s0;s<s1 && s<wfm.rms.length;s++) { if (s>=0 && wfm.rms[s]>mr) mr=wfm.rms[s]; }
+    var rh = (mr/255)*waveH;
+    if (rh>0) ctx.fillRect(px, centerY-rh, 1, rh*2);
+  }
+
+  // Selection
+  if (st.selStart !== null && st.selEnd !== null) {
+    var sx = timeToPx(Math.min(st.selStart,st.selEnd), w);
+    var ex = timeToPx(Math.max(st.selStart,st.selEnd), w);
+    ctx.fillStyle = 'rgba(46,204,113,0.25)';
+    ctx.fillRect(sx, 0, ex-sx, h-axisH);
+    ctx.strokeStyle = 'rgba(46,204,113,0.7)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx, 0, ex-sx, h-axisH);
+  }
+
+  // Playback cursor
+  if (!st.player.paused && st.playStart > 0) {
+    var cur = st.playStart + st.player.currentTime;
+    if (cur >= viewStart && cur <= viewEnd) {
+      var cx = timeToPx(cur, w);
+      ctx.strokeStyle = '#e74c3c';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(cx,0); ctx.lineTo(cx, h-axisH); ctx.stroke();
+    }
+  }
+
+  drawTimeAxis(ctx, 0, h-axisH, w, axisH);
+}
+
+function drawTimeAxis(ctx, x, y, w, h) {
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(x, y, w, h);
+  var duration = viewEnd - viewStart;
+  var intervals = [5,10,15,30,60,120,300,600,900,1800,3600,7200,14400,28800];
+  var target = w / 100;
+  var interval = 3600;
+  for (var i=0;i<intervals.length;i++) { if (duration/intervals[i] <= target) { interval=intervals[i]; break; } }
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  var first = Math.ceil(viewStart / interval) * interval;
+  for (var t=first; t<=viewEnd; t+=interval) {
+    var px = timeToPx(t, w);
+    ctx.fillStyle = '#333'; ctx.fillRect(px, y, 1, 3);
+    ctx.fillStyle = '#666';
+    var d = new Date(t*1000);
+    var lbl = pad2(d.getHours())+':'+pad2(d.getMinutes());
+    if (interval < 60) lbl += ':'+pad2(d.getSeconds());
+    ctx.fillText(lbl, px, y+14);
+  }
+}
+
+// ── Playback ──────────────────────────────────────────────────
+function busPlayFrom(busId, epoch) {
+  var st = busState[busId];
+  st.playStart = epoch;
+  st.playEnd = viewEnd;
+  st.player.src = '/loop/play?bus='+busId+'&start='+epoch+'&end='+st.playEnd;
+  st.player.volume = document.getElementById('vol-'+busId).value / 100;
+  st.player.play();
+  _highlightPlayBtn(busId, true);
+  animatePlayback(busId);
+}
+
+function busPlay(busId) {
+  var st = busState[busId];
+  if (!st.player.paused) {
+    st.player.pause();
+    _highlightPlayBtn(busId, false);
+  } else if (st.player.src && st.player.src !== location.href) {
+    st.player.play();
+    _highlightPlayBtn(busId, true);
+    animatePlayback(busId);
+  } else {
+    busPlayFrom(busId, viewStart);
+  }
+}
+
+function busStop(busId) {
+  var st = busState[busId];
+  st.player.pause();
+  st.player.currentTime = 0;
+  _highlightPlayBtn(busId, false);
+  document.getElementById('td-'+busId).textContent = '--:--:-- / --:--:--';
+  document.getElementById('seek-'+busId).value = 0;
+  renderBus(busId);
+}
+
+function _highlightPlayBtn(busId, playing) {
+  // Find the play button (first button in bus controls)
+  var sec = document.getElementById('bus-sec-'+busId);
+  if (!sec) return;
+  var btns = sec.querySelectorAll('.bus-controls button');
+  if (btns.length > 0) {
+    btns[0].style.color = playing ? '#e74c3c' : '';
+    btns[0].style.borderColor = playing ? '#e74c3c' : '';
+    btns[0].innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+  }
+}
+
+function busSeek(busId, val) {
+  var st = busState[busId];
+  if (st.player.duration && st.player.duration < Infinity) {
+    st.player.currentTime = (val/1000) * st.player.duration;
+  } else if (st.playStart && st.playEnd) {
+    var epoch = st.playStart + ((val/1000) * (st.playEnd - st.playStart));
+    busPlayFrom(busId, epoch);
+  }
+}
+
+function busVol(busId, val) { busState[busId].player.volume = val / 100; }
+
+function animatePlayback(busId) {
+  var st = busState[busId];
+  if (st.player.paused) return;
+  var dur = st.player.duration || 0;
+  var cur = st.player.currentTime || 0;
+  document.getElementById('seek-'+busId).value = dur>0 ? Math.floor((cur/dur)*1000) : 0;
+  document.getElementById('td-'+busId).textContent = fmtTime(cur) + ' / ' + fmtTime(dur);
+  renderBus(busId);
+  requestAnimationFrame(function(){ animatePlayback(busId); });
+}
+
+// ── Export ────────────────────────────────────────────────────
+function updateExportFields(busId) {
+  var st = busState[busId];
+  if (st.selStart !== null && st.selEnd !== null) {
+    document.getElementById('es-'+busId).value = epochToHMS(Math.min(st.selStart,st.selEnd));
+    document.getElementById('ee-'+busId).value = epochToHMS(Math.max(st.selStart,st.selEnd));
+  }
+}
+
+function busExport(busId) {
+  var s = document.getElementById('es-'+busId).value;
+  var e = document.getElementById('ee-'+busId).value;
+  var fmt = document.getElementById('ef-'+busId).value;
+  if (!s||!e) { alert('Enter start and end times'); return; }
+  var se = hmsToEpoch(s), ee = hmsToEpoch(e);
+  if (!se||!ee||ee<=se) { alert('Invalid time range'); return; }
+  var status = document.getElementById('ex-'+busId);
+  status.textContent = 'Exporting...';
+  fetch('/loop/export', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({bus:busId, start:se, end:ee, format:fmt})
+  }).then(function(r) {
+    if (!r.ok) throw new Error('Export failed');
+    return r.blob();
+  }).then(function(blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href=url; a.download='loop_'+busId+'_'+s.replace(/:/g,'')+'-'+e.replace(/:/g,'')+'.'+fmt;
+    a.click(); URL.revokeObjectURL(url);
+    status.textContent = 'Done';
+  }).catch(function(err) { status.textContent = 'Error: '+err.message; });
+}
+
+// ── Zoom / Pan ────────────────────────────────────────────────
+function zoomIn() {
+  var pivot = findPivot();
+  var dur = Math.max(10, (viewEnd-viewStart)*0.5);
+  var ratio = (pivot-viewStart)/(viewEnd-viewStart);
+  viewStart = pivot - dur*ratio; viewEnd = viewStart+dur;
+  clampView(); loadAllWaveforms();
+}
+function zoomOut() {
+  var pivot = findPivot();
+  var dur = Math.min(dataEnd-dataStart, (viewEnd-viewStart)*2);
+  var ratio = (pivot-viewStart)/(viewEnd-viewStart);
+  viewStart = pivot - dur*ratio; viewEnd = viewStart+dur;
+  clampView(); loadAllWaveforms();
+}
+function fitAll() { viewStart=dataStart; viewEnd=dataEnd; loadAllWaveforms(); }
+function clampView() {
+  var dur=viewEnd-viewStart;
+  if (viewStart<dataStart){viewStart=dataStart;viewEnd=viewStart+dur;}
+  if (viewEnd>dataEnd){viewEnd=dataEnd;viewStart=viewEnd-dur;}
+  if (viewStart<dataStart) viewStart=dataStart;
+}
+function findPivot() {
+  // Use most recent click from any bus, or center
+  var best = null;
+  for (var id in busState) {
+    var lc = busState[id].lastClickTime;
+    if (lc && lc >= viewStart && lc <= viewEnd) best = lc;
+  }
+  return best || (viewStart+viewEnd)/2;
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function timeToPx(epoch,w) { return ((epoch-viewStart)/(viewEnd-viewStart))*w; }
+function pxToTime(px,w) { return viewStart + (px/w)*(viewEnd-viewStart); }
+function updateTimeRange() { document.getElementById('time-range').textContent = epochToHMS(viewStart)+' \u2014 '+epochToHMS(viewEnd); }
+function pad2(n){return n<10?'0'+n:''+n;}
+function fmtTime(s){return pad2(Math.floor(s/3600))+':'+pad2(Math.floor((s%3600)/60))+':'+pad2(Math.floor(s%60));}
+function epochToHMS(e){var d=new Date(e*1000);return pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds());}
+function hmsToEpoch(s){var p=s.split(':');if(p.length<2)return null;var d=new Date();d.setHours(parseInt(p[0])||0,parseInt(p[1])||0,parseInt(p[2])||0,0);return d.getTime()/1000;}
+
+// ── Resize ────────────────────────────────────────────────────
+window.addEventListener('resize', function() {
+  for (var id in busState) {
+    var st = busState[id];
+    if (st.canvas) { st.canvas.width = st.canvas.parentElement.clientWidth; }
+  }
+  renderAll();
+});
+
+// ── Periodic refresh ──────────────────────────────────────────
+var _prevSegCounts = {};
+setInterval(function() {
+  fetch('/loop/buses').then(function(r){return r.json();}).then(function(data) {
+    // Check for new buses or first data
+    var needRebuild = data.length !== buses.length;
+    if (!needRebuild) {
+      for (var i=0;i<data.length;i++) {
+        var prev = _prevSegCounts[data[i].id] || 0;
+        if (prev === 0 && data[i].segments > 0) needRebuild = true;
+      }
+    }
+    buses = data;
+    for (var i=0;i<buses.length;i++) _prevSegCounts[buses[i].id] = buses[i].segments;
+    if (needRebuild && buses.length > 0) {
+      document.getElementById('no-data').style.display='none';
+      document.getElementById('toolbar').style.display='';
+      dataStart=Infinity; dataEnd=0;
+      for(var i=0;i<buses.length;i++){
+        if(buses[i].earliest<dataStart)dataStart=buses[i].earliest;
+        if(buses[i].latest>dataEnd)dataEnd=buses[i].latest;
+      }
+      buildUI(); loadAllWaveforms();
+      return;
+    }
+    // Update data range, auto-extend if viewing tail
+    for (var i=0;i<buses.length;i++) {
+      if (buses[i].latest > dataEnd) {
+        dataEnd = buses[i].latest;
+        if (viewEnd >= dataEnd - 60) { viewEnd = dataEnd; loadAllWaveforms(); }
+      }
+    }
+  }).catch(function(){});
+}, 5000);
+
+init();
+</script>
+</body>
+</html>

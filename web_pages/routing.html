@@ -608,6 +608,7 @@ function rebuildEditor() {
       + '<button class="proc-btn out-btn' + (proc.pcm === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
       + '<button class="proc-btn out-btn' + (proc.mp3 === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'
       + '<button class="proc-btn out-btn' + (proc.vad ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'vad\')" id="proc-' + b.id + '-vad" title="VAD gate">V</button>'
+      + '<button class="proc-btn out-btn' + (proc.loop ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'loop\')" id="proc-' + b.id + '-loop" title="Loop record" style="' + (proc.loop ? 'background:#c0392b;color:#fff' : '') + '">R</button>'
       + '<span style="flex-grow:1;"></span>'
       + '<button class="mute-btn' + busMuted + '" onclick="toggleBusMute(\'' + b.id + '\')" id="bus-mute-' + b.id + '" title="Mute bus">M</button>'
       + '</div>'

@@ -485,6 +485,11 @@ class TH9800Plugin(RadioPlugin):
                         _st.record('aioc_rx', 'arecord_read', chunk)
 
                     # Track level on RAW audio (before processing)
+                    # Apply audio processing (HPF, gate, etc.)
+                    if self._processor:
+                        chunk = self._processor.process(chunk)
+
+                    # Compute level AFTER processing so gate squelches noise to zero
                     try:
                         arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
                         rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
@@ -498,10 +503,6 @@ class TH9800Plugin(RadioPlugin):
                             self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
                     except Exception:
                         pass
-
-                    # Apply audio processing (HPF, gate, etc.)
-                    if self._processor:
-                        chunk = self._processor.process(chunk)
 
                     if _st:
                         _st.record('aioc_rx', 'post_proc', chunk)
