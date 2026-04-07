@@ -1541,11 +1541,11 @@ class WebConfigServer:
                     self.gateway.kv4p_plugin.tx_audio_level = 0
                 if self.gateway.d75_plugin:
                     self.gateway.d75_plugin.tx_audio_level = 0
-            if self.gateway and hasattr(self.gateway, 'sync_mixer_sources'):
+            if self.gateway and getattr(self.gateway, 'bus_manager', None):
                 try:
-                    self.gateway.sync_mixer_sources()
+                    self.gateway.bus_manager.sync_listen_bus()
                 except Exception as e:
-                    print(f"  [routing] sync_mixer_sources error: {e}")
+                    print(f"  [routing] sync_listen_bus error: {e}")
             # Log reload confirmation
             _bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
             if _bm:
@@ -1580,16 +1580,6 @@ class WebConfigServer:
                                 _bp = AudioProcessor(f"bus_{bus_id}", self.gateway.config)
                                 bm._bus_processors[bus_id] = _bp
                             setattr(_bp, 'enable_noise_gate' if filt == 'gate' else f'enable_{filt}', proc[filt])
-                    # Primary listen bus: update gateway's radio_processor
-                    gw = self.gateway
-                    if gw and filt in ('gate', 'hpf', 'lpf', 'notch'):
-                        _listen_id = getattr(gw, '_listen_bus_id', None)
-                        if bus_id == _listen_id:
-                            _rp = getattr(gw, '_listen_bus_processor', None)
-                            if not _rp:
-                                _rp = AudioProcessor(f"bus_{bus_id}", gw.config)
-                                gw._listen_bus_processor = _rp
-                            setattr(_rp, 'enable_noise_gate' if filt == 'gate' else f'enable_{filt}', proc[filt])
                     return {'ok': True, 'state': proc[filt]}
             return {'ok': False, 'error': f'bus not found: {bus_id}'}
 

@@ -979,11 +979,10 @@ def handle_routing_levels(handler, parent):
         if _bm:
             for _bid, _blv in _bm._bus_levels.items():
                 data['bus_' + _bid] = _blv
-        # Primary listen bus level from mixer
-        if gw.mixer:
-            _listen_id = getattr(gw, '_listen_bus_id', 'listen')
-            _mix_audio = getattr(gw, '_last_mixer_level', 0)
-            data['bus_' + _listen_id] = _mix_audio
+        # Primary listen bus level (managed by BusManager)
+        if _bm and _bm.listen_bus:
+            _listen_id = getattr(_bm, '_listen_bus_id', 'listen')
+            data['bus_' + _listen_id] = _bm._bus_levels.get(_listen_id, 0)
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')

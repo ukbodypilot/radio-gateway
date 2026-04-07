@@ -104,7 +104,7 @@ from audio_sources import (
     NetworkAnnouncementSource,
     WebMicSource, WebMonitorSource, LinkAudioSource, StreamOutputSource, generate_cw_pcm,
 )
-from audio_bus import ListenBus
+# ListenBus now created by BusManager (bus_manager.py)
 from gateway_utils import DDNSUpdater, EmailNotifier, CloudflareTunnel, MumbleServerManager, USBIPManager, GPSManager
 from repeater_manager import RepeaterManager
 from ptt import RelayController, GPIORelayController
@@ -292,7 +292,7 @@ class RadioGateway:
         self._sync_radio_processor()
         
         # Initialize audio bus (v2.0 mixer replacement) and sources
-        self.mixer = ListenBus("monitor", config)
+        self.mixer = None  # Managed by BusManager
         self.radio_source = None  # Will be initialized after AIOC setup
         # sdr_source removed — use sdr_plugin  # SDR1 receiver audio source
         self.sdr_muted = False  # SDR1-specific mute
@@ -1142,92 +1142,6 @@ class RadioGateway:
         print(f"Warning: Speaker output device '{spec}' not found -- using system default")
         return None, 'system default'
 
-    def _source_on_listen_bus(self, source_id):
-        """Check if a source is connected to the PRIMARY listen bus in routing config.
-
-        Only the first listen bus is the primary (handled by main loop mixer).
-        Secondary listen busses are handled by BusManager.
-        """
-        try:
-            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'routing_config.json')
-            with open(config_path) as f:
-                data = json_mod.load(f)
-            # Find the primary listen bus (first one)
-            primary_id = None
-            for b in data.get('busses', []):
-                if b.get('type') == 'listen':
-                    primary_id = b['id']
-                    break
-            if not primary_id:
-                print(f"  [routing] {source_id}: no listen bus found")
-                return False
-            for c in data.get('connections', []):
-                if c['type'] == 'source-bus' and c['from'] == source_id and c['to'] == primary_id:
-                    print(f"  [routing] {source_id} → primary listen bus '{primary_id}' ✓")
-                    return True
-            print(f"  [routing] {source_id} not on primary listen bus '{primary_id}'")
-        except Exception as e:
-            print(f"  [routing] _source_on_listen_bus error for {source_id}: {e}")
-        return False
-
-    def sync_mixer_sources(self):
-        """Reconcile primary ListenBus sources with routing config.
-
-        Called after routing save to add/remove sources from the mixer
-        so reality matches what the routing UI shows.
-        """
-        if not self.mixer:
-            return
-        _before = {s.source.name for s in self.mixer.source_slots}
-        print(f"  [sync] BEFORE: primary mixer sources = {_before}")
-        # Map source_id → (plugin, priority, duckable)
-        source_map = {}
-        if self.sdr_plugin:
-            source_map['sdr'] = (self.sdr_plugin, 11, getattr(self.config, 'SDR_DUCK', True))
-        if self.th9800_plugin:
-            source_map['aioc'] = (self.th9800_plugin, 1, False)
-        if self.kv4p_plugin:
-            source_map['kv4p'] = (self.kv4p_plugin, int(getattr(self.config, 'KV4P_AUDIO_PRIORITY', 2)) + 10, getattr(self.config, 'KV4P_AUDIO_DUCK', True))
-        if self.d75_plugin:
-            source_map['d75'] = (self.d75_plugin, int(getattr(self.config, 'D75_AUDIO_PRIORITY', 2)) + 10, getattr(self.config, 'D75_AUDIO_DUCK', True))
-        if getattr(self, 'playback_source', None):
-            source_map['playback'] = (self.playback_source, 0, False)
-        if getattr(self, 'web_mic_source', None):
-            source_map['webmic'] = (self.web_mic_source, 0, False)
-        if getattr(self, 'announce_input_source', None):
-            source_map['announce'] = (self.announce_input_source, 0, False)
-        if getattr(self, 'web_monitor_source', None):
-            source_map['monitor'] = (self.web_monitor_source, 5, False)
-        if getattr(self, 'mumble_source', None):
-            source_map['mumble_rx'] = (self.mumble_source, 0, False)
-        if getattr(self, 'remote_audio_source', None):
-            source_map['remote_audio'] = (self.remote_audio_source, int(getattr(self.config, 'REMOTE_AUDIO_PRIORITY', 2)) + 10, getattr(self.config, 'REMOTE_AUDIO_DUCK', True))
-
-        # Which sources should be on the listen bus?
-        should_be_on = set()
-        for sid in source_map:
-            if self._source_on_listen_bus(sid):
-                should_be_on.add(sid)
-
-        # Current sources on mixer
-        current_names = {s.source.name for s in self.mixer.source_slots}
-
-        # Add missing
-        for sid in should_be_on:
-            plugin, prio, duck = source_map[sid]
-            if plugin.name not in current_names:
-                _det = getattr(plugin, 'ptt_control', False)
-                self.mixer.add_source(plugin, bus_priority=prio, duckable=duck, deterministic=_det)
-                print(f"  [sync] Added {sid} to listen bus (det={_det})")
-
-        # Remove extras (only for sources we manage)
-        for sid, (plugin, _, _) in source_map.items():
-            if sid not in should_be_on and plugin.name in current_names:
-                self.mixer.remove_source(plugin.name)
-                print(f"  [sync] Removed {sid} from listen bus")
-
-        _final = {s.source.name for s in self.mixer.source_slots}
-        print(f"  [sync] Primary mixer sources: {_final}")
 
     def _speaker_enqueue(self, data):
         """Route audio to speaker — either real PortAudio or virtual (metering only).
@@ -1368,11 +1282,7 @@ class RadioGateway:
                         for _t in [self.sdr_plugin.get_tuner(1), self.sdr_plugin.get_tuner(2)]:
                             if _t:
                                 _t._stream_trace = self._stream_trace
-                        if self._source_on_listen_bus('sdr'):
-                            self.mixer.add_source(self.sdr_plugin, bus_priority=11, duckable=getattr(self.config, 'SDR_DUCK', True))
-                            print("✓ SDR plugin added to mixer (listen bus)")
-                        else:
-                            print("✓ SDR plugin initialized (routed via bus manager)")
+                        print("✓ SDR plugin initialized (routing managed by BusManager)")
                     else:
                         self.sdr_plugin = None
                 except Exception as sdr_err:
@@ -1391,12 +1301,7 @@ class RadioGateway:
                 self.th9800_plugin = TH9800Plugin()
                 if self.th9800_plugin.setup(self.config, gateway=self):
                     self.th9800_plugin._stream_trace = self._stream_trace
-                    # Only add to primary ListenBus if routed there (not to a solo/other bus)
-                    if self._source_on_listen_bus('aioc'):
-                        self.mixer.add_source(self.th9800_plugin, bus_priority=1, duckable=False)
-                        print("✓ TH-9800 plugin added to mixer (listen bus)")
-                    else:
-                        print("✓ TH-9800 plugin initialized (routed via bus manager)")
+                    print("✓ TH-9800 plugin initialized (routing managed by BusManager)")
                 else:
                     print("⚠ TH-9800 plugin setup failed")
                     self.th9800_plugin = None
@@ -1497,9 +1402,8 @@ class RadioGateway:
                         self.remote_audio_source.enabled = True
                         self.remote_audio_source.duck = self.config.REMOTE_AUDIO_DUCK
                         self.remote_audio_source.sdr_priority = int(self.config.REMOTE_AUDIO_PRIORITY)
-                        # Don't add to mixer here — sync_mixer_sources() handles it
-                        # after bus_manager is created, based on routing config
-                        print(f"✓ Remote audio RX source initialized (mixer sync deferred)")
+                        # Routing managed by BusManager via sync_listen_bus
+                        print(f"✓ Remote audio RX source initialized (routing managed by BusManager)")
                     else:
                         print("⚠ Warning: Could not initialize remote audio RX source")
                         self.remote_audio_source = None
@@ -1515,11 +1419,7 @@ class RadioGateway:
                     print(f"Initializing announcement input (listening on {bind_host}:{port})...")
                     self.announce_input_source = NetworkAnnouncementSource(self.config, self)
                     if self.announce_input_source.setup_audio():
-                        if self._source_on_listen_bus('announce'):
-                            self.mixer.add_source(self.announce_input_source, bus_priority=0, duckable=False, deterministic=True)
-                            print(f"✓ Announcement input (ANNIN) added to mixer (listen bus)")
-                        else:
-                            print(f"✓ Announcement input initialized (routed via bus manager)")
+                        print(f"✓ Announcement input (ANNIN) initialized (routing managed by BusManager)")
                         if not self.aioc_available:
                             print("  ⚠ No AIOC — PTT will not activate (audio discarded)")
                     else:
@@ -1534,11 +1434,7 @@ class RadioGateway:
                 try:
                     self.web_mic_source = WebMicSource(self.config, self)
                     if self.web_mic_source.setup_audio():
-                        if self._source_on_listen_bus('webmic'):
-                            self.mixer.add_source(self.web_mic_source, bus_priority=0, duckable=False, deterministic=True)
-                            print("✓ Web microphone source (WEBMIC) added to mixer (listen bus)")
-                        else:
-                            print("✓ Web microphone source initialized (routed via bus manager)")
+                        print("✓ Web microphone source (WEBMIC) initialized (routing managed by BusManager)")
                 except Exception as e:
                     print(f"⚠ Warning: Could not initialize web mic source: {e}")
                     self.web_mic_source = None
@@ -1548,11 +1444,7 @@ class RadioGateway:
                 try:
                     self.web_monitor_source = WebMonitorSource(self.config, self)
                     if self.web_monitor_source.setup_audio():
-                        if self._source_on_listen_bus('monitor'):
-                            self.mixer.add_source(self.web_monitor_source, bus_priority=5, duckable=False)
-                            print("✓ Web monitor source (MONITOR) added to mixer (listen bus)")
-                        else:
-                            print("✓ Web monitor source initialized (routed via bus manager)")
+                        print("✓ Web monitor source (MONITOR) initialized (routing managed by BusManager)")
                 except Exception as e:
                     print(f"⚠ Warning: Could not initialize web monitor source: {e}")
                     self.web_monitor_source = None
@@ -1573,11 +1465,7 @@ class RadioGateway:
                     print("Initializing D75 plugin...")
                     self.d75_plugin = D75Plugin()
                     if self.d75_plugin.setup(self.config):
-                        if self._source_on_listen_bus('d75'):
-                            self.mixer.add_source(self.d75_plugin, bus_priority=int(getattr(self.config, 'D75_AUDIO_PRIORITY', 2)) + 10, duckable=getattr(self.config, 'D75_AUDIO_DUCK', True))
-                            print("✓ D75 plugin added to mixer (listen bus)")
-                        else:
-                            print("✓ D75 plugin initialized (routed via bus manager)")
+                        print("✓ D75 plugin initialized (routing managed by BusManager)")
                     else:
                         print("⚠ Warning: D75 plugin setup failed")
                         self.d75_plugin = None
@@ -1653,16 +1541,7 @@ class RadioGateway:
                         # Store endpoint capabilities for routing UI
                         src._endpoint_caps = info.get('capabilities', {})
                         self.link_endpoints[name] = src
-                        # Only add to primary mixer if this source is on the primary listen bus.
-                        # Otherwise BusManager handles it via the solo/duplex bus, and adding
-                        # to the primary mixer causes queue competition (both call get_audio).
-                        import re as _re
-                        _source_id = 'd75' if 'd75' in name.lower() else _re.sub(r'[^a-z0-9_]', '_', name.lower())
-                        if hasattr(self, '_source_on_listen_bus') and self._source_on_listen_bus(_source_id):
-                            self.mixer.add_source(src, bus_priority=int(getattr(self.config, 'LINK_AUDIO_PRIORITY', 3)) + 10, duckable=getattr(self.config, 'LINK_AUDIO_DUCK', False))
-                            print(f"  [Link] {name} added to primary mixer (listen bus)")
-                        else:
-                            print(f"  [Link] {name} routed via bus manager (not on listen bus)")
+                        print(f"  [Link] {name} registered (routing managed by BusManager)")
                         self._link_ptt_active[name] = False
                         self._link_last_status[name] = {}
                         self._link_tx_levels[name] = 0
@@ -1681,7 +1560,8 @@ class RadioGateway:
                         src = self.link_endpoints.pop(name, None)
                         if src:
                             src.server_connected = False
-                            self.mixer.remove_source(src.name)
+                            if self.bus_manager and self.bus_manager.listen_bus:
+                                self.bus_manager.listen_bus.remove_source(src.name)
                         self._link_ptt_active.pop(name, None)
                         self._link_last_status.pop(name, None)
                         self._link_tx_levels.pop(name, None)
@@ -1845,8 +1725,7 @@ class RadioGateway:
                     print("Initializing EchoLink integration...")
                     self.echolink_source = EchoLinkSource(self.config, self)
                     if self.echolink_source.connected:
-                        self.mixer.add_source(self.echolink_source, bus_priority=2, duckable=False)
-                        print("✓ EchoLink source added to mixer")
+                        print("✓ EchoLink source initialized (routing managed by BusManager)")
                         print("  Audio routing:")
                         if self.config.ECHOLINK_TO_MUMBLE:
                             print("    EchoLink → Mumble: ON")
@@ -2332,374 +2211,108 @@ class RadioGateway:
                 if self.announcement_delay_active and time.time() >= self._announcement_ptt_delay_until:
                     self.announcement_delay_active = False
 
-                # ── Mixer path: runs whenever the mixer exists (SDR-only is valid) ──
-                if self.mixer:
-                    # Snapshot source state BEFORE mixer call
-                    _tr_sdr_q = -1
-                    _tr_sdr_sb = -1
-                    _tr_sdr_prebuf = False
-                    _tr_sdr2_q = -1
-                    _tr_sdr2_sb = -1
-                    _tr_sdr2_prebuf = False
-                    _tr_aioc_q = -1  # TH9800Plugin doesn't use chunk_queue
-                    _tr_aioc_sb = -1
-
-                    _tr_mixer_t0 = time.monotonic()
-                    _bus_out = self.mixer.tick(self.config.AUDIO_CHUNK_SIZE)
-                    data = _bus_out.mixed_audio
-                    ptt_required = _bus_out.ptt.get('_ptt_required', False)
-
-                    active_sources = _bus_out.active_sources
-                    sdr1_was_ducked = 'SDR1' in _bus_out.ducked_sources
-                    sdr2_was_ducked = 'SDR2' in _bus_out.ducked_sources
-                    sdrsv_was_ducked = 'SDRSV' in _bus_out.ducked_sources
-                    rx_audio = _bus_out.status.get('rx_audio')
-                    sdr_only_audio = _bus_out.status.get('duckee_only_audio')
-                    _tr_mixer_ms = (time.monotonic() - _tr_mixer_t0) * 1000
-
-                    # Store SDR ducked states for status bar display
-                    self.sdr_ducked = sdr1_was_ducked
-                    self.sdr2_ducked = sdr2_was_ducked
-                    self.remote_audio_ducked = sdrsv_was_ducked
-
-                    # Capture mixer internal state for trace
-                    if self._trace_recording and hasattr(self.mixer, '_last_trace_state'):
-                        _tr_mixer_state = self.mixer._last_trace_state.copy()
-                        _tr_mixer_state['rx_m'] = getattr(self, 'rx_muted', False)
-                        _tr_mixer_state['tx_m'] = getattr(self, 'tx_muted', False)
-                        _tr_mixer_state['sp_m'] = getattr(self, 'speaker_muted', False)
-                        _tr_mixer_state['gl_m'] = getattr(self, 'global_muted', False)
-
-                    _tr_mixer_got = data is not None
-
-                    # Track listen bus output level for routing page
-                    if data is not None:
-                        _mlv = self.calculate_audio_level(data)
-                        if _mlv > getattr(self, '_last_mixer_level', 0):
-                            self._last_mixer_level = _mlv
-                        else:
-                            self._last_mixer_level = max(0, int(getattr(self, '_last_mixer_level', 0) * 0.7))
-                    else:
-                        self._last_mixer_level = max(0, int(getattr(self, '_last_mixer_level', 0) * 0.7))
-
-                    # Drain BusManager PCM/MP3 once per tick (don't call twice!)
-                    _bm_pcm = self.bus_manager.drain_pcm() if self.bus_manager else None
-                    _bm_mp3 = self.bus_manager.drain_mp3() if self.bus_manager else None
-                    # Copy drain count for trace (BusManager sets it, main loop reads it)
-                    if self.bus_manager:
-                        self._last_pcm_drain_n = getattr(self.bus_manager, '_last_pcm_drain_n', 0)
-
-                    # Early sink delivery — before VAD/signal gates so monitoring
-                    # sinks always receive audio (SDR scanner feeds etc.)
-                    _early_audio = data if data is not None else sdr_only_audio
-                    # Apply listen bus processing (gate/HPF/LPF/notch from routing UI)
-                    _lbp = getattr(self, '_listen_bus_processor', None)
-                    if _lbp and _early_audio is not None:
-                        _early_audio = _lbp.process(_early_audio)
-                    # Suppress all sink delivery when primary listen bus is muted
-                    if getattr(self, '_listen_bus_muted', False):
-                        _early_audio = None
-                    _listen_sinks = self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())
-                    _vad_pass = True  # default: pass through (updated below if VAD enabled)
-                    # Decay sink levels when no audio
-                    if _early_audio is None:
-                        self.stream_audio_level = max(0, int(self.stream_audio_level * 0.7))
-                        self.mumble_tx_level = max(0, int(getattr(self, 'mumble_tx_level', 0) * 0.7))
-                        self.transcription_audio_level = max(0, int(getattr(self, 'transcription_audio_level', 0) * 0.7))
-                    if _early_audio is not None:
-                        _early_level = self.calculate_audio_level(_early_audio)
-                        if 'broadcastify' in _listen_sinks and self.stream_output:
-                            try:
-                                self.stream_output.send_audio(_early_audio)
-                                if self.stream_output.connected:
-                                    self.stream_audio_level = _early_level
-                            except Exception:
-                                pass
-                        # Run VAD once per tick — reused below for the main gate.
-                        _vad_pass = self.check_vad(_early_audio) if (getattr(self.config, 'ENABLE_VAD', False) and _early_audio) else True
-                        # Mumble respects VAD — only deliver when signal is present.
-                        if 'mumble' in _listen_sinks and _vad_pass:
-                            if (self.mumble and
-                                    hasattr(self.mumble, 'sound_output') and
-                                    self.mumble.sound_output is not None and
-                                    getattr(self.mumble.sound_output, 'encoder_framesize', None) is not None):
-                                try:
-                                    # Feed in frame-aligned chunks to prevent fractional
-                                    # frame accumulation in pymumble's buffer
-                                    _ef = self.mumble.sound_output.encoder_framesize
-                                    _fb = int(_ef * self.config.AUDIO_RATE * 2)
-                                    if not hasattr(self, '_mumble_early_buf'):
-                                        self._mumble_early_buf = b''
-                                    self._mumble_early_buf += _early_audio
-                                    while len(self._mumble_early_buf) >= _fb:
-                                        _fr = self._mumble_early_buf[:_fb]
-                                        self._mumble_early_buf = self._mumble_early_buf[_fb:]
-                                        self.mumble.sound_output.add_sound(_fr)
-                                    # Track Mumble TX level for routing page
-                                    if _early_level > getattr(self, 'mumble_tx_level', 0):
-                                        self.mumble_tx_level = _early_level
-                                    else:
-                                        self.mumble_tx_level = int(getattr(self, 'mumble_tx_level', 0) * 0.7 + _early_level * 0.3)
-                                except Exception:
-                                    pass
-                        # Transcription sink on listen bus
-                        if 'transcription' in _listen_sinks and self.transcriber:
-                            try:
-                                self.transcriber.feed(_early_audio, source_id=self._listen_bus_id)
-                                if _early_level > getattr(self, 'transcription_audio_level', 0):
-                                    self.transcription_audio_level = _early_level
-                                else:
-                                    self.transcription_audio_level = int(getattr(self, 'transcription_audio_level', 0) * 0.7 + _early_level * 0.3)
-                            except Exception:
-                                pass
-
-                    if data is None:
-                        # No audio from any source — nothing to send.
-                        # Feed silence to speaker so its PortAudio buffer stays primed,
-                        # but skip the Mumble/remote-audio send path entirely.
-                        self.audio_capture_active = False
-                        _silence = b'\x00' * (self.config.AUDIO_CHUNK_SIZE * 2)
-                        if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
-                            self._speaker_enqueue(_silence)
-                        # Push BusManager PCM (or silence if listen bus PCM is on)
-                        _ws_idle = _bm_pcm if _bm_pcm is not None else (
-                            _silence if self._bus_stream_flags.get(self._listen_bus_id, {}).get('pcm', False) else None)
-                        if _ws_idle is not None:
-                            if self.web_config_server and self.web_config_server._ws_clients:
-                                self.web_config_server.push_ws_audio(_ws_idle)
-                        _tr_outcome = 'vad_gate'
-                        continue
-                    else:
-                        # Mixer produced audio (from any source: AIOC, SDR, file).
-                        # Update health flags so the status monitor doesn't think
-                        # audio capture has stopped and trigger restart_audio_input().
-                        self.last_audio_capture_time = time.time()
-                        self.audio_capture_active = True
-
-                        # Feed audio to automation recorder if active
-                        if self.automation_engine and self.automation_engine.recorder.is_recording():
-                            self.automation_engine.recorder.feed(data)
-
-                        # Push listen bus + BusManager PCM mixed to WebSocket.
-                        _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
-                        _listen_pcm_on = _listen_flags.get('pcm', False) and not getattr(self, '_listen_bus_muted', False)
-                        _ws_pcm = _early_audio if (_listen_pcm_on and _early_audio is not None) else None
-                        if _bm_pcm is not None:
-                            from audio_bus import mix_audio_streams
-                            _ws_pcm = mix_audio_streams(_ws_pcm, _bm_pcm) if _ws_pcm is not None else _bm_pcm
-                        if _ws_pcm is not None:
-                            if self.web_config_server and self.web_config_server._ws_clients:
-                                self.web_config_server.push_ws_audio(_ws_pcm)
-
-                    _tr_outcome = 'mix'  # will be updated to sent/no_mumble/etc below
-
-                    # SDR rebroadcast: route SDR-only mix to AIOC radio TX
-                    if self.sdr_rebroadcast and not ptt_required and sdr_only_audio is not None:
-                        sdr_arr = np.frombuffer(sdr_only_audio, dtype=np.int16).astype(np.float32)
-                        sdr_rms = float(np.sqrt(np.mean(sdr_arr * sdr_arr))) if len(sdr_arr) > 0 else 0.0
-                        sdr_has_signal = sdr_rms > 100  # ~-50 dBFS threshold
-
-                        if sdr_has_signal:
-                            self._rebroadcast_ptt_hold_until = time.monotonic() + self.config.SDR_REBROADCAST_PTT_HOLD
-                            self._rebroadcast_sending = True
-                            self.last_sound_time = time.time()  # prevent PTT release timer
-                        else:
-                            self._rebroadcast_sending = False
-
-                        rebroadcast_ptt_needed = time.monotonic() < self._rebroadcast_ptt_hold_until
-
-                        if rebroadcast_ptt_needed:
-                            self.last_sound_time = time.time()  # keep PTT release timer at bay during hold
-
-                            if not self._rebroadcast_ptt_active and not self.tx_muted and not self.manual_ptt_mode:
-                                self.set_ptt_state(True)
-                                self._ptt_change_time = time.monotonic()
-                                self._rebroadcast_ptt_active = True
-                                # Disable AIOC source so TX feedback doesn't trigger ducking
-                                if self.radio_source:
-                                    self.radio_source.enabled = False
-                                self._trace_events.append((time.monotonic(), 'rebro_ptt', 'on'))
-
-                            pcm = sdr_only_audio if sdr_has_signal else b'\x00' * len(sdr_only_audio)
-                            if self.output_stream and not self.tx_muted:
-                                if self.config.OUTPUT_VOLUME != 1.0:
-                                    arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-                                    pcm = np.clip(arr * self.config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
-                                try:
-                                    self.output_stream.write(pcm, exception_on_overflow=False)
-                                except TypeError:
-                                    self.output_stream.write(pcm)
-
-                            # Update TX bar — measure after OUTPUT_VOLUME to reflect actual transmitted level
-                            tx_level_pcm = pcm if sdr_has_signal else sdr_only_audio
-                            current_level = self.calculate_audio_level(tx_level_pcm)
-                            if current_level > self.rx_audio_level:
-                                self.rx_audio_level = current_level
-                            else:
-                                self.rx_audio_level = int(self.rx_audio_level * 0.7 + current_level * 0.3)
-                            self.last_rx_audio_time = time.time()  # prevent level decay
-
-                            _tr_rebro = 'sig' if sdr_has_signal else 'hold'
-                        else:
-                            if self._rebroadcast_ptt_active and self.ptt_active:
-                                self.set_ptt_state(False)
-                                self._ptt_change_time = time.monotonic()
-                                self._rebroadcast_ptt_active = False
-                                if self.radio_source:
-                                    self.radio_source.enabled = True
-                                self._trace_events.append((time.monotonic(), 'rebro_ptt', 'off'))
-                            self._rebroadcast_sending = False
-                            _tr_rebro = 'idle'
-                    elif self.sdr_rebroadcast and not ptt_required and sdr_only_audio is None:
-                        # No SDR audio this tick — check if hold expired
-                        self._rebroadcast_sending = False
-                        if time.monotonic() >= self._rebroadcast_ptt_hold_until:
-                            if self._rebroadcast_ptt_active and self.ptt_active:
-                                self.set_ptt_state(False)
-                                self._ptt_change_time = time.monotonic()
-                                self._rebroadcast_ptt_active = False
-                                if self.radio_source:
-                                    self.radio_source.enabled = True
-                                self._trace_events.append((time.monotonic(), 'rebro_ptt', 'off'))
-                            _tr_rebro = 'idle'
-                        else:
-                            _tr_rebro = 'hold'
-
-                    # No PTT required (radio RX / SDR) — deliver to sinks that bypass VAD, then gate
-                    # _vad_pass was computed above in early delivery section
-                    if data and not _vad_pass:
-                        if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())):
-                            self._speaker_enqueue(data)
-                        # Push PCM (mixed with BusManager) to WebSocket
-                        _listen_flags = self._bus_stream_flags.get(self._listen_bus_id, {})
-                        _ws_vad = data if _listen_flags.get('pcm', False) else None
-                        if _bm_pcm is not None:
-                            from audio_bus import mix_audio_streams
-                            _ws_vad = mix_audio_streams(_ws_vad, _bm_pcm) if _ws_vad is not None else _bm_pcm
-                        if _ws_vad is not None and self.web_config_server and self.web_config_server._ws_clients:
-                            self.web_config_server.push_ws_audio(_ws_vad)
-                        _tr_outcome = 'vad_gate'
-                        continue
-
-                else:
-                    # No mixer and no AIOC stream available — self-clock still paces us
+                # ── All bus ticks + sink delivery handled by BusManager ──
+                # Main loop drains queues for SDR rebroadcast TX and WebSocket push.
+                data = None  # no longer produced here; kept for trace compat
+                if not self.bus_manager:
                     self.audio_capture_active = False
                     continue
 
-                # ── Common: reset error count and send to Mumble ─────────────────
+                # Drain SDR rebroadcast queue (duckee_only_audio + ptt flag)
+                sdr_only_audio, ptt_required = self.bus_manager.drain_sdr_rebroadcast()
+
+                # Drain PCM/MP3 for WebSocket push
+                _bm_pcm = self.bus_manager.drain_pcm()
+                _bm_mp3 = self.bus_manager.drain_mp3()
+                self._last_pcm_drain_n = getattr(self.bus_manager, '_last_pcm_drain_n', 0)
+
+                # Read listen bus state for trace
+                _lbid = getattr(self.bus_manager, '_listen_bus_id', None)
+                if _lbid:
+                    _tr_mixer_got = self.bus_manager._bus_levels.get(_lbid, 0) > 0
+                    _tr_mixer_state = getattr(self, '_last_mixer_trace_state', {})
+
+                # SDR rebroadcast: route SDR-only mix to AIOC radio TX
+                if self.sdr_rebroadcast and not ptt_required and sdr_only_audio is not None:
+                    sdr_arr = np.frombuffer(sdr_only_audio, dtype=np.int16).astype(np.float32)
+                    sdr_rms = float(np.sqrt(np.mean(sdr_arr * sdr_arr))) if len(sdr_arr) > 0 else 0.0
+                    sdr_has_signal = sdr_rms > 100  # ~-50 dBFS threshold
+
+                    if sdr_has_signal:
+                        self._rebroadcast_ptt_hold_until = time.monotonic() + self.config.SDR_REBROADCAST_PTT_HOLD
+                        self._rebroadcast_sending = True
+                        self.last_sound_time = time.time()
+                    else:
+                        self._rebroadcast_sending = False
+
+                    rebroadcast_ptt_needed = time.monotonic() < self._rebroadcast_ptt_hold_until
+
+                    if rebroadcast_ptt_needed:
+                        self.last_sound_time = time.time()
+
+                        if not self._rebroadcast_ptt_active and not self.tx_muted and not self.manual_ptt_mode:
+                            self.set_ptt_state(True)
+                            self._ptt_change_time = time.monotonic()
+                            self._rebroadcast_ptt_active = True
+                            if self.radio_source:
+                                self.radio_source.enabled = False
+                            self._trace_events.append((time.monotonic(), 'rebro_ptt', 'on'))
+
+                        pcm = sdr_only_audio if sdr_has_signal else b'\x00' * len(sdr_only_audio)
+                        if self.output_stream and not self.tx_muted:
+                            if self.config.OUTPUT_VOLUME != 1.0:
+                                arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                                pcm = np.clip(arr * self.config.OUTPUT_VOLUME, -32768, 32767).astype(np.int16).tobytes()
+                            try:
+                                self.output_stream.write(pcm, exception_on_overflow=False)
+                            except TypeError:
+                                self.output_stream.write(pcm)
+
+                        tx_level_pcm = pcm if sdr_has_signal else sdr_only_audio
+                        current_level = self.calculate_audio_level(tx_level_pcm)
+                        if current_level > self.rx_audio_level:
+                            self.rx_audio_level = current_level
+                        else:
+                            self.rx_audio_level = int(self.rx_audio_level * 0.7 + current_level * 0.3)
+                        self.last_rx_audio_time = time.time()
+
+                        _tr_rebro = 'sig' if sdr_has_signal else 'hold'
+                    else:
+                        if self._rebroadcast_ptt_active and self.ptt_active:
+                            self.set_ptt_state(False)
+                            self._ptt_change_time = time.monotonic()
+                            self._rebroadcast_ptt_active = False
+                            if self.radio_source:
+                                self.radio_source.enabled = True
+                            self._trace_events.append((time.monotonic(), 'rebro_ptt', 'off'))
+                        self._rebroadcast_sending = False
+                        _tr_rebro = 'idle'
+                elif self.sdr_rebroadcast and not ptt_required and sdr_only_audio is None:
+                    self._rebroadcast_sending = False
+                    if time.monotonic() >= self._rebroadcast_ptt_hold_until:
+                        if self._rebroadcast_ptt_active and self.ptt_active:
+                            self.set_ptt_state(False)
+                            self._ptt_change_time = time.monotonic()
+                            self._rebroadcast_ptt_active = False
+                            if self.radio_source:
+                                self.radio_source.enabled = True
+                            self._trace_events.append((time.monotonic(), 'rebro_ptt', 'off'))
+                        _tr_rebro = 'idle'
+                    else:
+                        _tr_rebro = 'hold'
+
+                # WebSocket PCM push (all buses mixed by BusManager)
+                if _bm_pcm is not None:
+                    if self.web_config_server and self.web_config_server._ws_clients:
+                        self.web_config_server.push_ws_audio(_bm_pcm)
+
+                # MP3 stream push
+                if _bm_mp3 is not None:
+                    if self.web_config_server and self.web_config_server._stream_subscribers:
+                        self.web_config_server.push_audio(_bm_mp3)
+
                 consecutive_errors = 0
-
-                # Trace: compute data RMS, output discontinuity, and repeat detection
-                if self._trace_recording and data:
-                    _tr_arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-                    _tr_data_rms = float(np.sqrt(np.mean(_tr_arr * _tr_arr))) if len(_tr_arr) > 0 else 0.0
-                    # Output discontinuity: jump between last sample of previous
-                    # chunk and first sample of this chunk (clicks if large)
-                    _i16arr = np.frombuffer(data, dtype=np.int16)
-                    if len(_i16arr) > 0:
-                        _out_disc = float(abs(int(_i16arr[0]) - _out_last_sample))
-                        _out_last_sample = int(_i16arr[-1])
-                    # Repeated chunk detection: flag when output is identical to previous
-                    _prev_hash = getattr(self, '_tr_prev_chunk_hash', None)
-                    _cur_hash = hash(data)
-                    self._tr_prev_chunk_hash = _cur_hash
-                    if _prev_hash is not None and _cur_hash == _prev_hash and _tr_data_rms > 10:
-                        if not hasattr(self, '_tr_repeat_count'):
-                            self._tr_repeat_count = 0
-                        self._tr_repeat_count += 1
-                        self._trace_events.append((time.monotonic(), 'repeat_chunk', f'#{self._tr_repeat_count} rms={_tr_data_rms:.0f}'))
-
-                # Output click suppressor: detect sharp sample-to-sample jumps
-                # in the mixed output and interpolate over a 4-sample window.
-                # The mixer's additive summing can create boundary jumps larger
-                # than any individual source when waveforms combine.
-                # Threshold 8000 catches real discontinuities without firing
-                # on normal audio (a 1kHz sine at -20dBFS has diffs of ~2700).
-                if data and len(data) >= 16:
-                    _arr = np.frombuffer(data, dtype=np.int16)
-                    _diffs = np.abs(np.diff(_arr.astype(np.int32)))
-                    _clicks = np.where(_diffs > 8000)[0]
-                    if len(_clicks) > 0:
-                        _farr = _arr.astype(np.float32)
-                        for _idx in _clicks:
-                            _lo = max(0, _idx - 2)
-                            _hi = min(len(_farr) - 1, _idx + 3)
-                            if _hi - _lo >= 2:
-                                _farr[_lo:_hi+1] = np.linspace(_farr[_lo], _farr[_hi], _hi - _lo + 1)
-                        data = np.clip(_farr, -32768, 32767).astype(np.int16).tobytes()
-
-                # Speaker output — only if connected as a sink on the listen bus.
-                if 'speaker' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())) and not getattr(self, '_listen_bus_muted', False):
-                    if self.speaker_queue and not self.speaker_muted:
-                        _tr_spk_qd = self.speaker_queue.qsize()
-                    self._speaker_enqueue(data)
-                _tr_spk_ok = True
-
-                # Remote audio server send — only if connected as a sink on the listen bus
-                if 'remote_audio_tx' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())) and not getattr(self, '_listen_bus_muted', False):
-                    if self.remote_audio_server and self.remote_audio_server.connected:
-                        try:
-                            _sv_t0 = time.monotonic()
-                            self.remote_audio_server.send_audio(data)
-                            _tr_sv_ms += (time.monotonic() - _sv_t0) * 1000
-                            _tr_sv_sent += 1
-                            self._update_sv_level(data)
-                            # Update routing-visible level (reuse _mlv from mixer output)
-                            if _mlv > getattr(self, 'remote_audio_tx_level', 0):
-                                self.remote_audio_tx_level = _mlv
-                            else:
-                                self.remote_audio_tx_level = int(getattr(self, 'remote_audio_tx_level', 0) * 0.7 + _mlv * 0.3)
-                        except Exception:
-                            pass
-
-                # Gateway Link: send listen bus audio to endpoints whose TX sink
-                # is on the PRIMARY listen bus. Solo/duplex busses handle their
-                # own TX delivery via put_audio() in BusManager.
-                if self.link_server and self.link_endpoints:
-                    _listen_sinks_for_link = self._bus_sinks.get(self._listen_bus_id, set())
-                    # Reuse _mlv (0-100 level already computed for data) to derive dB
-                    _ldb = _mlv * 0.6 - 60.0 if _mlv > 0 else -100.0
-                    _vad_t = getattr(self.config, 'VAD_THRESHOLD', -40)
-                    for _ep_name in list(self.link_endpoints.keys()):
-                        # Only send listen bus audio if this endpoint's TX sink is on the listen bus
-                        import re as _re
-                        _ep_san = _re.sub(r'[^a-z0-9_]', '_', _ep_name.lower())
-                        _tx_sink_ids = {_ep_san + '_tx', _ep_san, _ep_name + '_tx', _ep_name, 'd75_tx' if 'd75' in _ep_name.lower() else _ep_san + '_tx'}
-                        if not _tx_sink_ids & _listen_sinks_for_link:
-                            self._link_tx_levels[_ep_name] = max(0, int(self._link_tx_levels.get(_ep_name, 0) * 0.7))
-                            continue
-                        _ep_settings = self.link_endpoint_settings.get(_ep_name, {})
-                        if _ep_settings.get('tx_muted', False):
-                            self._link_tx_levels[_ep_name] = max(0, int(self._link_tx_levels.get(_ep_name, 0) * 0.7))
-                            continue
-                        try:
-                            self.link_server.send_audio_to(_ep_name, data)
-                            if _ldb > _vad_t:
-                                _prev = self._link_tx_levels.get(_ep_name, 0)
-                                self._link_tx_levels[_ep_name] = _mlv if _mlv > _prev else int(_prev * 0.7 + _mlv * 0.3)
-                            else:
-                                self._link_tx_levels[_ep_name] = max(0, int(self._link_tx_levels.get(_ep_name, 0) * 0.7))
-                        except Exception:
-                            pass
-
-                # Mumble delivery handled early (before VAD gate) — skip here
-                _tr_outcome = 'sent' if 'mumble' in (self._bus_sinks.get(self._listen_bus_id, set()) - getattr(self, '_muted_sinks', set())) else 'no_mumble_sink'
-
-                if self.echolink_source and self.config.RADIO_TO_ECHOLINK:
-                    try:
-                        self.echolink_source.send_audio(data)
-                    except Exception as el_err:
-                        if self.config.VERBOSE_LOGGING:
-                            print(f"\n[EchoLink] Send error: {el_err}")
-
-                # Broadcastify already delivered early (after mixer.tick, before gates)
-
-                # Push to web audio stream listeners (MP3 only, gated by bus M toggle)
-                _listen_flags_mp3 = self._bus_stream_flags.get(self._listen_bus_id, {})
-                if _listen_flags_mp3.get('mp3', False) and not getattr(self, '_listen_bus_muted', False):
-                    if self.web_config_server:
-                        if self.web_config_server._stream_subscribers:
-                            self.web_config_server.push_audio(data)
+                _tr_outcome = 'bus_ok'
 
             except Exception as e:
                 consecutive_errors += 1
@@ -3498,21 +3111,12 @@ class RadioGateway:
             from bus_manager import BusManager
             self.bus_manager = BusManager(self)
             self.bus_manager.start()
-            # Cache per-bus stream flags (pcm/mp3/vad), sink connections, and listen bus ID
+            self.mixer = self.bus_manager.listen_bus  # Backward compat for trace access
+            # Cache bus metadata for web UI (refreshed after routing saves)
             self._bus_stream_flags = self.bus_manager.get_bus_stream_flags()
             self._bus_sinks = self.bus_manager.get_bus_sinks()
             self._listen_bus_id = self.bus_manager.get_listen_bus_id()
             self._listen_bus_muted = self.bus_manager.is_bus_muted(self._listen_bus_id)
-            # Initialize listen bus processor from saved processing config
-            _lbp_cfg = self.bus_manager.get_bus_processing(self._listen_bus_id)
-            if _lbp_cfg and any(_lbp_cfg.get(k) for k in ('gate', 'hpf', 'lpf', 'notch')):
-                self._listen_bus_processor = AudioProcessor(f"bus_{self._listen_bus_id}", self.config)
-                self._listen_bus_processor.enable_noise_gate = _lbp_cfg.get('gate', False)
-                self._listen_bus_processor.enable_hpf = _lbp_cfg.get('hpf', False)
-                self._listen_bus_processor.enable_lpf = _lbp_cfg.get('lpf', False)
-                self._listen_bus_processor.enable_notch = _lbp_cfg.get('notch', False)
-            # Reconcile mixer sources with routing config now that bus_manager exists
-            self.sync_mixer_sources()
         except Exception as e:
             print(f"  [BusManager] Failed to start: {e}")
             self.bus_manager = None
