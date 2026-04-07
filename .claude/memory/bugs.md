@@ -1,5 +1,47 @@
 # Bug History — Radio Gateway
 
+## Bus processing per-sink IIR filter corruption (2026-04-05)
+**Symptom:** Audio processing buttons (G/H/L/N) on routing page had no audible effect or corrupted audio.
+**Root cause:** `_deliver_audio()` called `AudioProcessor.process()` once per sink inside the loop. IIR filters are stateful — running N times per tick advanced filter state N times, corrupting output for all but the first sink.
+**Fix:** Process mixed audio ONCE before the sink loop, replace all sink audio entries with the processed result.
+**File:** `bus_manager.py` (_deliver_audio)
+
+## Listen bus processing buttons non-functional (2026-04-05)
+**Symptom:** G/H/L/N buttons on the primary listen bus ("Main") toggled visually but had zero audio effect.
+**Root cause:** Primary listen bus is skipped by BusManager (handled by gateway_core main loop). The toggle saved to routing_config.json but no processing path existed in the main loop. Also, the toggle handler updated the config dict but never set the actual AudioProcessor's enable flags.
+**Fix:** Added `_listen_bus_processor` to gateway_core, applied in the `_early_audio` path before sink delivery. Toggle handler now creates/updates the live AudioProcessor object. Startup loads saved processing state from routing config.
+**Files:** `gateway_core.py`, `web_server.py`, `bus_manager.py`
+
+## Passive sink gain sliders non-functional (2026-04-05)
+**Symptom:** Gain slider on mumble/broadcastify/speaker/recording nodes did nothing.
+**Root cause:** `_get_plugin_by_id('mumble')` returned None — passive sinks have no plugin object. Gain command only worked for plugin-backed sources/sinks.
+**Fix:** Added `_sink_gains` dict on gateway, populated by gain command for passive sinks. Applied as numpy multiply in bus_manager delivery path.
+**Files:** `web_server.py`, `bus_manager.py`
+
+## Missing AudioProcessor import in web_server.py (2026-04-05)
+**Symptom:** Processing toggle buttons stopped responding — no visual feedback, no error shown in UI.
+**Root cause:** Toggle handler created `AudioProcessor()` but the import was missing from web_server.py. Error returned `{"ok": false, "error": "name 'AudioProcessor' is not defined"}` but JS only checked `d.ok` so button stayed unchanged.
+**Fix:** Added `AudioProcessor` to the import from `audio_sources`.
+**File:** `web_server.py`
+
+## Endpoint ALSA device busy on mode switch (2026-04-05)
+**Symptom:** Direwolf failed to start when switching to data/winlink mode: "Could not open audio device plughw:3,0 for input — Device or resource busy"
+**Root cause:** Mode switch closed PyAudio streams but didn't terminate the PyAudio instance itself. PyAudio held ALSA device handles even after streams were closed. 0.5s delay was also insufficient.
+**Fix:** Terminate `self._pa` (PyAudio instance) after closing streams, increase delay to 1.0s before starting Direwolf.
+**File:** `gateway_link.py` (AIOCPlugin._set_mode), deployed to Pi endpoint.
+
+## SDR continuous mode polluting routing levels (2026-04-05)
+**Symptom:** SDR source and Main bus showed constant level ~71 even when SDRs were idle (no signal). Noise floor visible on all connected sinks.
+**Root cause:** rtl_airband `continuous = true` sends receiver noise to PipeWire even when squelch is closed. StreamOutputSource silence keepalive handles Broadcastify independently — continuous mode was unnecessary.
+**Fix:** Hardcode `continuous = false` in rtl_airband config generation. Default in `_SETTING_KEYS` also changed to False. Noise gate approach was tried first but abandoned — can't distinguish noise from weak signal in audio domain.
+**Files:** `sdr_plugin.py` (_write_config, _write_config_sdr2, _SETTING_KEYS)
+
+## Packet endpoint stuck in data mode on disable (2026-04-05)
+**Symptom:** After disabling packet mode, FTM-150 endpoint stayed in data mode with Direwolf running, blocking TX audio.
+**Root cause:** `_send_endpoint_mode('audio')` silently failed when no matching endpoint was found. Gateway set mode to idle but endpoint never received the audio command.
+**Fix:** `_send_endpoint_mode()` returns True/False. `_set_mode()` reports failures. Added endpoint status (mode, DW process, audio I/O, HID) to packet status API and UI. Added Force Audio button for manual recovery. Mismatch warning banner when gateway idle but endpoint stuck in data.
+**Files:** `packet_radio.py`, `web_routes_post.py`, `web_pages/packet.html`
+
 ## Endpoint mode switch race — PyAudio reopen crash (2026-04-04)
 **Symptom:** Switching AIOC endpoint from audio to data mode crashed the endpoint. PyAudio stream reopened immediately after being closed, conflicting with Direwolf's exclusive ALSA access.
 **Root cause:** `AIOCPlugin._set_mode()` closed PyAudio streams before setting `self._mode = 'data'`. The `get_audio()` method saw audio mode + no stream and triggered `reopen_audio()`, which crashed because Direwolf already had exclusive ALSA access.

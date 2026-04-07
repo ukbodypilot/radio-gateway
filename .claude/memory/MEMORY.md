@@ -92,6 +92,24 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - GPS: u-blox GNSS on `/dev/gps` (udev rule), real position for APRS/repeaters
 - `packet_radio.py` — KISS client, APRS parser, Pat Winlink lifecycle (local Direwolf removed)
 
+## Bus Processing (2026-04-05)
+- AudioProcessor has stateful IIR filters — MUST process once per bus tick, not per-sink
+- Primary listen bus processor: `_listen_bus_processor` on gateway_core, applied to `_early_audio`
+- Passive sink gains (mumble, broadcastify, speaker, recording): `_sink_gains` dict, applied in bus_manager delivery
+- PCM streams now get processed audio (was raw)
+- SDR `continuous = false` hardcoded in rtl_airband config — silence keepalive handles Broadcastify
+
+## Web UI Navigation (2026-04-05)
+- Shell nav grouped into dropdowns: Audio, Radios, Data, System
+- CSS hover/click dropdowns, no framework
+- Active page highlights parent group label
+
+## FTM-150 Reverse Engineering (2026-04-05, shelved)
+- Proprietary PWM-modulated bus (~50kHz carrier), not UART/SPI/I2C
+- Would need analog demodulator before digital capture is viable
+- Files in `ftm150-re/` + `docs/ftm150-reverse-engineering.md`
+- sigrok + PulseView installed on gateway machine
+
 ## Audio Quality (2026-04-04, branch: audio-quality)
 - AIOC reader: `arecord` subprocess bypasses PipeWire (PyAudio/sounddevice read silence)
 - BusManager: accumulative clock, fire-and-forget PTT, GC disabled
@@ -112,3 +130,5 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [reference_gdrive_backup.md](reference_gdrive_backup.md) — rclone backup to Google Drive
 - [project_ftm150_endpoint.md](project_ftm150_endpoint.md) — FTM-150 AIOC endpoint on Pi 192.168.2.121
 - [project_packet_radio.md](project_packet_radio.md) — Packet Radio (Direwolf TNC) + Winlink email
+- [project_ftm150_reverse_eng.md](project_ftm150_reverse_eng.md) — FTM-150 control head RE (shelved)
+- [bugs_2026_04_05.md](bugs_2026_04_05.md) — bus processing, SDR noise, endpoint mode bugs

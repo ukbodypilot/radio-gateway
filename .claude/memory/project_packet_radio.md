@@ -94,6 +94,12 @@ type: project
 - **Endpoint mode switch race:** AIOCPlugin._set_mode() closed PyAudio before setting self._mode='data', causing get_audio() to see audio mode + no stream, triggering reopen which crashed. Fix: set _mode before closing streams. Also close BOTH input AND output streams.
 - See bugs.md for full details.
 
+### Bugs found and fixed (2026-04-05)
+- **Endpoint stuck in data mode:** `_send_endpoint_mode('audio')` silently failed. Fix: return True/False, report errors, added endpoint status to UI + Force Audio button.
+- **ALSA device busy on mode switch:** PyAudio instance not terminated (only streams closed). Fix: terminate `self._pa` + increase delay to 1.0s before Direwolf start.
+- **Endpoint status in UI:** New row on /packet page shows EP mode, DW process, audio I/O, HID. Mismatch warning banner when gateway idle but endpoint stuck in data.
+- **`_find_endpoint()` cached:** Avoids `getpeername()` syscall on every status poll.
+
 ### Config keys
 ```ini
 [packet]
