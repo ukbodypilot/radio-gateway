@@ -6,9 +6,17 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 **Packet:** Winlink email via Direwolf TNC + Pat client. APRS decode with station mapping. BBS terminal. Gateway proximity map from Winlink CMS directory.
 **Audio:** Sub-millisecond jitter bus mixer with per-stream trace diagnostics. Fire-and-forget PTT. Direct ALSA capture bypassing PipeWire.
 
-## v2.0 Highlights
+## v3.0 Highlights
 
-v2.0 is a full architectural rewrite of the audio engine:
+- **Unified audio engine** -- all buses (listen, solo, duplex, simplex) now run in a single BusManager thread. The main loop is a thin consumer that drains queues for SDR rebroadcast and WebSocket push. One code path for all audio.
+- **Loop Recorder** -- per-bus continuous recording with visual waveform review. Enable the "R" button on any bus to record. Canvas-based waveform viewer with zoom/pan, click-to-play, drag-select, and MP3/WAV export. Configurable retention (1h to 7 days). Dashboard panel with live stats. See [docs/loop-recorder.md](docs/loop-recorder.md).
+- **Plugin auto-discovery** -- drop a `.py` file in `plugins/`, add a config flag, restart. No gateway code changes needed. Template at `plugins/example_radio.py`. Full developer guide at [docs/plugin-development.md](docs/plugin-development.md).
+
+| Loop Recorder |
+|:-:|
+| ![Loop Recorder](docs/loop-recorder-screenshot.png) |
+
+## v2.0 Highlights
 
 - **Bus-based routing** replaces the monolithic mixer. Four bus types (Listen, Solo, Duplex Repeater, Simplex Repeater) handle all audio flow. Sources and sinks are wired through busses -- audio only flows where you connect it.
 - **Visual routing UI** built on Drawflow. Drag sources, busses, and sinks onto a canvas and wire them with click-and-drag connections. Live audio level bars on every node.
@@ -123,6 +131,7 @@ WEB_THEME = blue             # blue, red, green, purple, amber, teal, pink
 | Telegram | `/telegram` | Telegram bot status and message log |
 | Monitor | `/monitor` | Room monitor: streams device mic, gain/VAD/level controls |
 | Recordings | `/recordings` | Browse, play, download, delete recorded audio; filter by source/date |
+| Loop Recorder | `/recorder` | Per-bus continuous recording: visual waveform, zoom/pan, click-to-play, export |
 | Transcribe | `/transcribe` | Live voice-to-text with Whisper, freq-tagged output, Mumble/Telegram forwarding |
 | Config | `/config` | INI editor with collapsible sections, Save & Restart |
 | Packet | `/packet` | Packet radio: Direwolf TNC, APRS map, Winlink email, BBS terminal |
@@ -662,9 +671,11 @@ radio-gateway/
 +-- gateway_core.py            # RadioGateway class, main loop, audio setup
 +-- gateway_mcp.py             # MCP server (55+ tools, stdio)
 +-- web_server.py              # WebConfigServer, Handler dispatch, config layout
-+-- web_routes_get.py          # GET route handlers (28 endpoints)
-+-- web_routes_post.py         # POST route handlers (27 endpoints)
++-- web_routes_get.py          # GET route handlers (core endpoints)
++-- web_routes_post.py         # POST route handlers
 +-- web_routes_stream.py       # WebSocket + MP3 streaming handlers
++-- web_routes_loop.py         # Loop recorder API handlers
++-- web_routes_packet.py       # Packet radio + Winlink API handlers
 +-- text_commands.py           # Mumble chat commands, key dispatch, TTS
 +-- audio_trace.py             # Audio pipeline debug trace
 +-- stream_stats.py            # Broadcastify/Icecast stats
@@ -680,6 +691,8 @@ radio-gateway/
 +-- smart_announce.py          # AI announcement engine
 +-- radio_automation.py        # Automation engine
 +-- gateway_link.py            # Gateway Link protocol
++-- loop_recorder.py           # Per-bus continuous recording + waveform
++-- plugin_loader.py           # Auto-discovers plugins from plugins/
 +-- ddns_updater.py            # Dynamic DNS updater
 +-- email_notifier.py          # Gmail SMTP notifications
 +-- cloudflare_tunnel.py       # Cloudflare quick tunnel manager
@@ -693,7 +706,10 @@ radio-gateway/
 |   +-- gps.html, repeaters.html, aircraft.html
 |   +-- telegram.html, monitor.html, recordings.html
 |   +-- transcribe.html, logs.html, voice.html, config.html
+|   +-- recorder.html, packet.html
 |   +-- shell.html, common.css, common.js
++-- plugins/
+|   +-- example_radio.py       # Template for external radio plugins
 +-- tools/
 |   +-- telegram_bot.py        # Telegram bot (systemd service)
 |   +-- link_endpoint.py       # Gateway Link endpoint
@@ -701,6 +717,8 @@ radio-gateway/
 +-- docs/
 |   +-- screenshots/           # Web UI screenshots (18 images)
 |   +-- gateway_link.md        # Gateway Link protocol spec
+|   +-- loop-recorder.md       # Loop Recorder user guide
+|   +-- plugin-development.md  # Plugin developer guide
 +-- scripts/
 |   +-- install.sh             # Full installer (RPi + Debian + Arch)
 |   +-- remote_bt_proxy.py     # D75 Bluetooth proxy
