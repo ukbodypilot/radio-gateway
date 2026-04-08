@@ -365,8 +365,7 @@ class RadioGateway:
         self.cat_client = None  # RadioCATClient instance
 
         # KV4P HT Radio
-        self.kv4p_plugin = None           # KV4PCATClient instance
-        self.kv4p_plugin = None  # KV4PAudioSource instance
+        self.kv4p_plugin = None           # KV4PPlugin instance
         self.packet_plugin = None         # PacketRadioPlugin instance
         self.bus_manager = None           # BusManager (created in _setup_routing)
         self._bus_sinks = {}              # {bus_id: set(sink_ids)} — populated by _setup_routing

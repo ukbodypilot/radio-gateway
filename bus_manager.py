@@ -17,7 +17,7 @@ import time
 import numpy as np
 
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus
-from audio_sources import AudioProcessor
+from audio_util import AudioProcessor
 
 
 class BusManager:

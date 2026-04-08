@@ -22,7 +22,7 @@ import time
 import numpy as np
 
 from audio_bus import DuckGroup, check_signal_instant, mix_audio_streams
-from audio_sources import AudioProcessor
+from audio_util import AudioProcessor
 from gateway_link import RadioPlugin
 
 _math_mod = math

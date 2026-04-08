@@ -30,7 +30,7 @@ def _update_config_key(key, value):
 
 import numpy as np
 
-from audio_sources import AudioProcessor
+from audio_util import AudioProcessor
 from gateway_link import RadioPlugin
 
 

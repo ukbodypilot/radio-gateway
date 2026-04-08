@@ -23,7 +23,7 @@ import queue as _queue_mod
 
 import numpy as np
 
-from audio_sources import AudioProcessor
+from audio_util import AudioProcessor
 from gateway_link import RadioPlugin
 from cat_client import RadioCATClient
 from ptt import RelayController, GPIORelayController

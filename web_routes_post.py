@@ -10,6 +10,23 @@ from audio_sources import generate_cw_pcm
 from cat_client import RadioCATClient
 
 
+def _resolve_source(gw, source_id):
+    """Resolve a source ID to the source object, checking plugins then link endpoints."""
+    _plugin_map = {
+        'sdr': 'sdr_plugin', 'kv4p': 'kv4p_plugin',
+        'remote': 'remote_audio_source', 'announce': 'announce_input_source',
+    }
+    if source_id in _plugin_map:
+        return getattr(gw, _plugin_map[source_id], None)
+    # Link endpoint lookup (d75, ftm_150, etc.)
+    import re as _re
+    for name, src in getattr(gw, 'link_endpoints', {}).items():
+        _ep_id = 'd75' if 'd75' in name.lower() else _re.sub(r'[^a-z0-9_]', '_', name.lower())
+        if _ep_id == source_id:
+            return src
+    return None
+
+
 def handle_key(handler, parent):
     """POST /key"""
     length = int(handler.headers.get('Content-Length', 0))
@@ -168,10 +185,10 @@ def handle_mixer(handler, parent):
             }, 'volume': s.get('volume', 1.0),
             'duck': {
                 'sdr1': s.get('sdr1_duck', False),
-                'sdr2': gw.sdr_plugin.duck if gw.sdr_plugin else False,
-                'd75': next((getattr(s, 'duck', False) for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), False),
-                'kv4p': gw.kv4p_plugin.duck if gw.kv4p_plugin and hasattr(gw.kv4p_plugin, 'duck') else False,
-                'remote': gw.remote_audio_source.duck if gw.remote_audio_source and hasattr(gw.remote_audio_source, 'duck') else False,
+                'sdr2': getattr(_resolve_source(gw, 'sdr'), 'duck', False),
+                'd75': getattr(_resolve_source(gw, 'd75'), 'duck', False),
+                'kv4p': getattr(_resolve_source(gw, 'kv4p'), 'duck', False),
+                'remote': getattr(_resolve_source(gw, 'remote'), 'duck', False),
             }, 'ducked': {
                 'sdr1': s.get('sdr1_ducked', False),
                 'sdr2': s.get('sdr2_ducked', False),
@@ -184,9 +201,9 @@ def handle_mixer(handler, parent):
                 'talkback': getattr(gw, 'tx_talkback', False),
                 'manual_ptt': s.get('manual_ptt', False),
             }, 'boost': {
-                'd75': next((int(getattr(s, 'audio_boost', 1.0) * 100) for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), 100),
-                'kv4p': int(gw.kv4p_plugin.audio_boost * 100) if gw.kv4p_plugin and hasattr(gw.kv4p_plugin, 'audio_boost') else 100,
-                'remote': int(gw.remote_audio_source.audio_boost * 100) if gw.remote_audio_source and hasattr(gw.remote_audio_source, 'audio_boost') else 100,
+                'd75': int(getattr(_resolve_source(gw, 'd75'), 'audio_boost', 1.0) * 100),
+                'kv4p': int(getattr(_resolve_source(gw, 'kv4p'), 'audio_boost', 1.0) * 100),
+                'remote': int(getattr(_resolve_source(gw, 'remote'), 'audio_boost', 1.0) * 100),
             }, 'processing': {
                 'radio': gw.radio_processor.get_active_list() if hasattr(gw, 'radio_processor') else [],
                 'sdr': gw.sdr_processor.get_active_list() if hasattr(gw, 'sdr_processor') else [],
@@ -284,52 +301,25 @@ def handle_mixer(handler, parent):
         elif action == 'duck':
             # Enable/disable duck on a source
             state = data.get('state')  # true/false or omit for toggle
-            _duck_map = {
-                'sdr1': 'sdr_plugin', 'sdr2': 'sdr_plugin',
-                'kv4p': 'kv4p_plugin',
-                'remote': 'remote_audio_source',
-            }
-            if source in _duck_map:
-                src_obj = getattr(gw, _duck_map[source], None)
-                if src_obj and hasattr(src_obj, 'duck'):
-                    if state is None:
-                        src_obj.duck = not src_obj.duck
-                    else:
-                        src_obj.duck = bool(state)
-                    result = {'ok': True, 'source': source, 'duck': src_obj.duck}
+            src_obj = _resolve_source(gw, source)
+            if src_obj and hasattr(src_obj, 'duck'):
+                if state is None:
+                    src_obj.duck = not src_obj.duck
                 else:
-                    result = {'ok': False, 'error': f'{source} not available'}
+                    src_obj.duck = bool(state)
+                result = {'ok': True, 'source': source, 'duck': src_obj.duck}
             else:
                 result = {'ok': False, 'error': f'duck not supported for: {source}'}
 
         elif action == 'boost':
             # Set per-source audio boost (percentage 0-500)
             pct = data.get('value', 100)
-            _boost_map = {
-                'kv4p': 'kv4p_plugin',
-                'remote': 'remote_audio_source',
-            }
-            if source in _boost_map:
-                src_obj = getattr(gw, _boost_map[source], None)
-                if src_obj and hasattr(src_obj, 'audio_boost'):
-                    src_obj.audio_boost = max(0, min(5.0, float(pct) / 100.0))
-                    result = {'ok': True, 'source': source, 'boost_pct': int(src_obj.audio_boost * 100)}
-                else:
-                    result = {'ok': False, 'error': f'{source} not available'}
+            src_obj = _resolve_source(gw, source)
+            if src_obj and hasattr(src_obj, 'audio_boost'):
+                src_obj.audio_boost = max(0, min(5.0, float(pct) / 100.0))
+                result = {'ok': True, 'source': source, 'boost_pct': int(src_obj.audio_boost * 100)}
             else:
-                # Try generic link endpoint by sanitised name (strip _tx suffix)
-                import re as _re
-                _ep_src = None
-                _base = source[:-3] if source.endswith('_tx') else source
-                for _n, _s in gw.link_endpoints.items():
-                    if _re.sub(r'[^a-z0-9_]', '_', _n.lower()) == _base:
-                        _ep_src = _s
-                        break
-                if _ep_src and hasattr(_ep_src, 'audio_boost'):
-                    _ep_src.audio_boost = max(0, min(5.0, float(pct) / 100.0))
-                    result = {'ok': True, 'source': source, 'boost_pct': int(_ep_src.audio_boost * 100)}
-                else:
-                    result = {'ok': False, 'error': f'boost not supported for: {source}'}
+                result = {'ok': False, 'error': f'boost not supported for: {source}'}
 
         elif action == 'flag':
             # Toggle or set a mixer flag (vad, agc, echo_cancel, rebroadcast)
@@ -771,8 +761,6 @@ def handle_kv4pcmd(handler, parent):
                 from kv4p_plugin import KV4PPlugin
                 parent.gateway.kv4p_plugin = KV4PPlugin()
                 if parent.gateway.kv4p_plugin.setup(parent.gateway.config):
-                    parent.gateway.kv4p_plugin = parent.gateway.kv4p_plugin
-                    parent.gateway.kv4p_plugin = parent.gateway.kv4p_plugin
                     result = {'ok': True, 'response': 'Reconnected'}
                 else:
                     parent.gateway.kv4p_plugin = None

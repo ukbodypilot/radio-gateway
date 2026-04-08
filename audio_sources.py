@@ -19,6 +19,12 @@ import math as _math_mod
 import re
 import numpy as np
 
+# Shared audio utilities — level metering, AudioProcessor, CW generation
+from audio_util import (
+    pcm_rms, rms_to_level, update_level, pcm_level, pcm_db,
+    AudioProcessor, generate_cw_pcm,
+)
+
 try:
     import hid
 except ImportError:
@@ -69,202 +75,7 @@ class AudioSource:
         return f"{self.name}: {'ON' if self.enabled else 'OFF'}"
 
 
-class AudioProcessor:
-    """Per-source audio processing chain with independent filter state.
-
-    Each audio source (Radio, SDR1, SDR2, etc.) gets its own AudioProcessor
-    instance so filters run independently with their own state (envelope,
-    filter memory, etc.) and can be toggled per-source.
-    """
-
-    def __init__(self, name, config):
-        self.name = name          # e.g. "radio", "sdr"
-        self.config = config      # gateway Config object (for AUDIO_RATE, etc.)
-
-        # Per-source enable flags (set from config or toggled at runtime)
-        self.enable_hpf = False
-        self.hpf_cutoff = 300         # Hz
-        self.enable_lpf = False
-        self.lpf_cutoff = 3000        # Hz
-        self.enable_notch = False
-        self.notch_freq = 1000        # Hz — target frequency
-        self.notch_q = 30.0           # Q factor (higher = narrower notch)
-        self.enable_noise_gate = False
-        self.gate_threshold = -40     # dB
-        self.gate_attack = 0.01       # seconds
-        self.gate_release = 0.1       # seconds
-
-        # Filter state (persists across audio chunks for continuity)
-        self.highpass_state = None
-        self.lowpass_state = None
-        self.notch_state = None
-        self.gate_envelope = 0.0
-
-    def reset_state(self):
-        """Reset all filter states (e.g. when source restarts)."""
-        self.highpass_state = None
-        self.lowpass_state = None
-        self.notch_state = None
-        self.gate_envelope = 0.0
-
-    def process(self, pcm_data):
-        """Run the full processing chain on PCM data. Order:
-        HPF → LPF → Notch → Noise Gate
-        """
-        if not pcm_data:
-            return pcm_data
-
-        processed = pcm_data
-
-        if self.enable_hpf:
-            processed = self._apply_hpf(processed)
-
-        if self.enable_lpf:
-            processed = self._apply_lpf(processed)
-
-        if self.enable_notch:
-            processed = self._apply_notch(processed)
-
-        if self.enable_noise_gate:
-            processed = self._apply_noise_gate(processed)
-
-        return processed
-
-    def get_active_list(self):
-        """Return list of active filter names for status display."""
-        active = []
-        if self.enable_noise_gate: active.append('Gate')
-        if self.enable_hpf: active.append('HPF')
-        if self.enable_lpf: active.append('LPF')
-        if self.enable_notch: active.append(f'Notch')
-        return active
-
-    # --- Filter implementations ---
-
-    def _apply_hpf(self, pcm_data):
-        """First-order IIR high-pass filter."""
-        try:
-            import math
-            from scipy.signal import lfilter, lfilter_zi
-
-            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(samples) == 0:
-                return pcm_data
-
-            cutoff = self.hpf_cutoff
-            sample_rate = self.config.AUDIO_RATE
-            rc = 1.0 / (2.0 * math.pi * cutoff)
-            dt = 1.0 / sample_rate
-            alpha = rc / (rc + dt)
-
-            b = np.array([alpha, -alpha], dtype=np.float64)
-            a = np.array([1.0, -alpha], dtype=np.float64)
-
-            if self.highpass_state is None:
-                self.highpass_state = lfilter_zi(b, a) * 0.0
-
-            filtered, self.highpass_state = lfilter(b, a, samples, zi=self.highpass_state)
-            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
-        except Exception:
-            return pcm_data
-
-    def _apply_lpf(self, pcm_data):
-        """First-order IIR low-pass filter — cuts high-frequency hiss above cutoff."""
-        try:
-            import math
-            from scipy.signal import lfilter, lfilter_zi
-
-            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(samples) == 0:
-                return pcm_data
-
-            cutoff = self.lpf_cutoff
-            sample_rate = self.config.AUDIO_RATE
-            rc = 1.0 / (2.0 * math.pi * cutoff)
-            dt = 1.0 / sample_rate
-            alpha = dt / (rc + dt)
-
-            b = np.array([alpha], dtype=np.float64)
-            a = np.array([1.0, -(1.0 - alpha)], dtype=np.float64)
-
-            if self.lowpass_state is None:
-                self.lowpass_state = lfilter_zi(b, a) * 0.0
-
-            filtered, self.lowpass_state = lfilter(b, a, samples, zi=self.lowpass_state)
-            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
-        except Exception:
-            return pcm_data
-
-    def _apply_notch(self, pcm_data):
-        """Second-order IIR notch (band-stop) filter — removes a specific frequency."""
-        try:
-            import math
-            from scipy.signal import lfilter, lfilter_zi
-
-            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(samples) == 0:
-                return pcm_data
-
-            sample_rate = self.config.AUDIO_RATE
-            w0 = 2.0 * math.pi * self.notch_freq / sample_rate
-            bw = w0 / self.notch_q
-            r = 1.0 - (bw / 2.0)
-            r = max(0.0, min(r, 0.9999))  # clamp for stability
-
-            # Transfer function: H(z) = (1 - 2cos(w0)z^-1 + z^-2) / (1 - 2r*cos(w0)z^-1 + r^2*z^-2)
-            cos_w0 = math.cos(w0)
-            b = np.array([1.0, -2.0 * cos_w0, 1.0], dtype=np.float64)
-            a = np.array([1.0, -2.0 * r * cos_w0, r * r], dtype=np.float64)
-            # Normalize so passband gain = 1
-            b = b / (1.0 + abs(1.0 - r))
-
-            if self.notch_state is None:
-                self.notch_state = lfilter_zi(b, a) * 0.0
-
-            filtered, self.notch_state = lfilter(b, a, samples, zi=self.notch_state)
-            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
-        except Exception:
-            return pcm_data
-
-    def _apply_noise_gate(self, pcm_data):
-        """Noise gate with attack/release envelope."""
-        try:
-            import array as _arr
-            import math
-
-            samples = _arr.array('h', pcm_data)
-            if len(samples) == 0:
-                return pcm_data
-
-            threshold_db = self.gate_threshold
-            threshold = 32767.0 * pow(10.0, threshold_db / 20.0)
-
-            attack_samples = self.gate_attack * self.config.AUDIO_RATE
-            release_samples = self.gate_release * self.config.AUDIO_RATE
-
-            attack_coef = 1.0 / attack_samples if attack_samples > 0 else 1.0
-            release_coef = 1.0 / release_samples if release_samples > 0 else 0.1
-
-            gated = []
-            for sample in samples:
-                level = abs(sample)
-
-                if level > self.gate_envelope:
-                    self.gate_envelope += (level - self.gate_envelope) * attack_coef
-                else:
-                    self.gate_envelope += (level - self.gate_envelope) * release_coef
-
-                if self.gate_envelope > threshold:
-                    gain = 1.0
-                else:
-                    ratio = self.gate_envelope / threshold if threshold > 0 else 0
-                    gain = ratio * ratio
-
-                gated.append(int(sample * gain))
-
-            return _arr.array('h', gated).tobytes()
-        except Exception:
-            return pcm_data
+# AudioProcessor moved to audio_util.py — re-exported above for backward compat
 
 
 class FilePlaybackSource(AudioSource):
@@ -1664,18 +1475,8 @@ class LinkAudioSource(AudioSource):
     def push_audio(self, pcm):
         """Called by GatewayLinkServer reader thread when AUDIO frame arrives."""
         self._chunk_queue.append(pcm)
-        # Track level from incoming audio — shows on routing page even when unrouted
         try:
-            arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                _lv = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
-            else:
-                _lv = 0
-            if _lv > self.audio_level:
-                self.audio_level = int(_lv)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+            self.audio_level = pcm_level(pcm, self.audio_level)
         except Exception:
             pass
 
@@ -1700,17 +1501,7 @@ class LinkAudioSource(AudioSource):
         self._sub_buffer = self._sub_buffer[cb:]
 
         # Level metering — no VAD gate here, bus handles that
-        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        if rms > 0:
-            raw_level = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60))))
-            display_level = min(100, int(raw_level * self.display_gain))
-            if display_level > self.audio_level:
-                self.audio_level = display_level
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + display_level * 0.3)
-        else:
-            self.audio_level = max(0, int(self.audio_level * 0.7))
+        self.audio_level = pcm_level(raw, self.audio_level, gain=self.display_gain)
 
         # Audio boost
         if self.audio_boost != 1.0:
@@ -1735,17 +1526,7 @@ class LinkAudioSource(AudioSource):
                     _arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
                     pcm = np.clip(_arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
                 self.gateway.link_server.send_audio_to(self.endpoint_name, pcm)
-                # TX level metering
-                arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-                rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-                if rms > 0:
-                    level = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
-                else:
-                    level = 0
-                if level > self.tx_audio_level:
-                    self.tx_audio_level = int(level)
-                else:
-                    self.tx_audio_level = int(self.tx_audio_level * 0.7 + level * 0.3)
+                self.tx_audio_level = pcm_level(pcm, self.tx_audio_level)
             except Exception:
                 pass
 
@@ -2534,44 +2315,5 @@ class StreamOutputSource:
 
 
 
-_MORSE_TABLE = {
-    'A': '.-',   'B': '-...', 'C': '-.-.', 'D': '-..',  'E': '.',
-    'F': '..-.', 'G': '--.',  'H': '....', 'I': '..',   'J': '.---',
-    'K': '-.-',  'L': '.-..', 'M': '--',   'N': '-.',   'O': '---',
-    'P': '.--.', 'Q': '--.-', 'R': '.-.',  'S': '...',  'T': '-',
-    'U': '..-',  'V': '...-', 'W': '.--',  'X': '-..-', 'Y': '-.--',
-    'Z': '--..',
-    '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-',
-    '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
-    '.': '.-.-.-', ',': '--..--', '?': '..--..', '/': '-..-.', '-': '-....-',
-}
-
-
-def generate_cw_pcm(text, wpm=15, freq=700, sample_rate=48000):
-    """Return int16 numpy array of CW audio for text. Standard PARIS timing."""
-    dit_n = int(sample_rate * 1.2 / wpm)
-    t = np.arange(dit_n) / sample_rate
-    dit_tone = (np.sin(2 * np.pi * freq * t) * 32767).astype(np.int16)
-    dah_tone = np.tile(dit_tone, 3)
-    dit_sil  = np.zeros(dit_n,     dtype=np.int16)
-    char_sil = np.zeros(3 * dit_n, dtype=np.int16)
-    word_sil = np.zeros(7 * dit_n, dtype=np.int16)
-
-    chunks = []
-    for wi, word in enumerate(text.upper().split()):
-        if wi:
-            chunks.append(word_sil)
-        for ci, ch in enumerate(word):
-            if ci:
-                chunks.append(char_sil)
-            pattern = _MORSE_TABLE.get(ch, '')
-            if not pattern:
-                print(f"[CW] Warning: skipping unknown character {ch!r}")
-                continue
-            for ei, el in enumerate(pattern):
-                if ei:
-                    chunks.append(dit_sil)
-                chunks.append(dit_tone if el == '.' else dah_tone)
-
-    return np.concatenate(chunks) if chunks else np.zeros(dit_n, dtype=np.int16)
+# CW generation moved to audio_util.py — re-exported above for backward compat
 
