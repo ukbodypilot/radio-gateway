@@ -364,11 +364,6 @@ class RadioGateway:
         # TH-9800 CAT control
         self.cat_client = None  # RadioCATClient instance
 
-        # D75 CAT Control + Audio
-        self.d75_plugin = None           # D75CATClient instance
-        self.d75_plugin = None  # D75AudioSource instance
-        self.d75_muted = False        # D75 audio mute toggle
-
         # KV4P HT Radio
         self.kv4p_plugin = None           # KV4PCATClient instance
         self.kv4p_plugin = None  # KV4PAudioSource instance
@@ -563,12 +558,7 @@ class RadioGateway:
             SDRPlugin._sync_processor(self.sdr_plugin._processor1, self.config)
             SDRPlugin._sync_processor(self.sdr_plugin._processor2, self.config)
 
-    def _sync_d75_plugin_processor(self):
-        """Sync D75 processing config into the D75Plugin's processor."""
-        if self.d75_plugin and self.d75_plugin._processor:
-            self.d75_plugin._sync_processor()
-
-    # process_audio_for_d75 removed — D75Plugin handles processing internally
+    # D75 processing is handled by the link endpoint — no local sync needed
 
     def _sync_kv4p_plugin_processor(self):
         """Sync KV4P processing config into the KV4PPlugin's processor."""
@@ -746,9 +736,7 @@ class RadioGateway:
     def set_ptt_state(self, state_on):
         """Control PTT — routes to the configured TX radio plugin."""
         tx_radio = str(getattr(self.config, 'TX_RADIO', 'th9800')).lower()
-        if tx_radio == 'd75' and self.d75_plugin:
-            self.d75_plugin.execute({'cmd': 'ptt', 'state': state_on})
-        elif tx_radio == 'kv4p' and self.kv4p_plugin:
+        if tx_radio == 'kv4p' and self.kv4p_plugin:
             self.kv4p_plugin.execute({'cmd': 'ptt', 'state': state_on})
         elif self.th9800_plugin:
             self.th9800_plugin.execute({'cmd': 'ptt', 'state': state_on})
@@ -832,34 +820,7 @@ class RadioGateway:
             print(f"\n[PTT] CAT !ptt error: {e}")
             self.notify(f"PTT failed: {e}")
     
-    _d75_ptt_on = False  # Track D75 PTT state
-
-    def _ptt_d75(self, state_on):
-        """PTT via D75 CAT TCP !ptt on/off command.
-
-        D75 uses explicit on/off (not toggle like TH-9800).
-        No RTS switching needed — D75 doesn't use the RTS relay.
-        CRITICAL: fire-and-forget — write bytes to socket without waiting
-        for response. Using _send_cmd would compete with the poll thread
-        for the socket lock and response parsing, causing 1-5s delays
-        that starve the audio mixer.
-        """
-        d75 = getattr(self, 'd75_plugin', None)
-        if not d75 or not d75._connected:
-            if state_on:
-                self.notify("PTT failed: D75 not connected")
-            return
-        if state_on == self._d75_ptt_on:
-            return
-        self._d75_ptt_on = state_on
-        cmd = "!ptt on" if state_on else "!ptt off"
-        try:
-            if d75._sock:
-                d75._sock.sendall(f"{cmd}\n".encode())
-                print(f"  [PTT] {'KEYED' if state_on else 'UNKEYED'} D75 (fire-and-forget)")
-        except Exception as e:
-            print(f"\n[PTT] D75 !ptt send error: {e}")
-            self._d75_ptt_on = False
+    # D75 PTT is handled by the link endpoint — no local PTT code needed
 
     _kv4p_ptt_on = False  # Track KV4P PTT state
 
@@ -1457,24 +1418,7 @@ class RadioGateway:
 
             # CAT client now owned by TH9800Plugin (backward compat alias set above)
 
-            # Initialize D75 (plugin)
-            self.d75_plugin = None
-            if getattr(self.config, 'ENABLE_D75', False):
-                try:
-                    from d75_plugin import D75Plugin
-                    print("Initializing D75 plugin...")
-                    self.d75_plugin = D75Plugin()
-                    if self.d75_plugin.setup(self.config):
-                        print("✓ D75 plugin initialized (routing managed by BusManager)")
-                    else:
-                        print("⚠ Warning: D75 plugin setup failed")
-                        self.d75_plugin = None
-                except Exception as e:
-                    print(f"⚠ D75 plugin error: {e}")
-                    import traceback; traceback.print_exc()
-                    self.d75_plugin = None
-            if self.d75_plugin and self.d75_plugin._processor:
-                self.d75_processor = self.d75_plugin._processor
+            # D75 is now a link endpoint — no local plugin init needed
 
             # Initialize KV4P HT Radio (plugin)
             self.kv4p_plugin = None
@@ -2646,7 +2590,7 @@ class RadioGateway:
                 'hpf':   'D75_PROC_ENABLE_HPF',
                 'lpf':   'D75_PROC_ENABLE_LPF',
                 'notch': 'D75_PROC_ENABLE_NOTCH',
-            }, '_sync_d75_plugin_processor'),
+            }, None),  # link endpoint manages its own processing
             'kv4p': ({
                 'gate':  'KV4P_PROC_ENABLE_NOISE_GATE',
                 'hpf':   'KV4P_PROC_ENABLE_HPF',
@@ -2665,7 +2609,8 @@ class RadioGateway:
                 setattr(self.config, key, not current)
             else:
                 setattr(self.config, key, bool(state))
-            getattr(self, sync_method)()
+            if sync_method:
+                getattr(self, sync_method)()
 
     def handle_key(self, char):
         from text_commands import handle_key as _handle_key
@@ -2808,12 +2753,12 @@ class RadioGateway:
             'ms1_state': self.mumble_server_1.state if self.mumble_server_1 else None,
             'ms2_state': self.mumble_server_2.state if self.mumble_server_2 else None,
             'cat_enabled': bool(self.cat_client) or getattr(self.config, 'ENABLE_CAT_CONTROL', False),
-            'd75_enabled': bool(self.d75_plugin) or getattr(self.config, 'ENABLE_D75', False) or bool(_d75_link),
-            'd75_connected': bool(self.d75_plugin and getattr(self.d75_plugin, '_serial_connected', False)) or bool(_d75_link),
-            'd75_audio_connected': bool(self.d75_plugin and self.d75_plugin.server_connected) or bool(_d75_link),
-            'd75_mode': 'link_endpoint' if _d75_link else str(getattr(self.config, 'D75_CONNECTION', 'bluetooth')).lower().strip(),
-            'd75_level': self.d75_plugin.audio_level if self.d75_plugin else (_d75_link.audio_level if _d75_link else 0),
-            'd75_muted': getattr(self, 'd75_muted', False),
+            'd75_enabled': getattr(self.config, 'ENABLE_D75', False) or bool(_d75_link),
+            'd75_connected': bool(_d75_link),
+            'd75_audio_connected': bool(_d75_link),
+            'd75_mode': 'link_endpoint' if _d75_link else 'disabled',
+            'd75_level': _d75_link.audio_level if _d75_link else 0,
+            'd75_muted': getattr(_d75_link, 'muted', False) if _d75_link else False,
             'kv4p_enabled': bool(self.kv4p_plugin),
             'kv4p_level': self.kv4p_plugin.audio_level if self.kv4p_plugin else 0,
             'kv4p_muted': getattr(self, 'kv4p_muted', False),
@@ -3381,21 +3326,7 @@ class RadioGateway:
             except Exception:
                 pass
 
-        if self.d75_plugin:
-            try:
-                self.d75_plugin.close()
-                if self.config.VERBOSE_LOGGING:
-                    print("  D75 CAT client closed")
-            except Exception:
-                pass
-
-        if self.d75_plugin:
-            try:
-                self.d75_plugin.cleanup()
-                if self.config.VERBOSE_LOGGING:
-                    print("  D75 audio source closed")
-            except Exception:
-                pass
+        # D75 cleanup removed — D75 is now a link endpoint
 
         # Stop local Mumble Server instances on gateway exit
         if self.mumble_server_1:

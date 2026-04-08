@@ -347,19 +347,9 @@ class Config:
             'CAT_RIGHT_VOLUME': -1,     # 0-100, -1 = don't change
             'CAT_LEFT_POWER': '',       # L/M/H or blank = don't change
             'CAT_RIGHT_POWER': '',      # L/M/H or blank = don't change
-            # D75 CAT Control + Audio (via D75_CAT.py TCP server)
+            # D75 (link endpoint — legacy plugin config removed)
             'ENABLE_D75': False,
-            'D75_CONNECTION': 'bluetooth',     # 'bluetooth' or 'usb' (usb = CAT only, no audio)
-            'D75_HOST': '127.0.0.1',          # D75_CAT.py server IP
-            'D75_PORT': 9750,                  # CAT TCP port
-            'D75_AUDIO_PORT': 9751,            # Raw PCM audio TCP port (bluetooth only)
-            'D75_PASSWORD': '',                # !pass auth password
-            'D75_AUDIO_DUCK': True,            # Duck D75 when higher priority source active
-            'D75_AUDIO_PRIORITY': 2,           # sdr_priority for ducking
-            'D75_AUDIO_DISPLAY_GAIN': 1.0,     # Display level sensitivity
-            'D75_AUDIO_BOOST': 1.0,            # Volume multiplier
-            'D75_RECONNECT_INTERVAL': 5.0,     # Seconds between reconnect attempts
-            # D75 audio processing (same structure as radio/SDR processing)
+            # D75 audio processing
             'D75_PROC_ENABLE_NOISE_GATE': False,
             'D75_PROC_NOISE_GATE_THRESHOLD': -40,
             'D75_PROC_NOISE_GATE_ATTACK': 0.01,

@@ -1647,6 +1647,7 @@ class LinkAudioSource(AudioSource):
         self.mix_ratio = 1.0
         self.duck = getattr(config, 'LINK_AUDIO_DUCK', False)
         self.tx_audio_boost = 1.0     # separate TX gain for put_audio path
+        self.tx_audio_level = 0       # TX level 0-100 (updated in put_audio)
         self.audio_boost = float(getattr(config, 'LINK_AUDIO_BOOST', 1.0))
         self.display_gain = float(getattr(config, 'LINK_AUDIO_DISPLAY_GAIN', 1.0))
         self.server_connected = False
@@ -1734,6 +1735,17 @@ class LinkAudioSource(AudioSource):
                     _arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
                     pcm = np.clip(_arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
                 self.gateway.link_server.send_audio_to(self.endpoint_name, pcm)
+                # TX level metering
+                arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
+                if rms > 0:
+                    level = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
+                else:
+                    level = 0
+                if level > self.tx_audio_level:
+                    self.tx_audio_level = int(level)
+                else:
+                    self.tx_audio_level = int(self.tx_audio_level * 0.7 + level * 0.3)
             except Exception:
                 pass
 

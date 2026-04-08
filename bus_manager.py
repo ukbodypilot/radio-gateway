@@ -201,10 +201,6 @@ class BusManager:
             source_map['kv4p'] = (gw.kv4p_plugin,
                                   int(getattr(gw.config, 'KV4P_AUDIO_PRIORITY', 2)) + 10,
                                   getattr(gw.config, 'KV4P_AUDIO_DUCK', True))
-        if gw.d75_plugin:
-            source_map['d75'] = (gw.d75_plugin,
-                                 int(getattr(gw.config, 'D75_AUDIO_PRIORITY', 2)) + 10,
-                                 getattr(gw.config, 'D75_AUDIO_DUCK', True))
         if getattr(gw, 'playback_source', None):
             source_map['playback'] = (gw.playback_source, 0, False)
         if getattr(gw, 'web_mic_source', None):
@@ -484,16 +480,12 @@ class BusManager:
         gw = self.gateway
         if sink_id == 'kv4p_tx' and gw.kv4p_plugin:
             return gw.kv4p_plugin
-        elif sink_id == 'd75_tx' and gw.d75_plugin:
-            return gw.d75_plugin
         elif sink_id in ('aioc_tx', 'aioc') and getattr(gw, 'th9800_plugin', None):
             return gw.th9800_plugin
         elif sink_id == 'kv4p' and gw.kv4p_plugin:
             return gw.kv4p_plugin
-        elif sink_id == 'd75' and gw.d75_plugin:
-            return gw.d75_plugin
-        # Check link endpoints for D75 (when using link endpoint instead of plugin)
-        if sink_id in ('d75_tx', 'd75') and not gw.d75_plugin:
+        # Check link endpoints for D75
+        if sink_id in ('d75_tx', 'd75'):
             for name, src in gw.link_endpoints.items():
                 if 'd75' in name.lower():
                     return src
@@ -516,8 +508,6 @@ class BusManager:
             return gw.sdr_plugin
         elif source_id == 'kv4p' and gw.kv4p_plugin:
             return gw.kv4p_plugin
-        elif source_id == 'd75' and gw.d75_plugin:
-            return gw.d75_plugin
         elif source_id == 'aioc' and getattr(gw, 'th9800_plugin', None):
             return gw.th9800_plugin
         elif source_id == 'playback' and getattr(gw, 'playback_source', None):

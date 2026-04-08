@@ -254,14 +254,12 @@ class WebConfigServer:
     _SELECT_OPTIONS = {
         'TX_RADIO': ['th9800', 'd75', 'kv4p'],
         'PTT_METHOD': ['aioc', 'relay', 'software'],
-        'D75_CONNECTION': [('bluetooth', 'bluetooth — BT audio + CAT'), ('usb', 'usb — CAT only, no audio')],
         'SDR_PRIORITY_ORDER': [
             ('sdr1', 'SDR1 first — SDR1 ducks SDR2 when active'),
             ('sdr2', 'SDR2 first — SDR2 ducks SDR1 when active'),
             ('equal', 'Equal — both play simultaneously'),
         ],
         'KV4P_AUDIO_PRIORITY': [('0', '0 — ducks all'), ('1', '1 — high'), ('2', '2 — low')],
-        'D75_AUDIO_PRIORITY': [('0', '0 — ducks all'), ('1', '1 — high'), ('2', '2 — low')],
         'REMOTE_AUDIO_PRIORITY': [('0', '0 — ducks all'), ('1', '1 — high'), ('2', '2 — low')],
         'KV4P_BANDWIDTH': [('0', '0 — Narrow'), ('1', '1 — Wide')],
         'AUDIO_CHANNELS': [('1', '1 — Mono'), ('2', '2 — Stereo')],
@@ -492,9 +490,7 @@ class WebConfigServer:
             'CAT_LEFT_POWER', 'CAT_RIGHT_POWER',
         ]),
         ('d75', 'TH-D75 Control', [
-            'ENABLE_D75', 'D75_CONNECTION', 'D75_HOST', 'D75_PORT', 'D75_AUDIO_PORT',
-            'D75_PASSWORD', 'D75_AUDIO_DUCK', 'D75_AUDIO_PRIORITY',
-            'D75_AUDIO_DISPLAY_GAIN', 'D75_AUDIO_BOOST', 'D75_RECONNECT_INTERVAL',
+            'ENABLE_D75',
             'D75_PROC_ENABLE_HPF', 'D75_PROC_HPF_CUTOFF',
             'D75_PROC_ENABLE_LPF', 'D75_PROC_LPF_CUTOFF',
             'D75_PROC_ENABLE_NOTCH', 'D75_PROC_NOTCH_FREQ', 'D75_PROC_NOTCH_Q',
@@ -1344,10 +1340,7 @@ class WebConfigServer:
             if gw.kv4p_plugin:
                 sources.append({**{'id': 'kv4p', 'name': 'KV4P [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.kv4p_plugin)})
-            if gw.d75_plugin:
-                sources.append({**{'id': 'd75', 'name': 'TH-D75 [RX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.d75_plugin)})
-            elif any('d75' in n.lower() for n in gw.link_endpoints):
+            if any('d75' in n.lower() for n in gw.link_endpoints):
                 _d75_src = next((s for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), None)
                 if _d75_src:
                     sources.append({**{'id': 'd75', 'name': 'TH-D75 [RX]', 'enabled': True,
@@ -1377,7 +1370,7 @@ class WebConfigServer:
             # TNC source/sink removed — Direwolf runs on remote endpoint
             # Generic link endpoints (skip D75 — handled above with special ID mapping)
             _covered_ids = set()
-            if gw.d75_plugin or any('d75' in n.lower() for n in gw.link_endpoints):
+            if any('d75' in n.lower() for n in gw.link_endpoints):
                 _covered_ids.update(n for n in gw.link_endpoints if 'd75' in n.lower())
             for _ep_name, _ep_src in gw.link_endpoints.items():
                 if _ep_name in _covered_ids:
@@ -1408,9 +1401,7 @@ class WebConfigServer:
         if gw:
             if gw.kv4p_plugin:
                 sinks.append({**{'id': 'kv4p_tx', 'name': 'KV4P [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.kv4p_plugin)})
-            if gw.d75_plugin:
-                sinks.append({**{'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.d75_plugin)})
-            elif any('d75' in n.lower() for n in gw.link_endpoints):
+            if any('d75' in n.lower() for n in gw.link_endpoints):
                 _d75_src = next((s for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), None)
                 if _d75_src:
                     sinks.append({**{'id': 'd75_tx', 'name': 'TH-D75 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(_d75_src)})
@@ -1544,8 +1535,6 @@ class WebConfigServer:
                     self.gateway.th9800_plugin.tx_audio_level = 0
                 if self.gateway.kv4p_plugin:
                     self.gateway.kv4p_plugin.tx_audio_level = 0
-                if self.gateway.d75_plugin:
-                    self.gateway.d75_plugin.tx_audio_level = 0
             if self.gateway and getattr(self.gateway, 'bus_manager', None):
                 try:
                     self.gateway.bus_manager.sync_listen_bus()
@@ -1712,9 +1701,7 @@ class WebConfigServer:
         _map = {
             'sdr': gw.sdr_plugin,
             'kv4p': gw.kv4p_plugin,
-            'd75': gw.d75_plugin,
             'kv4p_tx': gw.kv4p_plugin,
-            'd75_tx': gw.d75_plugin,
             'aioc': getattr(gw, 'th9800_plugin', None),
             'aioc_tx': getattr(gw, 'th9800_plugin', None),
             'playback': getattr(gw, 'playback_source', None),

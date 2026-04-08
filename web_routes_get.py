@@ -152,7 +152,7 @@ def handle_d75status(handler, parent):
     if parent.gateway:
         gw = parent.gateway
         data['d75_enabled'] = getattr(gw.config, 'ENABLE_D75', False)
-        data['d75_mode'] = str(getattr(gw.config, 'D75_CONNECTION', 'bluetooth')).lower().strip()
+        data['d75_mode'] = 'disabled'
 
         # Check for D75 link endpoint first
         _link = getattr(gw, 'link_server', None)
@@ -198,20 +198,8 @@ def handle_d75status(handler, parent):
                     data['audio_boost'] = int(getattr(_src, 'audio_boost', 1.0) * 100)
                     break
 
-        elif gw.d75_plugin:
-            # Legacy path: direct D75Plugin
-            cat = gw.d75_plugin
-            data.update(cat.get_radio_state())
-            data['d75_enabled'] = True
-            data['tcp_connected'] = cat._connected
-            data['serial_connected'] = getattr(cat, '_serial_connected', False) if cat._connected else False
-            data['af_gain'] = getattr(cat, '_af_gain', -1)
-            data['audio_connected'] = cat.server_connected
-            data['audio_level'] = cat.audio_level
-            data['audio_boost'] = int(cat.audio_boost * 100)
-
         # Build status detail
-        if not _d75_ep and not gw.d75_plugin:
+        if not _d75_ep:
             if not data['d75_enabled']:
                 data['status_detail'] = 'D75 disabled in config'
             else:
@@ -252,8 +240,7 @@ def handle_d75memlist(handler, parent):
     import threading as _thr
     channels = []
     gw = parent.gateway
-    cat = gw.d75_plugin if gw else None
-    # Check for D75 link endpoint first
+    # Check for D75 link endpoint
     _link = getattr(gw, 'link_server', None) if gw else None
     _d75_ep = None
     if _link:
@@ -300,118 +287,13 @@ def handle_d75memlist(handler, parent):
         except BrokenPipeError:
             pass
         return
-    _modes = {0: 'FM', 1: 'AM', 2: 'LSB', 3: 'USB', 4: 'CW', 5: 'DV'}
-    _shifts = {0: 'S', 1: '+', 2: '-'}
-    _ctcss = ["67.0","69.3","71.9","74.4","77.0","79.7","82.5","85.4","88.5",
-        "91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0",
-        "127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9",
-        "173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"]
-    _dcs = ["023","025","026","031","032","036","043","047","051","053","054",
-        "065","071","072","073","074","114","115","116","122","125","131",
-        "132","134","143","145","152","155","156","162","165","172","174",
-        "205","212","223","225","226","243","244","245","246","251","252",
-        "255","261","263","265","266","271","274","306","311","315","325",
-        "331","332","343","346","351","356","364","365","371","411","412",
-        "413","423","431","432","445","446","452","454","455","462","464",
-        "465","466","503","506","516","523","526","532","546","565","606",
-        "612","624","627","631","632","654","662","664","703","712","723",
-        "731","732","734","743","754"]
-    if cat:
-        _empty_streak = 0
-        for ch_num in range(1000):
-            ch_str = str(ch_num).zfill(3)
-            resp = cat.send_command(f"!cat ME {ch_str}")
-            if not resp or ',' not in str(resp):
-                _empty_streak += 1
-                if _empty_streak >= 5:
-                    break  # Stop after 5 consecutive empty channels
-
-                continue
-            # Find ME data line in response
-            me_line = ''
-            for line in str(resp).split('\n'):
-                line = line.strip()
-                if line.startswith('ME ') and ',' in line:
-                    me_line = line[3:]
-                    break
-            if not me_line:
-                continue
-            fields = me_line.split(',')
-            if len(fields) < 14:
-                continue
-            try:
-                freq_hz = int(fields[1])
-                if freq_hz < 1000000:
-                    continue
-                freq = freq_hz / 1_000_000
-                field2 = int(fields[2])  # ME[2]: offset if small, TX freq if large
-                mode = int(fields[5])
-                tone_on = fields[8] == '1'
-                ctcss_on = fields[9] == '1'
-                dcs_on = fields[10] == '1'
-                shift = int(fields[13])  # 0=simplex, 1=+, 2=-
-                # Determine shift display
-                # ME field[2] < 100 MHz → offset; >= 100 MHz → TX frequency
-                if field2 >= 100_000_000:
-                    # TX frequency — derive offset and shift
-                    tx_freq = field2 / 1_000_000
-                    diff = tx_freq - freq
-                    if abs(diff) < 0.001:
-                        shift_str = 'S'
-                        offset_str = ''
-                    elif abs(diff) > 50:
-                        shift_str = 'X'
-                        offset_str = f'{tx_freq:.4f}'
-                    elif diff > 0:
-                        shift_str = '+'
-                        offset_str = f'{diff:.4f}'
-                    else:
-                        shift_str = '-'
-                        offset_str = f'{abs(diff):.4f}'
-                elif field2 > 0 and shift != 0:
-                    # Small value = offset in Hz
-                    offset_mhz = field2 / 1_000_000
-                    shift_str = '+' if shift == 1 else '-'
-                    offset_str = f'{offset_mhz:.4f}'
-                else:
-                    shift_str = 'S'
-                    offset_str = ''
-                tone_str = ''
-                # ME field[14]=lockout, [15]=tone_idx, [16]=ctcss_idx, [17]=dcs_idx
-                tone_idx = int(fields[15])
-                ctcss_idx = int(fields[16])
-                if ctcss_on:
-                    if ctcss_idx < len(_ctcss): tone_str = _ctcss[ctcss_idx]
-                elif tone_on:
-                    idx = ctcss_idx if tone_idx == 0 and ctcss_idx > 0 else tone_idx
-                    if idx < len(_ctcss): tone_str = _ctcss[idx]
-                elif dcs_on:
-                    idx = int(fields[17])
-                    if idx < len(_dcs): tone_str = 'D' + _dcs[idx]
-                name = fields[20].strip() if len(fields) > 20 else ''
-                # Power: ME field[21] on D75 if present (0=H,1=L,2=EL)
-                power = int(fields[21]) if len(fields) > 21 and fields[21].strip().isdigit() else -1
-                channels.append({
-                    'ch': ch_str, 'freq': round(freq, 4),
-                    'offset': offset_str,
-                    'mode': _modes.get(mode, '?'),
-                    'shift': shift_str,
-                    'tone': tone_str, 'name': name,
-                    # ME→FO field mapping: ME has lockout field at [14] that FO lacks
-                    # FO = band + ME[1:14] + ME[15:22] (skip ME[14]=lockout)
-                    'me_fields': ','.join(fields[1:14] + fields[15:22]) if len(fields) >= 22 else '',
-                    'power': power,
-                })
-                _empty_streak = 0
-            except (ValueError, IndexError):
-                continue
-    data = channels
+    # No link endpoint — return empty channel list
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')
         handler.send_header('Cache-Control', 'no-cache')
         handler.end_headers()
-        handler.wfile.write(json_mod.dumps(data).encode('utf-8'))
+        handler.wfile.write(json_mod.dumps(channels).encode('utf-8'))
     except BrokenPipeError:
         pass
 
@@ -897,8 +779,6 @@ def handle_routing_levels(handler, parent):
             data['sdr'] = gw.sdr_plugin.audio_level
         if gw.kv4p_plugin:
             data['kv4p'] = gw.kv4p_plugin.audio_level
-        if gw.d75_plugin:
-            data['d75'] = getattr(gw.d75_plugin, 'audio_level', 0)
         if not data.get('d75'):
             for _ln, _ls in gw.link_endpoints.items():
                 if 'd75' in _ln.lower():
@@ -933,9 +813,7 @@ def handle_routing_levels(handler, parent):
         # TX levels (radio destinations)
         if gw.kv4p_plugin:
             data['kv4p_tx'] = getattr(gw.kv4p_plugin, 'tx_audio_level', 0)
-        if gw.d75_plugin:
-            data['d75_tx'] = getattr(gw.d75_plugin, 'tx_audio_level', 0)
-        elif not data.get('d75_tx'):
+        if not data.get('d75_tx'):
             for _ln, _ls in gw.link_endpoints.items():
                 if 'd75' in _ln.lower():
                     data['d75_tx'] = getattr(_ls, 'tx_audio_level', 0)
@@ -961,8 +839,9 @@ def handle_routing_levels(handler, parent):
             gw.mumble_source.audio_level = max(0, int(gw.mumble_source.audio_level * 0.8))
         if gw.kv4p_plugin:
             gw.kv4p_plugin.tx_audio_level = max(0, int(getattr(gw.kv4p_plugin, 'tx_audio_level', 0) * 0.8))
-        if gw.d75_plugin:
-            gw.d75_plugin.tx_audio_level = max(0, int(getattr(gw.d75_plugin, 'tx_audio_level', 0) * 0.8))
+        # Decay link endpoint TX levels
+        for _ln, _ls in gw.link_endpoints.items():
+            _ls.tx_audio_level = max(0, int(getattr(_ls, 'tx_audio_level', 0) * 0.8))
         if getattr(gw, 'th9800_plugin', None):
             gw.th9800_plugin.tx_audio_level = max(0, int(getattr(gw.th9800_plugin, 'tx_audio_level', 0) * 0.8))
         # Report sink levels — 0 when disconnected so bars clear

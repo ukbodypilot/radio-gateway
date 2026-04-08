@@ -169,7 +169,7 @@ def handle_mixer(handler, parent):
             'duck': {
                 'sdr1': s.get('sdr1_duck', False),
                 'sdr2': gw.sdr_plugin.duck if gw.sdr_plugin else False,
-                'd75': gw.d75_plugin.duck if gw.d75_plugin and hasattr(gw.d75_plugin, 'duck') else False,
+                'd75': next((getattr(s, 'duck', False) for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), False),
                 'kv4p': gw.kv4p_plugin.duck if gw.kv4p_plugin and hasattr(gw.kv4p_plugin, 'duck') else False,
                 'remote': gw.remote_audio_source.duck if gw.remote_audio_source and hasattr(gw.remote_audio_source, 'duck') else False,
             }, 'ducked': {
@@ -184,7 +184,7 @@ def handle_mixer(handler, parent):
                 'talkback': getattr(gw, 'tx_talkback', False),
                 'manual_ptt': s.get('manual_ptt', False),
             }, 'boost': {
-                'd75': int(gw.d75_plugin.audio_boost * 100) if gw.d75_plugin and hasattr(gw.d75_plugin, 'audio_boost') else 100,
+                'd75': next((int(getattr(s, 'audio_boost', 1.0) * 100) for n, s in gw.link_endpoints.items() if 'd75' in n.lower()), 100),
                 'kv4p': int(gw.kv4p_plugin.audio_boost * 100) if gw.kv4p_plugin and hasattr(gw.kv4p_plugin, 'audio_boost') else 100,
                 'remote': int(gw.remote_audio_source.audio_boost * 100) if gw.remote_audio_source and hasattr(gw.remote_audio_source, 'audio_boost') else 100,
             }, 'processing': {
@@ -201,7 +201,6 @@ def handle_mixer(handler, parent):
                 'rx':       ('rx_muted', None),
                 'sdr1':     ('sdr_muted', 'sdr_plugin'),
                 'sdr2':     ('sdr2_muted', 'sdr_plugin'),
-                'd75':      ('d75_muted', 'd75_plugin'),
                 'kv4p':     ('kv4p_muted', 'kv4p_plugin'),
                 'remote':   ('remote_audio_muted', 'remote_audio_source'),
                 'announce': ('announce_input_muted', 'announce_input_source'),
@@ -287,7 +286,7 @@ def handle_mixer(handler, parent):
             state = data.get('state')  # true/false or omit for toggle
             _duck_map = {
                 'sdr1': 'sdr_plugin', 'sdr2': 'sdr_plugin',
-                'd75': 'd75_plugin', 'kv4p': 'kv4p_plugin',
+                'kv4p': 'kv4p_plugin',
                 'remote': 'remote_audio_source',
             }
             if source in _duck_map:
@@ -307,7 +306,6 @@ def handle_mixer(handler, parent):
             # Set per-source audio boost (percentage 0-500)
             pct = data.get('value', 100)
             _boost_map = {
-                'd75': 'd75_plugin',
                 'kv4p': 'kv4p_plugin',
                 'remote': 'remote_audio_source',
             }
@@ -661,26 +659,6 @@ def handle_d75cmd(handler, parent):
                 _link.send_command_to(_d75_ep, {'cmd': 'cat', 'raw': f'{cmd} {args}'.strip()})
                 result = {'ok': True, 'response': f'sent via link'}
 
-        elif gw and gw.d75_plugin:
-            # Legacy path: direct D75Plugin
-            if cmd == 'cat':
-                resp = gw.d75_plugin.send_command(f"!cat {args}")
-                result = {'ok': True, 'response': resp or ''}
-            elif cmd == 'ptt':
-                result = gw.d75_plugin.execute({'cmd': 'ptt', 'state': not gw.d75_plugin._ptt_on_state})
-            elif cmd == 'mute':
-                result = gw.d75_plugin.execute({'cmd': 'mute'})
-                gw.d75_muted = gw.d75_plugin.muted
-            elif cmd == 'vol':
-                try:
-                    pct = int(args)
-                    gw.d75_plugin.audio_boost = max(0, min(500, pct)) / 100.0
-                    result = {'ok': True, 'response': f'boost={pct}%'}
-                except (ValueError, TypeError):
-                    result = {'ok': False, 'error': 'usage: vol 0-500'}
-            else:
-                resp = gw.d75_plugin.send_command(f"!{cmd} {args}".strip())
-                result = {'ok': True, 'response': resp or ''}
         else:
             result = {'ok': False, 'error': 'D75 not connected (no link endpoint or plugin)'}
     except Exception as e:

@@ -634,11 +634,6 @@ def handle_key(gw, char):
         if gw.speaker_stream:
             gw.speaker_muted = not gw.speaker_muted
             gw._trace_events.append((time.monotonic(), 'spk_mute', 'on' if gw.speaker_muted else 'off'))
-    elif char == 'w':
-        if gw.d75_plugin:
-            gw.d75_muted = not gw.d75_muted
-            gw.d75_plugin.muted = gw.d75_muted
-            gw._trace_events.append((time.monotonic(), 'd75_mute', 'on' if gw.d75_muted else 'off'))
     elif char == 'y':
         if gw.kv4p_plugin:
             gw.kv4p_muted = not gw.kv4p_muted

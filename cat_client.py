@@ -1000,4 +1000,4 @@ class RadioCATClient:
             print(f"  CAT: Setup done ({ok_count}/{len(tasks)} ok) — {', '.join(summary_parts)}")
 
 
-# D75CATClient removed — replaced by D75Plugin in d75_plugin.py
+# D75CATClient removed — D75 now uses link endpoint

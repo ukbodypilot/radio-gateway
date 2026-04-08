@@ -184,8 +184,6 @@ class RadioController:
                 return self._tune_sdr(frequency, mode)
             elif radio == 'th9800':
                 return self._tune_th9800(frequency, pl_tone)
-            elif radio == 'd75':
-                return self._tune_d75(frequency, mode, pl_tone)
             else:
                 return {'ok': False, 'error': f'Unknown radio: {radio}'}
         except Exception as e:
@@ -207,12 +205,6 @@ class RadioController:
                     state = cat.get_radio_state()
                     return {'ok': True, **state}
                 return {'ok': False, 'error': 'TH-9800 not connected'}
-            elif radio == 'd75':
-                d75 = getattr(self._gw, 'd75_cat', None)
-                if d75:
-                    state = d75.get_radio_state()
-                    return {'ok': True, **state}
-                return {'ok': False, 'error': 'D75 not connected'}
             else:
                 return {'ok': False, 'error': f'Unknown radio: {radio}'}
         except Exception as e:
@@ -229,12 +221,6 @@ class RadioController:
             elif radio == 'th9800':
                 level = getattr(self._gw, 'rx_audio_level', 0)
                 return {'ok': True, 'level': level, 'has_signal': level > 50}
-            elif radio == 'd75':
-                d75 = getattr(self._gw, 'd75_cat', None)
-                if d75:
-                    sig = d75._signal.get(d75._active_band, 0)
-                    return {'ok': True, 'level': sig, 'has_signal': sig > 1}
-                return {'ok': False, 'error': 'D75 not connected'}
             else:
                 return {'ok': False, 'error': f'Unknown radio: {radio}'}
         except Exception as e:
@@ -248,8 +234,6 @@ class RadioController:
             radios.append('sdr')
         if getattr(self._gw, 'cat_client', None):
             radios.append('th9800')
-        if getattr(self._gw, 'd75_cat', None):
-            radios.append('d75')
         return radios
 
     def _tune_sdr(self, frequency, mode):
@@ -273,109 +257,7 @@ class RadioController:
         print(f"[Automation] TH-9800: frequency {frequency} MHz requested (channel-based radio)")
         return {'ok': True, 'note': 'TH-9800 is channel-based; set up channels manually'}
 
-    # D75 step size index: 0=5k, 1=6.25k, 2=8.33k, 3=10k, 4=12.5k, 5=15k,
-    #                      6=20k, 7=25k, 8=30k, 9=50k, 10=100k
-    _D75_STEP_5KHZ = '0'
-
-    # CTCSS tone table (index 0-38) — must match D75 firmware order
-    _CTCSS_TONES = [
-        67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5, 85.4, 88.5,
-        91.5, 94.8, 97.4, 100.0, 103.5, 107.2, 110.9, 114.8,
-        118.8, 123.0, 127.3, 131.8, 136.5, 141.3, 146.2, 151.4,
-        156.7, 162.2, 167.9, 173.8, 179.9, 186.2, 192.8, 203.5,
-        210.7, 218.1, 225.7, 233.6, 241.8, 250.3,
-    ]
-
-    def _find_ctcss_index(self, tone_hz):
-        """Find CTCSS tone index closest to the given frequency."""
-        tone = float(tone_hz)
-        best_idx, best_diff = 0, 9999
-        for i, t in enumerate(self._CTCSS_TONES):
-            diff = abs(t - tone)
-            if diff < best_diff:
-                best_idx, best_diff = i, diff
-        return best_idx
-
-    def _tune_d75(self, frequency, mode, pl_tone):
-        """Tune D75 via FO command — sets freq, step, mode, and PL tone atomically."""
-        d75 = getattr(self._gw, 'd75_cat', None)
-        if not d75:
-            return {'ok': False, 'error': 'D75 not connected'}
-        band = d75._active_band
-
-        # Read current FO to use as template
-        fo_resp = d75.send_command(f"!cat FO {band}")
-        if not fo_resp or ',' not in str(fo_resp):
-            return {'ok': False, 'error': f'FO read failed: {fo_resp}'}
-
-        # Response may contain multiple lines and FO prefix — find the FO data line
-        fo_line = ''
-        for line in str(fo_resp).strip().split('\n'):
-            line = line.strip()
-            if line.startswith('FO '):
-                fo_line = line[3:]
-                break
-            elif ',' in line and len(line.split(',')) >= 21:
-                fo_line = line
-                break
-        if not fo_line:
-            fo_line = str(fo_resp).strip()
-
-        fields = fo_line.split(',')
-        if len(fields) < 21:
-            return {'ok': False, 'error': f'FO parse error: got {len(fields)} fields'}
-
-        # Set frequency (10-digit Hz)
-        hz = int(round(frequency * 1_000_000))
-        fields[1] = str(hz).zfill(10)
-
-        # Set step to 5 kHz so the target frequency is reachable
-        fields[3] = self._D75_STEP_5KHZ
-        fields[4] = self._D75_STEP_5KHZ  # TX step too
-
-        # Set mode
-        if mode:
-            mode_map = {'FM': '0', 'NFM': '0', 'AM': '1', 'LSB': '2', 'USB': '3', 'CW': '4', 'DR': '5', 'DV': '5'}
-            m = mode_map.get(mode.upper())
-            if m:
-                fields[5] = m
-
-        # Set PL tone if specified
-        if pl_tone:
-            tone_idx = self._find_ctcss_index(pl_tone)
-            fields[8] = '1'   # tone_status ON (encode PL on TX)
-            fields[9] = '1'   # ctcss_status ON (decode PL on RX)
-            fields[14] = str(tone_idx)  # tone freq index
-            fields[15] = str(tone_idx)  # ctcss freq index
-        else:
-            # No tone — clear tone/ctcss
-            fields[8] = '0'
-            fields[9] = '0'
-
-        # Calculate offset for standard repeater splits
-        if frequency >= 144.0 and frequency < 148.0:
-            fields[2] = '0000600000'  # 600 kHz offset
-            # Standard 2m: input below 147.0 = positive, above = negative
-            # But this varies; use positive shift for >= 147.0, negative for < 147.0
-            # Actually standard is: 145.1-145.5 +, 146.6-147.0 -, 147.0-147.4 +
-            # Simplify: set shift based on input_freq from repeater DB if available
-            if frequency >= 147.0:
-                fields[13] = '1'  # shift up
-            else:
-                fields[13] = '2'  # shift down
-        elif frequency >= 420.0 and frequency < 450.0:
-            fields[2] = '0005000000'  # 5 MHz offset
-            fields[13] = '2'  # UHF standard: negative offset
-        else:
-            fields[13] = '0'  # simplex
-
-        # Write FO
-        fo_cmd = ','.join(fields)
-        resp = d75.send_command(f"!cat FO {fo_cmd}")
-        print(f"[Automation] D75: FO set {frequency} MHz step=5k"
-              f"{' PL=' + str(pl_tone) if pl_tone else ''}"
-              f" shift={'+-s'[int(fields[13])]} — {resp}")
-        return {'ok': True, 'frequency': frequency, 'response': resp or ''}
+    # D75 tuning is now handled by the link endpoint
 
 
 # ============================================================================

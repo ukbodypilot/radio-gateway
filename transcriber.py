@@ -44,9 +44,6 @@ def _resolve_freq_tag(gateway, source_id):
             if kv:
                 return f'{kv._frequency:.3f}'
         if source_id == 'd75':
-            d75 = getattr(gateway, 'd75_plugin', None)
-            if d75 and hasattr(d75, '_frequency'):
-                return f'{d75._frequency:.3f}'
             for name in getattr(gateway, 'link_endpoints', {}):
                 if 'd75' in name.lower():
                     status = getattr(gateway, '_link_last_status', {}).get(name, {})
