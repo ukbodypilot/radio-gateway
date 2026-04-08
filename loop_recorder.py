@@ -43,6 +43,7 @@ class LoopSegment:
         self.wfm_peaks = []   # peak per second (0-255)
         self.wfm_rms = []     # RMS per second (0-255)
         self._sample_buf = bytearray()
+        self._first_feed = True  # pad from segment start on first feed
 
         # Start lame encoder
         self._encoder = subprocess.Popen(
@@ -58,6 +59,23 @@ class LoopSegment:
         """Feed PCM data to encoder and accumulate waveform."""
         if not self._encoder or self._encoder.stdin.closed:
             return
+
+        # On first feed: pad with silence from segment start to now
+        # so waveform and MP3 are aligned to the wall-clock boundary.
+        if self._first_feed:
+            self._first_feed = False
+            elapsed = time.time() - self.segment_start.timestamp()
+            pad_seconds = max(0, int(elapsed))
+            if pad_seconds > 0:
+                silence = b'\x00' * self._bytes_per_second
+                for _ in range(pad_seconds):
+                    try:
+                        self._encoder.stdin.write(silence)
+                    except (BrokenPipeError, OSError):
+                        return
+                    self.wfm_peaks.append(0)
+                    self.wfm_rms.append(0)
+
         try:
             self._encoder.stdin.write(pcm_data)
         except (BrokenPipeError, OSError):

@@ -263,14 +263,19 @@ function renderBus(busId) {
     return;
   }
 
-  var dataOffset = viewStart - wfm.start;
-  var samplesPerPx = (viewEnd - viewStart) / w;
+  var secsPerPx = (viewEnd - viewStart) / w;
+
+  // Map pixel → waveform sample index (always aligned to viewStart)
+  function pxToSample(px) {
+    var t = viewStart + px * secsPerPx;
+    return Math.floor(t - wfm.start);
+  }
 
   // Peak envelope
   ctx.fillStyle = 'rgba(52,152,219,0.25)';
   for (var px=0;px<w;px++) {
-    var s0 = Math.floor(dataOffset + px*samplesPerPx);
-    var s1 = Math.floor(dataOffset + (px+1)*samplesPerPx);
+    var s0 = pxToSample(px);
+    var s1 = pxToSample(px+1);
     var mp = 0;
     for (var s=s0;s<s1 && s<wfm.peaks.length;s++) { if (s>=0 && wfm.peaks[s]>mp) mp=wfm.peaks[s]; }
     var ph = (mp/255)*waveH;
@@ -279,8 +284,8 @@ function renderBus(busId) {
   // RMS envelope
   ctx.fillStyle = 'rgba(52,152,219,0.8)';
   for (var px=0;px<w;px++) {
-    var s0 = Math.floor(dataOffset + px*samplesPerPx);
-    var s1 = Math.floor(dataOffset + (px+1)*samplesPerPx);
+    var s0 = pxToSample(px);
+    var s1 = pxToSample(px+1);
     var mr = 0;
     for (var s=s0;s<s1 && s<wfm.rms.length;s++) { if (s>=0 && wfm.rms[s]>mr) mr=wfm.rms[s]; }
     var rh = (mr/255)*waveH;
