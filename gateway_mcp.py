@@ -1428,6 +1428,71 @@ def link_endpoint_command(
 
 
 # ---------------------------------------------------------------------------
+# Loop Recorder
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def loop_recorder_status() -> str:
+    """
+    Get loop recorder status: which buses are recording, segment counts,
+    disk usage, write rate, and retention settings.
+    """
+    import json
+    result = _get('/loop/buses')
+    if not result:
+        return "Loop recorder: no buses recording"
+    lines = ["Loop Recorder Status:", ""]
+    total_mb = 0
+    for b in result:
+        segs = b.get('segments', 0)
+        disk = b.get('disk_mb', 0)
+        total_mb += disk
+        active = "RECORDING" if b.get('active') else "stopped"
+        ret = b.get('retention_hours', 24)
+        dur = ''
+        if segs > 0:
+            dur_sec = b.get('latest', 0) - b.get('earliest', 0)
+            h = int(dur_sec // 3600)
+            m = int((dur_sec % 3600) // 60)
+            dur = f" ({h}h {m}m)"
+        disk_str = f"{disk:.1f} MB" if disk < 1024 else f"{disk/1024:.1f} GB"
+        lines.append(f"  {b['id']}: {active}, {segs} segments{dur}, {disk_str}, retention {ret}h")
+    total_str = f"{total_mb:.1f} MB" if total_mb < 1024 else f"{total_mb/1024:.1f} GB"
+    lines.append(f"\n  Total disk: {total_str}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def loop_recorder_toggle(bus_id: str) -> str:
+    """
+    Toggle loop recording on/off for a bus.
+
+    Args:
+        bus_id: Bus ID (e.g., 'main', 'th9800', 'monitor')
+    """
+    result = _post('/routing/cmd', {'cmd': 'toggle_proc', 'bus': bus_id, 'filter': 'loop'})
+    if result.get('ok'):
+        state = "enabled" if result.get('state') else "disabled"
+        return f"Loop recording {state} on bus '{bus_id}'"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def loop_recorder_retention(bus_id: str, hours: int) -> str:
+    """
+    Set loop recorder retention window for a bus.
+
+    Args:
+        bus_id: Bus ID (e.g., 'main', 'th9800')
+        hours:  Retention in hours (1-168, i.e., 1 hour to 7 days)
+    """
+    result = _post('/routing/cmd', {'cmd': 'set_loop_hours', 'bus': bus_id, 'hours': hours})
+    if result.get('ok'):
+        return f"Retention set to {result.get('hours')}h for bus '{bus_id}'"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
 # Test Loop & Speaker
 # ---------------------------------------------------------------------------
 
