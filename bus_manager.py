@@ -17,7 +17,7 @@ import time
 import numpy as np
 
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus
-from audio_util import AudioProcessor
+from audio_util import AudioProcessor, pcm_level
 
 
 class BusManager:
@@ -859,14 +859,13 @@ class BusManager:
                     # Track bus output level
                     _mixed = output.mixed_audio
                     if _mixed is not None:
-                        _arr = np.frombuffer(_mixed, dtype=np.int16).astype(np.float32)
-                        _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
-                        _lv = int(max(0, min(100, (20 * math.log10(_rms / 32767.0) + 60) * (100 / 60)))) if _rms > 0 else 0
+                        _prev = self._bus_levels.get(bus_id, 0)
+                        _lv = pcm_level(_mixed, current=_prev)
                     else:
                         _tx_active = output.status.get('tx_audio_active', False)
                         _lv = 50 if _tx_active else 0
-                    _prev = self._bus_levels.get(bus_id, 0)
-                    self._bus_levels[bus_id] = _lv if _lv > _prev else max(0, int(_prev * 0.7))
+                        _prev = self._bus_levels.get(bus_id, 0)
+                    self._bus_levels[bus_id] = _lv
 
                     _t1 = time.monotonic()
                     self._deliver_audio(output, bus_id)

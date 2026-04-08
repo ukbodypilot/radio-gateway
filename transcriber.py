@@ -11,11 +11,12 @@ Mumble/Telegram.
 
 import collections
 import json
-import math
 import os
 import numpy as np
 import threading
 import time
+
+from audio_util import pcm_db
 
 _SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                '.transcribe_settings.json')
@@ -160,8 +161,7 @@ class RadioTranscriber:
             return
         self._current_source = source_id
         arr = np.frombuffer(pcm_48k, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        db = 20 * math.log10(rms / 32767.0) if rms > 0 else -100.0
+        db = pcm_db(pcm_48k)
 
         # Envelope follower
         if db > self._vad_envelope:
@@ -463,8 +463,7 @@ class StreamingTranscriber:
             return
         self._current_source = source_id
         arr = np.frombuffer(pcm_48k, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        db = 20 * math.log10(rms / 32767.0) if rms > 0 else -100.0
+        db = pcm_db(pcm_48k)
 
         # Envelope follower
         if db > self._vad_envelope:

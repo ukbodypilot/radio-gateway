@@ -12,7 +12,6 @@ See docs/mixer-v2-design.md for architecture.
 
 import collections
 import json
-import math
 import os
 import queue as _queue_mod
 import subprocess
@@ -22,10 +21,8 @@ import time
 import numpy as np
 
 from audio_bus import DuckGroup, check_signal_instant, mix_audio_streams
-from audio_util import AudioProcessor
+from audio_util import AudioProcessor, pcm_level, pcm_rms, rms_to_level, update_level
 from gateway_link import RadioPlugin
-
-_math_mod = math
 
 
 # ---------------------------------------------------------------------------
@@ -154,13 +151,9 @@ class _TunerCapture:
                     else:
                         mono = arr.astype(np.float32)
                     rms = float(np.sqrt(np.mean(mono * mono))) if len(mono) > 0 else 0.0
-                    _lv = int(max(0, min(100, (20.0 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
                     dg = getattr(self.config, 'SDR2_DISPLAY_GAIN' if '2' in self.name else 'SDR_DISPLAY_GAIN', 1.0)
-                    _lv = min(100, int(_lv * dg))
-                    if _lv > self.audio_level:
-                        self.audio_level = _lv
-                    else:
-                        self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+                    _lv = rms_to_level(rms, gain=dg)
+                    self.audio_level = update_level(self.audio_level, _lv)
                 except Exception:
                     pass
                 _qd = self._chunk_queue.qsize()
@@ -213,7 +206,7 @@ class _TunerCapture:
 
         # Muted: consume but discard
         if self.muted:
-            self.audio_level = max(0, int(self.audio_level * 0.7))
+            self.audio_level = update_level(self.audio_level, 0)
             return None
 
         self.total_reads += 1
@@ -236,24 +229,14 @@ class _TunerCapture:
 
         self._sub_buffer_after = self._chunk_queue.qsize() * self._chunk_bytes
 
-        # Level metering + noise gate
+        # Level metering + audio boost
         if len(arr) > 0:
             farr = arr.astype(np.float32)
             rms = float(np.sqrt(np.mean(farr * farr)))
-            if rms > 0:
-                db = 20.0 * _math_mod.log10(rms / 32767.0)
-                raw_level = max(0, min(100, (db + 60) * (100 / 60)))
-            else:
-                db = -100.0
-                raw_level = 0
-
             display_gain_key = 'SDR2_DISPLAY_GAIN' if '2' in self.name else 'SDR_DISPLAY_GAIN'
             display_gain = getattr(self.config, display_gain_key, 1.0)
-            display_level = min(100, int(raw_level * display_gain))
-            if display_level > self.audio_level:
-                self.audio_level = display_level
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + display_level * 0.3)
+            _lv = rms_to_level(rms, gain=display_gain)
+            self.audio_level = update_level(self.audio_level, _lv)
 
             # Audio boost
             boost_key = 'SDR2_AUDIO_BOOST' if '2' in self.name else 'SDR_AUDIO_BOOST'

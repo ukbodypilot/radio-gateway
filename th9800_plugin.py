@@ -12,7 +12,6 @@ and delivers audio to sinks.
 See docs/mixer-v2-design.md for architecture.
 """
 
-import math
 import os
 import struct
 import subprocess
@@ -23,7 +22,7 @@ import queue as _queue_mod
 
 import numpy as np
 
-from audio_util import AudioProcessor
+from audio_util import AudioProcessor, pcm_level, pcm_rms
 from gateway_link import RadioPlugin
 from cat_client import RadioCATClient
 from ptt import RelayController, GPIORelayController
@@ -224,16 +223,7 @@ class TH9800Plugin(RadioPlugin):
 
         # Level metering
         try:
-            arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                level = max(0, min(100, (20.0 * math.log10(rms / 32767.0) + 60) * (100 / 60)))
-            else:
-                level = 0
-            if level > self.audio_level:
-                self.audio_level = int(level)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + level * 0.3)
+            self.audio_level = pcm_level(data, self.audio_level)
         except Exception:
             pass
 
@@ -262,14 +252,7 @@ class TH9800Plugin(RadioPlugin):
             if _st:
                 _st.record('aioc_tx', 'queue_put', pcm, _qd)
             # TX level metering
-            arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                db = 20.0 * math.log10(rms / 32767.0)
-                level = max(0, min(100, (db + 60) * (100 / 60)))
-            else:
-                level = 0
-            self.tx_audio_level = int(level) if level > self.tx_audio_level else int(self.tx_audio_level * 0.7 + level * 0.3)
+            self.tx_audio_level = pcm_level(pcm, self.tx_audio_level)
         except Exception as e:
             if getattr(self._config, 'VERBOSE_LOGGING', False):
                 print(f"  [TH-9800] TX write error: {e}")
@@ -491,16 +474,7 @@ class TH9800Plugin(RadioPlugin):
 
                     # Compute level AFTER processing so gate squelches noise to zero
                     try:
-                        arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-                        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-                        if rms > 0:
-                            _lv = max(0, min(100, (20.0 * math.log10(rms / 32767.0) + 60) * (100 / 60)))
-                        else:
-                            _lv = 0
-                        if _lv > self.audio_level:
-                            self.audio_level = int(_lv)
-                        else:
-                            self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+                        self.audio_level = pcm_level(chunk, self.audio_level)
                     except Exception:
                         pass
 

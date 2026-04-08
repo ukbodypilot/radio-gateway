@@ -7,7 +7,6 @@ See docs/mixer-v2-design.md for architecture.
 """
 
 import collections
-import math
 import os
 import sys
 import threading
@@ -30,7 +29,7 @@ def _update_config_key(key, value):
 
 import numpy as np
 
-from audio_util import AudioProcessor
+from audio_util import AudioProcessor, pcm_level, pcm_rms, pcm_db
 from gateway_link import RadioPlugin
 
 
@@ -282,19 +281,8 @@ class KV4PPlugin(RadioPlugin):
 
         # Level metering
         try:
-            arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                db = 20.0 * math.log10(rms / 32767.0)
-                level = max(0, min(100, (db + 60) * (100 / 60)))
-            else:
-                level = 0
             display_gain = float(getattr(self._config, 'KV4P_AUDIO_DISPLAY_GAIN', 1.0))
-            level = min(100, level * display_gain)
-            if level > self.audio_level:
-                self.audio_level = int(level)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + level * 0.3)
+            self.audio_level = pcm_level(pcm_data, self.audio_level, gain=display_gain)
         except Exception:
             pass
 
@@ -310,8 +298,7 @@ class KV4PPlugin(RadioPlugin):
 
         # Trace RMS
         try:
-            _arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            self._trace_pcm_rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
+            self._trace_pcm_rms = pcm_rms(pcm_data)
         except Exception:
             self._trace_pcm_rms = 0.0
 
@@ -336,18 +323,8 @@ class KV4PPlugin(RadioPlugin):
             self._tx_buf += pcm_48k
             buf = self._tx_buf
             try:
-                _arr = np.frombuffer(pcm_48k, dtype=np.int16).astype(np.float32)
-                rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
-                self._trace_tx_input_rms = rms
-                if rms > 0:
-                    db = 20.0 * math.log10(rms / 32767.0)
-                    level = max(0, min(100, (db + 60) * (100 / 60)))
-                else:
-                    level = 0
-                if level > self.tx_audio_level:
-                    self.tx_audio_level = int(level)
-                else:
-                    self.tx_audio_level = int(self.tx_audio_level * 0.7 + level * 0.3)
+                self._trace_tx_input_rms = pcm_rms(pcm_48k)
+                self.tx_audio_level = pcm_level(pcm_48k, self.tx_audio_level)
             except Exception:
                 pass
             frames_sent = 0
@@ -603,13 +580,7 @@ class KV4PPlugin(RadioPlugin):
             pcm = self._decoder.decode(opus_data, 1920)
             # Track level in callback (works without bus)
             try:
-                _arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-                _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
-                _lv = int(max(0, min(100, (20.0 * math.log10(_rms / 32767.0) + 60) * (100 / 60)))) if _rms > 0 else 0
-                if _lv > self.audio_level:
-                    self.audio_level = int(_lv)
-                else:
-                    self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+                self.audio_level = pcm_level(pcm, self.audio_level)
             except Exception:
                 pass
             if len(self._chunk_queue) >= self._chunk_queue.maxlen:

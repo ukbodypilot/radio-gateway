@@ -20,6 +20,8 @@ import time
 
 import numpy as np
 
+from audio_util import pcm_level, pcm_rms
+
 
 class ExampleRadioPlugin:
     """A radio plugin template.
@@ -125,10 +127,7 @@ class ExampleRadioPlugin:
             chunk = np.clip(arr * self.audio_boost, -32768, 32767).astype(np.int16).tobytes()
 
         # Update level meter
-        arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        level = min(100, max(0, int((20 * np.log10(max(rms, 1) / 32768) + 60) * 100 / 60)))
-        self.audio_level = level if level > self.audio_level else int(self.audio_level * 0.7 + level * 0.3)
+        self.audio_level = pcm_level(chunk, current=self.audio_level)
 
         return chunk, False
 
@@ -150,9 +149,7 @@ class ExampleRadioPlugin:
             pcm = np.clip(arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
 
         # Update TX level meter
-        arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        self.tx_audio_level = min(100, int(rms / 327.68))
+        self.tx_audio_level = pcm_level(pcm, current=self.tx_audio_level)
 
         # ── Write to your hardware here ──
         # Example: self._tx_stream.write(pcm)

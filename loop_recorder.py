@@ -9,7 +9,6 @@ Storage layout:
     recordings/loop/<bus_id>/YYYYMMDD_HHMM.wfm   (binary: [peak,rms] per second)
 """
 
-import math
 import os
 import struct
 import subprocess
@@ -19,6 +18,8 @@ import time
 from datetime import datetime, timedelta
 
 import numpy as np
+
+from audio_util import pcm_rms
 
 
 # ---------------------------------------------------------------------------
@@ -90,13 +91,13 @@ class LoopSegment:
 
     def _compute_waveform_sample(self, pcm_one_second):
         """Compute peak and RMS for one second of PCM, append to arrays."""
-        arr = np.frombuffer(pcm_one_second, dtype=np.int16).astype(np.float32)
+        arr = np.frombuffer(pcm_one_second, dtype=np.int16)
         if len(arr) == 0:
             self.wfm_peaks.append(0)
             self.wfm_rms.append(0)
             return
         peak = float(np.max(np.abs(arr)))
-        rms = float(np.sqrt(np.mean(arr * arr)))
+        rms = pcm_rms(pcm_one_second)
         # Map to 0-255 (linear scale relative to int16 max)
         self.wfm_peaks.append(min(255, int(peak / 32768.0 * 255)))
         self.wfm_rms.append(min(255, int(rms / 32768.0 * 255)))

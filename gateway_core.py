@@ -104,6 +104,7 @@ from audio_sources import (
     NetworkAnnouncementSource,
     WebMicSource, WebMonitorSource, LinkAudioSource, StreamOutputSource, generate_cw_pcm,
 )
+from audio_util import pcm_level, pcm_rms, rms_to_level, update_level, pcm_db
 # ListenBus now created by BusManager (bus_manager.py)
 from gateway_utils import DDNSUpdater, EmailNotifier, CloudflareTunnel, MumbleServerManager, USBIPManager, GPSManager
 from repeater_manager import RepeaterManager
@@ -436,25 +437,13 @@ class RadioGateway:
         try:
             if not pcm_data:
                 return 0
-            arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(arr) == 0:
-                return 0
-            rms = float(np.sqrt(np.mean(arr * arr)))
-            if rms > 0:
-                db = 20 * _math_mod.log10(rms / 32767.0)
-                level = max(0, min(100, (db + 60) * (100/60)))
-                return int(level)
-            return 0
+            return rms_to_level(pcm_rms(pcm_data))
         except Exception:
             return 0
 
     def _update_sv_level(self, pcm_data):
         """Update sv_audio_level from PCM data sent to remote client."""
-        current = self.calculate_audio_level(pcm_data)
-        if current > self.sv_audio_level:
-            self.sv_audio_level = current
-        else:
-            self.sv_audio_level = int(self.sv_audio_level * 0.7 + current * 0.3)
+        self.sv_audio_level = pcm_level(pcm_data, self.sv_audio_level)
 
     def apply_highpass_filter(self, pcm_data):
         """Apply high-pass filter to remove low-frequency rumble"""
@@ -606,19 +595,9 @@ class RadioGateway:
         try:
             if not pcm_data:
                 return False
-            arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(arr) == 0:
-                return False
 
-            # Calculate RMS level
-            rms = float(np.sqrt(np.mean(arr * arr)))
+            db_level = pcm_db(pcm_data)
 
-            # Convert to dB
-            if rms > 0:
-                db_level = 20 * _math_mod.log10(rms / 32767.0)
-            else:
-                db_level = -100
-            
             # Attack and release coefficients (samples per second)
             chunks_per_second = self.config.AUDIO_RATE / self.config.AUDIO_CHUNK_SIZE
             attack_coef = 1.0 / (self.config.VAD_ATTACK * chunks_per_second)
@@ -682,18 +661,8 @@ class RadioGateway:
         try:
             if not pcm_data:
                 return False
-            arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(arr) == 0:
-                return False
 
-            # Calculate RMS level
-            rms = float(np.sqrt(np.mean(arr * arr)))
-
-            # Convert to dB
-            if rms > 0:
-                db = 20 * _math_mod.log10(rms / 32767.0)
-            else:
-                db = -100  # Very quiet
+            db = pcm_db(pcm_data)
 
             # Attack and release timing
             attack_time = self.config.VOX_ATTACK_TIME / 1000.0  # ms to seconds
@@ -861,12 +830,7 @@ class RadioGateway:
         self.last_rx_audio_time = time.time()
 
         # Calculate audio level (with smoothing)
-        current_level = self.calculate_audio_level(soundchunk.pcm)
-        # Smooth the level display (fast attack, slow decay)
-        if current_level > self.rx_audio_level:
-            self.rx_audio_level = current_level
-        else:
-            self.rx_audio_level = int(self.rx_audio_level * 0.7 + current_level * 0.3)
+        self.rx_audio_level = pcm_level(soundchunk.pcm, self.rx_audio_level)
 
         _t2 = time.monotonic()
 
@@ -1118,11 +1082,7 @@ class RadioGateway:
             if self.config.SPEAKER_VOLUME != 1.0:
                 arr = np.frombuffer(spk, dtype=np.int16).astype(np.float32)
                 spk = np.clip(arr * self.config.SPEAKER_VOLUME, -32768, 32767).astype(np.int16).tobytes()
-            current_level = self.calculate_audio_level(spk)
-            if current_level > self.speaker_audio_level:
-                self.speaker_audio_level = current_level
-            else:
-                self.speaker_audio_level = int(self.speaker_audio_level * 0.7 + current_level * 0.3)
+            self.speaker_audio_level = pcm_level(spk, self.speaker_audio_level)
         except Exception:
             return
 
@@ -2177,9 +2137,7 @@ class RadioGateway:
 
                 # SDR rebroadcast: route SDR-only mix to AIOC radio TX
                 if self.sdr_rebroadcast and not ptt_required and sdr_only_audio is not None:
-                    sdr_arr = np.frombuffer(sdr_only_audio, dtype=np.int16).astype(np.float32)
-                    sdr_rms = float(np.sqrt(np.mean(sdr_arr * sdr_arr))) if len(sdr_arr) > 0 else 0.0
-                    sdr_has_signal = sdr_rms > 100  # ~-50 dBFS threshold
+                    sdr_has_signal = pcm_db(sdr_only_audio) > -50.3  # was rms > 100
 
                     if sdr_has_signal:
                         self._rebroadcast_ptt_hold_until = time.monotonic() + self.config.SDR_REBROADCAST_PTT_HOLD
@@ -2212,11 +2170,7 @@ class RadioGateway:
                                 self.output_stream.write(pcm)
 
                         tx_level_pcm = pcm if sdr_has_signal else sdr_only_audio
-                        current_level = self.calculate_audio_level(tx_level_pcm)
-                        if current_level > self.rx_audio_level:
-                            self.rx_audio_level = current_level
-                        else:
-                            self.rx_audio_level = int(self.rx_audio_level * 0.7 + current_level * 0.3)
+                        self.rx_audio_level = pcm_level(tx_level_pcm, self.rx_audio_level)
                         self.last_rx_audio_time = time.time()
 
                         _tr_rebro = 'sig' if sdr_has_signal else 'hold'

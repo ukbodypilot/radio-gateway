@@ -8,11 +8,12 @@ See docs/mixer-v2-design.md for architecture.
 See docs/mixer-v2-progress.md for status.
 """
 
-import math
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
+
+from audio_util import pcm_db
 
 
 # ---------------------------------------------------------------------------
@@ -27,14 +28,7 @@ def check_signal_instant(audio_data, threshold_db=-60.0):
     if not audio_data:
         return False
     try:
-        arr = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
-        if len(arr) == 0:
-            return False
-        rms = float(np.sqrt(np.mean(arr * arr)))
-        if rms > 0:
-            db = 20.0 * math.log10(rms / 32767.0)
-            return db > threshold_db
-        return False
+        return pcm_db(audio_data) > threshold_db
     except Exception:
         return False
 

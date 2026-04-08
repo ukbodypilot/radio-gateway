@@ -874,16 +874,7 @@ class FilePlaybackSource(AudioSource):
 
         # Level metering for routing display
         try:
-            _arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-            _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
-            if _rms > 0:
-                _level = max(0, min(100, (20 * _math_mod.log10(_rms / 32767.0) + 60) * (100 / 60)))
-            else:
-                _level = 0
-            if _level > self.audio_level:
-                self.audio_level = int(_level)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + _level * 0.3)
+            self.audio_level = pcm_level(chunk, self.audio_level)
         except Exception:
             pass
 
@@ -1287,16 +1278,7 @@ class RemoteAudioSource(AudioSource):
 
                     # Track level in reader thread (works even when not on a bus)
                     try:
-                        arr = np.frombuffer(payload, dtype=np.int16).astype(np.float32)
-                        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-                        if rms > 0:
-                            _lv = max(0, min(100, (20.0 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
-                        else:
-                            _lv = 0
-                        if _lv > self.audio_level:
-                            self.audio_level = int(_lv)
-                        else:
-                            self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+                        self.audio_level = pcm_level(payload, self.audio_level)
                     except Exception:
                         pass
 
@@ -1389,22 +1371,12 @@ class RemoteAudioSource(AudioSource):
         # Level metering and audio boost
         arr = np.frombuffer(raw, dtype=np.int16)
         if len(arr) > 0:
-            farr = arr.astype(np.float32)
-            rms = float(np.sqrt(np.mean(farr * farr)))
-            if rms > 0:
-                db = 20 * _math_mod.log10(rms / 32767.0)
-                raw_level = max(0, min(100, (db + 60) * (100 / 60)))
-            else:
-                raw_level = 0
             display_gain = float(self.config.REMOTE_AUDIO_DISPLAY_GAIN)
-            display_level = min(100, int(raw_level * display_gain))
-            if display_level > self.audio_level:
-                self.audio_level = display_level
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + display_level * 0.3)
+            self.audio_level = pcm_level(raw, self.audio_level, gain=display_gain)
 
             audio_boost = float(self.config.REMOTE_AUDIO_AUDIO_BOOST)
             if audio_boost != 1.0:
+                farr = arr.astype(np.float32)
                 arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
                 raw = arr.tobytes()
 
@@ -1704,19 +1676,8 @@ class NetworkAnnouncementSource(AudioSource):
         self._sub_buffer = self._sub_buffer[cb:]
 
         # Level metering + threshold gate
-        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        if rms > 0:
-            db = 20 * _math_mod.log10(rms / 32767.0)
-            raw_level = max(0, min(100, (db + 60) * (100 / 60)))
-        else:
-            db = -100.0
-            raw_level = 0
-
-        if raw_level > self.audio_level:
-            self.audio_level = raw_level
-        else:
-            self.audio_level = int(self.audio_level * 0.7 + raw_level * 0.3)
+        self.audio_level = pcm_level(raw, self.audio_level)
+        db = pcm_db(raw)
 
         threshold_db = float(getattr(self.config, 'ANNOUNCE_INPUT_THRESHOLD', -45.0))
         if db < threshold_db:
@@ -1786,18 +1747,8 @@ class MumbleSource(AudioSource):
 
     def push_audio(self, pcm_bytes):
         """Called by sound_received_handler to push Mumble RX audio."""
-        # Track level here so it works even when not on a bus
         try:
-            arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                _lv = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
-            else:
-                _lv = 0
-            if _lv > self.audio_level:
-                self.audio_level = int(_lv)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+            self.audio_level = pcm_level(pcm_bytes, self.audio_level)
         except Exception:
             pass
         try:
@@ -1843,30 +1794,12 @@ class MumbleSource(AudioSource):
             arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
             data = np.clip(arr * self.audio_boost, -32768, 32767).astype(np.int16).tobytes()
 
-        # Level metering (in get_audio for bus-connected path)
+        # Level metering + VAD
         try:
-            arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            if rms > 0:
-                level = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))
-            else:
-                level = 0
-            if level > self.audio_level:
-                self.audio_level = int(level)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + level * 0.3)
+            self.audio_level = pcm_level(data, self.audio_level)
+            vad_pass = pcm_db(data) > self.vad_threshold_db
         except Exception:
-            pass
-
-        # VAD-gated PTT: only key radio when voice detected, not on silence/noise
-        vad_pass = False
-        try:
-            _arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-            _rms = float(np.sqrt(np.mean(_arr * _arr))) if len(_arr) > 0 else 0.0
-            if _rms > 0:
-                vad_pass = (20.0 * _math_mod.log10(_rms / 32767.0)) > self.vad_threshold_db
-        except Exception:
-            pass
+            vad_pass = False
         return data, vad_pass
 
     def is_active(self):
@@ -1912,15 +1845,8 @@ class WebMicSource(AudioSource):
 
     def push_audio(self, pcm_bytes):
         """Called by WebSocket handler to push raw PCM into the queue."""
-        # Track level in push (works without bus)
         try:
-            arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            _lv = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
-            if _lv > self.audio_level:
-                self.audio_level = int(_lv)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+            self.audio_level = pcm_level(pcm_bytes, self.audio_level)
         except Exception:
             pass
         try:
@@ -1956,13 +1882,11 @@ class WebMicSource(AudioSource):
         self._sub_buffer = self._sub_buffer[cb:]
 
         # Level metering (for UI display only)
-        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        raw_level = max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60))) if rms > 0 else 0
-        self.audio_level = raw_level if raw_level > self.audio_level else int(self.audio_level * 0.7 + raw_level * 0.3)
+        self.audio_level = pcm_level(raw, self.audio_level)
 
         # Apply volume multiplier
         if self.volume != 1.0:
+            arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             arr = arr * self.volume
             raw = np.clip(arr, -32768, 32767).astype(np.int16).tobytes()
 
@@ -2012,15 +1936,8 @@ class WebMonitorSource(AudioSource):
 
     def push_audio(self, pcm_bytes):
         """Called by WebSocket handler to push raw PCM into the queue."""
-        # Track level in push (works without bus)
         try:
-            arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-            _lv = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
-            if _lv > self.audio_level:
-                self.audio_level = int(_lv)
-            else:
-                self.audio_level = int(self.audio_level * 0.7 + _lv * 0.3)
+            self.audio_level = pcm_level(pcm_bytes, self.audio_level)
         except Exception:
             pass
         try:
@@ -2056,16 +1973,8 @@ class WebMonitorSource(AudioSource):
         self._sub_buffer = self._sub_buffer[cb:]
 
         # Level metering + VAD
-        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        rms = float(np.sqrt(np.mean(arr * arr))) if len(arr) > 0 else 0.0
-        raw_level = int(max(0, min(100, (20 * _math_mod.log10(rms / 32767.0) + 60) * (100 / 60)))) if rms > 0 else 0
-        self.audio_level = raw_level if raw_level > self.audio_level else int(self.audio_level * 0.7 + raw_level * 0.3)
-
-        # VAD-gated PTT: only trigger PTT when audio exceeds threshold
-        vad_pass = False
-        if rms > 0:
-            db = 20.0 * _math_mod.log10(rms / 32767.0)
-            vad_pass = db > self.vad_threshold_db
+        self.audio_level = pcm_level(raw, self.audio_level)
+        vad_pass = pcm_db(raw) > self.vad_threshold_db
 
         # Apply volume multiplier
         if self.volume != 1.0:
