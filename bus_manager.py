@@ -499,7 +499,11 @@ class BusManager:
                     return src
         # Generic link endpoint lookup by sanitised name
         import re as _re
-        _base = sink_id[:-3] if sink_id.endswith('_tx') else sink_id
+        _base = sink_id
+        if _base.endswith('_tx'):
+            _base = _base[:-3]
+            if _base.endswith('_'):
+                _base = _base[:-1]  # 'ftm_150_tx' → 'ftm_150' not 'ftm_150_'
         for name, src in gw.link_endpoints.items():
             if _re.sub(r'[^a-z0-9_]', '_', name.lower()) == _base:
                 return src

@@ -623,6 +623,16 @@ class SoloBus(AudioBus):
         radio = self._radio
         def _do():
             try:
+                # Check link endpoint mode before keying PTT
+                if state and hasattr(radio, 'endpoint_name'):
+                    _ep_name = radio.endpoint_name
+                    _gw = getattr(radio, '_gateway', None)
+                    _ep_status = _gw._link_last_status.get(_ep_name, {}) if _gw else {}
+                    _mode = _ep_status.get('mode', '')
+                    if _mode == 'data':
+                        print(f"  [SoloBus:{self.name}] WARNING: {_ep_name} is in DATA mode — auto-switching to audio for TX")
+                        radio.execute({'cmd': 'mode', 'args': 'audio'})
+                        import time; time.sleep(0.5)  # let mode switch settle
                 if hasattr(radio, 'execute'):
                     radio.execute({'cmd': 'ptt', 'state': state})
                 elif state and hasattr(radio, 'ptt_on'):
