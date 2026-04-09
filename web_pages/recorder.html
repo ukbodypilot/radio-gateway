@@ -102,7 +102,7 @@ function buildUI() {
     html += '<div class="bus-section" id="bus-sec-'+b.id+'">'
       + '<div class="bus-header">'
       + '<span class="bus-dot '+dot+'"></span>'
-      + '<span class="bus-name">'+b.id+'</span>'
+      + '<span class="bus-name">'+(b.name || b.id)+'</span>'
       + '<span class="bus-meta">'+b.segments+' segs &middot; '+diskStr+' &middot; ret '+(b.retention_hours||24)+'h</span>'
       + '</div>'
       + '<div class="bus-canvas"><canvas id="cv-'+b.id+'" height="120" data-bus="'+b.id+'"></canvas></div>'

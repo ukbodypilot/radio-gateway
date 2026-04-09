@@ -27,6 +27,17 @@ def handle_loop_api(handler, parent):
         buses = lr.get_buses(enabled_bus_ids=_enabled)
         # Only return buses that are enabled or actively recording
         buses = [b for b in buses if b.get('active') or b['id'] in _enabled]
+        # Add display names from routing config
+        _bus_names = {}
+        try:
+            import json as _json
+            with open(_bm._config_path) as _f:
+                for _b in _json.load(_f).get('busses', []):
+                    _bus_names[_b['id']] = _b.get('name', _b['id'])
+        except Exception:
+            pass
+        for b in buses:
+            b['name'] = _bus_names.get(b['id'], b['id'])
         _loop_json(handler, buses)
 
     elif path == '/loop/waveform':

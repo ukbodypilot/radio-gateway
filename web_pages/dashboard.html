@@ -908,7 +908,7 @@ function updateLoopRecorder() {
         rateStr = rateMBh.toFixed(0) + ' MB/h';
       }
       html += '<div style="display:flex; gap:12px; align-items:center; padding:2px 0;">'
-        + dot + ' <span style="color:#e0e0e0; min-width:80px;">' + b.id + '</span>'
+        + dot + ' <span style="color:#e0e0e0; min-width:80px;">' + (b.name || b.id) + '</span>'
         + '<span style="color:#aaa; min-width:60px;">' + b.segments + ' segs</span>'
         + '<span style="color:#888; min-width:55px;">' + durStr + '</span>'
         + '<span style="color:#2ecc71; min-width:55px;">' + diskStr + '</span>'
