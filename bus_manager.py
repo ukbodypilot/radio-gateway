@@ -194,7 +194,18 @@ class BusManager:
         # Build source_map: source_id → (plugin, priority, duckable)
         source_map = {}
         if gw.sdr_plugin:
-            source_map['sdr'] = (gw.sdr_plugin, 11, getattr(gw.config, 'SDR_DUCK', True))
+            _sdr = gw.sdr_plugin
+            _has_tuners = False
+            # Register tuner captures as separate source nodes for independent routing
+            if getattr(_sdr, '_tuner1', None):
+                source_map['sdr1'] = (_sdr._tuner1, 11, getattr(gw.config, 'SDR_DUCK', True))
+                _has_tuners = True
+            if getattr(_sdr, '_tuner2', None):
+                source_map['sdr2'] = (_sdr._tuner2, 11, getattr(gw.config, 'SDR_DUCK', True))
+                _has_tuners = True
+            # Only register combined 'sdr' if no individual tuners (backward compat)
+            if not _has_tuners:
+                source_map['sdr'] = (_sdr, 11, getattr(gw.config, 'SDR_DUCK', True))
         if getattr(gw, 'th9800_plugin', None):
             source_map['aioc'] = (gw.th9800_plugin, 1, False)
         if gw.kv4p_plugin:
@@ -504,7 +515,14 @@ class BusManager:
     def _get_source(self, source_id):
         """Get a source object by its ID."""
         gw = self.gateway
-        if source_id == 'sdr' and gw.sdr_plugin:
+        if source_id == 'sdr1' and gw.sdr_plugin and getattr(gw.sdr_plugin, '_tuner1', None):
+            return gw.sdr_plugin._tuner1
+        elif source_id == 'sdr2' and gw.sdr_plugin and getattr(gw.sdr_plugin, '_tuner2', None):
+            return gw.sdr_plugin._tuner2
+        elif source_id == 'sdr' and gw.sdr_plugin:
+            # Legacy: return tuner1 if available, else combined plugin
+            if getattr(gw.sdr_plugin, '_tuner1', None):
+                return gw.sdr_plugin._tuner1
             return gw.sdr_plugin
         elif source_id == 'kv4p' and gw.kv4p_plugin:
             return gw.kv4p_plugin

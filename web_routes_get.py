@@ -776,7 +776,12 @@ def handle_routing_levels(handler, parent):
     if gw:
         # RX levels (sources)
         if gw.sdr_plugin:
-            data['sdr'] = gw.sdr_plugin.audio_level
+            _sdr = gw.sdr_plugin
+            data['sdr'] = _sdr.audio_level
+            if getattr(_sdr, '_tuner1', None):
+                data['sdr1'] = _sdr._tuner1.audio_level
+            if getattr(_sdr, '_tuner2', None):
+                data['sdr2'] = _sdr._tuner2.audio_level
         if gw.kv4p_plugin:
             data['kv4p'] = gw.kv4p_plugin.audio_level
         if not data.get('d75'):

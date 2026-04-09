@@ -44,6 +44,13 @@ class _TunerCapture:
         self.audio_level = 0
         self.muted = False
         self.enabled = True
+        # Bus compat — allows direct registration as a source node
+        self.ptt_control = False
+        self.duck = getattr(config, 'SDR_DUCK', True)
+        self.priority = 2
+        self.sdr_priority = 1
+        self.volume = 1.0
+        self.mix_ratio = 1.0
 
         self._parec_proc = None
         self._reader_thread = None
@@ -60,6 +67,11 @@ class _TunerCapture:
         self._audio_rate = getattr(config, 'AUDIO_RATE', 48000)
         self._chunk_size = getattr(config, 'AUDIO_CHUNK_SIZE', 2400)
         self._chunk_bytes = self._chunk_size * 2 * 2  # stereo 16-bit = 4 bytes/sample
+        # Diagnostics
+        self._overflows = 0
+        self._underruns = 0
+        self._last_get_time = 0.0
+        self._get_gaps = []  # recent gaps > 60ms
 
     def setup(self):
         """Start parec subprocess and reader thread. Returns True on success."""
@@ -162,6 +174,11 @@ class _TunerCapture:
                     self._chunk_queue.put_nowait(data)
                 except _queue_mod.Full:
                     _overflow = True
+                    self._overflows += 1
+                    _st2 = self._stream_trace
+                    if _st2:
+                        _sid2 = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
+                        _st2.record(_sid2, 'overflow', data, _qd, f'dropped_oldest qd={_qd}')
                     try:
                         self._chunk_queue.get_nowait()
                     except _queue_mod.Empty:
@@ -184,25 +201,45 @@ class _TunerCapture:
         if not self.enabled or not self._reader_running:
             return None
 
+        now = time.monotonic()
+        if self._last_get_time > 0:
+            gap = (now - self._last_get_time) * 1000
+            if gap > 60:
+                self._get_gaps.append(gap)
+                if len(self._get_gaps) > 50:
+                    self._get_gaps = self._get_gaps[-50:]
+        self._last_get_time = now
+
         # Take one chunk
         data = None
         try:
             data = self._chunk_queue.get_nowait()
         except _queue_mod.Empty:
-            pass
+            self._underruns += 1
+            _st = self._stream_trace
+            if _st:
+                _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
+                _st.record(_sid, 'underrun', b'', self._chunk_queue.qsize(), 'empty')
 
-        # Cap latency if queue builds up
-        if data is not None:
-            qsz = self._chunk_queue.qsize()
-            while qsz > 6:
-                try:
-                    data = self._chunk_queue.get_nowait()
-                    qsz -= 1
-                except _queue_mod.Empty:
-                    break
+        # Slow drain: if queue is deeper than target, pull one extra chunk
+        # to gradually reduce latency without creating audible skips.
+        # Target ~3 chunks (150ms) — drain 1 extra when above 4.
+        _drained = False
+        if data is not None and self._chunk_queue.qsize() > 4:
+            try:
+                data = self._chunk_queue.get_nowait()
+                _drained = True
+            except _queue_mod.Empty:
+                pass
 
         if data is None:
             return None
+
+        if _drained:
+            _st = self._stream_trace
+            if _st:
+                _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
+                _st.record(_sid, 'slow_drain', data, self._chunk_queue.qsize(), f'qd_after={self._chunk_queue.qsize()}')
 
         # Muted: consume but discard
         if self.muted:
@@ -267,6 +304,10 @@ class _TunerCapture:
                 pass
             self._parec_proc = None
 
+    def get_audio(self, chunk_size=None):
+        """Bus-compatible audio interface. Returns (pcm_bytes_or_none, False)."""
+        return self.get_chunk(), False
+
     @property
     def active(self):
         return self._reader_running and self._parec_proc is not None
@@ -301,12 +342,16 @@ class SDRPlugin(RadioPlugin):
     # RTL-Airband config paths
     CONFIG_PATH = '/etc/rtl_airband/rspduo_gateway.conf'
     CONFIG_PATH_SDR2 = '/etc/rtl_airband/rspduo_gateway2.conf'
+    CONFIG_PATH_SINGLE = '/etc/rtl_airband/rspduo_single.conf'
     MASTER_DEVICE_STRING = "driver=sdrplay,rspduo_mode=4"
     SLAVE_DEVICE_STRING = "driver=sdrplay,rspduo_mode=8"
+    SINGLE_DEVICE_STRING = "driver=sdrplay,rspduo_mode=1"
 
     ANTENNAS = ['Tuner 1 50 ohm', 'Tuner 1 Hi-Z', 'Tuner 2 50 ohm']
     MODULATIONS = ['nfm', 'am']
     SAMPLE_RATES = [0.5, 1.0, 2.0, 2.56, 6.0, 8.0, 10.66]
+    SINGLE_SAMPLE_RATES = [0.25, 0.5, 1.0, 2.0, 2.56, 6.0, 8.0, 10.66]
+    MAX_SINGLE_CHANNELS = 2
 
     # All tunable settings with (type, default)
     _SETTING_KEYS = {
@@ -387,6 +432,24 @@ class SDRPlugin(RadioPlugin):
         for key, (typ, default) in self._SETTING_KEYS.items():
             setattr(self, key, default)
 
+        # Single-tuner mode state
+        self._sdr_mode = 'dual'       # 'dual' or 'single'
+        self._single_centerfreq = 446.70
+        self._single_sample_rate = 0.5
+        self._single_channels = []    # list of channel dicts
+        self._single_antenna = 'Tuner 1 50 ohm'
+        self._single_gain_mode = 'agc'
+        self._single_rfgr = 4
+        self._single_ifgr = 40
+        self._single_agc_setpoint = -30
+        self._single_correction = 0.0
+        self._single_tau = 75
+        self._single_bias_t = False
+        self._single_rf_notch = False
+        self._single_dab_notch = False
+        self._single_iq_correction = True
+        self._single_external_ref = False
+
     def setup(self, config):
         """Initialize the SDR plugin: load settings, start rtl_airband, open audio captures."""
         if isinstance(config, dict):
@@ -445,8 +508,20 @@ class SDRPlugin(RadioPlugin):
             _already_running = _chk.returncode == 0
         except Exception:
             _already_running = False
+        # Persisted mode from sdr_channels.json takes priority.
+        # SDR_MODE config key only used as fallback if no persisted mode exists.
+        if self._sdr_mode not in ('dual', 'single'):
+            self._sdr_mode = str(getattr(config, 'SDR_MODE', 'dual')).lower()
+
         if _already_running:
-            print("  rtl_airband already running (adopted)")
+            print(f"  rtl_airband already running (adopted, mode={self._sdr_mode})")
+        elif self._sdr_mode == 'single':
+            print("  Starting rtl_airband (single-tuner mode)...")
+            try:
+                self._write_config_single()
+                self._start_rtl_airband_single_only()
+            except Exception as e:
+                print(f"  Warning: rtl_airband single start issue: {e}")
         else:
             print("  Starting rtl_airband processes...")
             try:
@@ -488,7 +563,8 @@ class SDRPlugin(RadioPlugin):
 
         # Create tuner captures
         enable_sdr1 = getattr(config, 'ENABLE_SDR', True)
-        enable_sdr2 = getattr(config, 'ENABLE_SDR2', False)
+        enable_sdr2 = (getattr(config, 'ENABLE_SDR2', False) and self._sdr_mode == 'dual') or \
+                      (self._sdr_mode == 'single' and len(self._single_channels) >= 2)
 
         success = False
 
@@ -591,6 +667,16 @@ class SDRPlugin(RadioPlugin):
         if not self.enabled:
             return None, False
 
+        # Single mode with 2 channels: same ducking as dual mode (fall through)
+        # Single mode with 1 channel: simple path
+        if self._sdr_mode == 'single' and not self._tuner2:
+            audio = self._tuner1.get_chunk() if self._tuner1 else None
+            self.audio_level = self._tuner1.audio_level if self._tuner1 and audio else 0
+            _st = getattr(self, '_stream_trace_plugin', None) or (self._tuner1._stream_trace if self._tuner1 else None)
+            if _st and audio is None and self._tuner1:
+                _st.record('sdr_single', 'get_audio_empty', b'', self._tuner1._chunk_queue.qsize() if self._tuner1 else -1)
+            return audio, False
+
         current_time = time.monotonic()
 
         # Pull audio from both tuners
@@ -638,17 +724,20 @@ class SDRPlugin(RadioPlugin):
         return output, False
 
     def execute(self, cmd):
-        """Handle commands: tune, restart, stop, mute, status."""
+        """Handle commands: tune, restart, stop, mute, status, and single-mode operations."""
         if isinstance(cmd, dict):
             action = cmd.get('cmd', '')
         else:
             return {"ok": False, "error": "invalid command"}
 
+        # Dual-mode commands
         if action == 'tune':
             return self._apply_settings(**{k: v for k, v in cmd.items() if k != 'cmd'})
         elif action == 'tune2':
             return self._apply_settings_sdr2(**{k: v for k, v in cmd.items() if k != 'cmd'})
         elif action == 'restart':
+            if self._sdr_mode == 'single':
+                return self._restart_rtl_airband_single()
             return self._restart_rtl_airband()
         elif action == 'stop':
             self._stop_rtl_airband()
@@ -664,6 +753,17 @@ class SDRPlugin(RadioPlugin):
             return {"ok": False, "error": f"tuner {tuner} not available"}
         elif action == 'status':
             return {"ok": True, "status": self.get_status()}
+        # Single-mode commands
+        elif action == 'set_mode':
+            return self._switch_mode(cmd.get('mode', 'dual'))
+        elif action == 'single_tune':
+            return self._apply_single_settings(cmd)
+        elif action == 'single_add_channel':
+            return self._add_single_channel(cmd)
+        elif action == 'single_remove_channel':
+            return self._remove_single_channel(cmd.get('index', -1))
+        elif action == 'single_update_channel':
+            return self._update_single_channel(cmd.get('index', -1), cmd)
         return {"ok": False, "error": f"unknown command: {action}"}
 
     def get_status(self):
@@ -698,6 +798,53 @@ class SDRPlugin(RadioPlugin):
             d['tuner2_active'] = False
 
         d['master_ducking_slave'] = self._master_has_signal_hyst
+
+        # Per-tuner diagnostics
+        for _ti, _tc in enumerate([self._tuner1, self._tuner2]):
+            if _tc:
+                _pfx = f'tuner{_ti+1}_'
+                d[_pfx + 'overflows'] = _tc._overflows
+                d[_pfx + 'underruns'] = _tc._underruns
+                d[_pfx + 'queue_depth'] = _tc._chunk_queue.qsize()
+                d[_pfx + 'get_gaps'] = _tc._get_gaps[-10:] if _tc._get_gaps else []
+
+        # Mode field (always present)
+        d['sdr_mode'] = self._sdr_mode
+        if self._sdr_mode == 'single':
+            # Override unprefixed fields for UI compatibility
+            d['center_freq'] = self._single_centerfreq
+            d['sample_rate'] = self._single_sample_rate
+            d['gain_mode'] = self._single_gain_mode
+            d['rfgr'] = self._single_rfgr
+            d['ifgr'] = self._single_ifgr
+            d['agc_setpoint'] = self._single_agc_setpoint
+            d['correction'] = self._single_correction
+            d['tau'] = self._single_tau
+            d['bias_t'] = self._single_bias_t
+            d['rf_notch'] = self._single_rf_notch
+            d['dab_notch'] = self._single_dab_notch
+            d['iq_correction'] = self._single_iq_correction
+            d['external_ref'] = self._single_external_ref
+            d['antenna'] = self._single_antenna
+            # Prefixed fields for band visualization
+            d['single_centerfreq'] = self._single_centerfreq
+            d['single_sample_rate'] = self._single_sample_rate
+            d['single_channels'] = self._single_channels
+            d['single_band_low'] = self._single_centerfreq - self._single_sample_rate / 2.0
+            d['single_band_high'] = self._single_centerfreq + self._single_sample_rate / 2.0
+            d['single_antenna'] = self._single_antenna
+            d['single_gain_mode'] = self._single_gain_mode
+            d['single_rfgr'] = self._single_rfgr
+            d['single_ifgr'] = self._single_ifgr
+            d['single_agc_setpoint'] = self._single_agc_setpoint
+            d['single_correction'] = self._single_correction
+            d['single_tau'] = self._single_tau
+            d['single_bias_t'] = self._single_bias_t
+            d['single_rf_notch'] = self._single_rf_notch
+            d['single_dab_notch'] = self._single_dab_notch
+            d['single_iq_correction'] = self._single_iq_correction
+            d['single_external_ref'] = self._single_external_ref
+
         return d
 
     # -- Per-tuner accessors --
@@ -811,6 +958,9 @@ class SDRPlugin(RadioPlugin):
             if self._channels_path and os.path.exists(self._channels_path):
                 with open(self._channels_path, 'r') as f:
                     data = json.load(f)
+                # Mode
+                self._sdr_mode = data.get('mode', 'dual')
+                # Dual settings (unchanged)
                 saved = data.get('current', {})
                 if 'bandwidth' in saved and 'sample_rate' not in saved:
                     saved['sample_rate'] = saved.pop('bandwidth')
@@ -820,15 +970,54 @@ class SDRPlugin(RadioPlugin):
                             setattr(self, key, typ(saved[key]))
                         except (ValueError, TypeError):
                             pass
+                # Single-tuner settings
+                single = data.get('single', {})
+                if single:
+                    self._single_centerfreq = float(single.get('centerfreq', self._single_centerfreq))
+                    self._single_sample_rate = float(single.get('sample_rate', self._single_sample_rate))
+                    self._single_channels = single.get('channels', [])
+                    for attr in ('antenna', 'gain_mode'):
+                        if attr in single:
+                            setattr(self, f'_single_{attr}', str(single[attr]))
+                    for attr in ('rfgr', 'ifgr', 'agc_setpoint', 'tau'):
+                        if attr in single:
+                            setattr(self, f'_single_{attr}', int(single[attr]))
+                    for attr in ('correction',):
+                        if attr in single:
+                            setattr(self, f'_single_{attr}', float(single[attr]))
+                    for attr in ('bias_t', 'rf_notch', 'dab_notch', 'iq_correction', 'external_ref'):
+                        if attr in single:
+                            setattr(self, f'_single_{attr}', bool(single[attr]))
         except Exception:
             pass
 
     def _save_settings(self):
-        """Persist current tuning state to JSON."""
+        """Persist current tuning state to JSON (both dual and single sections)."""
         try:
             if self._channels_path:
+                data = {
+                    'mode': self._sdr_mode,
+                    'current': {k: getattr(self, k) for k in self._SETTING_KEYS},
+                    'single': {
+                        'centerfreq': self._single_centerfreq,
+                        'sample_rate': self._single_sample_rate,
+                        'channels': self._single_channels,
+                        'antenna': self._single_antenna,
+                        'gain_mode': self._single_gain_mode,
+                        'rfgr': self._single_rfgr,
+                        'ifgr': self._single_ifgr,
+                        'agc_setpoint': self._single_agc_setpoint,
+                        'correction': self._single_correction,
+                        'tau': self._single_tau,
+                        'bias_t': self._single_bias_t,
+                        'rf_notch': self._single_rf_notch,
+                        'dab_notch': self._single_dab_notch,
+                        'iq_correction': self._single_iq_correction,
+                        'external_ref': self._single_external_ref,
+                    },
+                }
                 with open(self._channels_path, 'w') as f:
-                    json.dump({'current': {k: getattr(self, k) for k in self._SETTING_KEYS}}, f, indent=2)
+                    json.dump(data, f, indent=2)
         except Exception as e:
             print(f"  [SDR] Failed to save settings: {e}")
 
@@ -1077,6 +1266,35 @@ devices:
             if count < 2:
                 print("  Warning: rtl_airband (SDR2) failed to start")
 
+    def _start_rtl_airband_single_only(self):
+        """Start single rtl_airband process without restarting sdrplay API service."""
+        # Wait for sdrplay_apiService
+        for _w in range(15):
+            chk = subprocess.run(['systemctl', 'is-active', 'sdrplay.service'],
+                                 capture_output=True, text=True, timeout=2)
+            if chk.stdout.strip() == 'active':
+                time.sleep(2)
+                break
+            time.sleep(1)
+        else:
+            print("  Warning: sdrplay.service not active — starting it")
+            subprocess.run(['sudo', 'systemctl', 'start', 'sdrplay.service'],
+                           capture_output=True, timeout=10)
+            time.sleep(8)
+
+        # Start single rtl_airband
+        subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SINGLE],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        alive = False
+        for _ in range(5):
+            time.sleep(1)
+            chk = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
+            if chk.returncode == 0:
+                alive = True
+                break
+        if not alive:
+            print("  Warning: rtl_airband (single) failed to start")
+
     def _stop_rtl_airband(self):
         """Stop all rtl_airband processes."""
         subprocess.run(['sudo', 'killall', '-9', 'rtl_airband'],
@@ -1103,3 +1321,354 @@ devices:
                 except (ValueError, TypeError):
                     pass
         return self._restart_rtl_airband()
+
+    # ── Single-tuner mode ───────────────────────────────────────────────────
+
+    def _write_config_single(self):
+        """Generate single-tuner multi-channel rtl_airband config."""
+        if not self._single_channels:
+            raise RuntimeError("No channels configured for single-tuner mode")
+        print(f"  [SDR] Writing single config: center={self._single_centerfreq:.3f} MHz, "
+              f"sr={self._single_sample_rate} MHz, {len(self._single_channels)} ch")
+
+        # Normalize channel keys (UI may send 'frequency' instead of 'freq')
+        for ch in self._single_channels:
+            if 'frequency' in ch and 'freq' not in ch:
+                ch['freq'] = ch.pop('frequency')
+            if 'squelch' in ch and 'squelch_threshold' not in ch:
+                ch['squelch_threshold'] = ch.pop('squelch')
+
+        # Validate all channels fit within bandwidth
+        half_bw = self._single_sample_rate / 2.0
+        for ch in self._single_channels:
+            offset = abs(ch['freq'] - self._single_centerfreq)
+            if offset > half_bw:
+                raise RuntimeError(
+                    f"Channel {ch['freq']:.3f} MHz is {offset:.3f} MHz from center "
+                    f"({self._single_centerfreq:.3f} MHz) but bandwidth is only "
+                    f"+/-{half_bw:.3f} MHz")
+
+        # Device settings
+        settings_parts = [
+            f'biasT_ctrl={str(self._single_bias_t).lower()}',
+            f'rfnotch_ctrl={str(self._single_rf_notch).lower()}',
+            f'dabnotch_ctrl={str(self._single_dab_notch).lower()}',
+            f'iqcorr_ctrl={str(self._single_iq_correction).lower()}',
+            f'extref_ctrl={str(self._single_external_ref).lower()}',
+            f'agc_setpoint={self._single_agc_setpoint}',
+        ]
+        gain_line = ''
+        if self._single_gain_mode == 'manual':
+            gain_line = f'  gain = "RFGR={self._single_rfgr},IFGR={self._single_ifgr}";'
+
+        dev_opts = ''
+        if self._single_correction != 0.0:
+            dev_opts += f'  correction = {self._single_correction};\n'
+        if self._single_antenna:
+            dev_opts += f'  antenna = "{self._single_antenna}";\n'
+
+        # Build channels block
+        channel_blocks = []
+        for i, ch in enumerate(self._single_channels):
+            ch_opts = ''
+            sq = ch.get('squelch_threshold', 0)
+            if sq != 0:
+                ch_opts += f'      squelch_threshold = {sq};\n'
+            amp = ch.get('ampfactor', 1.0)
+            if amp != 1.0:
+                ch_opts += f'      ampfactor = {amp};\n'
+            lp = ch.get('lowpass', 2500)
+            if lp != 2500:
+                ch_opts += f'      lowpass = {lp};\n'
+            hp = ch.get('highpass', 100)
+            if hp != 100:
+                ch_opts += f'      highpass = {hp};\n'
+            notch = ch.get('notch', 0.0)
+            if notch > 0:
+                ch_opts += f'      notch = {notch};\n'
+                nq = ch.get('notch_q', 10.0)
+                if nq != 10.0:
+                    ch_opts += f'      notch_q = {nq};\n'
+            cbw = ch.get('channel_bw', 0.0)
+            if cbw > 0:
+                ch_opts += f'      bandwidth = {cbw};\n'
+            tau = ch.get('tau', self._single_tau)
+            if tau != 200:
+                ch_opts += f'      tau = {tau};\n'
+            continuous = ch.get('continuous', False)
+            label = ch.get('label', f'Ch{i+1}')
+
+            # Route each channel to its own PipeWire sink for independent audio
+            sink_name = 'sdr_capture' if i == 0 else f'sdr_capture{i + 1}'
+
+            block = (
+                f'    {{\n'
+                f'      freq = {ch["freq"]};\n'
+                f'      modulation = "{ch.get("modulation", "nfm")}";\n'
+                f'{ch_opts}'
+                f'      outputs: (\n'
+                f'        {{\n'
+                f'          type = "pulse";\n'
+                f'          stream_name = "SDR {label} {ch["freq"]:.3f} MHz";\n'
+                f'          sink = "{sink_name}";\n'
+                f'          continuous = {str(continuous).lower()};\n'
+                f'        }}\n'
+                f'      );\n'
+                f'    }}'
+            )
+            channel_blocks.append(block)
+
+        channels_str = ',\n'.join(channel_blocks)
+
+        conf = (
+            f'# Auto-generated by SDRPlugin (Single Tuner Mode)\n'
+            f'devices:\n'
+            f'({{\n'
+            f'  type = "soapysdr";\n'
+            f'  device_string = "{self.SINGLE_DEVICE_STRING}";\n'
+            f'  device_settings = "{",".join(settings_parts)}";\n'
+            f'  mode = "multichannel";\n'
+            f'  centerfreq = {self._single_centerfreq};\n'
+            f'  sample_rate = {float(self._single_sample_rate)};\n'
+            f'{gain_line}\n'
+            f'{dev_opts}'
+            f'  channels:\n'
+            f'  (\n'
+            f'{channels_str}\n'
+            f'  );\n'
+            f'}});\n'
+        )
+        proc = subprocess.run(
+            ['sudo', 'tee', self.CONFIG_PATH_SINGLE],
+            input=conf.encode(), capture_output=True, timeout=5
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"Failed to write single config: {proc.stderr.decode()}")
+
+    def _restart_rtl_airband_single(self):
+        """Kill and restart rtl_airband in single-tuner mode."""
+        _t0 = time.monotonic()
+        try:
+            self._write_config_single()
+            print(f"  [SDR] Single config written: {len(self._single_channels)} channels, center={self._single_centerfreq} MHz, sr={self._single_sample_rate} MHz")
+
+            subprocess.run(['sudo', 'killall', '-9', 'rtl_airband'],
+                           capture_output=True, timeout=5)
+            time.sleep(1)
+
+            # Restart SDRplay API
+            try:
+                subprocess.run(['sudo', 'systemctl', 'stop', 'sdrplay.service'],
+                               capture_output=True, timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+            subprocess.run(['sudo', 'killall', '-9', 'sdrplay_apiService'],
+                           capture_output=True, timeout=3)
+            time.sleep(1)
+            subprocess.run(['sudo', 'systemctl', 'start', 'sdrplay.service'],
+                           capture_output=True, timeout=10)
+            time.sleep(5)
+
+            # Start single rtl_airband process
+            subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SINGLE],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            alive = False
+            for _ in range(5):
+                time.sleep(1)
+                chk = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
+                if chk.returncode == 0:
+                    alive = True
+                    break
+            if not alive:
+                return {'ok': False, 'error': 'rtl_airband (single) failed to start'}
+
+            # Verify exactly ONE process
+            chk = subprocess.run(['pgrep', '-c', 'rtl_airband'], capture_output=True, timeout=2)
+            count = int(chk.stdout.decode().strip()) if chk.returncode == 0 else 0
+
+            self._save_settings()
+            _elapsed = (time.monotonic() - _t0) * 1000
+            print(f"  [SDR] Single restart complete: {count} process(es), {_elapsed:.0f}ms")
+            return {
+                'ok': True,
+                'mode': 'single',
+                'process_count': count,
+                'channels': len(self._single_channels),
+                'restart_ms': round(_elapsed),
+            }
+        except Exception as e:
+            _elapsed = (time.monotonic() - _t0) * 1000
+            print(f"  [SDR] Single restart FAILED after {_elapsed:.0f}ms: {e}")
+            return {'ok': False, 'error': str(e)}
+
+    def _switch_mode(self, new_mode):
+        """Switch between 'dual' and 'single' mode. Stops all processes first."""
+        _t0 = time.monotonic()
+        print(f"  [SDR] Mode switch: {self._sdr_mode} → {new_mode}")
+        if new_mode not in ('dual', 'single'):
+            return {'ok': False, 'error': f'Invalid mode: {new_mode}'}
+        if new_mode == self._sdr_mode:
+            return {'ok': True, 'mode': self._sdr_mode, 'message': 'Already in this mode'}
+
+        # Step 1: Stop everything
+        self._stop_rtl_airband()
+        time.sleep(1)
+
+        # Verify stopped
+        chk = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
+        if chk.returncode == 0:
+            # Force kill
+            subprocess.run(['sudo', 'killall', '-9', 'rtl_airband'], capture_output=True, timeout=5)
+            time.sleep(1)
+
+        # Step 2: Clean up current captures
+        if self._tuner1:
+            self._tuner1.cleanup()
+            self._tuner1 = None
+        if self._tuner2:
+            self._tuner2.cleanup()
+            self._tuner2 = None
+
+        # Step 3: Switch mode
+        old_mode = self._sdr_mode
+        self._sdr_mode = new_mode
+        self._save_settings()
+
+        # Step 4: Restart in new mode
+        if new_mode == 'single':
+            result = self._restart_rtl_airband_single()
+        else:
+            result = self._restart_rtl_airband()
+
+        if not result.get('ok'):
+            # Rollback
+            self._sdr_mode = old_mode
+            self._save_settings()
+            return {'ok': False, 'error': f'Mode switch failed: {result.get("error", "unknown")}',
+                    'mode': old_mode}
+
+        # Step 5: Re-setup captures
+        config = self._config
+        sdr1_device = getattr(config, 'SDR_DEVICE_NAME', 'pw:sdr_capture')
+        sink1 = sdr1_device.split(':', 1)[1] if ':' in sdr1_device else sdr1_device
+
+        if new_mode == 'single':
+            self._tuner1 = _TunerCapture('SDR-Ch1', config, sink1, self._processor1)
+            capture_ok = self._tuner1.setup()
+            if len(self._single_channels) >= 2:
+                sdr2_device = getattr(config, 'SDR2_DEVICE_NAME', 'pw:sdr_capture2')
+                sink2 = sdr2_device.split(':', 1)[1] if ':' in sdr2_device else sdr2_device
+                self._tuner2 = _TunerCapture('SDR-Ch2', config, sink2, self._processor2)
+                self._tuner2.setup()
+            else:
+                self._tuner2 = None
+        else:
+            sdr2_device = getattr(config, 'SDR2_DEVICE_NAME', 'pw:sdr_capture2')
+            sink2 = sdr2_device.split(':', 1)[1] if ':' in sdr2_device else sdr2_device
+            self._tuner1 = _TunerCapture('SDR1', config, sink1, self._processor1)
+            capture_ok = self._tuner1.setup()
+            if getattr(config, 'ENABLE_SDR2', False):
+                self._tuner2 = _TunerCapture('SDR2', config, sink2, self._processor2)
+                self._tuner2.setup()
+
+        # Step 6: Closed-loop verification
+        chk = subprocess.run(['pgrep', '-c', 'rtl_airband'], capture_output=True, timeout=2)
+        count = int(chk.stdout.decode().strip()) if chk.returncode == 0 else 0
+        expected = 1 if new_mode == 'single' else 2
+
+        _elapsed = (time.monotonic() - _t0) * 1000
+        print(f"  [SDR] Mode switch complete: {new_mode}, {count} processes, {_elapsed:.0f}ms")
+        return {
+            'ok': True,
+            'mode': new_mode,
+            'process_count': count,
+            'expected_processes': expected,
+            'capture_active': self._tuner1.active if self._tuner1 else False,
+            'switch_ms': round(_elapsed),
+        }
+
+    def _apply_single_settings(self, cmd):
+        """Update single-mode device settings and restart."""
+        self._sdr_mode = 'single'
+        for attr in ('centerfreq', 'sample_rate', 'antenna', 'gain_mode',
+                     'correction', 'tau'):
+            if attr in cmd:
+                setattr(self, f'_single_{attr}', cmd[attr])
+        for attr in ('rfgr', 'ifgr', 'agc_setpoint'):
+            if attr in cmd:
+                setattr(self, f'_single_{attr}', int(cmd[attr]))
+        for attr in ('bias_t', 'rf_notch', 'dab_notch', 'iq_correction', 'external_ref'):
+            if attr in cmd:
+                setattr(self, f'_single_{attr}', bool(cmd[attr]))
+        if 'channels' in cmd:
+            # Normalize channel keys
+            chs = []
+            for ch in cmd['channels']:
+                if 'frequency' in ch and 'freq' not in ch:
+                    ch['freq'] = ch.pop('frequency')
+                if 'squelch' in ch and 'squelch_threshold' not in ch:
+                    ch['squelch_threshold'] = ch.pop('squelch')
+                chs.append(ch)
+            self._single_channels = chs
+        return self._restart_rtl_airband_single()
+
+    def _add_single_channel(self, cmd):
+        """Add a channel to single-mode config."""
+        if len(self._single_channels) >= self.MAX_SINGLE_CHANNELS:
+            return {'ok': False, 'error': f'Maximum {self.MAX_SINGLE_CHANNELS} channels'}
+        freq = cmd.get('freq')
+        if not freq:
+            return {'ok': False, 'error': 'freq required'}
+        freq = float(freq)
+        # Validate fits in bandwidth
+        half_bw = self._single_sample_rate / 2.0
+        if abs(freq - self._single_centerfreq) > half_bw:
+            return {'ok': False, 'error': (
+                f'{freq:.3f} MHz outside tunable band '
+                f'({self._single_centerfreq - half_bw:.3f} - '
+                f'{self._single_centerfreq + half_bw:.3f} MHz)')}
+        ch = {
+            'freq': freq,
+            'modulation': cmd.get('modulation', 'nfm'),
+            'squelch_threshold': int(cmd.get('squelch_threshold', -26)),
+            'label': cmd.get('label', f'Ch {len(self._single_channels) + 1}'),
+            'tau': int(cmd.get('tau', self._single_tau)),
+            'ampfactor': float(cmd.get('ampfactor', 1.0)),
+            'lowpass': int(cmd.get('lowpass', 2500)),
+            'highpass': int(cmd.get('highpass', 100)),
+            'notch': float(cmd.get('notch', 0.0)),
+            'notch_q': float(cmd.get('notch_q', 10.0)),
+            'channel_bw': float(cmd.get('channel_bw', 0.0)),
+            'continuous': bool(cmd.get('continuous', False)),
+        }
+        self._single_channels.append(ch)
+        return self._restart_rtl_airband_single()
+
+    def _remove_single_channel(self, index):
+        """Remove a channel by index."""
+        try:
+            index = int(index)
+        except (ValueError, TypeError):
+            return {'ok': False, 'error': f'Invalid channel index: {index}'}
+        if index < 0 or index >= len(self._single_channels):
+            return {'ok': False, 'error': f'Invalid channel index: {index}'}
+        if len(self._single_channels) <= 1:
+            return {'ok': False, 'error': 'Cannot remove last channel'}
+        self._single_channels.pop(index)
+        return self._restart_rtl_airband_single()
+
+    def _update_single_channel(self, index, cmd):
+        """Update a specific channel's settings."""
+        try:
+            index = int(index)
+        except (ValueError, TypeError):
+            return {'ok': False, 'error': f'Invalid channel index: {index}'}
+        if index < 0 or index >= len(self._single_channels):
+            return {'ok': False, 'error': f'Invalid channel index: {index}'}
+        ch = self._single_channels[index]
+        for key in ('freq', 'modulation', 'squelch_threshold', 'ampfactor',
+                     'lowpass', 'highpass', 'notch', 'notch_q', 'channel_bw',
+                     'tau', 'continuous', 'label'):
+            if key in cmd:
+                ch[key] = cmd[key]
+        return self._restart_rtl_airband_single()

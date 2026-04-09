@@ -200,20 +200,53 @@ def sdr_tune(
     squelch_db: float | None = None,
 ) -> str:
     """
-    Retune an SDR receiver channel to a new frequency.  Restarts both tuners (~12s).
+    Retune an SDR receiver channel to a new frequency.  Restarts tuners (~8-12s).
+
+    In dual mode: channel 1 or 2 tunes the corresponding tuner.
+    In single mode: channel number is the 1-based index in the channel list.
 
     Args:
         freq_mhz:    Frequency in MHz (e.g. 118.1 for aircraft, 162.55 for NOAA weather).
-        channel:     SDR channel number — 1 or 2 (default 1).
+        channel:     SDR channel number — 1 or 2 in dual mode, 1-8 in single mode (default 1).
         squelch_db:  Optional squelch threshold in dBFS (negative, e.g. -40.0).
                      Omit to keep current squelch.
     """
-    freq_key = 'frequency' if channel == 1 else 'frequency2'
-    squelch_key = 'squelch_threshold' if channel == 1 else 'squelch_threshold2'
-    payload: dict = {'cmd': 'tune', freq_key: freq_mhz}
-    if squelch_db is not None:
-        payload[squelch_key] = squelch_db
-    result = _post('/sdrcmd', payload, timeout=20)
+    # Check current mode
+    status = _get('/sdrstatus')
+    mode = status.get('sdr_mode', 'dual')
+
+    if mode == 'single':
+        channels = status.get('single_channels', [])
+        idx = channel - 1
+        if idx < 0 or idx >= len(channels):
+            return json.dumps({'ok': False, 'error': f'Channel {channel} not found (have {len(channels)} channels)'})
+        payload: dict = {'cmd': 'single_update_channel', 'index': idx, 'freq': freq_mhz}
+        if squelch_db is not None:
+            payload['squelch_threshold'] = int(squelch_db)
+        result = _post('/sdrcmd', payload, timeout=20)
+    else:
+        freq_key = 'frequency' if channel == 1 else 'frequency2'
+        squelch_key = 'squelch_threshold' if channel == 1 else 'squelch_threshold2'
+        payload = {'cmd': 'tune', freq_key: freq_mhz}
+        if squelch_db is not None:
+            payload[squelch_key] = squelch_db
+        result = _post('/sdrcmd', payload, timeout=20)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def sdr_set_mode(mode: str) -> str:
+    """
+    Switch SDR between dual-tuner and single-tuner mode.
+
+    Dual mode: two independent tuners (master/slave), higher CPU, independent frequencies.
+    Single mode: one tuner with multiple demodulated channels, lower CPU, frequencies
+    must fit within the selected sample rate bandwidth.
+
+    Args:
+        mode: 'dual' for master/slave dual tuner, 'single' for one tuner with multiple channels.
+    """
+    result = _post('/sdrcmd', {'cmd': 'set_mode', 'mode': mode}, timeout=25)
     return json.dumps(result, indent=2)
 
 

@@ -312,7 +312,9 @@ function autoArrange() {
     var el = document.querySelector('#node-' + nid);
     var h = el ? el.offsetHeight : 55;
     var w = el ? el.offsetWidth : 140;
-    var entry = { nid: nid, name: node.name || node.data.id || '', cls: node.class || '', h: h, w: w };
+    var busNameEl = el ? el.querySelector('.bus-name') : null;
+    var displayName = busNameEl ? busNameEl.textContent : (node.name || node.data.id || '');
+    var entry = { nid: nid, name: displayName, cls: node.class || '', h: h, w: w };
     nodeInfo[nid] = entry;
     if (entry.cls.indexOf('source') >= 0) sources.push(entry);
     else if (entry.cls.indexOf('bus') >= 0) buses.push(entry);
@@ -371,12 +373,8 @@ function autoArrange() {
   var positions = {};
   var curY = MARGIN;  // shared Y cursor across all three columns
 
-  // Sort buses by most connected first
-  buses.sort(function(a, b) {
-    var ac = (busSourceMap[a.nid] || []).length + (busSinkMap[a.nid] || []).length;
-    var bc = (busSourceMap[b.nid] || []).length + (busSinkMap[b.nid] || []).length;
-    return bc - ac;
-  });
+  // Sort buses alphabetically by name
+  buses.sort(function(a, b) { return a.name.localeCompare(b.name); });
 
   var placedSrc = {}, placedSink = {};
 
@@ -581,7 +579,7 @@ function rebuildEditor() {
     var html = '<div class="box">'
       + '<div class="node-controls">'
       + '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">M</button>'
-      + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" title="Gain">'
+      + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" ondblclick="this.value=100;setGain(\'' + s.id + '\',100)" title="Gain (double-click to reset)">'
       + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>'
       + '</div>'
       + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>'
@@ -616,7 +614,7 @@ function rebuildEditor() {
       + '</div>';
     var pos = savedPositions['bus-' + b.id] || {x: xBus, y: yBus};
     var busCls = cls + (b.muted ? ' node-muted' : '');
-    var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, busCls, {id: b.id, type: b.type}, b.name + ' <span style="opacity:0.5;font-weight:400">(' + b.type + ')</span>\n' + html);
+    var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, busCls, {id: b.id, type: b.type}, '<span class="bus-name" data-bus="' + b.id + '" ondblclick="renameBus(this,\'' + b.id + '\')">' + b.name + '</span> <span style="opacity:0.5;font-weight:400">(' + b.type + ')</span>\n' + html);
     _nodeMap['bus-' + b.id] = nodeId;
     yBus += spacing + 20;
   }
@@ -628,7 +626,7 @@ function rebuildEditor() {
     var html = '<div class="box">'
       + '<div class="node-controls">'
       + '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">M</button>'
-      + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" title="Gain">'
+      + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" ondblclick="this.value=100;setGain(\'' + s.id + '\',100)" title="Gain (double-click to reset)">'
       + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>'
       + '</div>'
       + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>';
@@ -897,6 +895,37 @@ function setGain(id, value) {
         if (d.ok) setStatus(id + ': gain ' + value + '%');
       });
   }, 200);
+}
+
+// Bus rename — double-click bus name for inline edit
+function renameBus(el, busId) {
+  var current = el.textContent;
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.style.cssText = 'background:var(--t-btn);color:#fff;border:1px solid var(--t-accent);border-radius:3px;padding:2px 6px;font-family:monospace;font-size:0.9em;width:' + Math.max(80, current.length * 9) + 'px;';
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  input.select();
+  function commit() {
+    var newName = input.value.trim();
+    if (!newName || newName === current) { el.textContent = current; return; }
+    fetch('/routing/cmd', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cmd: 'rename_bus', id: busId, name: newName})
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        el.textContent = d.ok ? d.name : current;
+        if (d.ok) setStatus('Renamed bus to: ' + d.name);
+      }).catch(function() { el.textContent = current; });
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { el.textContent = current; }
+  });
 }
 
 // Processing toggle

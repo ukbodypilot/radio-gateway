@@ -1335,8 +1335,17 @@ class WebConfigServer:
 
         if gw:
             if gw.sdr_plugin:
-                sources.append({**{'id': 'sdr', 'name': 'SDR [RX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.sdr_plugin)})
+                _sdr = gw.sdr_plugin
+                if getattr(_sdr, '_tuner1', None):
+                    sources.append({**{'id': 'sdr1', 'name': 'SDR1 [RX]', 'enabled': True,
+                                    'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(_sdr._tuner1)})
+                if getattr(_sdr, '_tuner2', None):
+                    sources.append({**{'id': 'sdr2', 'name': 'SDR2 [RX]', 'enabled': True,
+                                    'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(_sdr._tuner2)})
+                if not getattr(_sdr, '_tuner1', None) and not getattr(_sdr, '_tuner2', None):
+                    # Fallback: plugin has no captures yet
+                    sources.append({**{'id': 'sdr', 'name': 'SDR [RX]', 'enabled': True,
+                                    'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(_sdr)})
             if gw.kv4p_plugin:
                 sources.append({**{'id': 'kv4p', 'name': 'KV4P [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.kv4p_plugin)})
@@ -1450,6 +1459,18 @@ class WebConfigServer:
             busses.append({'id': bus_id, 'name': name, 'type': bus_type, 'sources': [], 'sinks': []})
             self._save_routing_config(busses, connections)
             return {'ok': True}
+
+        elif cmd == 'rename_bus':
+            bus_id = data.get('id', '')
+            new_name = data.get('name', '').strip()
+            if not new_name:
+                return {'ok': False, 'error': 'name required'}
+            for b in busses:
+                if b['id'] == bus_id:
+                    b['name'] = new_name
+                    self._save_routing_config(busses, connections)
+                    return {'ok': True, 'name': new_name}
+            return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
         elif cmd == 'delete_bus':
             bus_id = data.get('id', '')

@@ -219,6 +219,7 @@ class Config:
             'PTT_TTS_DELAY': 0.5,   # Silence padding before TTS (seconds) to prevent cutoff
             'PTT_ANNOUNCEMENT_DELAY': 0.5,  # Seconds after PTT key-up before announcement audio starts
             # SDR Integration
+            'SDR_MODE': 'dual',             # 'dual' (master+slave) or 'single' (one tuner, multi-channel)
             'ENABLE_SDR': True,
             'SDR_DEVICE_NAME': 'pw:sdr_capture',  # PipeWire sink (recommended) or ALSA device (e.g., 'hw:6,1')
             'SDR_DUCK': True,             # Duck SDR: silence SDR when higher priority source is active
