@@ -26,7 +26,7 @@
   .shell-nav > a { padding: 3px 10px; }
   .shell-nav > a + a, .shell-nav > a + .nav-group, .shell-nav > .nav-group + a, .shell-nav > .nav-group + .nav-group { border-left: 1px solid #444; }
   .nav-group { position: relative; }
-  .nav-group > .nav-label { padding: 3px 10px; color: #888; font-size: 0.8em; cursor: pointer; user-select: none; }
+  .nav-group > .nav-label { padding: 3px 10px; color: #888; font-size: 0.78em; cursor: pointer; user-select: none; }
   .nav-group > .nav-label:hover { color: var(--t-accent); }
   .nav-group > .nav-label::after { content: ' \25BE'; font-size: 0.7em; }
   .nav-group.open > .nav-label { color: var(--t-accent); }
@@ -72,7 +72,7 @@
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Audio</span><div class="nav-drop">
+    <a href="/dashboard" target="content" onclick="setActive(this)" title="Dashboard">&#8962;</a><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Audio</span><div class="nav-drop">
       <a href="/routing" target="content" onclick="setActive(this)">Routing</a>
       <a href="/controls" target="content" onclick="setActive(this)">Controls</a>
       <a href="/monitor" target="content" onclick="setActive(this)">Monitor</a>
@@ -96,13 +96,11 @@
       <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     </div></div>
     <span class="shell-pcm">
-      <button id="play-btn" onclick="toggleStream()" style="min-width:68px; text-align:center;">&#9654; MP3</button>
+      <button id="play-btn" onclick="toggleStream()" style="width:62px; text-align:center; padding:3px 0; overflow:hidden;">&#9654; MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="50" style="width:40px; accent-color:var(--t-accent);" oninput="setVolume(this.value)">
-      <span style="color:var(--t-border);">|</span>
-      <button id="ws-btn" onclick="toggleWS()" style="min-width:68px; text-align:center;">&#9654; PCM</button>
+      <button id="ws-btn" onclick="toggleWS()" style="width:62px; text-align:center; padding:3px 0; overflow:hidden;">&#9654; PCM</button>
       <input id="ws-vol" type="range" min="0" max="100" value="50" style="width:40px; accent-color:var(--t-accent);" oninput="setWSVol(this.value)">
-      <span style="color:var(--t-border);">|</span>
-      <button id="mic-btn" onclick="toggleMic()" style="min-width:68px; text-align:center;">&#127908; MIC</button>
+      <button id="mic-btn" onclick="toggleMic()" style="width:62px; text-align:center; padding:3px 0; overflow:hidden;">&#127908; MIC</button>
     </span>
   </div>
 </div>
