@@ -849,6 +849,8 @@ def handle_routing_levels(handler, parent):
         # Decay link endpoint TX levels
         for _ln, _ls in gw.link_endpoints.items():
             _ls.tx_audio_level = max(0, int(getattr(_ls, 'tx_audio_level', 0) * 0.8))
+            if _ln in gw._link_tx_levels:
+                gw._link_tx_levels[_ln] = max(0, int(gw._link_tx_levels[_ln] * 0.8))
         if getattr(gw, 'th9800_plugin', None):
             gw.th9800_plugin.tx_audio_level = max(0, int(getattr(gw.th9800_plugin, 'tx_audio_level', 0) * 0.8))
         # Report sink levels — 0 when disconnected so bars clear

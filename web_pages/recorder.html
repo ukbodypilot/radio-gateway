@@ -115,6 +115,13 @@ function init() {
 }
 
 function buildUI() {
+  // Stop all browser players on rebuild
+  for (var id in busState) {
+    if (busState[id].player) {
+      busState[id].player.pause();
+      busState[id].player.currentTime = 0;
+    }
+  }
   var container = document.getElementById('buses-container');
   var html = '';
   for (var i=0;i<buses.length;i++) {
@@ -165,8 +172,11 @@ function buildUI() {
     st.ctx = cv.getContext('2d');
     cv.width = cv.parentElement.clientWidth;
     wireCanvas(cv, b.id);
-    // Player ended handler
-    (function(bid){ busState[bid].player.addEventListener('ended', function(){ _highlightPlayBtn(bid,false); renderBus(bid); }); })(b.id);
+    // Player ended/error handlers
+    (function(bid){
+      busState[bid].player.addEventListener('ended', function(){ _highlightPlayBtn(bid,false); renderBus(bid); });
+      busState[bid].player.addEventListener('error', function(){ _highlightPlayBtn(bid,false); renderBus(bid); });
+    })(b.id);
   }
 }
 

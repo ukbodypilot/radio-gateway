@@ -319,6 +319,9 @@ class RadioGateway:
         self._link_last_status = {}       # {name: dict}
         self._link_tx_levels = {}         # {name: int}
         self._link_settings_path = os.path.expanduser('~/.config/radio-gateway/link_endpoints.json')
+        self._source_gains = {}     # {source_id: gain_pct} — persisted
+        self._source_gains_path = os.path.expanduser('~/.config/radio-gateway/source_gains.json')
+        self._sink_gains = {}       # {sink_id: float} — runtime only for now
         self.aioc_available = False  # Track if AIOC is connected
 
         # SDR rebroadcast — route mixed SDR audio to AIOC radio TX
@@ -584,6 +587,45 @@ class RadioGateway:
                 _json.dump(self.link_endpoint_settings, f, indent=2)
         except Exception as e:
             print(f"  [Link] Failed to save settings: {e}")
+
+    def _load_source_gains(self):
+        """Load saved source/sink gain overrides from JSON."""
+        try:
+            with open(self._source_gains_path) as f:
+                import json as _json
+                data = _json.load(f)
+                self._source_gains = data.get('sources', {})
+                # Restore sink gains too
+                for sid, val in data.get('sinks', {}).items():
+                    self._sink_gains[sid] = val / 100.0
+        except (FileNotFoundError, ValueError):
+            self._source_gains = {}
+
+    def _save_source_gains(self):
+        """Persist source/sink gain overrides to JSON."""
+        import json as _json
+        try:
+            os.makedirs(os.path.dirname(self._source_gains_path), exist_ok=True)
+            data = {'sources': self._source_gains,
+                    'sinks': {k: int(v * 100) for k, v in self._sink_gains.items()}}
+            with open(self._source_gains_path, 'w') as f:
+                _json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"  [Gains] Failed to save: {e}")
+
+    def _apply_source_gains(self):
+        """Apply saved gain overrides to source objects. Called after all sources init."""
+        _bm = getattr(self, 'bus_manager', None)
+        for source_id, gain_pct in self._source_gains.items():
+            plugin = _bm._get_source(source_id) if _bm else None
+            if plugin:
+                _is_tx = source_id.endswith('_tx')
+                if _is_tx and hasattr(plugin, 'tx_audio_boost'):
+                    plugin.tx_audio_boost = gain_pct / 100.0
+                else:
+                    plugin.audio_boost = gain_pct / 100.0
+                if getattr(self.config, 'VERBOSE_LOGGING', False):
+                    print(f"  [Gains] Restored {source_id} = {gain_pct}%")
 
     # process_audio_for_sdr removed — SDRPlugin handles processing internally
 
@@ -3019,6 +3061,9 @@ class RadioGateway:
             self._bus_sinks = self.bus_manager.get_bus_sinks()
             self._listen_bus_id = self.bus_manager.get_listen_bus_id()
             self._listen_bus_muted = self.bus_manager.is_bus_muted(self._listen_bus_id)
+            # Restore persisted source/sink gains
+            self._load_source_gains()
+            self._apply_source_gains()
         except Exception as e:
             print(f"  [BusManager] Failed to start: {e}")
             self.bus_manager = None

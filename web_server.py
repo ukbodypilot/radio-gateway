@@ -1669,6 +1669,7 @@ class WebConfigServer:
         elif cmd == 'gain':
             target_id = data.get('id', '')
             value = int(data.get('value', 100))
+            _gw = self.gateway
             plugin = self._get_plugin_by_id(target_id)
             if plugin:
                 _is_tx = target_id.endswith('_tx')
@@ -1678,20 +1679,23 @@ class WebConfigServer:
                     plugin.audio_boost = value / 100.0
                 # Persist link endpoint gains
                 _ep_name = getattr(plugin, 'endpoint_name', '')
-                _gw = self.gateway
                 if _ep_name and _gw:
                     _key = 'tx_boost' if _is_tx else 'rx_boost'
                     settings = _gw.link_endpoint_settings.setdefault(_ep_name, {})
                     settings[_key] = value
                     _gw._save_link_settings()
+                # Persist source gains
+                if _gw:
+                    _gw._source_gains[target_id] = value
+                    _gw._save_source_gains()
                 return {'ok': True, 'gain': value}
             # Passive sinks (mumble, broadcastify, speaker, recording, etc.)
             _passive_sinks = ('mumble', 'broadcastify', 'speaker', 'recording',
                               'transcription', 'remote_audio_tx')
-            if target_id in _passive_sinks and self.gateway:
-                if not hasattr(self.gateway, '_sink_gains'):
-                    self.gateway._sink_gains = {}
-                self.gateway._sink_gains[target_id] = value / 100.0
+            if target_id in _passive_sinks and _gw:
+                _gw._sink_gains[target_id] = value / 100.0
+                _gw._source_gains[target_id] = value
+                _gw._save_source_gains()
                 return {'ok': True, 'gain': value}
             return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
 
@@ -1730,8 +1734,11 @@ class WebConfigServer:
         gw = self.gateway
         if not gw:
             return None
+        _sdr = gw.sdr_plugin
         _map = {
-            'sdr': gw.sdr_plugin,
+            'sdr': _sdr,
+            'sdr1': getattr(_sdr, '_tuner1', None) if _sdr else None,
+            'sdr2': getattr(_sdr, '_tuner2', None) if _sdr else None,
             'kv4p': gw.kv4p_plugin,
             'kv4p_tx': gw.kv4p_plugin,
             'aioc': getattr(gw, 'th9800_plugin', None),

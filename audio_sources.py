@@ -579,13 +579,9 @@ class FilePlaybackSource(AudioSource):
 
     def stop_playback(self):
         """Stop current playback and clear queue"""
-        # Mark current file as not playing
-        if self.current_file:
-            # Find which key this file belongs to
-            for key, info in self.file_status.items():
-                if info['path'] == self.current_file:
-                    self.file_status[key]['playing'] = False
-                    break
+        # Clear ALL playing flags — only one file plays at a time
+        for key in self.file_status:
+            self.file_status[key]['playing'] = False
 
         # Clear current playback
         self._loop_active = False
@@ -837,13 +833,10 @@ class FilePlaybackSource(AudioSource):
             if self.gateway.config.VERBOSE_LOGGING:
                 print(f"[Playback] Volume reset to {self.volume}x")
             
-            # Mark file as not playing by matching path
-            if self.current_file:
-                for key, info in self.file_status.items():
-                    if info['path'] == self.current_file:
-                        self.file_status[key]['playing'] = False
-                        break
-            
+            # Clear all playing flags (only one file plays at a time)
+            for key in self.file_status:
+                self.file_status[key]['playing'] = False
+
             self.current_file = None
             self.file_data = None
             self.file_position = 0
@@ -952,7 +945,7 @@ class LoopPlaybackSource(AudioSource):
         super().__init__("LoopPlayback", gateway.config)
         self.gateway = gateway
         self.priority = 10
-        self.ptt_control = False
+        self.ptt_control = True
         self.volume = 1.0
         self.audio_level = 0
         self._stream_trace = None  # set by gateway_core after init
@@ -1245,7 +1238,7 @@ class LoopPlaybackSource(AudioSource):
             self._diag_print()
             self._diag_reset()
 
-        return data, False
+        return data, True
 
     def is_active(self):
         return self._playing
