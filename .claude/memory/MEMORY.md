@@ -5,7 +5,7 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 
 **Config:** `gateway_config.txt` (INI, `.gitignore` — NEVER commit, contains secrets)
 **Start:** `sudo systemctl restart radio-gateway.service` (or start.sh)
-**Version:** 3.0 (released 2026-04-07)
+**Version:** 3.1.0 (released 2026-04-09)
 
 ## Codebase Structure (post-cleanup, 2026-04-09)
 - `gateway_core.py` (~3,200) — RadioGateway class, simplified main loop, audio setup, Mumble, status
@@ -28,14 +28,16 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - `th9800_plugin.py` — TH-9800 AIOC plugin
 - `kv4p_plugin.py` — KV4P HT radio plugin
 - `gateway_link.py` — Link protocol, server, client, RadioPlugin base, AudioPlugin noise gate
-- `gateway_mcp.py` — MCP server (stdio, 60+ tools including sdr_set_mode)
+- `gateway_mcp.py` — MCP server (stdio, 88 tools including sdr_set_mode, sdr_single_tune, sdr_add/remove_channel, bus_rename)
 - `repeater_manager.py`, `transcriber.py`, `smart_announce.py`, `radio_automation.py`, `ptt.py`
 
 ## Web UI
 - Pages: `/dashboard` `/routing` `/controls` `/radio` `/d75` `/kv4p` `/sdr` `/gps` `/repeaters` `/aircraft` `/telegram` `/monitor` `/recordings` `/recorder` `/transcribe` `/packet` `/config` `/logs` `/voice`
 - `common.js` (124 lines) — postJson, getJson, createPoller, sendKey, openTmux, fmtSecs, fmtTimestamp, fmtDuration, fmtBytes
 - `common.css` (68 lines) — theme variables, status colors, layout grid, level bars, buttons
+- Shell nav: home icon for dashboard, fixed-width MP3/PCM/MIC buttons, group labels 0.78em
 - Routing page: bus rename (double-click), gain slider reset (double-click), alphabetical auto-arrange
+- Loop recorder: red local-time clock during playback, bus display names
 
 ## Key Subsystems
 
@@ -52,6 +54,8 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - Queue: maxsize=16, slow drain above 4 chunks (target ~150-200ms latency)
 - RSPduo dual-tuner mode locked at 2 MS/s (hardware constraint) — single mode allows 0.25-10.66 MS/s
 - Instrumented: overflow, underrun, slow_drain in stream trace; mode switch timing in console
+- 500 kHz has parec jitter — use 1 MHz minimum for clean audio
+- D75 endpoint host (192.168.2.134): Intel Celeron N2807, sysbench 1157 evt/s — Pi Zero 2W (~1228 evt/s) is viable replacement
 
 ### D75 Link Endpoint (cleaned 2026-04-08)
 - D75 is link-endpoint-only — all legacy d75_plugin.py code removed (~1,136 lines deleted)
