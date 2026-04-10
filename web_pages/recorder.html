@@ -44,6 +44,13 @@
   .export-status { color:#888; font-size:0.8em; }
 
   .no-data { color:#666; text-align:center; padding:60px 0; font-size:1.1em; }
+
+  .toolbar button.danger { border-color:#c0392b; color:#e74c3c; }
+  .toolbar button.danger:hover { background:#c0392b; color:#fff; }
+  .toolbar button.pb-active { border-color:#2ecc71; color:#2ecc71; }
+  .toolbar .mgmt-status { color:#888; font-size:0.85em; }
+  .toolbar .disk-total { color:#666; font-family:monospace; }
+  .toolbar .sep { border-left:1px solid #333; height:18px; }
 </style>
 </head>
 <body>
@@ -52,7 +59,15 @@
   <button onclick="zoomIn()">+</button>
   <button onclick="zoomOut()">&minus;</button>
   <button onclick="fitAll()">Fit All</button>
+  <button id="pb-btn" onclick="togglePlaybackMode()">Playback</button>
+  <span id="pb-time" style="color:#2ecc71;font-family:monospace;font-weight:bold;min-width:60px;"></span>
+  <span class="sep"></span>
+  <button onclick="mgmtDownloadAll()">Download ZIP</button>
+  <button onclick="mgmtArchiveAll()">Archive</button>
+  <button class="danger" onclick="mgmtDeleteAll()">Delete All</button>
+  <span class="mgmt-status" id="mgmt-status"></span>
   <span style="margin-left:auto;"></span>
+  <span class="disk-total" id="disk-total"></span>
   <span id="time-range" style="color:#888;"></span>
 </div>
 
@@ -69,6 +84,11 @@ var busState = {};  // busId → {wfmData, player, playStart, playEnd, selStart,
 var viewStart = 0, viewEnd = 0;
 var dataStart = 0, dataEnd = 0;
 
+// Server playback state
+var playbackMode = false;
+var serverPlayback = {playing: false, bus: null, position: 0, start: 0};
+var _pbPollTimer = null;
+
 // Shared drag state
 var activeDragBus = null;
 var isDragging = false, dragStartX = 0, dragViewStart = 0;
@@ -81,6 +101,7 @@ function init() {
     if (!buses.length) { document.getElementById('no-data').style.display=''; return; }
     document.getElementById('no-data').style.display='none';
     document.getElementById('toolbar').style.display='';
+    updateDiskTotal();
     // Compute global data range
     dataStart = Infinity; dataEnd = 0;
     for (var i=0;i<buses.length;i++) {
@@ -201,8 +222,13 @@ function wireCanvas(cv, busId) {
       isDragging = false;
       var dx = Math.abs(e.clientX - dragStartX);
       if (dx < 4) {
-        busState[busId].lastClickTime = pxToTime(canvasX(cv,e), cv.width);
-        busPlayFrom(busId, busState[busId].lastClickTime);
+        var clickTime = pxToTime(canvasX(cv,e), cv.width);
+        busState[busId].lastClickTime = clickTime;
+        if (playbackMode) {
+          serverPlayStart(busId, clickTime);
+        } else {
+          busPlayFrom(busId, clickTime);
+        }
       } else {
         clampView();
         loadAllWaveforms();
@@ -212,7 +238,12 @@ function wireCanvas(cv, busId) {
       var st = busState[busId];
       if (Math.abs(st.selEnd - st.selStart) < 1) {
         st.selStart = null; st.selEnd = null;
-        busPlayFrom(busId, pxToTime(canvasX(cv,e), cv.width));
+        var clickTime = pxToTime(canvasX(cv,e), cv.width);
+        if (playbackMode) {
+          serverPlayStart(busId, clickTime);
+        } else {
+          busPlayFrom(busId, clickTime);
+        }
       } else {
         updateExportFields(busId);
       }
@@ -305,7 +336,7 @@ function renderBus(busId) {
     ctx.strokeRect(sx, 0, ex-sx, h-axisH);
   }
 
-  // Playback cursor
+  // Browser playback cursor (red)
   if (!st.player.paused && st.playStart > 0) {
     var cur = st.playStart + st.player.currentTime;
     if (cur >= viewStart && cur <= viewEnd) {
@@ -313,6 +344,17 @@ function renderBus(busId) {
       ctx.strokeStyle = '#e74c3c';
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(cx,0); ctx.lineTo(cx, h-axisH); ctx.stroke();
+    }
+  }
+
+  // Server playback cursor (green)
+  if (serverPlayback.playing && serverPlayback.bus === busId) {
+    var sp = serverPlayback.position;
+    if (sp >= viewStart && sp <= viewEnd) {
+      var spx = timeToPx(sp, w);
+      ctx.strokeStyle = '#2ecc71';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(spx,0); ctx.lineTo(spx, h-axisH); ctx.stroke();
     }
   }
 
@@ -528,6 +570,7 @@ setInterval(function() {
       buildUI(); loadAllWaveforms();
       return;
     }
+    updateDiskTotal();
     // Update data range, auto-extend if viewing tail
     for (var i=0;i<buses.length;i++) {
       if (buses[i].latest > dataEnd) {
@@ -538,7 +581,164 @@ setInterval(function() {
   }).catch(function(){});
 }, 5000);
 
+// ── Bulk management ──────────────────────────────────────────
+function updateDiskTotal() {
+  var total = 0;
+  for (var i=0;i<buses.length;i++) total += (buses[i].disk_mb || 0);
+  var str = total >= 1024 ? (total/1024).toFixed(1)+' GB' : total.toFixed(0)+' MB';
+  document.getElementById('disk-total').textContent = 'Total: '+str;
+}
+
+function mgmtStatus(msg) { document.getElementById('mgmt-status').textContent = msg; }
+
+function mgmtDeleteAll() {
+  if (!confirm('Delete ALL loop recordings?\n\nThis cannot be undone.')) return;
+  if (!confirm('Are you sure? All audio data will be permanently deleted.')) return;
+  mgmtStatus('Deleting...');
+  fetch('/loop/delete_all', {method:'POST'}).then(function(r){return r.json();}).then(function(data) {
+    if (data.ok) {
+      mgmtStatus('Deleted '+data.deleted+' files');
+      setTimeout(function(){ location.reload(); }, 1500);
+    } else {
+      mgmtStatus('Error: '+(data.error||'unknown'));
+    }
+  }).catch(function(e){ mgmtStatus('Error: '+e.message); });
+}
+
+function mgmtDownloadAll() {
+  mgmtStatus('Preparing ZIP...');
+  fetch('/loop/download_all', {method:'POST'}).then(function(r) {
+    if (!r.ok) throw new Error(r.status === 404 ? 'No recordings' : 'Download failed');
+    return r.blob();
+  }).then(function(blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'loop_recordings.zip';
+    a.click();
+    URL.revokeObjectURL(url);
+    mgmtStatus('Download started');
+  }).catch(function(e){ mgmtStatus('Error: '+e.message); });
+}
+
+function mgmtArchiveAll() {
+  if (!confirm('Archive all recordings?\n\nFiles will be moved to an archive folder and removed from the live recorder.')) return;
+  mgmtStatus('Archiving...');
+  fetch('/loop/archive_all', {method:'POST'}).then(function(r){return r.json();}).then(function(data) {
+    if (data.ok) {
+      mgmtStatus('Archived to '+data.path);
+      setTimeout(function(){ location.reload(); }, 1500);
+    } else {
+      mgmtStatus('Error: '+(data.error||'unknown'));
+    }
+  }).catch(function(e){ mgmtStatus('Error: '+e.message); });
+}
+
+// ── Server playback mode ─────────────────────────────────────
+function togglePlaybackMode() {
+  if (playbackMode) {
+    // Turning off: stop server playback
+    playbackMode = false;
+    _updatePbBtn();
+    fetch('/loop/playback', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'stop'})
+    }).then(function(){
+      serverPlayback.playing = false;
+      _stopPbPoll();
+      _updatePbTime();
+      renderAll();
+    });
+  } else if (serverPlayback.playing) {
+    // Server is playing from a previous session — stop it
+    playbackMode = false;
+    _updatePbBtn();
+    fetch('/loop/playback', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'stop'})
+    }).then(function(){
+      serverPlayback.playing = false;
+      _stopPbPoll();
+      _updatePbTime();
+      renderAll();
+    });
+  } else {
+    // Enter playback mode
+    playbackMode = true;
+    _updatePbBtn();
+  }
+}
+
+function _updatePbBtn() {
+  var btn = document.getElementById('pb-btn');
+  if (!btn) return;
+  if (playbackMode || serverPlayback.playing) {
+    btn.classList.add('pb-active');
+  } else {
+    btn.classList.remove('pb-active');
+  }
+}
+
+function serverPlayStart(busId, epoch) {
+  fetch('/loop/playback', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'play', bus:busId, start:epoch})
+  }).then(function(r){return r.json();}).then(function(data) {
+    if (data.ok) {
+      serverPlayback.playing = true;
+      serverPlayback.bus = busId;
+      serverPlayback.position = epoch;
+      serverPlayback.start = epoch;
+      _startPbPoll();
+      renderAll();
+    }
+  });
+}
+
+function _updatePbTime() {
+  var el = document.getElementById('pb-time');
+  if (!el) return;
+  if (serverPlayback.playing && serverPlayback.position > 0) {
+    el.textContent = epochToHMS(serverPlayback.position);
+  } else {
+    el.textContent = '';
+  }
+}
+
+function _startPbPoll() {
+  _stopPbPoll();
+  _pbPollTimer = setInterval(function() {
+    fetch('/loop/playback/status').then(function(r){return r.json();}).then(function(data) {
+      serverPlayback.playing = data.playing;
+      serverPlayback.bus = data.bus;
+      serverPlayback.position = data.position || 0;
+      serverPlayback.start = data.start || 0;
+      _updatePbBtn();
+      _updatePbTime();
+      if (!data.playing) { _stopPbPoll(); _updatePbTime(); }
+      renderAll();
+    });
+  }, 500);
+}
+
+function _stopPbPoll() {
+  if (_pbPollTimer) { clearInterval(_pbPollTimer); _pbPollTimer = null; }
+}
+
+function _checkServerPlayback() {
+  fetch('/loop/playback/status').then(function(r){return r.json();}).then(function(data) {
+    serverPlayback.playing = data.playing;
+    serverPlayback.bus = data.bus;
+    serverPlayback.position = data.position || 0;
+    serverPlayback.start = data.start || 0;
+    _updatePbBtn();
+    _updatePbTime();
+    if (data.playing) { _startPbPoll(); }
+  }).catch(function(){});
+}
+
 init();
+_checkServerPlayback();
 </script>
 </body>
 </html>

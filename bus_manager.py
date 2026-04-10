@@ -97,7 +97,8 @@ class BusManager:
             self._pcm_drain_multi += 1
         self._last_pcm_drain_n = len(chunks)  # exposed for trace
         if time.time() - self._pcm_drain_diag > 10.0:
-            print(f"  [PCM-DIAG] drains={self._pcm_drain_count} multi={self._pcm_drain_multi} ({self._pcm_drain_multi*100//max(1,self._pcm_drain_count)}% double)")
+            if getattr(self.config, 'VERBOSE_LOGGING', False):
+                print(f"  [PCM-DIAG] drains={self._pcm_drain_count} multi={self._pcm_drain_multi} ({self._pcm_drain_multi*100//max(1,self._pcm_drain_count)}% double)")
             self._pcm_drain_count = 0
             self._pcm_drain_multi = 0
             self._pcm_drain_diag = time.time()
@@ -214,6 +215,8 @@ class BusManager:
                                   getattr(gw.config, 'KV4P_AUDIO_DUCK', True))
         if getattr(gw, 'playback_source', None):
             source_map['playback'] = (gw.playback_source, 0, False)
+        if getattr(gw, 'loop_playback_source', None):
+            source_map['loop_playback'] = (gw.loop_playback_source, 10, True)
         if getattr(gw, 'web_mic_source', None):
             source_map['webmic'] = (gw.web_mic_source, 0, False)
         if getattr(gw, 'announce_input_source', None):
@@ -530,6 +533,8 @@ class BusManager:
             return gw.th9800_plugin
         elif source_id == 'playback' and getattr(gw, 'playback_source', None):
             return gw.playback_source
+        elif source_id == 'loop_playback' and getattr(gw, 'loop_playback_source', None):
+            return gw.loop_playback_source
         elif source_id == 'webmic' and getattr(gw, 'web_mic_source', None):
             return gw.web_mic_source
         elif source_id == 'announce' and getattr(gw, 'announce_input_source', None):
@@ -562,6 +567,7 @@ class BusManager:
 
     def _deliver_audio(self, bus_output, bus_id):
         """Deliver a bus's audio output to connected sinks + PCM/MP3 streams."""
+        _t_deliver_start = time.monotonic()
         gw = self.gateway
         bus_cfg = self._bus_config.get(bus_id, {})
         _st = getattr(gw, '_stream_trace', None)
@@ -575,7 +581,12 @@ class BusManager:
         _proc = self._bus_processors.get(bus_id)
         _processed_audio = None
         if _proc and bus_output.mixed_audio is not None:
+            _t_proc = time.monotonic()
             _processed_audio = _proc.process(bus_output.mixed_audio)
+            _proc_ms = (time.monotonic() - _t_proc) * 1000
+            if _st and _proc_ms > 5:
+                _st.record(f'{bus_id}_deliver', 'processing', bus_output.mixed_audio,
+                           -1, f'{_proc_ms:.1f}ms')
             # Replace per-sink audio refs (most busses send same mixed audio to all sinks)
             for sink_id in list(bus_output.audio):
                 if bus_output.audio[sink_id] is not None:
@@ -670,8 +681,9 @@ class BusManager:
             elif sink_id == 'remote_audio_tx' and getattr(gw, 'remote_audio_server', None):
                 if gw.remote_audio_server.connected:
                     try:
+                        _t_ra = time.monotonic()
                         gw.remote_audio_server.send_audio(audio)
-                        _ra_ms = (time.monotonic() - _t_sink) * 1000
+                        _ra_ms = (time.monotonic() - _t_ra) * 1000
                         if _st:
                             _extra = f'remote_tx {_ra_ms:.1f}ms' if _ra_ms > 5 else ''
                             _st.record(f'{bus_id}_deliver', 'remote_audio_tx', audio, -1, _extra)
@@ -721,7 +733,18 @@ class BusManager:
                     _lh = proc_cfg.get('loop_hours', 0)
                     if _lh and _lh != _lr.get_retention(bus_id):
                         _lr.set_retention(bus_id, _lh)
+                    _t_lr = time.monotonic()
                     _lr.feed(bus_id, mixed)
+                    _lr_ms = (time.monotonic() - _t_lr) * 1000
+                    if _st and _lr_ms > 5:
+                        _st.record(f'{bus_id}_deliver', 'loop_rec', mixed,
+                                   -1, f'{_lr_ms:.1f}ms')
+
+        # Total deliver timing
+        _deliver_total = (time.monotonic() - _t_deliver_start) * 1000
+        if _st and _deliver_total > 10:
+            _st.record(f'{bus_id}_deliver', 'total', bus_output.mixed_audio,
+                       -1, f'{_deliver_total:.1f}ms')
 
     def _handle_listen_tick(self, output, chunk_size):
         """Handle listen-bus-specific post-tick work.

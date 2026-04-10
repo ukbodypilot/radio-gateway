@@ -937,6 +937,337 @@ class FilePlaybackSource(AudioSource):
             return f"{self.name}: Idle"
 
 
+class LoopPlaybackSource(AudioSource):
+    """Plays loop recorder audio as a routable source node.
+
+    Uses ffmpeg to stream-decode MP3 segments into raw PCM.  A reader
+    thread fills a bounded queue; get_audio() drains it at bus-tick rate.
+    Playback persists even when the web page is closed.
+    """
+
+    SAMPLE_RATE = 48000
+    _DIAG_INTERVAL = 10.0  # seconds between console diagnostics
+
+    def __init__(self, gateway):
+        super().__init__("LoopPlayback", gateway.config)
+        self.gateway = gateway
+        self.priority = 10
+        self.ptt_control = False
+        self.volume = 1.0
+        self.audio_level = 0
+        self._stream_trace = None  # set by gateway_core after init
+
+        self._lock = threading.Lock()
+        self._playing = False
+        self._bus_id = None
+        self._play_start = 0.0
+        self._play_position = 0.0
+        self._decoder = None
+        self._concat_path = None
+        self._pcm_queue = _queue_mod.Queue(maxsize=200)
+        self._reader_thread = None
+
+        # Diagnostics — rolling counters reset every _DIAG_INTERVAL
+        self._diag_time = 0.0
+        self._diag_reads = 0          # reader: successful pipe reads
+        self._diag_read_bytes = 0     # reader: total bytes read
+        self._diag_short_reads = 0    # reader: reads shorter than chunk_bytes
+        self._diag_put_full = 0       # reader: queue full (put timeout)
+        self._diag_get_ok = 0         # get_audio: successful pulls
+        self._diag_get_empty = 0      # get_audio: queue was empty (underrun)
+        self._diag_get_pad = 0        # get_audio: chunk needed zero-padding
+        self._diag_get_trim = 0       # get_audio: chunk was oversized
+        self._diag_last_qd = 0        # most recent queue depth at get_audio
+        self._diag_max_qd = 0         # max queue depth seen in window
+        self._diag_min_qd = 200       # min queue depth seen in window
+        self._diag_get_intervals = [] # monotonic intervals between get_audio calls
+
+    def _diag_reset(self):
+        """Reset rolling diagnostic counters."""
+        self._diag_time = time.monotonic()
+        self._diag_reads = 0
+        self._diag_read_bytes = 0
+        self._diag_short_reads = 0
+        self._diag_put_full = 0
+        self._diag_get_ok = 0
+        self._diag_get_empty = 0
+        self._diag_get_pad = 0
+        self._diag_get_trim = 0
+        self._diag_max_qd = 0
+        self._diag_min_qd = 200
+        self._diag_get_intervals = []
+
+    def _diag_print(self):
+        """Print diagnostic summary to console (gated by VERBOSE_LOGGING)."""
+        if not getattr(self.config, 'VERBOSE_LOGGING', False):
+            return
+        dt = time.monotonic() - self._diag_time
+        if dt < 0.1:
+            return
+        ivs = self._diag_get_intervals
+        iv_mean = sum(ivs) / len(ivs) if ivs else 0
+        iv_max = max(ivs) if ivs else 0
+        iv_min = min(ivs) if ivs else 0
+        jitter = iv_max - iv_min if ivs else 0
+        over_60 = sum(1 for v in ivs if v > 60)
+        over_80 = sum(1 for v in ivs if v > 80)
+        print(f"  [LoopPlay-DIAG] {dt:.0f}s: "
+              f"read={self._diag_reads} ({self._diag_read_bytes//1024}kB) "
+              f"short={self._diag_short_reads} full={self._diag_put_full} | "
+              f"get={self._diag_get_ok} empty={self._diag_get_empty} "
+              f"pad={self._diag_get_pad} trim={self._diag_get_trim} | "
+              f"qd={self._diag_min_qd}-{self._diag_max_qd} | "
+              f"iv={iv_mean:.1f}/{iv_max:.1f}ms "
+              f"jitter={jitter:.1f}ms >60={over_60} >80={over_80}")
+
+    # -- control API --------------------------------------------------------
+
+    def play(self, bus_id, start_epoch):
+        """Start (or seek) playback of a loop recorder bus from *start_epoch*."""
+        self.stop()
+        lr = getattr(self.gateway, 'loop_recorder', None)
+        if not lr:
+            return False
+
+        # Determine end: latest available data for this bus
+        buses = lr.get_buses()
+        bus_info = next((b for b in buses if b['id'] == bus_id), None)
+        if not bus_info:
+            return False
+        end_epoch = bus_info['latest']
+        if start_epoch >= end_epoch:
+            return False
+
+        segments = lr.get_segments(bus_id, start_epoch, end_epoch)
+        if not segments:
+            return False
+
+        print(f"  [LoopPlay] {len(segments)} segments, "
+              f"{end_epoch - start_epoch:.0f}s duration")
+
+        # Build ffmpeg concat file
+        import tempfile
+        cf = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.txt', prefix='lp_concat_', delete=False)
+        for seg in segments:
+            cf.write(f"file '{seg['path']}'\n")
+        cf.close()
+        self._concat_path = cf.name
+
+        offset = max(0, start_epoch - segments[0]['start'])
+        duration = end_epoch - start_epoch
+        channels = getattr(self.config, 'AUDIO_CHANNELS', 1)
+
+        cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error',
+               '-f', 'concat', '-safe', '0', '-i', cf.name,
+               '-ss', str(offset), '-t', str(duration),
+               '-f', 's16le', '-ar', str(self.SAMPLE_RATE),
+               '-ac', str(channels), 'pipe:1']
+        try:
+            self._decoder = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f"  [LoopPlay] Decode failed: {e}")
+            self._cleanup_files()
+            return False
+
+        with self._lock:
+            self._bus_id = bus_id
+            self._play_start = start_epoch
+            self._play_position = start_epoch
+            self._playing = True
+            while not self._pcm_queue.empty():
+                try:
+                    self._pcm_queue.get_nowait()
+                except _queue_mod.Empty:
+                    break
+
+        self._diag_reset()
+        self._reader_thread = threading.Thread(
+            target=self._reader_loop, daemon=True, name="loop-play-read")
+        self._reader_thread.start()
+        print(f"  [LoopPlay] Playing {bus_id} from "
+              f"{time.strftime('%H:%M:%S', time.localtime(start_epoch))}")
+        return True
+
+    def stop(self):
+        """Stop playback and clean up."""
+        with self._lock:
+            was = self._playing
+            self._playing = False
+        if self._decoder:
+            try:
+                self._decoder.kill()
+                self._decoder.wait(timeout=5)
+            except Exception:
+                pass
+            self._decoder = None
+        # Drain queue
+        drained = 0
+        while not self._pcm_queue.empty():
+            try:
+                self._pcm_queue.get_nowait()
+                drained += 1
+            except _queue_mod.Empty:
+                break
+        self._cleanup_files()
+        self.audio_level = 0
+        if was:
+            self._diag_print()
+            print(f"  [LoopPlay] Stopped (drained {drained} queued chunks)")
+
+    def _cleanup_files(self):
+        if self._concat_path:
+            try:
+                os.unlink(self._concat_path)
+            except Exception:
+                pass
+            self._concat_path = None
+
+    # -- reader thread ------------------------------------------------------
+
+    def _reader_loop(self):
+        """Fill PCM queue from ffmpeg stdout."""
+        channels = getattr(self.config, 'AUDIO_CHANNELS', 1)
+        chunk_bytes = int(self.SAMPLE_RATE * 0.05) * channels * 2  # 50ms
+        _st = self._stream_trace
+        try:
+            while self._playing and self._decoder:
+                _t0 = time.monotonic()
+                data = self._decoder.stdout.read(chunk_bytes)
+                _read_ms = (time.monotonic() - _t0) * 1000
+                if not data:
+                    if _st and _st.active:
+                        _st.record('lp_read', 'eof', None, self._pcm_queue.qsize())
+                    break
+
+                _qd = self._pcm_queue.qsize()
+                self._diag_reads += 1
+                self._diag_read_bytes += len(data)
+                if len(data) < chunk_bytes:
+                    self._diag_short_reads += 1
+
+                if _st and _st.active:
+                    _extra = ''
+                    if len(data) < chunk_bytes:
+                        _extra = f'short:{len(data)}/{chunk_bytes}'
+                    if _read_ms > 50:
+                        _extra += f' slow_read:{_read_ms:.0f}ms'
+                    _st.record('lp_read', 'pipe_read', data, _qd, _extra)
+
+                try:
+                    self._pcm_queue.put(data, timeout=1.0)
+                    if _st and _st.active:
+                        _st.record('lp_read', 'queue_put', data,
+                                   self._pcm_queue.qsize())
+                except _queue_mod.Full:
+                    self._diag_put_full += 1
+                    if _st and _st.active:
+                        _st.record('lp_read', 'queue_put', data, _qd,
+                                   'FULL')
+                    if not self._playing:
+                        break
+        except Exception as e:
+            print(f"  [LoopPlay] Reader error: {e}")
+        finally:
+            with self._lock:
+                self._playing = False
+            if _st and _st.active:
+                _st.record('lp_read', 'exit', None,
+                           self._pcm_queue.qsize(), 'reader_done')
+
+    # -- AudioSource interface ----------------------------------------------
+
+    def get_audio(self, chunk_size):
+        _now = time.monotonic()
+
+        if not self._playing:
+            self.audio_level = max(0, int(self.audio_level * 0.7))
+            return None, False
+
+        _qd = self._pcm_queue.qsize()
+        self._diag_last_qd = _qd
+        if _qd > self._diag_max_qd:
+            self._diag_max_qd = _qd
+        if _qd < self._diag_min_qd:
+            self._diag_min_qd = _qd
+
+        # Track get_audio call intervals (ms)
+        if hasattr(self, '_last_get_time') and self._last_get_time > 0:
+            _iv = (_now - self._last_get_time) * 1000
+            self._diag_get_intervals.append(_iv)
+        self._last_get_time = _now
+
+        _st = self._stream_trace
+
+        try:
+            data = self._pcm_queue.get_nowait()
+        except _queue_mod.Empty:
+            self._diag_get_empty += 1
+            if _st and _st.active:
+                _st.record('lp_out', 'get_audio', None, 0, 'UNDERRUN')
+            return None, False
+
+        self._diag_get_ok += 1
+
+        channels = getattr(self.config, 'AUDIO_CHANNELS', 1)
+        expected = chunk_size * channels * 2
+        _extra = ''
+        if len(data) < expected:
+            _extra = f'pad:{expected - len(data)}'
+            self._diag_get_pad += 1
+            data += b'\x00' * (expected - len(data))
+        elif len(data) > expected:
+            _extra = f'trim:{len(data) - expected}'
+            self._diag_get_trim += 1
+            data = data[:expected]
+
+        if _st and _st.active:
+            _st.record('lp_out', 'get_audio', data, _qd, _extra)
+
+        # Advance position
+        samples = len(data) // (channels * 2)
+        self._play_position += samples / self.SAMPLE_RATE
+
+        # Level metering
+        try:
+            self.audio_level = pcm_level(data, self.audio_level)
+        except Exception:
+            pass
+
+        # Volume
+        if self.volume != 1.0:
+            arr = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+            data = np.clip(arr * self.volume, -32768, 32767).astype(np.int16).tobytes()
+
+        # Periodic diagnostic dump
+        if _now - self._diag_time >= self._DIAG_INTERVAL:
+            self._diag_print()
+            self._diag_reset()
+
+        return data, False
+
+    def is_active(self):
+        return self._playing
+
+    def get_status(self):
+        if self._playing:
+            pos = time.strftime('%H:%M:%S', time.localtime(self._play_position))
+            qd = self._pcm_queue.qsize()
+            return f"{self.name}: Playing {self._bus_id} @ {pos} (qd={qd})"
+        return f"{self.name}: Idle"
+
+    def get_status_dict(self):
+        return {
+            'playing': self._playing,
+            'bus': self._bus_id,
+            'position': self._play_position,
+            'start': self._play_start,
+            'queue_depth': self._pcm_queue.qsize(),
+            'underruns': self._diag_get_empty,
+        }
+
+
 class EchoLinkSource(AudioSource):
     """EchoLink audio input via TheLinkBox IPC"""
     def __init__(self, config, gateway):

@@ -793,6 +793,8 @@ def handle_routing_levels(handler, parent):
             data['aioc'] = gw.th9800_plugin.audio_level
         if getattr(gw, 'playback_source', None):
             data['playback'] = getattr(gw.playback_source, 'audio_level', 0)
+        if getattr(gw, 'loop_playback_source', None):
+            data['loop_playback'] = getattr(gw.loop_playback_source, 'audio_level', 0)
         if getattr(gw, 'announce_input_source', None):
             data['announce'] = getattr(gw.announce_input_source, 'audio_level', 0)
         if getattr(gw, 'web_mic_source', None):
@@ -919,5 +921,5 @@ def handle_voice_view(handler, parent):
 from web_routes_packet import _pkt_json, handle_winlink_api, handle_packet_status
 from web_routes_packet import handle_packet_packets, handle_packet_aprs_stations
 from web_routes_packet import handle_packet_bbs_buffer, handle_packet_log
-from web_routes_loop import handle_loop_api
+from web_routes_loop import handle_loop_api, handle_loop_post
 

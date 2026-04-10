@@ -799,6 +799,7 @@ class WebConfigServer:
 
                 # Route dispatch — handlers in web_routes_post.py
                 import web_routes_post as _rp
+                import web_routes_loop as _rl
 
                 if self.path == '/key':
                     _rp.handle_key(self, parent)
@@ -854,6 +855,8 @@ class WebConfigServer:
                     _rp.handle_voice_session(self, parent)
                 elif self.path == '/loop/export':
                     _rp.handle_loop_export(self, parent)
+                elif self.path.startswith('/loop/'):
+                    _rl.handle_loop_post(self, parent)
                 elif self.path == '/pat' or self.path.startswith('/pat/'):
                     _rg.handle_pat_proxy(self, parent)
                 elif self.path.startswith('/packet/'):
@@ -1360,6 +1363,9 @@ class WebConfigServer:
             if getattr(gw, 'playback_source', None):
                 sources.append({**{'id': 'playback', 'name': 'File Playback', 'enabled': True,
                                 'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.playback_source)})
+            if getattr(gw, 'loop_playback_source', None):
+                sources.append({**{'id': 'loop_playback', 'name': 'Loop Playback', 'enabled': True,
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.loop_playback_source)})
             if getattr(gw, 'web_mic_source', None):
                 sources.append({**{'id': 'webmic', 'name': 'Web Mic', 'enabled': True,
                                 'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.web_mic_source)})
@@ -1731,6 +1737,7 @@ class WebConfigServer:
             'aioc': getattr(gw, 'th9800_plugin', None),
             'aioc_tx': getattr(gw, 'th9800_plugin', None),
             'playback': getattr(gw, 'playback_source', None),
+            'loop_playback': getattr(gw, 'loop_playback_source', None),
             'webmic': getattr(gw, 'web_mic_source', None),
             'announce': getattr(gw, 'announce_input_source', None),
             'monitor': getattr(gw, 'web_monitor_source', None),

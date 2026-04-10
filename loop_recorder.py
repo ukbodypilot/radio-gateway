@@ -10,9 +10,11 @@ Storage layout:
 """
 
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
+import zipfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -27,7 +29,12 @@ from audio_util import pcm_rms
 # ---------------------------------------------------------------------------
 
 class LoopSegment:
-    """Manages a single recording segment: lame encoder + waveform computation."""
+    """Manages a single recording segment: lame encoder + waveform computation.
+
+    Encoder writes are done in a background thread to avoid blocking the
+    bus tick loop.  feed() only appends to an in-memory queue and computes
+    waveform data — never touches the pipe.
+    """
 
     def __init__(self, bus_id, segment_start, bus_dir, sample_rate=48000):
         self.bus_id = bus_id
@@ -46,7 +53,9 @@ class LoopSegment:
         self._sample_buf = bytearray()
         self._first_feed = True  # pad from segment start on first feed
 
-        # Start lame encoder
+        # Async encoder: queue + writer thread
+        import queue as _q
+        self._write_queue = _q.Queue(maxsize=500)
         self._encoder = subprocess.Popen(
             ['lame', '-r', '-s', str(sample_rate), '--bitwidth', '16',
              '-m', 'm', '-b', '128', '--signed', '--little-endian',
@@ -55,9 +64,33 @@ class LoopSegment:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        self._writer_running = True
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop, daemon=True,
+            name=f"loop-enc-{bus_id}")
+        self._writer_thread.start()
+
+    def _writer_loop(self):
+        """Drain write queue into lame stdin pipe (background thread)."""
+        import queue as _q
+        while self._writer_running:
+            try:
+                data = self._write_queue.get(timeout=1.0)
+            except _q.Empty:
+                continue
+            if data is None:  # sentinel: close
+                break
+            try:
+                self._encoder.stdin.write(data)
+            except (BrokenPipeError, OSError):
+                break
 
     def feed(self, pcm_data):
-        """Feed PCM data to encoder and accumulate waveform."""
+        """Feed PCM data to encoder and accumulate waveform.
+
+        The actual pipe write happens in _writer_loop; this method only
+        enqueues data and computes waveform — guaranteed fast.
+        """
         if not self._encoder or self._encoder.stdin.closed:
             return
 
@@ -71,16 +104,16 @@ class LoopSegment:
                 silence = b'\x00' * self._bytes_per_second
                 for _ in range(pad_seconds):
                     try:
-                        self._encoder.stdin.write(silence)
-                    except (BrokenPipeError, OSError):
+                        self._write_queue.put_nowait(silence)
+                    except Exception:
                         return
                     self.wfm_peaks.append(0)
                     self.wfm_rms.append(0)
 
         try:
-            self._encoder.stdin.write(pcm_data)
-        except (BrokenPipeError, OSError):
-            return
+            self._write_queue.put_nowait(pcm_data)
+        except Exception:
+            return  # queue full — drop frame rather than block
 
         # Accumulate for waveform computation
         self._sample_buf.extend(pcm_data)
@@ -108,6 +141,15 @@ class LoopSegment:
         if self._sample_buf:
             self._compute_waveform_sample(bytes(self._sample_buf))
             self._sample_buf.clear()
+
+        # Stop writer thread, drain remaining queue into pipe
+        self._writer_running = False
+        try:
+            self._write_queue.put_nowait(None)  # sentinel
+        except Exception:
+            pass
+        if self._writer_thread and self._writer_thread.is_alive():
+            self._writer_thread.join(timeout=5)
 
         # Close encoder
         if self._encoder and self._encoder.stdin and not self._encoder.stdin.closed:
@@ -441,6 +483,109 @@ class LoopRecorder:
                     os.unlink(os.path.join(bus_dir, fname))
                 except Exception:
                     pass
+
+    # -- Bulk operations ----------------------------------------------------
+
+    def delete_all(self):
+        """Delete all loop recordings for all buses. Returns count of files deleted."""
+        count = 0
+        with self._lock:
+            # Close all active segments first
+            for seg in self._active.values():
+                seg.close()
+            self._active.clear()
+        if os.path.isdir(self._base_dir):
+            for bus_id in os.listdir(self._base_dir):
+                bus_dir = os.path.join(self._base_dir, bus_id)
+                if not os.path.isdir(bus_dir):
+                    continue
+                for fname in os.listdir(bus_dir):
+                    if fname.endswith(('.mp3', '.wfm')):
+                        try:
+                            os.unlink(os.path.join(bus_dir, fname))
+                            count += 1
+                        except Exception:
+                            pass
+                # Remove empty bus dir
+                try:
+                    os.rmdir(bus_dir)
+                except OSError:
+                    pass
+        print(f"  [LoopRec] Deleted all recordings ({count} files)")
+        return count
+
+    def zip_all(self):
+        """Create a zip of all loop recordings. Returns temp file path or None."""
+        if not os.path.isdir(self._base_dir):
+            return None
+        outfile = tempfile.NamedTemporaryFile(
+            suffix='.zip', prefix='loop_all_', delete=False)
+        outfile.close()
+        count = 0
+        try:
+            with zipfile.ZipFile(outfile.name, 'w', zipfile.ZIP_STORED) as zf:
+                for bus_id in sorted(os.listdir(self._base_dir)):
+                    bus_dir = os.path.join(self._base_dir, bus_id)
+                    if not os.path.isdir(bus_dir):
+                        continue
+                    for fname in sorted(os.listdir(bus_dir)):
+                        if fname.endswith('.mp3'):
+                            fpath = os.path.join(bus_dir, fname)
+                            zf.write(fpath, os.path.join(bus_id, fname))
+                            count += 1
+        except Exception as e:
+            print(f"  [LoopRec] Zip failed: {e}")
+            try:
+                os.unlink(outfile.name)
+            except Exception:
+                pass
+            return None
+        if count == 0:
+            os.unlink(outfile.name)
+            return None
+        print(f"  [LoopRec] Zipped {count} files → {outfile.name}")
+        return outfile.name
+
+    def archive_all(self):
+        """Archive all recordings to recordings/loop_archive/<timestamp>/. Returns path or None."""
+        if not os.path.isdir(self._base_dir):
+            return None
+        archive_base = os.path.join(os.path.dirname(self._base_dir), 'loop_archive')
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        archive_dir = os.path.join(archive_base, ts)
+        os.makedirs(archive_dir, exist_ok=True)
+        count = 0
+        # Close active segments so files are complete
+        with self._lock:
+            for seg in self._active.values():
+                seg.close()
+            self._active.clear()
+        for bus_id in sorted(os.listdir(self._base_dir)):
+            bus_dir = os.path.join(self._base_dir, bus_id)
+            if not os.path.isdir(bus_dir):
+                continue
+            mp3s = sorted(f for f in os.listdir(bus_dir) if f.endswith('.mp3'))
+            if not mp3s:
+                continue
+            dest_dir = os.path.join(archive_dir, bus_id)
+            os.makedirs(dest_dir, exist_ok=True)
+            for fname in mp3s:
+                src = os.path.join(bus_dir, fname)
+                shutil.move(src, os.path.join(dest_dir, fname))
+                count += 1
+                # Also move wfm sidecar if present
+                wfm = fname.replace('.mp3', '.wfm')
+                wfm_path = os.path.join(bus_dir, wfm)
+                if os.path.exists(wfm_path):
+                    shutil.move(wfm_path, os.path.join(dest_dir, wfm))
+        if count == 0:
+            try:
+                os.rmdir(archive_dir)
+            except OSError:
+                pass
+            return None
+        print(f"  [LoopRec] Archived {count} files → {archive_dir}")
+        return archive_dir
 
     # -- Helpers ------------------------------------------------------------
 

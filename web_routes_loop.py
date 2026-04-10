@@ -137,6 +137,93 @@ def handle_loop_api(handler, parent):
                 except OSError:
                     pass
 
+    elif path == '/loop/playback/status':
+        lps = getattr(gw, 'loop_playback_source', None) if gw else None
+        if lps:
+            _loop_json(handler, lps.get_status_dict())
+        else:
+            _loop_json(handler, {"playing": False})
+
+    else:
+        _loop_json(handler, {"ok": False, "error": "unknown endpoint"}, 404)
+
+
+def handle_loop_post(handler, parent):
+    """POST /loop/* — Loop recorder bulk operations."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(handler.path)
+    path = parsed.path
+    gw = parent.gateway if parent else None
+    lr = getattr(gw, 'loop_recorder', None) if gw else None
+
+    if path == '/loop/playback':
+        lps = getattr(gw, 'loop_playback_source', None) if gw else None
+        if not lps:
+            _loop_json(handler, {"ok": False, "error": "loop playback not available"}, 503)
+            return
+        content_len = int(handler.headers.get('Content-Length', 0))
+        body = json_mod.loads(handler.rfile.read(content_len)) if content_len else {}
+        action = body.get('action', '')
+        if action == 'play':
+            bus_id = body.get('bus', '')
+            start = float(body.get('start', 0))
+            if not bus_id or not start:
+                _loop_json(handler, {"ok": False, "error": "missing bus or start"}, 400)
+                return
+            ok = lps.play(bus_id, start)
+            _loop_json(handler, {"ok": ok})
+        elif action == 'stop':
+            lps.stop()
+            _loop_json(handler, {"ok": True})
+        else:
+            _loop_json(handler, {"ok": False, "error": "unknown action"}, 400)
+
+    elif path == '/loop/delete_all':
+        if not lr:
+            _loop_json(handler, {"ok": False, "error": "loop recorder not available"}, 503)
+            return
+        count = lr.delete_all()
+        _loop_json(handler, {"ok": True, "deleted": count})
+
+    elif path == '/loop/download_all':
+        if not lr:
+            handler.send_error(503, 'Loop recorder not available')
+            return
+        zip_path = lr.zip_all()
+        if not zip_path:
+            handler.send_error(404, 'No recordings to download')
+            return
+        try:
+            file_size = os.path.getsize(zip_path)
+            handler.send_response(200)
+            handler.send_header('Content-Type', 'application/zip')
+            handler.send_header('Content-Disposition', 'attachment; filename="loop_recordings.zip"')
+            handler.send_header('Content-Length', str(file_size))
+            handler.end_headers()
+            with open(zip_path, 'rb') as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    handler.wfile.write(chunk)
+        except BrokenPipeError:
+            pass
+        finally:
+            try:
+                os.unlink(zip_path)
+            except Exception:
+                pass
+
+    elif path == '/loop/archive_all':
+        if not lr:
+            _loop_json(handler, {"ok": False, "error": "loop recorder not available"}, 503)
+            return
+        archive_path = lr.archive_all()
+        if not archive_path:
+            _loop_json(handler, {"ok": False, "error": "no recordings to archive"}, 404)
+            return
+        _loop_json(handler, {"ok": True, "path": archive_path})
+
     else:
         _loop_json(handler, {"ok": False, "error": "unknown endpoint"}, 404)
 

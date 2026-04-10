@@ -1813,6 +1813,113 @@ def loop_recorder_export(bus_id: str, start_time: str, end_time: str, format: st
         return f"Error: {e}"
 
 
+@mcp.tool()
+def loop_playback_control(action: str, bus_id: str = "", start_time: str = "") -> str:
+    """
+    Control server-side loop recorder playback through the routing system.
+    Audio plays through the loop_playback source node to connected sinks.
+
+    Args:
+        action:     'play', 'stop', or 'status'
+        bus_id:     Bus ID for play (e.g., 'main', 'th9800')
+        start_time: Start time as HH:MM:SS (today) or epoch seconds (for play)
+    """
+    if action == 'status':
+        result = _get('/loop/playback/status')
+        if not result:
+            return "Loop playback: not available"
+        if result.get('playing'):
+            import datetime
+            pos = result.get('position', 0)
+            t = datetime.datetime.fromtimestamp(pos).strftime('%H:%M:%S')
+            return f"Loop playback: playing {result.get('bus')} @ {t}"
+        return "Loop playback: stopped"
+
+    if action == 'stop':
+        result = _post('/loop/playback', {'action': 'stop'})
+        return "Playback stopped" if result.get('ok') else f"Error: {result.get('error', 'unknown')}"
+
+    if action == 'play':
+        if not bus_id:
+            return "Error: bus_id required for play"
+        # Parse start time
+        from datetime import datetime
+        try:
+            start_epoch = float(start_time)
+        except (ValueError, TypeError):
+            parts = start_time.split(':')
+            if len(parts) >= 2:
+                now = datetime.now()
+                h, m = int(parts[0]), int(parts[1])
+                s = int(parts[2]) if len(parts) > 2 else 0
+                start_epoch = now.replace(hour=h, minute=m, second=s, microsecond=0).timestamp()
+            else:
+                return "Error: start_time must be HH:MM:SS or epoch seconds"
+        result = _post('/loop/playback', {'action': 'play', 'bus': bus_id, 'start': start_epoch})
+        if result.get('ok'):
+            return f"Playing {bus_id} from {start_time}"
+        return f"Error: {result.get('error', 'unknown')}"
+
+    return f"Error: unknown action '{action}'"
+
+
+@mcp.tool()
+def loop_recorder_delete_all() -> str:
+    """
+    Delete ALL loop recordings across all buses. This is irreversible.
+    """
+    result = _post('/loop/delete_all', {})
+    if result.get('ok'):
+        return f"Deleted {result.get('deleted', 0)} files from all buses"
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def loop_recorder_archive_all() -> str:
+    """
+    Archive all loop recordings to a timestamped folder under
+    recordings/loop_archive/. Files are moved (not copied), clearing
+    the live recorder.
+    """
+    result = _post('/loop/archive_all', {})
+    if result.get('ok'):
+        return f"Archived to: {result.get('path')}"
+    return f"Error: {result.get('error', 'no recordings to archive')}"
+
+
+@mcp.tool()
+def loop_recorder_download_all() -> str:
+    """
+    Download all loop recordings as a single ZIP file.
+    Saves to the recordings/ directory.
+    """
+    import urllib.request, os
+    from datetime import datetime
+    try:
+        req = urllib.request.Request(
+            'http://127.0.0.1:8080/loop/download_all',
+            method='POST',
+            data=b'',
+        )
+        resp = urllib.request.urlopen(req, timeout=300)
+        if resp.status != 200:
+            return f"Error: server returned {resp.status}"
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recordings')
+        os.makedirs(out_dir, exist_ok=True)
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        out_path = os.path.join(out_dir, f'loop_all_{ts}.zip')
+        with open(out_path, 'wb') as f:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+        size_mb = os.path.getsize(out_path) / (1024 * 1024)
+        return f"Downloaded to: {out_path} ({size_mb:.1f} MB)"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 # ---------------------------------------------------------------------------
 # Test Loop & Speaker
 # ---------------------------------------------------------------------------

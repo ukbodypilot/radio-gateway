@@ -98,47 +98,101 @@ class CloudflareTunnel:
                                                 name="cf-health")
         self._health_thread.start()
 
+    def _probe_url(self, url):
+        """HTTP HEAD probe of tunnel URL. Returns True if reachable (any HTTP response)."""
+        import urllib.request
+        try:
+            req = urllib.request.Request(url, method='HEAD')
+            urllib.request.urlopen(req, timeout=10)
+            return True
+        except urllib.error.HTTPError:
+            return True  # Got an HTTP response (e.g. 502) — tunnel itself is alive
+        except Exception:
+            return False  # Connection refused, DNS failure, timeout — tunnel dead
+
+    def _kill_cloudflared(self):
+        """Kill all cloudflared processes."""
+        import subprocess, signal
+        try:
+            result = subprocess.run(['pgrep', '-x', 'cloudflared'],
+                                    capture_output=True, text=True, timeout=5)
+            for pid in result.stdout.strip().split('\n'):
+                pid = pid.strip()
+                if pid:
+                    try:
+                        os.kill(int(pid), signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+            time.sleep(2)
+        except Exception:
+            pass
+
+    def _relaunch_tunnel(self):
+        """Relaunch cloudflared and wait for new URL. Returns (old_url, new_url)."""
+        old_url = self._url
+        self._url = None
+        self._adopted = False
+        self._process = None
+        try:
+            os.unlink(self.URL_FILE)
+        except Exception:
+            pass
+
+        port = int(getattr(self.config, 'WEB_CONFIG_PORT', 8080))
+        self._do_launch(port)
+
+        # Wait up to 60s for new URL
+        for _ in range(60):
+            if self._url:
+                break
+            time.sleep(1)
+
+        return old_url, self._url
+
     def _health_check_loop(self):
-        """Periodically verify cloudflared is alive; relaunch if it has exited."""
+        """Periodically verify tunnel is alive; relaunch if dead or expired."""
         import subprocess
+        consecutive_probe_failures = 0
+        PROBE_FAIL_THRESHOLD = 2  # require 2 consecutive failures before relaunch
+
         while True:
             time.sleep(self.HEALTH_CHECK_INTERVAL)
             try:
+                # Check if cloudflared process is running
                 result = subprocess.run(
                     ['pgrep', '-x', 'cloudflared'],
                     capture_output=True, text=True, timeout=5
                 )
-                if result.returncode == 0 and result.stdout.strip():
-                    continue  # Still running
+                process_alive = result.returncode == 0 and result.stdout.strip()
 
-                # cloudflared is gone — relaunch
-                old_url = self._url
-                self._url = None
-                self._adopted = False
-                self._process = None
-                try:
-                    os.unlink(self.URL_FILE)
-                except Exception:
-                    pass
+                if process_alive and self._url:
+                    # Process is running — probe the URL to detect expired tunnels
+                    if self._probe_url(self._url):
+                        consecutive_probe_failures = 0
+                        continue  # Healthy
+                    consecutive_probe_failures += 1
+                    if consecutive_probe_failures < PROBE_FAIL_THRESHOLD:
+                        print(f"  [Tunnel] URL probe failed ({consecutive_probe_failures}/{PROBE_FAIL_THRESHOLD}), will retry...")
+                        continue
+                    # Tunnel expired while process still running — kill and relaunch
+                    print(f"  [Tunnel] URL expired (probe failed {consecutive_probe_failures}x) — killing and relaunching...")
+                    self._kill_cloudflared()
+                elif process_alive:
+                    continue  # Running but no URL cached yet — let _tail_log handle it
+                else:
+                    print(f"  [Tunnel] cloudflared not running — relaunching...")
 
-                port = int(getattr(self.config, 'WEB_CONFIG_PORT', 8080))
-                print(f"  [Tunnel] cloudflared not running — relaunching...")
-                self._do_launch(port)
+                consecutive_probe_failures = 0
+                old_url, new_url = self._relaunch_tunnel()
 
-                # Wait up to 60s for new URL
-                for _ in range(60):
-                    if self._url:
-                        break
-                    time.sleep(1)
-
-                if self._url and self._url != old_url:
-                    print(f"  [Tunnel] New URL after relaunch: {self._url}")
+                if new_url and new_url != old_url:
+                    print(f"  [Tunnel] New URL after relaunch: {new_url}")
                     if self._on_url_changed:
                         try:
-                            self._on_url_changed(self._url)
+                            self._on_url_changed(new_url)
                         except Exception as e:
                             print(f"  [Tunnel] on_url_changed callback error: {e}")
-                elif not self._url:
+                elif not new_url:
                     print(f"  [Tunnel] Relaunch failed — no URL after 60s")
             except Exception as e:
                 print(f"  [Tunnel] Health check error: {e}")

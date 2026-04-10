@@ -98,7 +98,7 @@ except ImportError:
     sys.exit(1)
 
 from audio_sources import (
-    AudioSource, AudioProcessor, FilePlaybackSource,
+    AudioSource, AudioProcessor, FilePlaybackSource, LoopPlaybackSource,
     EchoLinkSource,
     RemoteAudioServer, RemoteAudioSource,
     NetworkAnnouncementSource,
@@ -1269,7 +1269,11 @@ class RadioGateway:
                     self.playback_source = None
             else:
                 self.playback_source = None
-            
+
+            # Loop playback source (always available if loop recorder exists)
+            self.loop_playback_source = LoopPlaybackSource(self)
+            self.loop_playback_source._stream_trace = self._stream_trace
+
             # Initialize text-to-speech if enabled
             self.tts_engine = None
             self._tts_backend = str(getattr(self.config, 'TTS_ENGINE', 'edge')).lower().strip()
