@@ -1330,30 +1330,18 @@ class AudioPlugin(RadioPlugin):
             target=self._arecord_reader, daemon=True, name="arecord-reader")
         self._rx_thread.start()
 
-        # Output via PyAudio (for playback to radio TX)
+        # Output via aplay subprocess (raw ALSA, bypasses PipeWire)
         try:
-            import pyaudio
-            self._pa = pyaudio.PyAudio()
-            out_index = self._find_device(self._device_name)
-            # Scan for output-capable device matching name
-            if self._pa and self._device_name:
-                _dn = self._device_name.lower()
-                for i in range(self._pa.get_device_count()):
-                    try:
-                        info = self._pa.get_device_info_by_index(i)
-                        if _dn in info.get('name', '').lower() and info.get('maxOutputChannels', 0) > 0:
-                            out_index = i
-                            break
-                    except Exception:
-                        continue
-            kw_out = {'output_device_index': out_index} if out_index is not None else {}
-            self._out_stream = self._pa.open(
-                format=pyaudio.paInt16, channels=channels, rate=rate,
-                output=True, frames_per_buffer=self.CHUNK_FRAMES,
-                **kw_out)
-            print(f"  [Link] AudioPlugin: output stream opened (idx={out_index})")
+            import subprocess
+            self._out_stream = subprocess.Popen(
+                ['aplay', '-D', alsa_dev, '-f', 'S16_LE',
+                 '-r', str(rate), '-c', str(channels), '-t', 'raw',
+                 '--buffer-size', str(self.CHUNK_FRAMES * 4)],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+            print(f"  [Link] AudioPlugin: aplay output opened on {alsa_dev} pid={self._out_stream.pid}")
         except Exception as e:
-            print(f"  [Link] AudioPlugin: failed to open output: {e}")
+            print(f"  [Link] AudioPlugin: failed to open aplay output: {e}")
             self._out_stream = None
 
     def _find_alsa_card(self, name_match):
@@ -1451,7 +1439,7 @@ class AudioPlugin(RadioPlugin):
         return data
 
     def teardown(self):
-        """Stop arecord reader, close PyAudio output, save settings."""
+        """Stop arecord reader and aplay output, save settings."""
         self._save_settings()
         self._rx_running = False
         if self._in_stream:
@@ -1465,17 +1453,12 @@ class AudioPlugin(RadioPlugin):
             self._rx_thread.join(timeout=3)
         if self._out_stream:
             try:
-                self._out_stream.stop_stream()
-                self._out_stream.close()
+                self._out_stream.stdin.close()
+                self._out_stream.kill()
+                self._out_stream.wait(timeout=2)
             except Exception:
                 pass
             self._out_stream = None
-        if self._pa:
-            try:
-                self._pa.terminate()
-            except Exception:
-                pass
-            self._pa = None
         print("  [Link] AudioPlugin: teardown complete")
 
     def get_audio(self, chunk_size=None):
@@ -1497,15 +1480,15 @@ class AudioPlugin(RadioPlugin):
         print(f"  [Link] AudioPlugin: reopen requested (arecord auto-restarts)")
 
     def put_audio(self, pcm):
-        """Write PCM audio to the output stream, applying TX gain."""
-        if not self._out_stream:
+        """Write PCM audio to aplay stdin, applying TX gain."""
+        if not self._out_stream or self._out_stream.poll() is not None:
             return
         try:
             if self._tx_gain_db != 0.0:
                 pcm = self._apply_volume(pcm, self._db_to_linear(self._tx_gain_db))
-            self._out_stream.write(pcm)
-        except Exception as e:
-            print(f"  [Link] AudioPlugin: write error: {e}")
+            self._out_stream.stdin.write(pcm)
+        except (BrokenPipeError, OSError) as e:
+            print(f"  [Link] AudioPlugin: aplay write error: {e}")
 
     def execute(self, cmd):
         """Handle commands from master gateway."""
@@ -1537,8 +1520,8 @@ class AudioPlugin(RadioPlugin):
             "plugin": self.name,
             "device": self._device_name or "default",
             "rate": self.RATE,
-            "input_active": self._in_stream is not None,
-            "output_active": self._out_stream is not None,
+            "input_active": self._in_stream is not None and (not hasattr(self._in_stream, 'poll') or self._in_stream.poll() is None),
+            "output_active": self._out_stream is not None and (not hasattr(self._out_stream, 'poll') or self._out_stream.poll() is None),
             "rx_gain_db": self._rx_gain_db,
             "tx_gain_db": self._tx_gain_db,
             "gate_enabled": self._gate_enabled,
