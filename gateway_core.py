@@ -1548,6 +1548,9 @@ class RadioGateway:
                             if name not in self._link_last_status:
                                 self._link_last_status[name] = {}
                             self._link_last_status[name].update(status)
+                            # Sync PTT state from endpoint report
+                            if 'ptt_active' in status:
+                                self._link_ptt_active[name] = status['ptt_active']
 
                     self.link_server = GatewayLinkServer(
                         port=link_port,
