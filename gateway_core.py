@@ -1494,7 +1494,6 @@ class RadioGateway:
                         self._link_ptt_active[name] = False
                         self._link_last_status[name] = {}
                         self._link_tx_levels[name] = 0
-                        print(f"  [Link] Endpoint registered: {name} ({info.get('plugin', '?')})")
                         # Reload bus manager so buses pick up the new LinkAudioSource
                         if hasattr(self, 'bus_manager') and self.bus_manager:
                             try:
@@ -1514,7 +1513,6 @@ class RadioGateway:
                         self._link_ptt_active.pop(name, None)
                         self._link_last_status.pop(name, None)
                         self._link_tx_levels.pop(name, None)
-                        print(f"  [Link] Endpoint disconnected: {name}")
 
                     def _link_on_ack(name, ack):
                         """Called when an endpoint sends an ACK."""

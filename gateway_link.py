@@ -426,7 +426,8 @@ class GatewayLinkServer:
                         ack = json.loads(payload)
                         cmd_name = ack.get('cmd', ack.get('cmd_id', '?'))
                         ok = ack.get('ok', False)
-                        print(f"  [Link] ACK received from {ep_name}: cmd={cmd_name} ok={ok}")
+                        if cmd_name != 'status':
+                            print(f"  [Link] ACK received from {ep_name}: cmd={cmd_name} ok={ok}")
                         if self._on_ack:
                             try:
                                 self._on_ack(ep_name, ack)
@@ -464,7 +465,6 @@ class GatewayLinkServer:
                     if existing is not None and existing.sock is sock:
                         del self._endpoints[ep_name]
                         _reader_removed = True
-                print(f"  [Link] Reader cleanup: {ep_name} removed={_reader_removed} (entry={'exists' if existing else 'gone'})")
             try:
                 sock.close()
             except OSError:
