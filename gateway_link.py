@@ -153,7 +153,7 @@ class GatewayLinkServer:
         self._server_sock = None
         self._stop = threading.Event()
         self._start_time = time.monotonic()
-        self._DEAD_PEER_TIMEOUT = 15.0     # seconds without heartbeat before declaring dead
+        self._DEAD_PEER_TIMEOUT = 30.0     # seconds without any frame before declaring dead
         self._REGISTER_TIMEOUT = 10.0      # seconds to wait for REGISTER after connect
 
         # dict keyed by endpoint name -> _EndpointConn
@@ -350,7 +350,7 @@ class GatewayLinkServer:
                     pass
                 return
 
-            sock.settimeout(10.0)  # 10s timeout for send+recv — detects cable pull
+            sock.settimeout(20.0)  # 20s timeout for send+recv — detects cable pull
 
             info = json.loads(payload)
             ep_name = info.get('name', '')
@@ -400,6 +400,8 @@ class GatewayLinkServer:
                 if result is None:
                     break
                 ftype, payload = result
+                # Any frame is proof of life
+                ep.last_heartbeat = time.monotonic()
                 try:
                     if ftype == P.AUDIO:
                         if ep.audio_sink:
