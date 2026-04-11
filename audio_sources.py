@@ -2016,6 +2016,7 @@ class NetworkAnnouncementSource(AudioSource):
 
         # Apply volume multiplier
         if self.volume != 1.0:
+            arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             arr = arr * self.volume
             raw = np.clip(arr, -32768, 32767).astype(np.int16).tobytes()
 
@@ -2302,6 +2303,7 @@ class WebMonitorSource(AudioSource):
 
         # Apply volume multiplier
         if self.volume != 1.0:
+            arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             arr = arr * self.volume
             raw = np.clip(arr, -32768, 32767).astype(np.int16).tobytes()
 

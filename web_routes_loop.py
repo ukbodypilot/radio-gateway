@@ -162,11 +162,19 @@ def handle_loop_post(handler, parent):
             _loop_json(handler, {"ok": False, "error": "loop playback not available"}, 503)
             return
         content_len = int(handler.headers.get('Content-Length', 0))
-        body = json_mod.loads(handler.rfile.read(content_len)) if content_len else {}
+        try:
+            body = json_mod.loads(handler.rfile.read(content_len)) if content_len else {}
+        except (json_mod.JSONDecodeError, ValueError):
+            _loop_json(handler, {"ok": False, "error": "invalid JSON"}, 400)
+            return
         action = body.get('action', '')
         if action == 'play':
             bus_id = body.get('bus', '')
-            start = float(body.get('start', 0))
+            try:
+                start = float(body.get('start', 0))
+            except (TypeError, ValueError):
+                _loop_json(handler, {"ok": False, "error": "invalid start time"}, 400)
+                return
             if not bus_id or not start:
                 _loop_json(handler, {"ok": False, "error": "missing bus or start"}, 400)
                 return
