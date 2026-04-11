@@ -1477,16 +1477,26 @@ class AudioPlugin(RadioPlugin):
         status.update(self._get_system_stats())
         return status
 
-    @staticmethod
-    def _get_system_stats():
+    _prev_cpu = None  # class-level: (total, idle) from last sample
+
+    @classmethod
+    def _get_system_stats(cls):
         """Get CPU, RAM, and disk usage for the endpoint machine."""
         stats = {}
         try:
-            # CPU load (1-min average, normalised to core count)
-            with open('/proc/loadavg') as f:
-                load1 = float(f.read().split()[0])
-            cores = os.cpu_count() or 1
-            stats['cpu_pct'] = round(min(100, load1 / cores * 100), 1)
+            # CPU usage from /proc/stat delta (all cores combined)
+            with open('/proc/stat') as f:
+                parts = f.readline().split()  # cpu user nice system idle iowait irq softirq ...
+            vals = [int(v) for v in parts[1:]]
+            total = sum(vals)
+            idle = vals[3] + (vals[4] if len(vals) > 4 else 0)  # idle + iowait
+            if cls._prev_cpu:
+                dt = total - cls._prev_cpu[0]
+                di = idle - cls._prev_cpu[1]
+                stats['cpu_pct'] = round((1.0 - di / dt) * 100, 1) if dt > 0 else 0.0
+            else:
+                stats['cpu_pct'] = 0.0
+            cls._prev_cpu = (total, idle)
         except Exception:
             pass
         try:
