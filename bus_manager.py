@@ -720,8 +720,12 @@ class BusManager:
                 for _eln, _els in gw.link_endpoints.items():
                     _san = _re2.sub(r'[^a-z0-9_]', '_', _eln.lower())
                     if _san == _base2 or _san.startswith(_base2 + '_'):
-                        # Send audio to link endpoint for TX (any bus, not just listen)
-                        if getattr(gw, 'link_server', None):
+                        # Send audio to link endpoint for TX
+                        # Skip if the bus already sent via put_audio (solo bus Phase 3)
+                        _bus_obj = self._busses.get(bus_id)
+                        _already_sent = (hasattr(_bus_obj, '_tx_only') and _bus_obj._tx_only
+                                         and hasattr(_bus_obj, '_ptt_active') and _bus_obj._ptt_active)
+                        if not _already_sent and getattr(gw, 'link_server', None):
                             _ep_settings = gw.link_endpoint_settings.get(_eln, {})
                             if not _ep_settings.get('tx_muted', False):
                                 try:
