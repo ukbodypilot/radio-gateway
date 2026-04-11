@@ -5,7 +5,7 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 
 **Config:** `gateway_config.txt` (INI, `.gitignore` — NEVER commit, contains secrets)
 **Start:** `sudo systemctl restart radio-gateway.service` (or start.sh)
-**Version:** 3.1.0 (released 2026-04-09)
+**Version:** 3.1.0 (released 2026-04-09), session 2026-04-10 added major features
 
 ## Codebase Structure (post-cleanup, 2026-04-09)
 - `gateway_core.py` (~3,200) — RadioGateway class, simplified main loop, audio setup, Mumble, status
@@ -28,11 +28,12 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - `th9800_plugin.py` — TH-9800 AIOC plugin
 - `kv4p_plugin.py` — KV4P HT radio plugin
 - `gateway_link.py` — Link protocol, server, client, RadioPlugin base, AudioPlugin noise gate
-- `gateway_mcp.py` — MCP server (stdio, 88 tools including sdr_set_mode, sdr_single_tune, sdr_add/remove_channel, bus_rename)
+- `gateway_mcp.py` — MCP server (stdio, 95+ tools)
+- `gdrive.py` (~200) — Google Drive integration via rclone (upload, download, list, JSON read/write)
 - `repeater_manager.py`, `transcriber.py`, `smart_announce.py`, `radio_automation.py`, `ptt.py`
 
 ## Web UI
-- Pages: `/dashboard` `/routing` `/controls` `/radio` `/d75` `/kv4p` `/sdr` `/gps` `/repeaters` `/aircraft` `/telegram` `/monitor` `/recordings` `/recorder` `/transcribe` `/packet` `/config` `/logs` `/voice`
+- Pages: `/dashboard` `/routing` `/controls` `/radio` `/d75` `/kv4p` `/sdr` `/gps` `/repeaters` `/aircraft` `/telegram` `/monitor` `/recordings` `/recorder` `/transcribe` `/packet` `/config` `/logs` `/voice` `/gdrive`
 - `common.js` (124 lines) — postJson, getJson, createPoller, sendKey, openTmux, fmtSecs, fmtTimestamp, fmtDuration, fmtBytes
 - `common.css` (68 lines) — theme variables, status colors, layout grid, level bars, buttons
 - Shell nav: home icon for dashboard, fixed-width MP3/PCM/MIC buttons, group labels 0.78em
@@ -79,6 +80,43 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - `pcm_rms(pcm)` — raw RMS value
 - Used by all plugins (kv4p, th9800, sdr, link sources) — replaces ~55 inline metering sites
 
+### Loop Playback Source (2026-04-10)
+- `LoopPlaybackSource` in audio_sources.py — server-side playback of loop recordings
+- Routes through bus system as source node `loop_playback` (priority 10, duckable, ptt_control=True)
+- ffmpeg streaming decode → Queue(200) → get_audio() at bus tick rate
+- Playback button + green cursor on recorder page, persists when page closed
+- Stream trace instrumented: lp_read (pipe_read, queue_put), lp_out (get_audio)
+
+### Async Loop Encoder (2026-04-10)
+- LoopSegment.feed() writes to queue, background thread drains to lame stdin
+- Fixed 37-46ms blocking pipe writes that caused bus tick jitter + PCM stutters
+- Diagnosed via stream trace: sdr2_deliver/loop_rec was the bottleneck
+
+### Source Gain Persistence (2026-04-10)
+- Gains saved to `~/.config/radio-gateway/source_gains.json`
+- Applied on startup after bus_manager init via `_apply_source_gains()`
+- SDR1/SDR2 gain sliders wired (were missing from `_get_plugin_by_id`)
+
+### Google Drive Integration (2026-04-10)
+- `gdrive.py` — GDriveClient using rclone (NOT service account — personal accounts have zero SA quota)
+- Config: ENABLE_GDRIVE, GDRIVE_REMOTE (default 'gdrive'), GDRIVE_FOLDER (default 'radio-gateway')
+- Auto-publishes `tunnel_url.json` to Drive on startup + URL change
+- Endpoints read this file to discover gateway WS link address
+- Web page at `/gdrive` — status, storage, file listing, publish button
+- GCP service account credentials at `~/.config/radio-gateway/gdrive_credentials.json` (unused, kept)
+- GCP project: tactile-ripsaw-272616, SA email: radio-gateway@tactile-ripsaw-272616.iam.gserviceaccount.com
+
+### WebSocket Link Bridge (2026-04-10)
+- `/ws/link` handler in web_routes_stream.py bridges WS ↔ TCP:9700
+- Allows endpoints to connect through CF tunnel over the internet
+- Each WS binary message = one link protocol frame (3-byte header + payload)
+- `/api/tunnel/link-url` returns current `wss://` URL
+
+### Cloudflare Tunnel Health (2026-04-10)
+- HTTP HEAD probe detects expired URLs (process alive but URL dead)
+- 2-strike threshold, kills + relaunches cloudflared, triggers email + Drive publish
+- Link TX level decay fix (_link_tx_levels dict was never decayed)
+
 ## Config Safety (CRITICAL)
 - `_CONFIG_LAYOUT` in web_server.py is master list — Save wipes keys not listed
 - NEVER use `replace_all=true` on config file
@@ -118,3 +156,4 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [project_rust_audio_core.md](project_rust_audio_core.md) — Rust audio core (future, deferred)
 - [project_loop_recorder.md](project_loop_recorder.md) — loop recorder details + bugs fixed
 - [project_sdr_single_mode.md](project_sdr_single_mode.md) — SDR single-tuner mode details
+- [project_internet_endpoints.md](project_internet_endpoints.md) — internet endpoint connectivity (WIP)
