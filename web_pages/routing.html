@@ -972,7 +972,9 @@ function pollLevels() {
   fetch('/routing/levels')
     .then(function(r) { return r.json(); })
     .then(function(d) {
+      var ptt = d._ptt || {};
       for (var id in d) {
+        if (id === '_ptt') continue;
         var el = document.getElementById('level-' + id);
         if (el) {
           var fill = el.querySelector('.level-fill');
@@ -985,6 +987,25 @@ function pollLevels() {
           if (txEl) {
             var txFill = txEl.querySelector('.level-fill');
             if (txFill) txFill.style.width = Math.min(100, d[id]) + '%';
+          }
+        }
+      }
+      // Color TX sink nodes red when PTT is active
+      for (var txId in ptt) {
+        var node = document.getElementById('level-' + txId);
+        if (node) {
+          var titleBox = node.closest('.drawflow-node');
+          if (titleBox) {
+            var tb = titleBox.querySelector('.title-box');
+            if (tb) {
+              if (ptt[txId]) {
+                tb.style.borderColor = '#e74c3c';
+                tb.style.background = '#3a1a1a';
+              } else {
+                tb.style.borderColor = '';
+                tb.style.background = '';
+              }
+            }
           }
         }
       }
