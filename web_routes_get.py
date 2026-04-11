@@ -823,7 +823,7 @@ def handle_routing_levels(handler, parent):
         if not data.get('d75_tx'):
             for _ln, _ls in gw.link_endpoints.items():
                 if 'd75' in _ln.lower():
-                    data['d75_tx'] = getattr(_ls, 'tx_audio_level', 0)
+                    data['d75_tx'] = gw._link_tx_levels.get(_ln, 0)
                     break
         if getattr(gw, 'th9800_plugin', None):
             data['aioc_tx'] = getattr(gw.th9800_plugin, 'tx_audio_level', 0)

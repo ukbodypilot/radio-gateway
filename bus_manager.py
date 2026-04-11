@@ -701,7 +701,8 @@ class BusManager:
                 import re as _re2
                 _base2 = sink_id[:-3] if sink_id.endswith('_tx') else sink_id
                 for _eln, _els in gw.link_endpoints.items():
-                    if _re2.sub(r'[^a-z0-9_]', '_', _eln.lower()) == _base2:
+                    _san = _re2.sub(r'[^a-z0-9_]', '_', _eln.lower())
+                    if _san == _base2 or _san.startswith(_base2 + '_'):
                         # Send audio to link endpoint for TX (any bus, not just listen)
                         if getattr(gw, 'link_server', None):
                             _ep_settings = gw.link_endpoint_settings.get(_eln, {})
