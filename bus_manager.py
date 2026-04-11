@@ -760,6 +760,13 @@ class BusManager:
         if mixed is not None:
             if proc_cfg.get('pcm', False):
                 self._pcm_queue.append(mixed)
+                # Direct push to WebSocket clients (bypass main loop drain)
+                _wcs = getattr(gw, 'web_config_server', None)
+                if _wcs and _wcs._ws_clients:
+                    _wcs.push_ws_audio(mixed)
+                if _st and _st.active:
+                    _st.record(f'{bus_id}_pcm', 'deposit', mixed,
+                               len(self._pcm_queue))
             if proc_cfg.get('mp3', False):
                 self._mp3_queue.append(mixed)
             # Loop recording: feed processed audio to LoopRecorder
