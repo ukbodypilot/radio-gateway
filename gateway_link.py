@@ -111,7 +111,8 @@ class _EndpointConn:
     """State for one connected endpoint."""
     __slots__ = ('name', 'sock', 'send_lock', 'reader_thread', 'info',
                  'capabilities', 'last_heartbeat', 'audio_sink', 'addr',
-                 'via_tunnel', 'ping_ms', '_ping_sent')
+                 'via_tunnel', 'ping_ms', '_ping_sent',
+                 '_send_queue', '_sender_thread', '_sender_running')
 
     def __init__(self, name, sock, addr=None):
         self.name = name
@@ -126,6 +127,37 @@ class _EndpointConn:
         self.audio_sink = None  # set by on_register callback return value
         self.ping_ms = -1       # last measured round-trip time (-1 = no data)
         self._ping_sent = 0.0   # monotonic time when last ping was sent
+        # Async send queue — audio frames queued here, sender thread drains
+        import queue as _q
+        self._send_queue = _q.Queue(maxsize=20)  # ~1s buffer at 50ms chunks
+        self._sender_running = True
+        self._sender_thread = threading.Thread(
+            target=self._sender_loop, daemon=True, name=f"LinkSend-{name}")
+        self._sender_thread.start()
+
+    def _sender_loop(self):
+        """Drain send queue to socket (dedicated thread, never blocks tick)."""
+        import queue as _q
+        while self._sender_running:
+            try:
+                frame_data = self._send_queue.get(timeout=1.0)
+            except _q.Empty:
+                continue
+            if frame_data is None:
+                break
+            with self.send_lock:
+                try:
+                    self.sock.sendall(frame_data)
+                except (OSError, ConnectionError):
+                    break
+
+    def stop_sender(self):
+        """Stop the sender thread."""
+        self._sender_running = False
+        try:
+            self._send_queue.put_nowait(None)
+        except Exception:
+            pass
 
 
 class GatewayLinkServer:
@@ -223,20 +255,21 @@ class GatewayLinkServer:
         print("  [Link] Server stopped")
 
     def send_audio_to_all(self, pcm, exclude=None):
-        """Send PCM audio to all connected endpoints (thread-safe).
+        """Send PCM audio to all connected endpoints (async, never blocks).
 
         *exclude* is an optional set of endpoint names to skip.
         """
+        header = GatewayLinkProtocol._HEADER.pack(GatewayLinkProtocol.AUDIO, len(pcm))
+        frame_data = header + pcm
         with self._endpoints_lock:
             snapshot = list(self._endpoints.values())
         for ep in snapshot:
             if exclude and ep.name in exclude:
                 continue
-            with ep.send_lock:
-                try:
-                    GatewayLinkProtocol.send_frame(ep.sock, GatewayLinkProtocol.AUDIO, pcm)
-                except (OSError, ConnectionError):
-                    pass  # reader thread handles disconnect
+            try:
+                ep._send_queue.put_nowait(frame_data)
+            except Exception:
+                pass  # queue full — drop
 
     def send_audio_to(self, name, pcm):
         """Send PCM audio to a specific endpoint by name."""
@@ -278,24 +311,37 @@ class GatewayLinkServer:
     # -- internal -----------------------------------------------------------
 
     def _send_to(self, name, frame_type, payload):
-        """Thread-safe send to a specific endpoint by name."""
+        """Thread-safe send to a specific endpoint by name.
+
+        Audio frames are queued for async delivery (never blocks tick loop).
+        Control frames (command/status) are sent directly with the lock.
+        """
         with self._endpoints_lock:
             ep = self._endpoints.get(name)
         if ep is None:
             return
-        with ep.send_lock:
+        header = GatewayLinkProtocol._HEADER.pack(frame_type, len(payload))
+        frame_data = header + payload
+        if frame_type == GatewayLinkProtocol.AUDIO:
+            # Async: queue for sender thread
             try:
-                GatewayLinkProtocol.send_frame(ep.sock, frame_type, payload)
-            except (OSError, ConnectionError):
-                pass  # reader thread handles disconnect
+                ep._send_queue.put_nowait(frame_data)
+            except Exception:
+                pass  # queue full — drop frame rather than block
+        else:
+            # Control frames: send directly (small, infrequent)
+            with ep.send_lock:
+                try:
+                    ep.sock.sendall(frame_data)
+                except (OSError, ConnectionError):
+                    pass
 
     def _remove_endpoint(self, name, reason=""):
         """Remove an endpoint from the dict, close socket, notify callback."""
         with self._endpoints_lock:
             ep = self._endpoints.pop(name, None)
         if ep:
-            print(f"  [Link] _remove_endpoint({name}) reason={reason}")
-        if ep:
+            ep.stop_sender()
             try:
                 ep.sock.close()
             except OSError:

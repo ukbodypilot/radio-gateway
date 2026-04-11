@@ -1770,13 +1770,19 @@ class LinkAudioSource(AudioSource):
 
     def push_audio(self, pcm):
         """Called by GatewayLinkServer reader thread when AUDIO frame arrives."""
+        _st = getattr(self, '_stream_trace', None)
+        _qd = len(self._chunk_queue)
         self._chunk_queue.append(pcm)
+        if _st and _st.active:
+            _extra = f'overflow' if _qd >= self._chunk_queue.maxlen else ''
+            _st.record(f'{self.endpoint_name}_rx', 'push_audio', pcm, _qd, _extra)
         try:
             self.audio_level = pcm_level(pcm, self.audio_level)
         except Exception:
             pass
 
     def get_audio(self, chunk_size):
+        _st = getattr(self, '_stream_trace', None)
         if not self.enabled or self.muted:
             self.audio_level = max(0, int(self.audio_level * 0.7))
             return None, False
@@ -1791,16 +1797,22 @@ class LinkAudioSource(AudioSource):
                 self._sub_buffer += blob
             except IndexError:
                 self.audio_level = max(0, int(self.audio_level * 0.7))
+                if _st and _st.active:
+                    _st.record(f'{self.endpoint_name}_rx', 'get_audio', None, 0, 'UNDERRUN')
                 return None, False
 
         raw = self._sub_buffer[:cb]
         self._sub_buffer = self._sub_buffer[cb:]
+
+        if _st and _st.active:
+            _st.record(f'{self.endpoint_name}_rx', 'get_audio', raw, len(self._chunk_queue))
 
         # Level metering — no VAD gate here, bus handles that
         self.audio_level = pcm_level(raw, self.audio_level, gain=self.display_gain)
 
         # Audio boost
         if self.audio_boost != 1.0:
+            arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             arr = np.clip(arr * self.audio_boost, -32768, 32767).astype(np.int16)
             raw = arr.tobytes()
 
@@ -1823,6 +1835,9 @@ class LinkAudioSource(AudioSource):
                     pcm = np.clip(_arr * self.tx_audio_boost, -32768, 32767).astype(np.int16).tobytes()
                 self.gateway.link_server.send_audio_to(self.endpoint_name, pcm)
                 self.tx_audio_level = pcm_level(pcm, self.tx_audio_level)
+                _st = getattr(self, '_stream_trace', None)
+                if _st and _st.active:
+                    _st.record(f'{self.endpoint_name}_tx', 'put_audio', pcm)
             except Exception:
                 pass
 

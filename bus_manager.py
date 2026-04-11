@@ -726,6 +726,8 @@ class BusManager:
                             if not _ep_settings.get('tx_muted', False):
                                 try:
                                     gw.link_server.send_audio_to(_eln, audio)
+                                    if _st and _st.active:
+                                        _st.record(f'{bus_id}_deliver', f'link_tx:{_eln}', audio)
                                 except Exception:
                                     pass
                                 # Auto-PTT: key endpoint when audio is above noise floor

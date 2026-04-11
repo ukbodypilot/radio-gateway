@@ -1487,6 +1487,7 @@ class RadioGateway:
                         if 'tx_boost' in saved:
                             src.tx_audio_boost = saved['tx_boost'] / 100.0
                         src.server_connected = True
+                        src._stream_trace = self._stream_trace
                         # Store endpoint capabilities for routing UI
                         src._endpoint_caps = info.get('capabilities', {})
                         self.link_endpoints[name] = src
