@@ -1990,6 +1990,7 @@ class AIOCPlugin(AudioPlugin):
             data = struct.pack("<BBBBB", 0, 0, iodata, iomask, 0)
             self._hid.write(bytes(data))
             self._ptt_on = state_on
+            self._status_dirty = True  # trigger immediate status report
             print(f"  [Link] AIOCPlugin: PTT {'ON' if state_on else 'OFF'}")
             return {"ok": True, "ptt": state_on}
         except Exception as e:

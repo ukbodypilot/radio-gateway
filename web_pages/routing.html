@@ -992,19 +992,16 @@ function pollLevels() {
       }
       // Color TX sink nodes red when PTT is active
       for (var txId in ptt) {
-        var node = document.getElementById('level-' + txId);
-        if (node) {
-          var titleBox = node.closest('.drawflow-node');
-          if (titleBox) {
-            var tb = titleBox.querySelector('.title-box');
-            if (tb) {
-              if (ptt[txId]) {
-                tb.style.borderColor = '#e74c3c';
-                tb.style.background = '#3a1a1a';
-              } else {
-                tb.style.borderColor = '';
-                tb.style.background = '';
-              }
+        var lvl = document.getElementById('level-' + txId);
+        if (lvl) {
+          var dfNode = lvl.closest('.drawflow-node');
+          if (dfNode) {
+            if (ptt[txId]) {
+              dfNode.style.borderColor = '#e74c3c';
+              dfNode.style.boxShadow = '0 0 8px rgba(231,76,60,0.5)';
+            } else {
+              dfNode.style.borderColor = '';
+              dfNode.style.boxShadow = '';
             }
           }
         }
