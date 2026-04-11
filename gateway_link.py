@@ -110,11 +110,14 @@ class GatewayLinkProtocol:
 class _EndpointConn:
     """State for one connected endpoint."""
     __slots__ = ('name', 'sock', 'send_lock', 'reader_thread', 'info',
-                 'capabilities', 'last_heartbeat', 'audio_sink')
+                 'capabilities', 'last_heartbeat', 'audio_sink', 'addr',
+                 'via_tunnel')
 
-    def __init__(self, name, sock):
+    def __init__(self, name, sock, addr=None):
         self.name = name
         self.sock = sock
+        self.addr = addr  # (ip, port) tuple
+        self.via_tunnel = (addr[0] == '127.0.0.1') if addr else False
         self.send_lock = threading.Lock()
         self.reader_thread = None
         self.info = {}
@@ -262,7 +265,12 @@ class GatewayLinkServer:
         """Return info dict for a specific endpoint, or None."""
         with self._endpoints_lock:
             ep = self._endpoints.get(name)
-            return dict(ep.info) if ep else None
+            if not ep:
+                return None
+            info = dict(ep.info)
+            info['via_tunnel'] = ep.via_tunnel
+            info['addr'] = f"{ep.addr[0]}:{ep.addr[1]}" if ep.addr else None
+            return info
 
     # -- internal -----------------------------------------------------------
 
@@ -368,7 +376,7 @@ class GatewayLinkServer:
                     return
 
                 # Build endpoint and store
-                ep = _EndpointConn(ep_name, sock)
+                ep = _EndpointConn(ep_name, sock, addr)
                 ep.info = info
                 ep.reader_thread = threading.current_thread()
                 caps = info.get('capabilities', {})

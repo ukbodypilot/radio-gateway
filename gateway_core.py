@@ -2793,6 +2793,8 @@ class RadioGateway:
                     'name': name,
                     'connected': True,
                     'plugin': _ep_info.get('plugin', ''),
+                    'via_tunnel': _ep_info.get('via_tunnel', False),
+                    'addr': _ep_info.get('addr', ''),
                     'capabilities': _ep_info.get('capabilities', {}),
                     'level': src.audio_level,
                     'rx_muted': src.muted,
