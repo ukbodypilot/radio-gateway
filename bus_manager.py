@@ -702,8 +702,8 @@ class BusManager:
                 _base2 = sink_id[:-3] if sink_id.endswith('_tx') else sink_id
                 for _eln, _els in gw.link_endpoints.items():
                     if _re2.sub(r'[^a-z0-9_]', '_', _eln.lower()) == _base2:
-                        # Listen bus: send audio to link endpoint for TX
-                        if _is_listen and getattr(gw, 'link_server', None):
+                        # Send audio to link endpoint for TX (any bus, not just listen)
+                        if getattr(gw, 'link_server', None):
                             _ep_settings = gw.link_endpoint_settings.get(_eln, {})
                             if not _ep_settings.get('tx_muted', False):
                                 try:
