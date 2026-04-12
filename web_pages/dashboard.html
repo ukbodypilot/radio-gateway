@@ -275,6 +275,7 @@ function updateStatus() {
           // Curated status row
           var eh = '';
           eh += '<div class="st-item"><span class="st-label">Link:</span><span class="st-val '+(le.via_tunnel?'yellow':'green')+'">'+(le.via_tunnel?'CF':'LAN')+'</span></div>';
+          if(le.addr) { var _ip = le.addr.split(':')[0]; eh += '<div class="st-item"><span class="st-label">IP:</span><span class="st-val white">'+_ip+'</span></div>'; }
           if(le.ping_ms >= 0) eh += '<div class="st-item"><span class="st-label">Ping:</span><span class="st-val white">'+le.ping_ms+'ms</span></div>';
           var _ver = (est.code_version || '').substring(0,8);
           if(_ver) eh += '<div class="st-item"><span class="st-label">Ver:</span><span class="st-val white">'+_ver+'</span></div>';
