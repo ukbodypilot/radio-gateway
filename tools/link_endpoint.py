@@ -374,6 +374,17 @@ def main():
     if not args.name:
         parser.error('--name is required (e.g. --name garage-radio)')
 
+    # Graceful shutdown — defined early so plugin retry loop can use it
+    shutdown_requested = threading.Event()
+
+    def handle_signal(signum, frame):
+        if not shutdown_requested.is_set():
+            print(f"\n[Endpoint] Signal {signum} received, shutting down...")
+            shutdown_requested.set()
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
     # Load and set up plugin
     print(f"[Endpoint] Loading plugin: {args.plugin}")
     plugin = load_plugin(args.plugin)
@@ -384,13 +395,16 @@ def main():
         'gain': args.gain,
     }
 
-    try:
-        plugin.setup(plugin_config)
-    except Exception as e:
-        print(f"[Endpoint] Plugin setup failed: {e}")
-        print(f"[Endpoint] Check that the device '{args.device or 'default'}' "
-              "is available and not in use.")
-        sys.exit(1)
+    # Retry plugin setup until it succeeds (radio may be off at boot)
+    while not shutdown_requested.is_set():
+        try:
+            plugin.setup(plugin_config)
+            break
+        except Exception as e:
+            print(f"[Endpoint] Plugin setup failed: {e} — retrying in 10s")
+            shutdown_requested.wait(10)
+    if shutdown_requested.is_set():
+        sys.exit(0)
 
     print(f"[Endpoint] Plugin '{plugin.name}' ready "
           f"(device={args.device or 'default'}, rate={args.rate}, gain={args.gain})")
@@ -442,17 +456,6 @@ def main():
         ws_url=ws_url,
         url_resolver=_resolve_tunnel_url,
     )
-
-    # Graceful shutdown
-    shutdown_requested = threading.Event()
-
-    def handle_signal(signum, frame):
-        if not shutdown_requested.is_set():
-            print(f"\n[Endpoint] Signal {signum} received, shutting down...")
-            shutdown_requested.set()
-
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
 
     # Start client (connects in background, auto-reconnect)
     client.start()
