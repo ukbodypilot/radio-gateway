@@ -2844,6 +2844,8 @@ class RadioGateway:
                     'via_tunnel': _ep_info.get('via_tunnel', False),
                     'addr': _ep_info.get('addr', ''),
                     'ping_ms': _ep_info.get('ping_ms', -1),
+                    'source_id': getattr(src, 'source_id', ''),
+                    'sink_id': getattr(src, 'sink_id', ''),
                     'capabilities': _ep_info.get('capabilities', {}),
                     'level': src.audio_level,
                     'rx_muted': src.muted,

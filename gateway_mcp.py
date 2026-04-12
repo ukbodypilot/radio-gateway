@@ -1492,8 +1492,11 @@ def link_endpoint_status() -> str:
         return "No link endpoints connected"
     lines = []
     for ep in endpoints:
-        lines.append(f"Endpoint: {ep['name']}")
-        lines.append(f"  Plugin: {ep.get('plugin', '?')}  Connected: {ep.get('connected')}")
+        _conn = 'CF' if ep.get('via_tunnel') else 'LAN'
+        _ping = f"{ep.get('ping_ms', -1)}ms" if ep.get('ping_ms', -1) >= 0 else '?'
+        lines.append(f"Endpoint: {ep['name']} ({_conn} {_ping})")
+        lines.append(f"  Plugin: {ep.get('plugin', '?')}  Addr: {ep.get('addr', '?')}")
+        lines.append(f"  Source: {ep.get('source_id', '?')}  Sink: {ep.get('sink_id', '?')}")
         lines.append(f"  RX level: {ep.get('level', 0)}  TX level: {ep.get('tx_level', 0)}")
         lines.append(f"  RX muted: {ep.get('rx_muted')}  TX muted: {ep.get('tx_muted')}  PTT: {ep.get('ptt_active')}")
         caps = ep.get('capabilities', {})
