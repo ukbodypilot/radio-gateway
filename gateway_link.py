@@ -1330,30 +1330,36 @@ class AudioPlugin(RadioPlugin):
             target=self._arecord_reader, daemon=True, name="arecord-reader")
         self._rx_thread.start()
 
-        # Output via PyAudio (through PipeWire — coexists with arecord on hw:)
-        try:
-            import pyaudio
-            self._pa = pyaudio.PyAudio()
-            out_index = self._find_device(self._device_name)
-            if self._pa and self._device_name:
-                _dn = self._device_name.lower()
-                for i in range(self._pa.get_device_count()):
-                    try:
-                        info = self._pa.get_device_info_by_index(i)
-                        if _dn in info.get('name', '').lower() and info.get('maxOutputChannels', 0) > 0:
-                            out_index = i
-                            break
-                    except Exception:
-                        continue
-            kw_out = {'output_device_index': out_index} if out_index is not None else {}
-            self._out_stream = self._pa.open(
-                format=pyaudio.paInt16, channels=channels, rate=rate,
-                output=True, frames_per_buffer=self.CHUNK_FRAMES,
-                **kw_out)
-            print(f"  [Link] AudioPlugin: PyAudio output opened (idx={out_index})")
-        except Exception as e:
-            print(f"  [Link] AudioPlugin: failed to open output: {e}")
+        # Output via PyAudio — only attempt if not using exclusive hw: device
+        # (hw: locks the ALSA device, preventing simultaneous capture + playback;
+        # PyAudio opening the same device would reset USB and kill arecord)
+        if alsa_dev.startswith('hw:'):
+            print(f"  [Link] AudioPlugin: output skipped (hw: exclusive — RX only)")
             self._out_stream = None
+        else:
+            try:
+                import pyaudio
+                self._pa = pyaudio.PyAudio()
+                out_index = self._find_device(self._device_name)
+                if self._pa and self._device_name:
+                    _dn = self._device_name.lower()
+                    for i in range(self._pa.get_device_count()):
+                        try:
+                            info = self._pa.get_device_info_by_index(i)
+                            if _dn in info.get('name', '').lower() and info.get('maxOutputChannels', 0) > 0:
+                                out_index = i
+                                break
+                        except Exception:
+                            continue
+                kw_out = {'output_device_index': out_index} if out_index is not None else {}
+                self._out_stream = self._pa.open(
+                    format=pyaudio.paInt16, channels=channels, rate=rate,
+                    output=True, frames_per_buffer=self.CHUNK_FRAMES,
+                    **kw_out)
+                print(f"  [Link] AudioPlugin: PyAudio output opened (idx={out_index})")
+            except Exception as e:
+                print(f"  [Link] AudioPlugin: failed to open output: {e}")
+                self._out_stream = None
 
     def _find_alsa_card(self, name_match):
         """Find ALSA card number by name substring in /proc/asound/cards."""
