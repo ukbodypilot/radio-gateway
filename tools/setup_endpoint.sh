@@ -194,6 +194,45 @@ BTDEV
         warn "hci0 not UP — skip SCO routing (enable BT first)"
     fi
 
+    # BT/WiFi coexistence tuning (shared BCM43436 radio on Pi Zero 2W)
+    # Apply now AND make persistent via boot service
+    # - noscan: disable BT page scanning (reduces radio contention)
+    # - TX power 15 dBm: shorter WiFi bursts = more BT airtime, higher modulation
+    if hciconfig hci0 2>/dev/null | grep -q 'UP RUNNING'; then
+        $DRY_RUN || sudo hciconfig hci0 noscan 2>/dev/null || true
+        info "BT page scanning disabled (re-enable for pairing)"
+    fi
+    if [[ -x /usr/sbin/iw ]]; then
+        $DRY_RUN || sudo /usr/sbin/iw dev wlan0 set txpower fixed 1500 2>/dev/null || true
+        info "WiFi TX power set to 15 dBm"
+    fi
+
+    # Persistent boot service for coex tuning
+    COEX_SVC="/etc/systemd/system/bt-wifi-coex.service"
+    if [[ ! -f "$COEX_SVC" ]]; then
+        info "Creating persistent BT/WiFi coex boot service"
+        $DRY_RUN || sudo tee "$COEX_SVC" > /dev/null << 'COEXEOF'
+[Unit]
+Description=BT/WiFi coexistence tuning (Pi shared radio)
+After=bluetooth.target network-online.target
+Wants=bluetooth.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/hciconfig hci0 noscan
+ExecStart=/usr/sbin/iw dev wlan0 set txpower fixed 1500
+
+[Install]
+WantedBy=multi-user.target
+COEXEOF
+        $DRY_RUN || sudo systemctl daemon-reload
+        $DRY_RUN || sudo systemctl enable bt-wifi-coex.service
+        info "bt-wifi-coex.service enabled at boot"
+    else
+        info "bt-wifi-coex.service already exists — OK"
+    fi
+
     # Disable WiFi power save
     if command -v iw >/dev/null 2>&1 || [[ -x /usr/sbin/iw ]]; then
         $DRY_RUN || sudo /usr/sbin/iw dev wlan0 set power_save off 2>/dev/null || true
