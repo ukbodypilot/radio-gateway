@@ -1491,9 +1491,15 @@ class RadioGateway:
                         # Backward compat: if routing config references plugin type
                         # as a source ID and no other endpoint claimed it, use the
                         # plugin type so existing configs keep working
+                        # Reserved IDs for built-in devices — never alias to these
+                        _builtin_ids = {'aioc', 'kv4p', 'sdr', 'sdr1', 'sdr2',
+                                        'playback', 'loop_playback', 'webmic',
+                                        'announce', 'monitor', 'mumble_rx',
+                                        'remote_audio', 'echolink'}
                         _existing_ids = {getattr(s, 'source_id', None)
                                          for s in self.link_endpoints.values()}
-                        if _raw_id != _plugin and _plugin not in _existing_ids:
+                        if (_raw_id != _plugin and _plugin not in _existing_ids
+                                and _plugin not in _builtin_ids):
                             try:
                                 import json as _rc_json
                                 _rc_path = os.path.join(

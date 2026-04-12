@@ -143,8 +143,8 @@ class PacketRadioPlugin:
                         return name
                 except Exception:
                     pass
-        for name in self._gateway.link_endpoints:
-            if 'ftm' in name.lower() or 'aioc' in name.lower():
+        for name, src in self._gateway.link_endpoints.items():
+            if getattr(src, 'plugin_type', None) == 'aioc':
                 self._cached_endpoint = name
                 return name
         return None
