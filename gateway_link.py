@@ -934,12 +934,18 @@ class GatewayLinkClient:
         3. If WS fails: call url_resolver to fetch fresh URL from Google Drive
         4. Retry with exponential backoff (5s → 10s → 30s → 60s max)
         """
+        import datetime
+        def _ts():
+            return datetime.datetime.now().strftime('%H:%M:%S')
+
         _backoff = 5.0
         _MAX_BACKOFF = 60.0
         _ws_failures = 0
+        _connect_count = 0
 
         while not self._stop.is_set():
             connected_via = None
+            _connect_count += 1
 
             # ── Attempt 1: Direct TCP ──
             if self._host and self._port:
@@ -948,14 +954,14 @@ class GatewayLinkClient:
                     sock.settimeout(10.0)
                     sock.connect((self._host, self._port))
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                    print(f"  [Link] Connected to {self._host}:{self._port} (TCP)")
+                    print(f"  [{_ts()}] [Link] Connected to {self._host}:{self._port} (TCP) [#{_connect_count}]")
                     with self._send_lock:
                         self._sock = sock
                         self._ws_transport = None
                     connected_via = 'tcp'
                     _backoff = 5.0
                 except (OSError, ConnectionError) as e:
-                    print(f"  [Link] TCP {self._host}:{self._port} failed: {e}")
+                    print(f"  [{_ts()}] [Link] TCP {self._host}:{self._port} failed: {e}")
                     try:
                         sock.close()
                     except Exception:
@@ -966,7 +972,7 @@ class GatewayLinkClient:
                 ws = WebSocketTransport()
                 try:
                     if ws.connect(self._ws_url, timeout=15):
-                        print(f"  [Link] Connected via WebSocket tunnel")
+                        print(f"  [{_ts()}] [Link] Connected via WebSocket tunnel [#{_connect_count}]")
                         with self._send_lock:
                             self._ws_transport = ws
                             self._sock = None
@@ -1071,16 +1077,16 @@ class GatewayLinkClient:
 
             hb_stop.set()
             self._close()
-            print(f"  [Link] Connection closed ({connected_via})")
+            print(f"  [{_ts()}] [Link] Connection closed ({connected_via}) [#{_connect_count}]")
 
             if self._on_disconnect:
                 try:
                     self._on_disconnect()
                 except Exception as e:
-                    print(f"  [Link] on_disconnect callback error: {e}")
+                    print(f"  [{_ts()}] [Link] on_disconnect callback error: {e}")
 
             if not self._stop.is_set():
-                print(f"  [Link] Reconnecting in 5s...")
+                print(f"  [{_ts()}] [Link] Reconnecting in 5s...")
                 if self._stop.wait(5.0):
                     break
 
@@ -1095,13 +1101,15 @@ class GatewayLinkClient:
                     result = P.recv_frame(sock)
                 except socket.timeout:
                     _silence = time.monotonic() - _last_frame_time
-                    print(f"  [Link] Client: socket timeout ({_silence:.1f}s since last frame, "
-                          f"{_frame_count} frames total)")
+                    import datetime as _dt
+                    print(f"  [{_dt.datetime.now().strftime('%H:%M:%S')}] [Link] Client: socket timeout "
+                          f"({_silence:.1f}s since last frame, {_frame_count} frames total)")
                     break
                 if result is None:
                     _silence = time.monotonic() - _last_frame_time
-                    print(f"  [Link] Disconnected from server (after {_frame_count} frames, "
-                          f"{_silence:.1f}s since last frame)")
+                    import datetime as _dt
+                    print(f"  [{_dt.datetime.now().strftime('%H:%M:%S')}] [Link] Disconnected from server "
+                          f"(after {_frame_count} frames, {_silence:.1f}s since last frame)")
                     break
                 _frame_count += 1
                 _last_frame_time = time.monotonic()
