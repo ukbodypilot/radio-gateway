@@ -395,19 +395,30 @@ def main():
         'gain': args.gain,
     }
 
-    # Retry plugin setup until it succeeds (radio may be off at boot)
-    while not shutdown_requested.is_set():
-        try:
-            plugin.setup(plugin_config)
-            break
-        except Exception as e:
-            print(f"[Endpoint] Plugin setup failed: {e} — retrying in 10s")
-            shutdown_requested.wait(10)
-    if shutdown_requested.is_set():
-        sys.exit(0)
+    # Try plugin setup — if it fails, retry in background thread
+    _plugin_ready = threading.Event()
+    try:
+        plugin.setup(plugin_config)
+        _plugin_ready.set()
+        print(f"[Endpoint] Plugin '{plugin.name}' ready "
+              f"(device={args.device or 'default'}, rate={args.rate}, gain={args.gain})")
+    except Exception as e:
+        print(f"[Endpoint] Plugin setup failed: {e} — will retry in background")
 
-    print(f"[Endpoint] Plugin '{plugin.name}' ready "
-          f"(device={args.device or 'default'}, rate={args.rate}, gain={args.gain})")
+        def _plugin_retry():
+            while not shutdown_requested.is_set():
+                shutdown_requested.wait(10)
+                if shutdown_requested.is_set():
+                    break
+                try:
+                    plugin.setup(plugin_config)
+                    _plugin_ready.set()
+                    print(f"[Endpoint] Plugin '{plugin.name}' ready (delayed)")
+                    return
+                except Exception as _e:
+                    print(f"[Endpoint] Plugin retry failed: {_e}")
+
+        threading.Thread(target=_plugin_retry, daemon=True, name="plugin-retry").start()
 
     # Audio callbacks
     def on_audio_from_master(pcm):
@@ -486,6 +497,9 @@ def main():
 
     try:
         while not shutdown_requested.is_set():
+            if not _plugin_ready.is_set():
+                time.sleep(0.5)
+                continue
             _t0 = time.monotonic()
             pcm, _ptt = plugin.get_audio()
             _read_ms = (time.monotonic() - _t0) * 1000
