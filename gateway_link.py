@@ -1313,14 +1313,11 @@ class AudioPlugin(RadioPlugin):
         if not alsa_dev.startswith(('hw:', 'plughw:')):
             card = self._find_alsa_card(alsa_dev or 'All-In-One')
             if card is not None:
-                alsa_dev = f'plughw:{card},0'
+                alsa_dev = f'hw:{card},0'
                 print(f"  [Link] AudioPlugin: matched ALSA card {card} → {alsa_dev}")
             else:
                 print(f"  [Link] AudioPlugin: no ALSA card matched '{alsa_dev}', using default")
                 alsa_dev = 'default'
-        elif alsa_dev.startswith('hw:'):
-            # Upgrade hw: to plughw: for full-duplex support
-            alsa_dev = 'plug' + alsa_dev
 
         # Start arecord reader thread for input
         import queue as _q
@@ -1333,18 +1330,29 @@ class AudioPlugin(RadioPlugin):
             target=self._arecord_reader, daemon=True, name="arecord-reader")
         self._rx_thread.start()
 
-        # Output via aplay subprocess (raw ALSA, bypasses PipeWire)
+        # Output via PyAudio (through PipeWire — coexists with arecord on hw:)
         try:
-            import subprocess
-            self._out_stream = subprocess.Popen(
-                ['aplay', '-D', alsa_dev, '-f', 'S16_LE',
-                 '-r', str(rate), '-c', str(channels), '-t', 'raw',
-                 '--buffer-size', str(self.CHUNK_FRAMES * 4)],
-                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL)
-            print(f"  [Link] AudioPlugin: aplay output opened on {alsa_dev} pid={self._out_stream.pid}")
+            import pyaudio
+            self._pa = pyaudio.PyAudio()
+            out_index = self._find_device(self._device_name)
+            if self._pa and self._device_name:
+                _dn = self._device_name.lower()
+                for i in range(self._pa.get_device_count()):
+                    try:
+                        info = self._pa.get_device_info_by_index(i)
+                        if _dn in info.get('name', '').lower() and info.get('maxOutputChannels', 0) > 0:
+                            out_index = i
+                            break
+                    except Exception:
+                        continue
+            kw_out = {'output_device_index': out_index} if out_index is not None else {}
+            self._out_stream = self._pa.open(
+                format=pyaudio.paInt16, channels=channels, rate=rate,
+                output=True, frames_per_buffer=self.CHUNK_FRAMES,
+                **kw_out)
+            print(f"  [Link] AudioPlugin: PyAudio output opened (idx={out_index})")
         except Exception as e:
-            print(f"  [Link] AudioPlugin: failed to open aplay output: {e}")
+            print(f"  [Link] AudioPlugin: failed to open output: {e}")
             self._out_stream = None
 
     def _find_alsa_card(self, name_match):
@@ -1484,7 +1492,7 @@ class AudioPlugin(RadioPlugin):
         return data
 
     def teardown(self):
-        """Stop arecord reader and aplay output, save settings."""
+        """Stop arecord reader and PyAudio output, save settings."""
         self._save_settings()
         self._rx_running = False
         if self._in_stream:
@@ -1498,12 +1506,17 @@ class AudioPlugin(RadioPlugin):
             self._rx_thread.join(timeout=3)
         if self._out_stream:
             try:
-                self._out_stream.stdin.close()
-                self._out_stream.kill()
-                self._out_stream.wait(timeout=2)
+                self._out_stream.stop_stream()
+                self._out_stream.close()
             except Exception:
                 pass
             self._out_stream = None
+        if self._pa:
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+            self._pa = None
         print("  [Link] AudioPlugin: teardown complete")
 
     def get_audio(self, chunk_size=None):
@@ -1525,15 +1538,15 @@ class AudioPlugin(RadioPlugin):
         print(f"  [Link] AudioPlugin: reopen requested (arecord auto-restarts)")
 
     def put_audio(self, pcm):
-        """Write PCM audio to aplay stdin, applying TX gain."""
-        if not self._out_stream or self._out_stream.poll() is not None:
+        """Write PCM audio to PyAudio output, applying TX gain."""
+        if not self._out_stream:
             return
         try:
             if self._tx_gain_db != 0.0:
                 pcm = self._apply_volume(pcm, self._db_to_linear(self._tx_gain_db))
-            self._out_stream.stdin.write(pcm)
-        except (BrokenPipeError, OSError) as e:
-            print(f"  [Link] AudioPlugin: aplay write error: {e}")
+            self._out_stream.write(pcm)
+        except Exception as e:
+            print(f"  [Link] AudioPlugin: output write error: {e}")
 
     def execute(self, cmd):
         """Handle commands from master gateway."""
@@ -1566,7 +1579,7 @@ class AudioPlugin(RadioPlugin):
             "device": self._device_name or "default",
             "rate": self.RATE,
             "input_active": self._in_stream is not None and (not hasattr(self._in_stream, 'poll') or self._in_stream.poll() is None),
-            "output_active": self._out_stream is not None and (not hasattr(self._out_stream, 'poll') or self._out_stream.poll() is None),
+            "output_active": self._out_stream is not None,
             "rx_gain_db": self._rx_gain_db,
             "tx_gain_db": self._tx_gain_db,
             "gate_enabled": self._gate_enabled,
@@ -1794,10 +1807,7 @@ class AIOCPlugin(AudioPlugin):
         else:
             self._aioc_hw = config.get('device', '')
 
-        # Open audio streams via parent class
-        super().setup(config)
-
-        # Open HID for PTT (support both hid.Device and hid.device APIs)
+        # Open HID for PTT BEFORE audio — plughw: can reset USB and kill hidraw
         try:
             import hid as _hid_mod
             if hasattr(_hid_mod, 'Device'):
@@ -1811,6 +1821,9 @@ class AIOCPlugin(AudioPlugin):
             print(f"  [Link] AIOCPlugin: HID open failed: {e}")
             print(f"         PTT will not work. Check USB connection and permissions.")
             self._hid = None
+
+        # Open audio streams via parent class (after HID to avoid USB reset)
+        super().setup(config)
 
     def teardown(self):
         """Unkey PTT, cancel safety timer, stop Direwolf, and close HID + audio."""
