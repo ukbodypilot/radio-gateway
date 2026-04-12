@@ -1310,14 +1310,17 @@ class AudioPlugin(RadioPlugin):
         # Resolve ALSA device — if device looks like hw:N,M use directly,
         # otherwise scan /proc/asound/cards for a name match
         alsa_dev = self._device_name
-        if not alsa_dev.startswith('hw:'):
+        if not alsa_dev.startswith(('hw:', 'plughw:')):
             card = self._find_alsa_card(alsa_dev or 'All-In-One')
             if card is not None:
-                alsa_dev = f'hw:{card},0'
+                alsa_dev = f'plughw:{card},0'
                 print(f"  [Link] AudioPlugin: matched ALSA card {card} → {alsa_dev}")
             else:
                 print(f"  [Link] AudioPlugin: no ALSA card matched '{alsa_dev}', using default")
                 alsa_dev = 'default'
+        elif alsa_dev.startswith('hw:'):
+            # Upgrade hw: to plughw: for full-duplex support
+            alsa_dev = 'plug' + alsa_dev
 
         # Start arecord reader thread for input
         import queue as _q
