@@ -586,7 +586,10 @@ class FilePlaybackSource(AudioSource):
         # Clear current playback
         self._loop_active = False
         self.current_file = None
-        self.file_data = None
+        # Inject 200ms silence to flush downstream buffers (endpoint aplay,
+        # WebSocket send queue, browser audio buffer) before clearing file_data
+        _silence = b'\x00' * (self.config.AUDIO_RATE * self.config.AUDIO_CHANNELS * 2 // 5)  # 200ms
+        self.file_data = _silence
         self.file_position = 0
 
         # Clear queue
