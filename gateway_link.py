@@ -1033,14 +1033,32 @@ class GatewayLinkClient:
                 except Exception as e:
                     print(f"  [Link] on_connect callback error: {e}")
 
-            # Heartbeat thread
+            # Heartbeat thread + LAN upgrade check
             hb_stop = threading.Event()
+            _upgrade_check_interval = 30  # seconds between LAN checks when on WS
             def _client_heartbeat():
+                _hb_count = 0
                 while not hb_stop.is_set():
                     hb_stop.wait(5.0)
                     if hb_stop.is_set():
                         break
                     self.send_status({"type": "heartbeat"})
+                    _hb_count += 1
+                    # If on WS tunnel, periodically check if LAN is available
+                    if (connected_via == 'ws' and self._host and self._port
+                            and _hb_count % (_upgrade_check_interval // 5) == 0):
+                        try:
+                            _probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            _probe.settimeout(3.0)
+                            _probe.connect((self._host, self._port))
+                            _probe.close()
+                            # LAN is reachable — force reconnect via TCP
+                            print(f"  [Link] LAN available — upgrading from WS to TCP")
+                            self._close()
+                            break
+                        except (OSError, ConnectionError):
+                            pass  # LAN not available, stay on WS
+
             hb_thread = threading.Thread(target=_client_heartbeat,
                                          name="LinkClientHB", daemon=True)
             hb_thread.start()
