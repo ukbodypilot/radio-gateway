@@ -588,8 +588,12 @@ class AudioManager:
 
             # Ensure SCO audio routes over HCI (Pi Broadcom defaults to PCM pins)
             try:
-                subprocess.run(['hcitool', 'cmd', '0x3f', '0x1c', '0x01', '0x02', '0x00', '0x00', '0x00'],
-                               capture_output=True, timeout=3)
+                r = subprocess.run(['sudo', '-n', 'hcitool', 'cmd', '0x3f', '0x1c', '0x01', '0x02', '0x00', '0x00', '0x00'],
+                                   capture_output=True, timeout=3)
+                if r.returncode != 0:
+                    # Fallback without sudo (may work if user has BT caps)
+                    subprocess.run(['hcitool', 'cmd', '0x3f', '0x1c', '0x01', '0x02', '0x00', '0x00', '0x00'],
+                                   capture_output=True, timeout=3)
             except Exception:
                 pass
 
@@ -730,11 +734,21 @@ class AudioManager:
 
     def _read_loop(self):
         """Read SCO frames and broadcast raw PCM to all TCP clients."""
+        _rx_count = 0
+        _rx_empty = 0
         while self._running and self._sco:
             try:
                 data = self._sco.recv(AUDIO_FRAME_SIZE * 8)
                 if not data:
-                    break
+                    _rx_empty += 1
+                    if _rx_empty > 50:
+                        print(f"[Audio] SCO read: {_rx_empty} consecutive empty reads, giving up")
+                        break
+                    continue
+                _rx_empty = 0
+                _rx_count += 1
+                if _rx_count <= 3 or _rx_count % 5000 == 0:
+                    print(f"[Audio] SCO read #{_rx_count}: {len(data)} bytes, clients={len(self._clients)}")
                 with self._clients_lock:
                     dead = []
                     for client in self._clients:
