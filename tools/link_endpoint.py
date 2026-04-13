@@ -456,6 +456,29 @@ def main():
         else:
             print(f"[Endpoint] Status from master: {status}")
 
+    # Update check on reconnect — runs in background so it doesn't block
+    _last_update_check = [0.0]
+    _UPDATE_CHECK_INTERVAL = 300  # check at most every 5 minutes
+
+    def on_connect_from_master():
+        """Called on each (re)connect. Check for code updates."""
+        now = time.time()
+        if now - _last_update_check[0] < _UPDATE_CHECK_INTERVAL:
+            return
+        _last_update_check[0] = now
+        if args.no_update:
+            return
+        _url = f'http://{host}:8080' if host else None
+        if _url:
+            try:
+                if _check_for_update(_url):
+                    print("[Update] New code installed, restarting...")
+                    # Remove --no-update from argv if present for clean restart
+                    _argv = [a for a in sys.argv if a != '--no-update']
+                    os.execv(sys.executable, [sys.executable] + _argv)
+            except Exception as e:
+                print(f"[Update] Reconnect update check failed: {e}")
+
     # Create client
     client = GatewayLinkClient(
         host, port, args.name,
@@ -464,6 +487,7 @@ def main():
         on_audio=on_audio_from_master,
         on_command=on_command_from_master,
         on_status=on_status_from_master,
+        on_connect=on_connect_from_master,
         ws_url=ws_url,
         url_resolver=_resolve_tunnel_url,
     )

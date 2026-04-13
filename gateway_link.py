@@ -399,7 +399,7 @@ class GatewayLinkServer:
                     pass
                 return
 
-            sock.settimeout(60.0)  # 60s timeout — generous for lossy WiFi links
+            sock.settimeout(120.0)  # must exceed DEAD_PEER_TIMEOUT (90s) so dead-peer check fires first
 
             info = json.loads(payload)
             ep_name = info.get('name', '')
@@ -954,7 +954,7 @@ class GatewayLinkClient:
                     sock.settimeout(10.0)
                     sock.connect((self._host, self._port))
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                    sock.settimeout(60.0)  # generous timeout for lossy WiFi
+                    sock.settimeout(120.0)  # generous timeout for lossy WiFi
                     print(f"  [{_ts()}] [Link] Connected to {self._host}:{self._port} (TCP) [#{_connect_count}]")
                     with self._send_lock:
                         self._sock = sock
