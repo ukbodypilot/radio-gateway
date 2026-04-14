@@ -546,10 +546,26 @@ def action_force_refresh():
     force_refresh = True
 
 
+def action_shutdown():
+    """Shutdown the Pi. Shows countdown, can be cancelled by any button."""
+    global _shutdown_pending
+    _shutdown_pending = True
+    show_message('Shutting down...', 3)
+    time.sleep(3)
+    if _shutdown_pending:
+        # Clear display before shutdown
+        DISPLAY.display(Image.new('RGB', (WIDTH, HEIGHT), BLACK))
+        subprocess.run(['sudo', '-n', 'shutdown', '-h', 'now'],
+                       capture_output=True, timeout=5)
+
+_shutdown_pending = False
+
+
 # ── Button polling thread ────────────────────────────────────────────────
 
 def button_thread():
-    """Poll buttons via gpiod. Debounced."""
+    """Poll buttons via gpiod. Debounced. Long-press joystick = shutdown."""
+    global _shutdown_pending
     chip = gpiod.Chip('/dev/gpiochip0')
     config = {pin: gpiod.LineSettings(direction=gpiod.line.Direction.INPUT,
                                        bias=gpiod.line.Bias.PULL_UP)
@@ -568,15 +584,43 @@ def button_thread():
     }
 
     prev = {pin: True for pin in ALL_BUTTONS}
+    joy_press_start = 0.0  # track how long joystick is held
+    boot_time = time.monotonic()  # ignore inputs for first 5s
 
     while True:
+        if time.monotonic() - boot_time < 5.0:
+            time.sleep(0.1)
+            continue
+
         for pin in ALL_BUTTONS:
             val = request.get_value(pin)
             pressed = (val == gpiod.line.Value.ACTIVE)
-            if pressed and prev[pin]:  # was high, now low = press
-                handler = handlers.get(pin)
-                if handler:
-                    handler()
+
+            if pin == JOY_PRESS:
+                if pressed:
+                    if joy_press_start == 0.0:
+                        joy_press_start = time.monotonic()
+                    elif time.monotonic() - joy_press_start > 3.0:
+                        # Long press — shutdown
+                        threading.Thread(target=action_shutdown, daemon=True).start()
+                        joy_press_start = 0.0
+                else:
+                    if joy_press_start > 0.0 and time.monotonic() - joy_press_start < 3.0:
+                        # Short press — refresh
+                        action_force_refresh()
+                        # Cancel pending shutdown if any
+                        _shutdown_pending = False
+                    joy_press_start = 0.0
+            else:
+                if pressed and prev[pin]:
+                    # Any button press cancels pending shutdown
+                    if _shutdown_pending:
+                        _shutdown_pending = False
+                        show_message('Shutdown cancelled', 2)
+                    else:
+                        handler = handlers.get(pin)
+                        if handler:
+                            handler()
             prev[pin] = not pressed
         time.sleep(0.1)
 
