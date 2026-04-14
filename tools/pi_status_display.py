@@ -585,32 +585,27 @@ def button_thread():
 
     prev = {pin: True for pin in ALL_BUTTONS}
     joy_press_start = 0.0  # track how long joystick is held
-    boot_time = time.monotonic()  # ignore inputs for first 5s
+    joy_seen_released = False  # must see joystick released before accepting presses
 
     while True:
-        if time.monotonic() - boot_time < 5.0:
-            time.sleep(0.1)
-            continue
-
         for pin in ALL_BUTTONS:
             val = request.get_value(pin)
             pressed = (val == gpiod.line.Value.ACTIVE)
 
             if pin == JOY_PRESS:
-                if pressed:
+                if not pressed:
+                    joy_seen_released = True
+                    if joy_press_start > 0.0 and time.monotonic() - joy_press_start < 3.0:
+                        action_force_refresh()
+                        _shutdown_pending = False
+                    joy_press_start = 0.0
+                elif pressed and joy_seen_released:
                     if joy_press_start == 0.0:
                         joy_press_start = time.monotonic()
                     elif time.monotonic() - joy_press_start > 3.0:
-                        # Long press — shutdown
                         threading.Thread(target=action_shutdown, daemon=True).start()
                         joy_press_start = 0.0
-                else:
-                    if joy_press_start > 0.0 and time.monotonic() - joy_press_start < 3.0:
-                        # Short press — refresh
-                        action_force_refresh()
-                        # Cancel pending shutdown if any
-                        _shutdown_pending = False
-                    joy_press_start = 0.0
+                        joy_seen_released = False
             else:
                 if pressed and prev[pin]:
                     # Any button press cancels pending shutdown
