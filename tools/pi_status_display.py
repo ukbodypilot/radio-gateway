@@ -344,8 +344,51 @@ def page_status(draw):
         pass
 
 
+_net_prev = {}  # {iface: (rx_bytes, tx_bytes, timestamp)}
+
+def _get_net_stats(iface):
+    """Read bytes counters and compute rates."""
+    try:
+        with open(f'/sys/class/net/{iface}/statistics/rx_bytes') as f:
+            rx = int(f.read().strip())
+        with open(f'/sys/class/net/{iface}/statistics/tx_bytes') as f:
+            tx = int(f.read().strip())
+        now = time.monotonic()
+        rx_rate = tx_rate = 0.0
+        prev = _net_prev.get(iface)
+        if prev:
+            dt = now - prev[2]
+            if dt > 0:
+                rx_rate = (rx - prev[0]) / dt
+                tx_rate = (tx - prev[1]) / dt
+        _net_prev[iface] = (rx, tx, now)
+        return rx, tx, rx_rate, tx_rate
+    except Exception:
+        return 0, 0, 0, 0
+
+
+def _fmt_bytes(b):
+    """Format byte count as human-readable."""
+    if b < 1024:
+        return f'{b}B'
+    if b < 1024 * 1024:
+        return f'{b/1024:.0f}K'
+    if b < 1024 * 1024 * 1024:
+        return f'{b/1024/1024:.1f}M'
+    return f'{b/1024/1024/1024:.1f}G'
+
+
+def _fmt_rate(bps):
+    """Format bytes/sec as human-readable rate."""
+    if bps < 1024:
+        return f'{bps:.0f}B/s'
+    if bps < 1024 * 1024:
+        return f'{bps/1024:.1f}K/s'
+    return f'{bps/1024/1024:.1f}M/s'
+
+
 def page_network(draw):
-    """Network details: SSID, signal, IPs, gateway, DNS."""
+    """Network details: SSID, signal, IPs, traffic rates."""
     L = 4
     draw_header(draw, 'Network')
     y = 14
@@ -355,41 +398,36 @@ def page_network(draw):
 
     wifi = get_wifi_info()
     if wifi.get('ssid'):
-        draw.text((L, y), f'SSID: {wifi["ssid"][:14]}', font=FONT, fill=WHITE)
+        draw.text((L, y), f'{wifi["ssid"][:14]}', font=FONT, fill=WHITE)
+        sig = wifi.get('signal', '')
+        if sig:
+            draw.text((80, y), f'{sig}dBm', font=FONT, fill=CYAN)
         y += 11
-    if wifi.get('signal'):
-        draw.text((L, y), f'Signal: {wifi["signal"]}dBm', font=FONT, fill=WHITE)
-        y += 11
-    if wifi.get('bitrate'):
-        draw.text((L, y), f'Rate: {wifi["bitrate"]}Mb/s', font=FONT, fill=WHITE)
-        y += 11
-    if wifi.get('freq'):
-        draw.text((L, y), f'Freq: {wifi["freq"]}GHz', font=FONT, fill=WHITE)
-        y += 13
 
     if wlan_ip:
-        draw.text((L, y), f'WiFi: {wlan_ip}', font=FONT, fill=GREEN)
+        draw.text((L, y), f'W:{wlan_ip}', font=FONT, fill=GREEN)
         y += 11
+        rx, tx, rx_r, tx_r = _get_net_stats('wlan0')
+        draw.text((L, y), f'Rx:{_fmt_rate(rx_r)}', font=FONT, fill=WHITE)
+        draw.text((68, y), f'Tx:{_fmt_rate(tx_r)}', font=FONT, fill=WHITE)
+        y += 10
+        draw.text((L, y), f'Tot:{_fmt_bytes(rx+tx)}', font=FONT, fill=GREY)
+        draw.text((68, y), f'R:{_fmt_bytes(rx)}', font=FONT, fill=GREY)
+        y += 12
     else:
         draw.text((L, y), 'WiFi: disconnected', font=FONT, fill=RED)
-        y += 11
+        y += 12
 
     if eth_ip:
-        draw.text((L, y), f'Eth:  {eth_ip}', font=FONT, fill=GREEN)
+        draw.text((L, y), f'E:{eth_ip}', font=FONT, fill=GREEN)
         y += 11
-    else:
-        draw.text((L, y), 'Eth:  none', font=FONT, fill=GREY)
-        y += 11
-
-    # Gateway
-    try:
-        out = subprocess.check_output(
-            ['ip', 'route', 'show', 'default'],
-            stderr=subprocess.DEVNULL, timeout=2).decode()
-        gw = out.split('via ')[1].split()[0] if 'via ' in out else '?'
-        draw.text((L, y), f'GW:   {gw}', font=FONT, fill=GREY)
-    except Exception:
-        pass
+        rx, tx, rx_r, tx_r = _get_net_stats('eth0')
+        draw.text((L, y), f'Rx:{_fmt_rate(rx_r)}', font=FONT, fill=WHITE)
+        draw.text((68, y), f'Tx:{_fmt_rate(tx_r)}', font=FONT, fill=WHITE)
+        y += 10
+        draw.text((L, y), f'Tot:{_fmt_bytes(rx+tx)}', font=FONT, fill=GREY)
+        draw.text((68, y), f'R:{_fmt_bytes(rx)}', font=FONT, fill=GREY)
+        y += 12
 
 
 def page_d75(draw):
