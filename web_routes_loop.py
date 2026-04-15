@@ -98,10 +98,8 @@ def handle_loop_api(handler, parent):
             return
         temp_path = None
         try:
-            if len(segments) == 1:
-                serve_path = segments[0]['path']
-            else:
-                serve_path = lr.export_range(bus, start_f, end_f, fmt='mp3')
+            # Always use export_range to trim audio to exact start point
+            serve_path = lr.export_range(bus, start_f, end_f, fmt='mp3')
                 if not serve_path:
                     handler.send_error(500, 'Export failed')
                     return

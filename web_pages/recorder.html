@@ -396,35 +396,14 @@ function drawTimeAxis(ctx, x, y, w, h) {
 // ── Playback ──────────────────────────────────────────────────
 function busPlayFrom(busId, epoch) {
   var st = busState[busId];
+  st.playStart = epoch;
   st.playEnd = viewEnd;
-  var url = '/loop/play?bus='+busId+'&start='+epoch+'&end='+st.playEnd;
-  // Query segment info to get actual audio start time
-  fetch('/loop/segments?bus='+busId+'&start='+epoch+'&end='+st.playEnd)
-    .then(function(r){return r.json();})
-    .then(function(data) {
-      var segs = data.segments || [];
-      var audioStart = segs.length > 0 ? segs[0].start : epoch;
-      var seekOffset = Math.max(0, epoch - audioStart);
-      st.playStart = audioStart;
-      st.player.src = url;
-      st.player.volume = document.getElementById('vol-'+busId).value / 100;
-      if (seekOffset > 0.5) {
-        st.player.addEventListener('canplaythrough', function _seek() {
-          st.player.removeEventListener('canplaythrough', _seek);
-          st.player.currentTime = seekOffset;
-        }, {once: true});
-      }
-      st.player.play();
-      _highlightPlayBtn(busId, true);
-      animatePlayback(busId);
-    }).catch(function() {
-      st.playStart = epoch;
-      st.player.src = url;
-      st.player.volume = document.getElementById('vol-'+busId).value / 100;
-      st.player.play();
-      _highlightPlayBtn(busId, true);
-      animatePlayback(busId);
-    });
+  // Server trims audio to start at exact epoch via ffmpeg
+  st.player.src = '/loop/play?bus='+busId+'&start='+epoch+'&end='+st.playEnd;
+  st.player.volume = document.getElementById('vol-'+busId).value / 100;
+  st.player.play();
+  _highlightPlayBtn(busId, true);
+  animatePlayback(busId);
 }
 
 function busPlay(busId) {
