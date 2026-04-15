@@ -502,6 +502,36 @@ def on_text_message(gw, text_message):
                 else:
                     gw.send_text_message("No smart announcements configured")
 
+        elif command == '!endpoints' or command == '!ep':
+            eps = getattr(gw, 'link_endpoints', {})
+            if not eps:
+                gw.send_text_message("No link endpoints connected")
+            else:
+                lines = ["=== Link Endpoints ==="]
+                for name, src in eps.items():
+                    sid = getattr(src, 'source_id', '?')
+                    plugin = getattr(src, 'plugin_type', '?')
+                    status = gw._link_last_status.get(name, {})
+                    cpu = status.get('cpu_pct', '?')
+                    ram = status.get('ram_pct', '?')
+                    temp = status.get('cpu_temp_c', '?')
+                    ver = status.get('code_version', '?')[:8]
+                    uptime = status.get('uptime', 0)
+                    h, m = int(uptime) // 3600, (int(uptime) % 3600) // 60
+                    lines.append(f"  {name} [{plugin}] sid={sid} "
+                                 f"CPU:{cpu}% RAM:{ram}% {temp}C "
+                                 f"Up:{h}h{m:02d}m v={ver}")
+                gw.send_text_message("\n".join(lines))
+
+        elif command == '!loop':
+            if hasattr(gw, 'loop_recorder') and gw.loop_recorder:
+                lr = gw.loop_recorder
+                buses = lr.get_active_buses() if hasattr(lr, 'get_active_buses') else []
+                total = sum(lr.get_segment_count(b) for b in buses) if hasattr(lr, 'get_segment_count') else 0
+                gw.send_text_message(f"Loop recorder: {len(buses)} buses, {total} segments")
+            else:
+                gw.send_text_message("Loop recorder not active")
+
         elif command == '!help':
             help_text = [
                 "=== Gateway Commands ===",
@@ -514,6 +544,8 @@ def on_text_message(gw, text_message):
                 "!mute         - Mute TX (Mumble → Radio)",
                 "!unmute       - Unmute TX",
                 "!id           - Play station ID (slot 0)",
+                "!endpoints    - Show connected link endpoints",
+                "!loop         - Loop recorder status",
                 "!restart      - Restart the gateway",
                 "!status       - Show gateway status",
                 "!help         - Show this help"

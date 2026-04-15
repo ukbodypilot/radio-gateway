@@ -449,13 +449,10 @@ def radio_set_tx(radio: str) -> str:
     Select which radio is used for transmit.
 
     Args:
-        radio: One of 'th9800' (main HF/VHF transceiver),
-               'd75' (Kenwood TH-D75 handheld), or
-               'kv4p' (KV4P HT USB radio module).
+        radio: Radio identifier — 'th9800', 'kv4p', or any link endpoint
+               source_id (e.g. 'd75_pi', 'ftm_150', 'celeron_aioc').
     """
     radio = radio.lower().strip()
-    if radio not in ('th9800', 'd75', 'kv4p'):
-        return f"Error: unknown radio '{radio}' — must be th9800, d75, or kv4p"
     result = _post('/catcmd', {'cmd': 'SET_TX_RADIO', 'radio': radio})
     if result.get('ok'):
         return f"TX radio set to: {radio}"
@@ -931,9 +928,9 @@ def mixer_control(
                 'flag'       — Toggle or set a mixer flag (requires flag arg)
                 'processing' — Toggle or set an audio processing filter (requires source
                                + flag for filter name; optionally state=true/false)
-        source: Audio source — one of:
-                'global' (TX+RX), 'tx', 'rx', 'sdr1', 'sdr2', 'd75',
-                'kv4p', 'remote', 'announce', 'speaker'
+        source: Audio source — built-in: 'global', 'tx', 'rx', 'sdr1', 'sdr2',
+                'kv4p', 'remote', 'announce', 'speaker'.
+                Link endpoints by source_id: e.g. 'd75_pi', 'ftm_150', 'celeron_aioc'.
         value:  Numeric value for 'volume' (0.1-3.0) or 'boost' (0-500) actions.
         flag:   For 'flag' action — one of:
                 'vad'          — Voice Activity Detection
@@ -961,10 +958,6 @@ def mixer_control(
         if not source:
             return 'Error: source required for mute/unmute/toggle'
         source = source.lower().strip()
-        valid = ('global', 'tx', 'rx', 'sdr1', 'sdr2', 'd75',
-                 'kv4p', 'remote', 'announce', 'speaker')
-        if source not in valid:
-            return f"Error: source must be one of: {', '.join(valid)}"
         result = _post('/mixer', {'action': action, 'source': source})
         if result.get('ok'):
             muted = result.get('muted')
@@ -2234,97 +2227,76 @@ def _ssh_cmd(host: str, user: str, password: str, cmd: str, timeout: int = 15) -
         return f"SSH error: {e}"
 
 
-def _load_endpoint_config() -> dict:
-    """Read endpoint SSH settings from gateway_config.txt."""
-    cfg = {
-        'd75_host': '192.168.2.134', 'd75_user': 'user', 'd75_pass': 'user',
-        'ftm150_host': '192.168.2.121', 'ftm150_user': 'user', 'ftm150_pass': 'user',
-    }
-    cfg_path = os.path.join(os.path.dirname(__file__), 'gateway_config.txt')
-    if os.path.isfile(cfg_path):
-        with open(cfg_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#') or '=' not in line:
-                    continue
-                k, _, v = line.partition('=')
-                k = k.strip(); v = v.strip()
-                if k == 'D75_ENDPOINT_HOST':
-                    cfg['d75_host'] = v
-                elif k == 'D75_ENDPOINT_USER':
-                    cfg['d75_user'] = v
-                elif k == 'D75_ENDPOINT_PASS':
-                    cfg['d75_pass'] = v
-                elif k == 'FTM150_ENDPOINT_HOST':
-                    cfg['ftm150_host'] = v
-                elif k == 'FTM150_ENDPOINT_USER':
-                    cfg['ftm150_user'] = v
-                elif k == 'FTM150_ENDPOINT_PASS':
-                    cfg['ftm150_pass'] = v
-    return cfg
+def _resolve_endpoint_host(name: str) -> tuple:
+    """Resolve endpoint name to (ip, user, password) from connected endpoints.
+    Returns (host, 'user', 'user') or raises ValueError."""
+    result = _get('/status')
+    endpoints = result.get('link_endpoints', [])
+    name_lower = name.lower().strip()
+    for ep in endpoints:
+        ep_name = ep.get('name', '').lower()
+        ep_sid = ep.get('source_id', '').lower()
+        if name_lower in (ep_name, ep_sid, ep_name.replace('-', '_'), ep_sid.replace('_', '-')):
+            addr = ep.get('addr', '')
+            if addr:
+                host = addr.split(':')[0]
+                return (host, 'user', 'user')
+    # List available endpoints for error message
+    names = [ep.get('name', '?') for ep in endpoints]
+    raise ValueError(f"Endpoint '{name}' not found. Connected: {', '.join(names) or 'none'}")
 
 
 @mcp.tool()
-def endpoint_reboot(endpoint: str = 'd75') -> str:
+def endpoint_reboot(endpoint: str) -> str:
     """
-    Reboot a remote endpoint Pi via SSH.
+    Reboot a remote endpoint Pi via SSH. Uses the IP from the active
+    link connection — works with any connected endpoint.
 
     Args:
-        endpoint: Which endpoint — 'd75' (192.168.2.134) or 'ftm150' (192.168.2.121).
+        endpoint: Endpoint name (e.g. 'd75-pi', 'ftm-150', 'celeron-aioc').
     """
-    endpoint = endpoint.lower().strip()
-    ep = _load_endpoint_config()
-    if endpoint == 'd75':
-        host, user, pw = ep['d75_host'], ep['d75_user'], ep['d75_pass']
-    elif endpoint in ('ftm150', 'ftm-150'):
-        host, user, pw = ep['ftm150_host'], ep['ftm150_user'], ep['ftm150_pass']
-    else:
-        return f"Error: unknown endpoint '{endpoint}' — use 'd75' or 'ftm150'"
-    result = _ssh_cmd(host, user, pw,
-                      f'echo {pw} | sudo -S reboot', timeout=10)
+    try:
+        host, user, pw = _resolve_endpoint_host(endpoint)
+    except ValueError as e:
+        return str(e)
+    result = _ssh_cmd(host, user, pw, 'sudo -n reboot', timeout=10)
     return f"Reboot sent to {endpoint} ({host}): {result}"
 
 
 @mcp.tool()
 def endpoint_ssh(
     command: str,
-    endpoint: str = 'd75',
+    endpoint: str,
 ) -> str:
     """
-    Run a shell command on a remote endpoint Pi via SSH.
+    Run a shell command on a remote endpoint Pi via SSH. Resolves the
+    endpoint IP dynamically from the active link connection.
 
     Args:
-        command:  Shell command to execute (e.g. 'uptime', 'systemctl status d75-cat').
-        endpoint: Which endpoint — 'd75' or 'ftm150' (default 'd75').
+        command:  Shell command to execute (e.g. 'uptime', 'free -h').
+        endpoint: Endpoint name (e.g. 'd75-pi', 'ftm-150', 'celeron-aioc').
     """
-    endpoint = endpoint.lower().strip()
-    ep = _load_endpoint_config()
-    if endpoint == 'd75':
-        host, user, pw = ep['d75_host'], ep['d75_user'], ep['d75_pass']
-    elif endpoint in ('ftm150', 'ftm-150'):
-        host, user, pw = ep['ftm150_host'], ep['ftm150_user'], ep['ftm150_pass']
-    else:
-        return f"Error: unknown endpoint '{endpoint}' — use 'd75' or 'ftm150'"
+    try:
+        host, user, pw = _resolve_endpoint_host(endpoint)
+    except ValueError as e:
+        return str(e)
     return _ssh_cmd(host, user, pw, command)
 
 
 @mcp.tool()
-def endpoint_ping(endpoint: str = 'd75') -> str:
+def endpoint_ping(endpoint: str) -> str:
     """
-    Ping a remote endpoint to check if it's reachable.
+    Ping a remote endpoint to check if it's reachable. Resolves the
+    endpoint IP dynamically from the active link connection.
 
     Args:
-        endpoint: Which endpoint — 'd75' or 'ftm150'.
+        endpoint: Endpoint name (e.g. 'd75-pi', 'ftm-150', 'celeron-aioc').
     """
     import subprocess
-    endpoint = endpoint.lower().strip()
-    ep = _load_endpoint_config()
-    if endpoint == 'd75':
-        host = ep['d75_host']
-    elif endpoint in ('ftm150', 'ftm-150'):
-        host = ep['ftm150_host']
-    else:
-        return f"Error: unknown endpoint '{endpoint}'"
+    try:
+        host, _, _ = _resolve_endpoint_host(endpoint)
+    except ValueError as e:
+        return str(e)
     try:
         r = subprocess.run(['ping', '-c', '3', '-W', '2', host],
                           capture_output=True, text=True, timeout=15)
@@ -2699,6 +2671,80 @@ def automation_scheme_edit(content: str) -> str:
     if result.get('ok'):
         return f"Scheme saved and reloaded: {result.get('tasks', 0)} tasks"
     return f"Scheme saved to {scheme_file} but reload failed: {result.get('error', 'unknown')}"
+
+
+# ---------------------------------------------------------------------------
+# Tools — Endpoint Management
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def endpoint_battery(endpoint: str = '') -> str:
+    """
+    Get battery status for a link endpoint (if it has a battery monitor).
+
+    Args:
+        endpoint: Endpoint name (e.g. 'd75-pi'). Omit to show all endpoints.
+    """
+    result = _get('/status')
+    endpoints = result.get('link_endpoints', [])
+    if not endpoints:
+        return "No link endpoints connected"
+    lines = []
+    for ep in endpoints:
+        name = ep.get('name', '?')
+        if endpoint and endpoint.lower() not in (name.lower(), name.lower().replace('-', '_')):
+            continue
+        status = ep.get('endpoint_status', {})
+        cpu = status.get('cpu_pct', '?')
+        ram = status.get('ram_pct', '?')
+        temp = status.get('cpu_temp_c', '?')
+        disk = status.get('disk_pct', '?')
+        ver = status.get('code_version', '?')
+        uptime = status.get('uptime', 0)
+        h, m = int(uptime) // 3600, (int(uptime) % 3600) // 60
+        lines.append(f"[{name}] CPU:{cpu}% RAM:{ram}% Temp:{temp}C Disk:{disk}% "
+                     f"Up:{h}h{m:02d}m v={ver}")
+    return '\n'.join(lines) if lines else f"Endpoint '{endpoint}' not found"
+
+
+@mcp.tool()
+def endpoint_version() -> str:
+    """
+    Show code version for the gateway and all connected endpoints.
+    Highlights version mismatches.
+    """
+    gw = _get('/endpoint/version')
+    gw_ver = gw.get('version', '?')
+    lines = [f"Gateway: v={gw_ver}"]
+    result = _get('/status')
+    for ep in result.get('link_endpoints', []):
+        name = ep.get('name', '?')
+        ep_ver = ep.get('endpoint_status', {}).get('code_version', '?')
+        match = 'OK' if ep_ver == gw_ver else 'MISMATCH'
+        lines.append(f"  {name}: v={ep_ver} [{match}]")
+    return '\n'.join(lines)
+
+
+@mcp.tool()
+def pihole_status() -> str:
+    """
+    Get Pi-hole DNS ad-blocker status: queries, blocked, top clients.
+    Pi-hole runs on the gateway at port 8089.
+    """
+    import urllib.request
+    try:
+        req = urllib.request.Request('http://127.0.0.1:8089/admin/api/stats/summary')
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(resp.read())
+        queries = data.get('queries', {})
+        total = queries.get('total', 0)
+        blocked = queries.get('blocked', 0)
+        pct = queries.get('percent_blocked', 0)
+        clients = data.get('clients', {}).get('total', 0)
+        return (f"Pi-hole: {total} queries, {blocked} blocked ({pct:.1f}%), "
+                f"{clients} clients")
+    except Exception as e:
+        return f"Pi-hole status unavailable: {e}"
 
 
 # ---------------------------------------------------------------------------
