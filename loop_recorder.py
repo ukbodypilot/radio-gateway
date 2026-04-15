@@ -417,12 +417,12 @@ class LoopRecorder:
             seg = segments[0]
             offset = max(0, start_ts - seg['start'])
             duration = min(end_ts, seg['end']) - max(start_ts, seg['start'])
-            cmd = ['ffmpeg', '-y', '-i', seg['path'],
-                   '-ss', str(offset), '-t', str(duration)]
+            cmd = ['ffmpeg', '-y', '-ss', str(offset), '-i', seg['path'],
+                   '-t', str(duration)]
             if fmt == 'wav':
                 cmd += ['-acodec', 'pcm_s16le', '-ar', str(self._sample_rate)]
             else:
-                cmd += ['-c', 'copy']
+                cmd += ['-acodec', 'libmp3lame', '-b:a', '128k']
             cmd.append(outfile.name)
         else:
             # Multi-segment: concat demuxer
