@@ -508,6 +508,25 @@ def main():
         url_resolver=_resolve_tunnel_url,
     )
 
+    # Periodic update checker — runs every hour regardless of connection state
+    def _periodic_update_checker():
+        time.sleep(3600)  # first check after 1 hour
+        while True:
+            if not args.no_update:
+                _url = f'http://{host}:8080' if host else None
+                if _url:
+                    try:
+                        if _check_for_update(_url):
+                            print("[Update] Periodic check: new code installed, restarting...")
+                            _argv = [a for a in sys.argv if a != '--no-update']
+                            os.execv(sys.executable, [sys.executable] + _argv)
+                    except Exception as e:
+                        print(f"[Update] Periodic check failed: {e}")
+            time.sleep(3600)
+
+    threading.Thread(target=_periodic_update_checker, daemon=True,
+                     name="update-check").start()
+
     # Start client (connects in background, auto-reconnect)
     client.start()
 
