@@ -3,189 +3,222 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dell - Radio Gateway - KV4P Control</title>
+<link rel="stylesheet" href="/pages/common.css">
 <style>
-  :root {
-    --t-bg: #1a1a2e; --t-panel: #16213e; --t-border: #0f3460;
-    --t-accent: #00d4ff; --t-btn: #0d1b2a; --t-btn-border: #1b3a5c;
-    --t-btn-hover: #1a2744; --t-btn-active: #0f3460;
-    --t-checkbox: #00d4ff;
+  /* KV4P-specific layout. Theme vars come from common.css. */
+  .kv-freq {
+    color: var(--t-ok);
+    font-size: 28px;
+    text-align: center;
+    letter-spacing: 2px;
+    margin: var(--s-2) 0;
   }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-         background: var(--t-bg); color: #e0e0e0; margin: 0; padding: 20px; }
-  h1 { color: var(--t-accent); margin: 0 0 20px; font-size: 1.4em; }
-  h2 { color: var(--t-accent); margin: 10px 0; font-size: 1.2em; }
-  a { color: var(--t-accent); }
-  details { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px;
-            margin: 8px 0; }
-  summary { cursor: pointer; padding: 10px 14px; font-weight: bold; color: var(--t-accent);
-            font-size: 0.95em; user-select: none; }
-  summary:hover { background: var(--t-btn-hover); }
-  .fields { padding: 8px 14px 14px; }
-  .field { display: flex; align-items: center; margin: 4px 0; gap: 8px; }
-  .field label { min-width: 320px; font-size: 0.85em; color: #b0b0b0; }
-  .field input[type="text"], .field input[type="number"], .field input[type="password"], .field select {
-    flex: 1; background: var(--t-btn); border: 1px solid var(--t-btn-border); color: #e0e0e0;
-    padding: 5px 8px; border-radius: 3px; font-family: monospace; font-size: 0.85em;
-    max-width: 500px; }
-  .field input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--t-checkbox); }
-  .field .default { font-size: 0.75em; color: #ffffff; margin-left: 8px; }
-  .buttons { position: sticky; top: 0; background: var(--t-bg); padding: 10px 0;
-             z-index: 10; border-bottom: 1px solid var(--t-border); margin-bottom: 10px;
-             display: flex; gap: 10px; }
-  button { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer;
-           font-size: 0.9em; font-weight: bold; }
-  .btn-save { background: var(--t-border); color: #e0e0e0; }
-  .btn-save:hover { background: var(--t-btn-hover); }
-  .btn-restart { background: #c0392b; color: #fff; }
-  .btn-restart:hover { background: #e74c3c; }
-  .btn-exit { background: #7d3c98; color: #fff; margin-left: auto; }
-  .btn-exit:hover { background: #9b59b6; }
+  .kv-freq.tx { color: var(--t-warn); font-size: 20px; }
+  .kv-row { display: flex; align-items: center; gap: var(--s-2); margin-bottom: var(--s-1); }
+  .kv-label { color: var(--t-text-dim); font-size: var(--f-sm); }
+  .kv-val { color: var(--t-text); }
+  .kv-val.ok  { color: var(--t-ok); }
+  .kv-val.err { color: var(--t-err); }
+
+  .kv-meter {
+    flex: 1;
+    background: var(--t-bg);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    height: 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .kv-meter-fill {
+    height: 100%;
+    transition: width 0.2s;
+    background: var(--t-ok);
+  }
+  .kv-meter.warn .kv-meter-fill { background: var(--t-warn); }
+  .kv-meter.err  .kv-meter-fill { background: var(--t-err); }
+  .kv-meter-text {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    font-size: var(--f-xs);
+    color: var(--t-text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .kv-input {
+    background: var(--t-btn);
+    border: 1px solid var(--t-border);
+    color: var(--t-ok);
+    padding: var(--s-1) var(--s-2);
+    border-radius: var(--r-sm);
+    font-family: inherit;
+    font-size: var(--f-md);
+    width: 140px;
+    text-align: center;
+  }
+  .kv-select {
+    background: var(--t-btn);
+    border: 1px solid var(--t-border);
+    color: var(--t-text);
+    padding: var(--s-1) var(--s-2);
+    border-radius: var(--r-sm);
+    font-family: inherit;
+    font-size: var(--f-sm);
+  }
+
+  /* TX-active state on freq box */
+  #kv-freq-box.tx-active {
+    background: color-mix(in srgb, var(--t-err) 18%, var(--t-panel));
+    border-color: var(--t-err);
+  }
+
+  .kv-sep { color: var(--t-border); }
+  .kv-tx-badge {
+    display: none;
+    background: var(--t-err);
+    color: var(--t-bg);
+    padding: 2px var(--s-2);
+    border-radius: var(--r-sm);
+    font-weight: 700;
+    font-size: var(--f-xs);
+    letter-spacing: 0.08em;
+  }
+  .kv-tx-badge.on { display: inline-block; }
+
+  .kv-ctrl-group { display: flex; flex-direction: column; gap: 2px; }
+  .kv-ctrl-row { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-2); }
+
+  .kv-feedback { font-size: var(--f-sm); min-width: 120px; font-variant-numeric: tabular-nums; }
 </style>
-<script>var _T={bg:'#1a1a2e',panel:'#16213e',border:'#0f3460',accent:'#00d4ff',btn:'#0d1b2a',btnBorder:'#1b3a5c',btnHover:'#1a2744',btnActive:'#0f3460'}</script>
 </head><body>
 
-<style>
-.rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
-  color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; min-width:44px; }
-.rb:hover { background:var(--t-btn-hover); border-color:var(--t-accent); }
-.rb:active { background:var(--t-border); }
-.rb-sm { font-size:0.8em; padding:5px 10px; }
-.rb-active { background:var(--t-accent) !important; color:#fff !important; border-color:var(--t-accent) !important; }
-.kv-panel { background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px; }
-.kv-freq { color:#2ecc71; font-size:2.4em; text-align:center; letter-spacing:2px; margin:8px 0; font-family:monospace; }
-.kv-label { color:#888; font-size:0.85em; }
-.kv-val { color:#e0e0e0; font-family:monospace; }
-.kv-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-.kv-meter { flex:1; background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:3px; height:18px; position:relative; overflow:hidden; }
-.kv-meter-fill { height:100%; transition:width 0.3s; }
-.kv-meter-text { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.75em; color:#fff; font-weight:bold; }
-.kv-input { background:var(--t-btn); border:1px solid var(--t-btn-border); color:#2ecc71; padding:6px 10px;
-  border-radius:4px; font-family:monospace; font-size:1.1em; width:140px; text-align:center; }
-.kv-select { background:var(--t-btn); border:1px solid var(--t-btn-border); color:#e0e0e0; padding:5px 8px;
-  border-radius:3px; font-family:monospace; font-size:0.9em; }
-</style>
-
-<div id="kv-offline" style="display:none;" class="kv-panel">
-  <span style="color:#e74c3c; font-weight:bold;">KV4P HT Not Connected</span>
-  <span id="kv-status-detail" style="color:#f39c12; font-size:0.9em; margin-left:10px;"></span>
-  <button class="rb rb-sm" onclick="kvCmd('reconnect')" style="margin-left:10px;">Reconnect</button>
+<div id="kv-offline" class="panel" style="display:none;">
+  <span class="kv-val err" style="font-weight:600;">KV4P HT Not Connected</span>
+  <span id="kv-status-detail" class="kv-label" style="margin-left:var(--s-3);"></span>
+  <button class="rb rb-sm" onclick="kvCmd('reconnect')" style="margin-left:var(--s-3);">Reconnect</button>
 </div>
 
 <div id="kv-panel" style="display:none;">
 
-<!-- Status bar -->
-<div class="kv-panel" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-  <span class="kv-label">FW:</span> <span id="kv-fw" class="kv-val">—</span>
-  <span style="color:#333;">|</span>
-  <span class="kv-label">Module:</span> <span id="kv-module" class="kv-val">—</span>
-  <span style="color:#333;">|</span>
-  <span class="kv-label">Audio:</span> <span id="kv-audio-status" class="kv-val">—</span>
-  <span style="flex:1;"></span>
-  <span id="kv-tx-badge" style="display:none; background:#c0392b; color:#fff; padding:2px 8px; border-radius:3px; font-weight:bold;">TX</span>
-  <span style="flex:1;"></span>
-  <span id="kv-feedback" style="font-family:monospace; font-size:0.85em; min-width:120px;"></span>
-  <button class="rb rb-sm" onclick="kvCmd('ptt')" id="kv-ptt-btn">PTT</button>
-  <button class="rb rb-sm" onclick="kvCmd('testtone','400')" id="kv-tone-btn">Test 400Hz</button>
-  <button class="rb rb-sm" onclick="kvCmd('testtone','1000')">Test 1kHz</button>
-  <button class="rb rb-sm" onclick="kvCmd('testtone')">Stop Tone</button>
-  <button class="rb rb-sm" onclick="kvCmd('reconnect')">Reconnect</button>
-</div>
-
-<!-- Frequency display -->
-<div class="kv-panel" id="kv-freq-box">
-  <div class="kv-row" style="justify-content:center;">
-    <span id="kv-rx-label" class="kv-label">RX</span>
-    <span id="kv-rx-freq" class="kv-freq">—</span>
-    <span class="kv-label">MHz</span>
-  </div>
-  <div id="kv-tx-freq-row" class="kv-row" style="justify-content:center; display:none;">
-    <span id="kv-tx-label" class="kv-label">TX</span>
-    <span id="kv-tx-freq" style="color:#e67e22; font-size:1.6em; font-family:monospace;">—</span>
-    <span class="kv-label">MHz</span>
+  <!-- Status bar -->
+  <div class="panel" style="display:flex; align-items:center; gap:var(--s-3); flex-wrap:wrap;">
+    <span class="kv-label">FW:</span> <span id="kv-fw" class="kv-val">&mdash;</span>
+    <span class="kv-sep">|</span>
+    <span class="kv-label">Module:</span> <span id="kv-module" class="kv-val">&mdash;</span>
+    <span class="kv-sep">|</span>
+    <span class="kv-label">Audio:</span> <span id="kv-audio-status" class="kv-val">&mdash;</span>
+    <span style="flex:1;"></span>
+    <span id="kv-tx-badge" class="kv-tx-badge">TX</span>
+    <span style="flex:1;"></span>
+    <span id="kv-feedback" class="kv-feedback"></span>
+    <button class="rb rb-sm" onclick="kvCmd('ptt')" id="kv-ptt-btn">PTT</button>
+    <button class="rb rb-sm" onclick="kvCmd('testtone','400')">Test 400Hz</button>
+    <button class="rb rb-sm" onclick="kvCmd('testtone','1000')">Test 1kHz</button>
+    <button class="rb rb-sm" onclick="kvCmd('testtone')">Stop Tone</button>
+    <button class="rb rb-sm" onclick="kvCmd('reconnect')">Reconnect</button>
   </div>
 
-  <!-- S-meter -->
-  <div class="kv-row" style="margin-top:10px;">
-    <span class="kv-label" style="min-width:55px;">S-meter</span>
-    <div class="kv-meter">
-      <div id="kv-meter-fill" class="kv-meter-fill" style="width:0%; background:linear-gradient(90deg,#27ae60,#2ecc71,#f1c40f,#e74c3c);"></div>
-      <div id="kv-meter-text" class="kv-meter-text">S0</div>
+  <!-- Frequency + meters -->
+  <div class="panel" id="kv-freq-box">
+    <div class="kv-row" style="justify-content:center;">
+      <span id="kv-rx-label" class="kv-label">RX</span>
+      <span id="kv-rx-freq" class="kv-freq">&mdash;</span>
+      <span class="kv-label">MHz</span>
     </div>
-  </div>
-
-  <!-- Audio level -->
-  <div class="kv-row">
-    <span class="kv-label" style="min-width:55px;">Audio</span>
-    <div class="kv-meter">
-      <div id="kv-audio-fill" class="kv-meter-fill" style="width:0%; background:var(--t-accent);"></div>
-      <div id="kv-audio-text" class="kv-meter-text">0%</div>
+    <div id="kv-tx-freq-row" class="kv-row" style="justify-content:center; display:none;">
+      <span id="kv-tx-label" class="kv-label">TX</span>
+      <span id="kv-tx-freq" class="kv-freq tx">&mdash;</span>
+      <span class="kv-label">MHz</span>
     </div>
-  </div>
-</div>
 
-<!-- Controls -->
-<div class="kv-panel">
-  <div class="kv-row" style="flex-wrap:wrap; gap:12px;">
-    <div>
-      <span class="kv-label">Frequency (MHz):</span><br>
-      <input id="kv-freq-input" class="kv-input" type="text" placeholder="146.520" onfocus="_ctrlEditUntil=Date.now()+5000">
-      <button class="rb rb-sm" onclick="kvCmd('freq',document.getElementById('kv-freq-input').value)">Set</button>
+    <div class="kv-row" style="margin-top:var(--s-3);">
+      <span class="kv-label" style="min-width:55px;">S-meter</span>
+      <div id="kv-sig-meter" class="kv-meter">
+        <div id="kv-meter-fill" class="kv-meter-fill" style="width:0%;"></div>
+        <div id="kv-meter-text" class="kv-meter-text">S0</div>
+      </div>
     </div>
-    <div>
-      <span class="kv-label">TX Freq (0=same):</span><br>
-      <input id="kv-txfreq-input" class="kv-input" type="text" placeholder="0" onfocus="_ctrlEditUntil=Date.now()+5000">
-      <button class="rb rb-sm" onclick="kvCmd('txfreq',document.getElementById('kv-txfreq-input').value)">Set</button>
+
+    <div class="kv-row">
+      <span class="kv-label" style="min-width:55px;">Audio</span>
+      <div class="kv-meter">
+        <div id="kv-audio-fill" class="kv-meter-fill" style="width:0%; background:var(--t-accent);"></div>
+        <div id="kv-audio-text" class="kv-meter-text">0%</div>
+      </div>
     </div>
   </div>
 
-  <div class="kv-row" style="margin-top:10px; flex-wrap:wrap; gap:12px;">
-    <div>
-      <span class="kv-label">Squelch (0-8):</span><br>
-      <input id="kv-squelch" type="range" min="0" max="8" value="4" style="width:120px; accent-color:var(--t-accent);"
-        oninput="_ctrlEditUntil=Date.now()+3000;document.getElementById('kv-sq-val').textContent=this.value"
-        onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('squelch',this.value)">
-      <span id="kv-sq-val" class="kv-val">4</span>
+  <!-- Controls -->
+  <div class="panel">
+    <div class="kv-ctrl-row">
+      <div class="kv-ctrl-group">
+        <span class="kv-label">Frequency (MHz)</span>
+        <div style="display:flex; gap:var(--s-1);">
+          <input id="kv-freq-input" class="kv-input" type="text" placeholder="146.520" onfocus="_ctrlEditUntil=Date.now()+5000">
+          <button class="rb rb-sm" onclick="kvCmd('freq',document.getElementById('kv-freq-input').value)">Set</button>
+        </div>
+      </div>
+      <div class="kv-ctrl-group">
+        <span class="kv-label">TX Freq (0=same)</span>
+        <div style="display:flex; gap:var(--s-1);">
+          <input id="kv-txfreq-input" class="kv-input" type="text" placeholder="0" onfocus="_ctrlEditUntil=Date.now()+5000">
+          <button class="rb rb-sm" onclick="kvCmd('txfreq',document.getElementById('kv-txfreq-input').value)">Set</button>
+        </div>
+      </div>
     </div>
-    <div>
-      <span class="kv-label">Volume (0-500%):</span><br>
-      <input id="kv-vol" type="range" min="0" max="500" value="100" style="width:120px; accent-color:var(--t-accent);"
-        oninput="_ctrlEditUntil=Date.now()+3000;document.getElementById('kv-vol-val').textContent=this.value+'%'"
-        onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('vol',this.value)">
-      <span id="kv-vol-val" class="kv-val">100%</span>
-    </div>
-    <div>
-      <span class="kv-label">Power:</span><br>
-      <select id="kv-power" class="kv-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('power',this.value)">
-        <option value="high">High</option><option value="low">Low</option>
-      </select>
-    </div>
-    <div>
-      <span class="kv-label">Bandwidth:</span><br>
-      <select id="kv-bw" class="kv-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('bandwidth',this.value)">
-        <option value="wide">Wide (25kHz)</option><option value="narrow">Narrow (12.5kHz)</option>
-      </select>
-    </div>
-  </div>
 
-  <div class="kv-row" style="margin-top:10px; flex-wrap:wrap; gap:12px;">
-    <div>
-      <span class="kv-label">CTCSS TX:</span><br>
-      <select id="kv-ctcss-tx" class="kv-input" onfocus="_ctrlEditUntil=Date.now()+30000">
-        <option value="0">None</option>
-        <option value="67.0">67.0 Hz</option><option value="71.9">71.9 Hz</option><option value="74.4">74.4 Hz</option><option value="77.0">77.0 Hz</option><option value="79.7">79.7 Hz</option><option value="82.5">82.5 Hz</option><option value="85.4">85.4 Hz</option><option value="88.5">88.5 Hz</option><option value="91.5">91.5 Hz</option><option value="94.8">94.8 Hz</option><option value="97.4">97.4 Hz</option><option value="100.0">100.0 Hz</option><option value="103.5">103.5 Hz</option><option value="107.2">107.2 Hz</option><option value="110.9">110.9 Hz</option><option value="114.8">114.8 Hz</option><option value="118.8">118.8 Hz</option><option value="123.0">123.0 Hz</option><option value="127.3">127.3 Hz</option><option value="131.8">131.8 Hz</option><option value="136.5">136.5 Hz</option><option value="141.3">141.3 Hz</option><option value="146.2">146.2 Hz</option><option value="151.4">151.4 Hz</option><option value="156.7">156.7 Hz</option><option value="162.2">162.2 Hz</option><option value="167.9">167.9 Hz</option><option value="173.8">173.8 Hz</option><option value="179.9">179.9 Hz</option><option value="186.2">186.2 Hz</option><option value="192.8">192.8 Hz</option><option value="203.5">203.5 Hz</option><option value="210.7">210.7 Hz</option><option value="218.1">218.1 Hz</option><option value="225.7">225.7 Hz</option><option value="233.6">233.6 Hz</option><option value="241.8">241.8 Hz</option><option value="250.3">250.3 Hz</option>
-      </select>
+    <div class="kv-ctrl-row">
+      <div class="kv-ctrl-group">
+        <span class="kv-label">Squelch (0-8)</span>
+        <div style="display:flex; gap:var(--s-2); align-items:center;">
+          <input id="kv-squelch" type="range" min="0" max="8" value="4" style="width:120px;"
+            oninput="_ctrlEditUntil=Date.now()+3000;document.getElementById('kv-sq-val').textContent=this.value"
+            onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('squelch',this.value)">
+          <span id="kv-sq-val" class="kv-val">4</span>
+        </div>
+      </div>
+      <div class="kv-ctrl-group">
+        <span class="kv-label">Volume (0-500%)</span>
+        <div style="display:flex; gap:var(--s-2); align-items:center;">
+          <input id="kv-vol" type="range" min="0" max="500" value="100" style="width:120px;"
+            oninput="_ctrlEditUntil=Date.now()+3000;document.getElementById('kv-vol-val').textContent=this.value+'%'"
+            onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('vol',this.value)">
+          <span id="kv-vol-val" class="kv-val">100%</span>
+        </div>
+      </div>
+      <div class="kv-ctrl-group">
+        <span class="kv-label">Power</span>
+        <select id="kv-power" class="kv-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('power',this.value)">
+          <option value="high">High</option><option value="low">Low</option>
+        </select>
+      </div>
+      <div class="kv-ctrl-group">
+        <span class="kv-label">Bandwidth</span>
+        <select id="kv-bw" class="kv-select" onfocus="_ctrlEditUntil=Date.now()+5000" onchange="_ctrlEditUntil=Date.now()+3000;kvCmd('bandwidth',this.value)">
+          <option value="wide">Wide (25kHz)</option><option value="narrow">Narrow (12.5kHz)</option>
+        </select>
+      </div>
     </div>
-    <div>
-      <span class="kv-label">CTCSS RX:</span><br>
-      <select id="kv-ctcss-rx" class="kv-input" onfocus="_ctrlEditUntil=Date.now()+30000">
-        <option value="0">None</option>
-        <option value="67.0">67.0 Hz</option><option value="71.9">71.9 Hz</option><option value="74.4">74.4 Hz</option><option value="77.0">77.0 Hz</option><option value="79.7">79.7 Hz</option><option value="82.5">82.5 Hz</option><option value="85.4">85.4 Hz</option><option value="88.5">88.5 Hz</option><option value="91.5">91.5 Hz</option><option value="94.8">94.8 Hz</option><option value="97.4">97.4 Hz</option><option value="100.0">100.0 Hz</option><option value="103.5">103.5 Hz</option><option value="107.2">107.2 Hz</option><option value="110.9">110.9 Hz</option><option value="114.8">114.8 Hz</option><option value="118.8">118.8 Hz</option><option value="123.0">123.0 Hz</option><option value="127.3">127.3 Hz</option><option value="131.8">131.8 Hz</option><option value="136.5">136.5 Hz</option><option value="141.3">141.3 Hz</option><option value="146.2">146.2 Hz</option><option value="151.4">151.4 Hz</option><option value="156.7">156.7 Hz</option><option value="162.2">162.2 Hz</option><option value="167.9">167.9 Hz</option><option value="173.8">173.8 Hz</option><option value="179.9">179.9 Hz</option><option value="186.2">186.2 Hz</option><option value="192.8">192.8 Hz</option><option value="203.5">203.5 Hz</option><option value="210.7">210.7 Hz</option><option value="218.1">218.1 Hz</option><option value="225.7">225.7 Hz</option><option value="233.6">233.6 Hz</option><option value="241.8">241.8 Hz</option><option value="250.3">250.3 Hz</option>
-      </select>
+
+    <div class="kv-ctrl-row" style="align-items:flex-end;">
+      <div class="kv-ctrl-group">
+        <span class="kv-label">CTCSS TX</span>
+        <select id="kv-ctcss-tx" class="kv-select" onfocus="_ctrlEditUntil=Date.now()+30000">
+          <option value="0">None</option>
+          <option value="67.0">67.0 Hz</option><option value="71.9">71.9 Hz</option><option value="74.4">74.4 Hz</option><option value="77.0">77.0 Hz</option><option value="79.7">79.7 Hz</option><option value="82.5">82.5 Hz</option><option value="85.4">85.4 Hz</option><option value="88.5">88.5 Hz</option><option value="91.5">91.5 Hz</option><option value="94.8">94.8 Hz</option><option value="97.4">97.4 Hz</option><option value="100.0">100.0 Hz</option><option value="103.5">103.5 Hz</option><option value="107.2">107.2 Hz</option><option value="110.9">110.9 Hz</option><option value="114.8">114.8 Hz</option><option value="118.8">118.8 Hz</option><option value="123.0">123.0 Hz</option><option value="127.3">127.3 Hz</option><option value="131.8">131.8 Hz</option><option value="136.5">136.5 Hz</option><option value="141.3">141.3 Hz</option><option value="146.2">146.2 Hz</option><option value="151.4">151.4 Hz</option><option value="156.7">156.7 Hz</option><option value="162.2">162.2 Hz</option><option value="167.9">167.9 Hz</option><option value="173.8">173.8 Hz</option><option value="179.9">179.9 Hz</option><option value="186.2">186.2 Hz</option><option value="192.8">192.8 Hz</option><option value="203.5">203.5 Hz</option><option value="210.7">210.7 Hz</option><option value="218.1">218.1 Hz</option><option value="225.7">225.7 Hz</option><option value="233.6">233.6 Hz</option><option value="241.8">241.8 Hz</option><option value="250.3">250.3 Hz</option>
+        </select>
+      </div>
+      <div class="kv-ctrl-group">
+        <span class="kv-label">CTCSS RX</span>
+        <select id="kv-ctcss-rx" class="kv-select" onfocus="_ctrlEditUntil=Date.now()+30000">
+          <option value="0">None</option>
+          <option value="67.0">67.0 Hz</option><option value="71.9">71.9 Hz</option><option value="74.4">74.4 Hz</option><option value="77.0">77.0 Hz</option><option value="79.7">79.7 Hz</option><option value="82.5">82.5 Hz</option><option value="85.4">85.4 Hz</option><option value="88.5">88.5 Hz</option><option value="91.5">91.5 Hz</option><option value="94.8">94.8 Hz</option><option value="97.4">97.4 Hz</option><option value="100.0">100.0 Hz</option><option value="103.5">103.5 Hz</option><option value="107.2">107.2 Hz</option><option value="110.9">110.9 Hz</option><option value="114.8">114.8 Hz</option><option value="118.8">118.8 Hz</option><option value="123.0">123.0 Hz</option><option value="127.3">127.3 Hz</option><option value="131.8">131.8 Hz</option><option value="136.5">136.5 Hz</option><option value="141.3">141.3 Hz</option><option value="146.2">146.2 Hz</option><option value="151.4">151.4 Hz</option><option value="156.7">156.7 Hz</option><option value="162.2">162.2 Hz</option><option value="167.9">167.9 Hz</option><option value="173.8">173.8 Hz</option><option value="179.9">179.9 Hz</option><option value="186.2">186.2 Hz</option><option value="192.8">192.8 Hz</option><option value="203.5">203.5 Hz</option><option value="210.7">210.7 Hz</option><option value="218.1">218.1 Hz</option><option value="225.7">225.7 Hz</option><option value="233.6">233.6 Hz</option><option value="241.8">241.8 Hz</option><option value="250.3">250.3 Hz</option>
+        </select>
+      </div>
+      <button class="rb rb-sm" onclick="kvCmd('ctcss',document.getElementById('kv-ctcss-tx').value+' '+document.getElementById('kv-ctcss-rx').value)">Set CTCSS</button>
     </div>
-    <button class="rb rb-sm" onclick="kvCmd('ctcss',document.getElementById('kv-ctcss-tx').value+' '+document.getElementById('kv-ctcss-rx').value)" style="align-self:flex-end;">Set CTCSS</button>
   </div>
-</div>
 
 </div><!-- end kv-panel -->
 
@@ -194,7 +227,6 @@
 var _ctrlEditUntil = 0;
 var _ctcss_tones = ["67.0","71.9","74.4","77.0","79.7","82.5","85.4","88.5","91.5","94.8","97.4","100.0","103.5","107.2","110.9","114.8","118.8","123.0","127.3","131.8","136.5","141.3","146.2","151.4","156.7","162.2","167.9","173.8","179.9","186.2","192.8","203.5","210.7","218.1","225.7","233.6","241.8","250.3"];
 function _ctcssCode2Hz(code) {
-  // code 0 = none, code 1..N = tones[0..N-1]
   if (!code || code <= 0) return '0';
   var t = _ctcss_tones[code - 1];
   return t !== undefined ? t : '0';
@@ -205,14 +237,15 @@ function kvCmd(cmd, args) {
   postJson('/kv4pcmd', body)
     .then(function(d){
       var fb = document.getElementById('kv-feedback');
+      fb.classList.remove('ok', 'err');
       if (d.ok) {
-        fb.style.color = '#2ecc71';
+        fb.className = 'kv-feedback kv-val ok';
         fb.textContent = d.response || 'OK';
       } else {
-        fb.style.color = '#e74c3c';
+        fb.className = 'kv-feedback kv-val err';
         fb.textContent = d.error || 'Error';
       }
-      setTimeout(function(){ fb.textContent = ''; }, 4000);
+      setTimeout(function(){ fb.textContent = ''; fb.className = 'kv-feedback'; }, 4000);
     });
 }
 
@@ -240,12 +273,10 @@ function kvUpdate(d) {
     document.getElementById('kv-fw').textContent = 'v' + (d.firmware_version || '?');
     document.getElementById('kv-module').textContent = d.rf_module || '?';
     document.getElementById('kv-audio-status').textContent = d.audio_connected ? 'Connected' : 'No codec';
-    document.getElementById('kv-tx-badge').style.display = d.transmitting ? 'inline' : 'none';
+    document.getElementById('kv-tx-badge').classList.toggle('on', !!d.transmitting);
 
-    // Red background on freq display during TX
-    var kvFreqBox = document.getElementById('kv-freq-box');
-    kvFreqBox.style.background = d.transmitting ? '#5c1a1a' : '';
-    kvFreqBox.style.borderColor = d.transmitting ? '#e74c3c' : '';
+    // TX overlay on freq display via class, not inline style
+    document.getElementById('kv-freq-box').classList.toggle('tx-active', !!d.transmitting);
 
     // Frequency — show TX freq as primary when transmitting on a split
     var rxf = d.frequency || '0.000000';
@@ -253,32 +284,32 @@ function kvUpdate(d) {
     var isSplit = (txf !== rxf);
 
     if (d.transmitting && isSplit) {
-      // TX active on split: big display = TX freq, small row = RX freq
       document.getElementById('kv-rx-label').textContent = 'TX';
       document.getElementById('kv-rx-freq').textContent = parseFloat(txf).toFixed(4);
       document.getElementById('kv-tx-freq-row').style.display = 'flex';
       document.getElementById('kv-tx-label').textContent = 'RX';
       document.getElementById('kv-tx-freq').textContent = parseFloat(rxf).toFixed(4);
     } else if (isSplit) {
-      // Split but not TX: big display = RX, small row = TX
       document.getElementById('kv-rx-label').textContent = 'RX';
       document.getElementById('kv-rx-freq').textContent = parseFloat(rxf).toFixed(4);
       document.getElementById('kv-tx-freq-row').style.display = 'flex';
       document.getElementById('kv-tx-label').textContent = 'TX';
       document.getElementById('kv-tx-freq').textContent = parseFloat(txf).toFixed(4);
     } else {
-      // Simplex
       document.getElementById('kv-rx-label').textContent = 'RX';
       document.getElementById('kv-rx-freq').textContent = parseFloat(rxf).toFixed(4);
       document.getElementById('kv-tx-freq-row').style.display = 'none';
     }
 
-    // S-meter: raw 0-255 → S0-S9
+    // S-meter: raw 0-255 → S0-S9; color shifts warn/err above thresholds.
     var raw = d.signal || 0;
     var s = Math.round(raw * 9 / 255);
     var pct = Math.min(100, Math.round(raw * 100 / 255));
     document.getElementById('kv-meter-fill').style.width = pct + '%';
     document.getElementById('kv-meter-text').textContent = 'S' + s + ' (' + raw + ')';
+    var sigMeter = document.getElementById('kv-sig-meter');
+    sigMeter.classList.toggle('warn', pct >= 70 && pct < 90);
+    sigMeter.classList.toggle('err',  pct >= 90);
 
     // Audio level
     var aLvl = Math.round(d.audio_level || 0);
