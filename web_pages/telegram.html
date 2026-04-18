@@ -5,102 +5,114 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Telegram Bot</title>
 <link rel="stylesheet" href="/pages/common.css">
+<style>
+  .tg-row { display:flex; align-items:center; gap:var(--s-3);
+            margin-bottom:var(--s-2); flex-wrap:wrap; }
+  .tg-row:last-child { margin-bottom:0; }
+  .tg-label { color:var(--t-text-dim); font-size:var(--f-sm); min-width:110px; }
+  .tg-val { color:var(--t-text); font-size:var(--f-sm); }
+  .tg-val.ok  { color:var(--t-ok); }
+  .tg-val.err { color:var(--t-err); }
+  .tg-val.accent { color:var(--t-accent); }
+  .tg-dot { font-size:var(--f-md); color:var(--t-text-mute); }
+  .tg-dot.ok   { color:var(--t-ok); }
+  .tg-dot.err  { color:var(--t-err); }
+  .tg-dot.warn { color:var(--t-warn); }
+  .tg-stat-big { color:var(--t-accent); font-size:var(--f-lg); font-weight:700; }
+  .tg-feedback { font-size:var(--f-xs); min-height:1.2em; margin-top:var(--s-1);
+                 color:var(--t-text-dim); }
+  .tg-feedback.ok  { color:var(--t-ok); }
+  .tg-feedback.err { color:var(--t-err); }
+  .tg-feedback.working { color:var(--t-warn); }
+
+  .tg-msg { background:var(--t-btn); border:1px solid var(--t-border);
+            border-radius:var(--r-sm); padding:var(--s-2) var(--s-3);
+            margin-top:var(--s-2); font-size:var(--f-sm); }
+  .tg-msg.in  { border-left:3px solid var(--t-accent); }
+  .tg-msg.out { border-left:3px solid var(--t-ok); }
+  .tg-msg-time { color:var(--t-text-dim); font-size:var(--f-xs); margin-right:var(--s-2); }
+
+  .tg-log-box { background:var(--t-bg); border:1px solid var(--t-border);
+                border-radius:var(--r-sm); padding:var(--s-2);
+                font-size:var(--f-xs); color:var(--t-text);
+                max-height:300px; overflow-y:auto;
+                white-space:pre-wrap; word-break:break-all; display:none;
+                font-family:inherit; }
+
+  .tg-sep { color:var(--t-text-mute); }
+
+  .panel h3 { margin:0 0 var(--s-2); color:var(--t-accent);
+              font-size:var(--f-sm); text-transform:uppercase;
+              letter-spacing:0.08em; font-weight:600; }
+</style>
 </head>
 <body>
 
-
-<style>
-.tg-panel { background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; margin-bottom:14px; font-family:monospace; font-size:0.95em; }
-.tg-row { display:flex; align-items:center; gap:14px; margin-bottom:8px; flex-wrap:wrap; }
-.tg-label { color:#888; font-size:0.85em; min-width:90px; }
-.tg-val { color:#e0e0e0; }
-.tg-dot { font-size:1.2em; }
-.tg-ok { color:#2ecc71; }
-.tg-err { color:#e74c3c; }
-.tg-warn { color:#f39c12; }
-.rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px; background:var(--t-btn);
-  color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.95em; }
-.rb:hover { background:var(--t-btn-hover); border-color:var(--t-accent); }
-.rb:active { background:var(--t-border); }
-.rb-sm { font-size:0.8em; padding:5px 10px; }
-.rb-danger { border-color:#e74c3c; }
-.rb-danger:hover { background:#5c1a1a; }
-.tg-msg { background:var(--t-btn); border:1px solid var(--t-btn-border); border-radius:4px; padding:10px 14px;
-  margin-bottom:6px; font-size:0.9em; }
-.tg-msg-in { border-left:3px solid var(--t-accent); }
-.tg-msg-out { border-left:3px solid #2ecc71; }
-.tg-msg-time { color:#888; font-size:0.8em; margin-right:8px; }
-.tg-log-box { background:#111; border:1px solid var(--t-border); border-radius:4px; padding:10px;
-  font-size:0.8em; color:#ccc; max-height:300px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; display:none; }
-</style>
-
 <!-- Status Panel -->
-<div class="tg-panel">
+<div class="panel">
   <div class="tg-row">
-    <span class="tg-label">Bot Service:</span>
+    <span class="tg-label">Bot Service</span>
     <span id="tg-bot-dot" class="tg-dot">&#x25cf;</span>
     <span id="tg-bot-state" class="tg-val">--</span>
     <span style="flex:1;"></span>
-    <span id="tg-bot-user" style="color:var(--t-accent); font-size:0.9em;"></span>
+    <span id="tg-bot-user" class="tg-val accent"></span>
   </div>
   <div class="tg-row">
-    <span class="tg-label">Claude tmux:</span>
+    <span class="tg-label">Claude tmux</span>
     <span id="tg-tmux-dot" class="tg-dot">&#x25cf;</span>
     <span id="tg-tmux-state" class="tg-val">--</span>
-    <span style="margin-left:4px;">
-      <button class="rb rb-sm" onclick="openTmux()" title="Open terminal attached to Claude tmux session">Open tmux</button>
-    </span>
+    <button class="rb rb-sm" onclick="openTmux()" title="Open terminal attached to Claude tmux session">Open tmux</button>
   </div>
   <div class="tg-row">
-    <span class="tg-label">Session:</span>
+    <span class="tg-label">Session</span>
     <span id="tg-session" class="tg-val">--</span>
   </div>
   <div class="tg-row">
-    <span class="tg-label">Config:</span>
+    <span class="tg-label">Config</span>
     <span id="tg-config-dot" class="tg-dot">&#x25cf;</span>
     <span id="tg-config-state" class="tg-val">--</span>
   </div>
-  <div id="tg-feedback" style="font-size:0.85em; min-height:18px; margin-top:4px;"></div>
+  <div id="tg-feedback" class="tg-feedback"></div>
 </div>
 
 <!-- Stats Panel -->
-<div class="tg-panel">
-  <h3 style="margin:0 0 10px 0; color:var(--t-accent); font-size:1em;">Activity</h3>
+<div class="panel">
+  <h3>Activity</h3>
   <div class="tg-row">
-    <span class="tg-label">Messages today:</span>
-    <span id="tg-msgs-today" class="tg-val" style="color:var(--t-accent); font-size:1.2em;">--</span>
+    <span class="tg-label">Messages today</span>
+    <span id="tg-msgs-today" class="tg-stat-big">--</span>
   </div>
   <div class="tg-row">
-    <span class="tg-label">Last incoming:</span>
+    <span class="tg-label">Last incoming</span>
     <span id="tg-last-in" class="tg-val">--</span>
   </div>
   <div class="tg-row">
-    <span class="tg-label">Last reply:</span>
-    <span id="tg-last-out" class="tg-val" style="color:#2ecc71;">--</span>
+    <span class="tg-label">Last reply</span>
+    <span id="tg-last-out" class="tg-val ok">--</span>
   </div>
-  <div id="tg-last-msg" class="tg-msg tg-msg-in" style="display:none;">
+  <div id="tg-last-msg" class="tg-msg in" style="display:none;">
     <span class="tg-msg-time" id="tg-last-msg-time"></span>
     <span id="tg-last-msg-text"></span>
   </div>
 </div>
 
 <!-- Service Controls -->
-<div class="tg-panel">
-  <h3 style="margin:0 0 10px 0; color:var(--t-accent); font-size:1em;">Service Controls</h3>
+<div class="panel">
+  <h3>Service Controls</h3>
   <div class="tg-row">
     <button class="rb rb-sm" onclick="tgCmd('start')">Start</button>
-    <button class="rb rb-sm" onclick="tgCmd('stop')" >Stop</button>
+    <button class="rb rb-sm" onclick="tgCmd('stop')">Stop</button>
     <button class="rb rb-sm" onclick="tgCmd('restart')">Restart</button>
-    <span style="color:#555;">|</span>
+    <span class="tg-sep">|</span>
     <button class="rb rb-sm" onclick="tgCmd('enable')">Enable on boot</button>
     <button class="rb rb-sm rb-danger" onclick="tgCmd('disable')">Disable on boot</button>
   </div>
 </div>
 
 <!-- Logs -->
-<div class="tg-panel">
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1em;">Service Logs</h3>
+<div class="panel">
+  <div style="display:flex; align-items:center; gap:var(--s-3); margin-bottom:var(--s-2);">
+    <h3 style="margin:0;">Service Logs</h3>
     <button class="rb rb-sm" onclick="tgLogs()">Load logs</button>
     <button class="rb rb-sm" onclick="document.getElementById('tg-log-box').style.display='none'">Hide</button>
   </div>
@@ -109,17 +121,25 @@
 
 <script src="/pages/common.js"></script>
 <script>
-function tgCmd(cmd) {
+function setFeedback(text, cls) {
   var fb = document.getElementById('tg-feedback');
-  fb.style.color = '#f39c12'; fb.textContent = cmd + '...';
+  fb.textContent = text || '';
+  fb.className = 'tg-feedback' + (cls ? ' ' + cls : '');
+}
+
+function setDot(id, cls) {
+  document.getElementById(id).className = 'tg-dot ' + cls;
+}
+
+function tgCmd(cmd) {
+  setFeedback(cmd + '...', 'working');
   postJson('/telegramcmd', {cmd:cmd})
     .then(function(d){
-      fb.style.color = d.ok ? '#2ecc71' : '#e74c3c';
-      fb.textContent = d.ok ? cmd + ' OK' : (d.error || 'failed');
-      setTimeout(function(){ fb.textContent=''; }, 4000);
+      setFeedback(d.ok ? cmd + ' OK' : (d.error || 'failed'), d.ok ? 'ok' : 'err');
+      setTimeout(function(){ setFeedback(''); }, 4000);
       tgPoll();
     })
-    .catch(function(e){ fb.style.color='#e74c3c'; fb.textContent=String(e); });
+    .catch(function(e){ setFeedback(String(e), 'err'); });
 }
 
 function tgLogs() {
@@ -134,43 +154,33 @@ function tgLogs() {
 
 function tgPoll() {
   fetch('/telegramstatus').then(function(r){return r.json()}).then(function(d) {
-    // Bot status
-    var botDot = document.getElementById('tg-bot-dot');
-    var botState = document.getElementById('tg-bot-state');
-    botDot.className = 'tg-dot ' + (d.bot_running ? 'tg-ok' : 'tg-err');
-    botState.textContent = d.bot_running ? 'Running' : 'Stopped';
+    setDot('tg-bot-dot', d.bot_running ? 'ok' : 'err');
+    document.getElementById('tg-bot-state').textContent = d.bot_running ? 'Running' : 'Stopped';
     document.getElementById('tg-bot-user').textContent = d.bot_username || '';
 
-    // tmux status
-    var tmuxDot = document.getElementById('tg-tmux-dot');
-    var tmuxState = document.getElementById('tg-tmux-state');
-    tmuxDot.className = 'tg-dot ' + (d.tmux_active ? 'tg-ok' : 'tg-err');
-    tmuxState.textContent = d.tmux_active ? 'Active' : 'Not found';
+    setDot('tg-tmux-dot', d.tmux_active ? 'ok' : 'err');
+    document.getElementById('tg-tmux-state').textContent = d.tmux_active ? 'Active' : 'Not found';
     document.getElementById('tg-session').textContent = d.tmux_session || '--';
 
-    // Config status
-    var cfgDot = document.getElementById('tg-config-dot');
     var cfgState = document.getElementById('tg-config-state');
     if (d.enabled && d.token_set) {
-      cfgDot.className = 'tg-dot tg-ok';
+      setDot('tg-config-dot', 'ok');
       cfgState.textContent = 'Enabled, token set';
     } else if (d.enabled && !d.token_set) {
-      cfgDot.className = 'tg-dot tg-warn';
+      setDot('tg-config-dot', 'warn');
       cfgState.textContent = 'Enabled but no token';
     } else if (!d.enabled && d.token_set) {
-      cfgDot.className = 'tg-dot tg-warn';
+      setDot('tg-config-dot', 'warn');
       cfgState.textContent = 'Disabled (token set)';
     } else {
-      cfgDot.className = 'tg-dot tg-err';
+      setDot('tg-config-dot', 'err');
       cfgState.textContent = 'Disabled, no token';
     }
 
-    // Activity
     document.getElementById('tg-msgs-today').textContent = d.messages_today != null ? d.messages_today : '--';
     document.getElementById('tg-last-in').textContent = fmtTimestamp(d.last_message_time);
     document.getElementById('tg-last-out').textContent = fmtTimestamp(d.last_reply_time);
 
-    // Last message preview
     var msgBox = document.getElementById('tg-last-msg');
     if (d.last_message_text) {
       msgBox.style.display = 'block';

@@ -5,25 +5,39 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gateway Logs</title>
 <link rel="stylesheet" href="/pages/common.css">
+<style>
+  .log-toolbar { margin-bottom:var(--s-2); display:flex; gap:var(--s-3);
+                 align-items:center; flex-wrap:wrap; }
+  .log-toolbar label { color:var(--t-text-dim); font-size:var(--f-sm); }
+  .log-filter { background:var(--t-btn); color:var(--t-text);
+                border:1px solid var(--t-btn-border); border-radius:var(--r-sm);
+                padding:2px var(--s-2); width:200px; font:inherit; font-size:var(--f-sm); }
+  .log-filter:focus { border-color:var(--t-accent); outline:none; }
+  .log-status { color:var(--t-text-dim); font-size:var(--f-xs); }
+
+  .log-box { background:var(--t-bg); border:1px solid var(--t-border);
+             border-radius:var(--r-md); padding:var(--s-2);
+             height:calc(100vh - 160px); overflow-y:auto;
+             font-family:inherit; font-size:var(--f-xs); line-height:1.5;
+             white-space:pre-wrap; word-break:break-all; color:var(--t-text); }
+  .log-box > div.err   { color:var(--t-err); }
+  .log-box > div.warn  { color:var(--t-warn); }
+  .log-box > div.cat   { color:var(--t-accent); }
+</style>
 </head>
 <body>
 
-<div style="margin-bottom:8px; display:flex; gap:10px; align-items:center;">
-  <label style="color:#888; font-size:0.85em;">
-    <input type="checkbox" id="auto-scroll" checked> Auto-scroll
-  </label>
-  <label style="color:#888; font-size:0.85em;">
-    Filter: <input type="text" id="log-filter" placeholder="regex..." style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:3px; padding:2px 6px; width:200px; font-size:0.85em;">
-  </label>
+<div class="log-toolbar">
+  <label><input type="checkbox" id="auto-scroll" checked> Auto-scroll</label>
+  <label>Filter: <input type="text" id="log-filter" placeholder="regex..." class="log-filter"></label>
   <button class="rb rb-sm" onclick="clearLog()">Clear</button>
   <button class="rb rb-sm" id="btn-trace" onclick="toggleTrace('audio')">Audio Trace</button>
   <button class="rb rb-sm" id="btn-watchdog" onclick="toggleTrace('watchdog')">Watchdog Trace</button>
-  <button class="rb rb-sm" id="btn-restart-gw" onclick="restartGateway()" style="background:#5a3b00; border-color:#c08a2c; color:#ffd98a; margin-left:auto;">Restart Gateway</button>
-  <button class="rb rb-sm" id="btn-reboot" onclick="rebootHost()" style="background:#7f0000; border-color:#c0392b; color:#ffcccc;">Reboot Host</button>
-  <span id="log-status" style="color:#888; font-size:0.8em;"></span>
+  <button class="rb rb-sm rb-warn" id="btn-restart-gw" onclick="restartGateway()" style="margin-left:auto;">Restart Gateway</button>
+  <button class="rb rb-sm rb-danger" id="btn-reboot" onclick="rebootHost()">Reboot Host</button>
+  <span id="log-status" class="log-status"></span>
 </div>
-<div id="log-box" style="background:#0a0a0a; border:1px solid var(--t-btn-border); border-radius:4px; padding:8px; height:calc(100vh - 160px); overflow-y:auto; font-family:'Courier New',monospace; font-size:0.82em; line-height:1.5; white-space:pre-wrap; word-break:break-all; color:#c0c0c0;">
-</div>
+<div id="log-box" class="log-box"></div>
 
 <script src="/pages/common.js"></script>
 <script>
@@ -33,32 +47,33 @@ function clearLog() {
   document.getElementById('log-box').innerHTML = '';
 }
 
+function setTraceBtn(id, active) {
+  var btn = document.getElementById(id);
+  btn.classList.toggle('rb-active', active);
+}
+
 function toggleTrace(type) {
   fetch('/tracecmd', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'type='+type})
     .then(function(r){ return r.json(); })
     .then(function(d) {
-      var btn = document.getElementById(type==='audio'?'btn-trace':'btn-watchdog');
-      if (d.active) {
-        btn.style.background = 'var(--t-btn-active)';
-        btn.style.borderColor = 'var(--t-accent)';
-        btn.style.color = 'var(--t-accent)';
-      } else {
-        btn.style.background = '';
-        btn.style.borderColor = '';
-        btn.style.color = '';
-      }
+      setTraceBtn(type==='audio'?'btn-trace':'btn-watchdog', !!d.active);
     });
 }
 
 function updateTraceButtons() {
   fetch('/tracestatus').then(function(r){ return r.json(); }).then(function(d) {
-    var ab = document.getElementById('btn-trace');
-    var wb = document.getElementById('btn-watchdog');
-    if (d.audio_trace) { ab.style.background='var(--t-btn-active)'; ab.style.borderColor='var(--t-accent)'; ab.style.color='var(--t-accent)'; }
-    if (d.watchdog_trace) { wb.style.background='var(--t-btn-active)'; wb.style.borderColor='var(--t-accent)'; wb.style.color='var(--t-accent)'; }
+    setTraceBtn('btn-trace', !!d.audio_trace);
+    setTraceBtn('btn-watchdog', !!d.watchdog_trace);
   }).catch(function(){});
 }
 updateTraceButtons();
+
+function classifyLine(t) {
+  if (t.indexOf('error') >= 0 || t.indexOf('Error') >= 0 || t.indexOf('ERROR') >= 0) return 'err';
+  if (t.indexOf('Warning') >= 0 || t.indexOf('warning') >= 0) return 'warn';
+  if (t.indexOf('[CAT]') >= 0 || t.indexOf('CAT') >= 0) return 'cat';
+  return '';
+}
 
 function pollLogs() {
   fetch('/logdata?after=' + _seq)
@@ -75,13 +90,8 @@ function pollLogs() {
           if (re && !re.test(d.lines[i])) continue;
           var div = document.createElement('div');
           div.textContent = d.lines[i];
-          var t = d.lines[i];
-          if (t.indexOf('error') >= 0 || t.indexOf('Error') >= 0 || t.indexOf('ERROR') >= 0)
-            div.style.color = '#e74c3c';
-          else if (t.indexOf('Warning') >= 0 || t.indexOf('warning') >= 0)
-            div.style.color = '#f39c12';
-          else if (t.indexOf('[CAT]') >= 0 || t.indexOf('CAT') >= 0)
-            div.style.color = '#3498db';
+          var cls = classifyLine(d.lines[i]);
+          if (cls) div.className = cls;
           frag.appendChild(div);
         }
         box.appendChild(frag);
@@ -148,7 +158,6 @@ function restartGateway() {
   }, 1000);
 }
 
-// Load initial backlog
 fetch('/logdata?after=0')
   .then(function(r){ return r.json(); })
   .then(function(d) {

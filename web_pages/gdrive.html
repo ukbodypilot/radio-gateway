@@ -6,50 +6,54 @@
 <title>Google Drive</title>
 <link rel="stylesheet" href="/pages/common.css">
 <style>
-  .status-card { background:var(--t-panel); border:1px solid var(--t-btn-border); border-radius:6px;
-    padding:12px; margin-bottom:10px; }
-  .status-row { display:flex; gap:10px; align-items:center; margin-bottom:6px; font-size:0.9em; }
-  .status-label { color:#888; min-width:110px; }
-  .status-value { color:#e0e0e0; font-family:monospace; }
-  .status-ok { color:#2ecc71; }
-  .status-err { color:#e74c3c; }
+  .gd-row { display:flex; gap:var(--s-3); align-items:center; margin-bottom:var(--s-1);
+            font-size:var(--f-sm); }
+  .gd-label { color:var(--t-text-dim); min-width:110px; }
+  .gd-val { color:var(--t-text); font-family:inherit; }
+  .gd-val.ok  { color:var(--t-ok); }
+  .gd-val.err { color:var(--t-err); }
 
-  .file-table { width:100%; border-collapse:collapse; font-size:0.85em; margin-top:8px; }
-  .file-table th { text-align:left; color:#888; padding:4px 8px; border-bottom:1px solid #333; }
-  .file-table td { padding:4px 8px; color:#ccc; font-family:monospace; border-bottom:1px solid #1a1a1a; }
-  .file-table tr:hover td { background:rgba(255,255,255,0.03); }
-  .file-size { color:#888; }
+  .gd-toolbar { display:flex; align-items:center; gap:var(--s-3);
+                padding:var(--s-2) 0; font-size:var(--f-sm); }
+  .gd-msg { color:var(--t-text-dim); font-size:var(--f-xs); }
 
-  .toolbar { display:flex; align-items:center; gap:10px; padding:8px 0; font-size:0.85em; }
-  .toolbar button { padding:4px 12px; background:var(--t-btn); color:#ccc; border:1px solid var(--t-btn-border);
-    border-radius:3px; cursor:pointer; font-family:monospace; }
-  .toolbar button:hover { background:var(--t-btn-hover); }
-  .toolbar .status-msg { color:#888; font-size:0.85em; }
+  .file-tbl { width:100%; border-collapse:collapse; font-size:var(--f-xs);
+              margin-top:var(--s-2); }
+  .file-tbl th { text-align:left; color:var(--t-text-dim);
+                 padding:var(--s-1) var(--s-2); border-bottom:1px solid var(--t-border);
+                 font-weight:600; letter-spacing:0.06em; text-transform:uppercase; }
+  .file-tbl td { padding:var(--s-1) var(--s-2); color:var(--t-text);
+                 font-family:inherit; border-bottom:1px solid var(--t-border); }
+  .file-tbl tr:hover td { background:var(--t-panel-hi); }
+  .file-size { color:var(--t-text-dim); }
+  .file-empty { color:var(--t-text-mute); font-style:italic; }
+  .file-err   { color:var(--t-err); }
 
-  .not-configured { color:#666; text-align:center; padding:60px 0; font-size:1.1em; }
+  .not-configured { color:var(--t-text-mute); text-align:center;
+                    padding:60px 0; font-size:var(--f-md); }
 </style>
 </head>
 <body>
 
 <div id="content">
-  <div class="status-card" id="status-card">
-    <div class="status-row"><span class="status-label">Status</span><span class="status-value" id="st-status">--</span></div>
-    <div class="status-row"><span class="status-label">Remote</span><span class="status-value" id="st-remote">--</span></div>
-    <div class="status-row"><span class="status-label">Folder</span><span class="status-value" id="st-folder">--</span></div>
-    <div class="status-row"><span class="status-label">Storage</span><span class="status-value" id="st-storage">--</span></div>
-    <div class="status-row"><span class="status-label">Tunnel URL</span><span class="status-value" id="st-tunnel">--</span></div>
+  <div class="panel" id="status-card">
+    <div class="gd-row"><span class="gd-label">Status</span><span class="gd-val" id="st-status">--</span></div>
+    <div class="gd-row"><span class="gd-label">Remote</span><span class="gd-val" id="st-remote">--</span></div>
+    <div class="gd-row"><span class="gd-label">Folder</span><span class="gd-val" id="st-folder">--</span></div>
+    <div class="gd-row"><span class="gd-label">Storage</span><span class="gd-val" id="st-storage">--</span></div>
+    <div class="gd-row"><span class="gd-label">Tunnel URL</span><span class="gd-val" id="st-tunnel">--</span></div>
   </div>
 
-  <div class="toolbar">
-    <button onclick="refreshFiles()">Refresh</button>
-    <button onclick="publishTunnel()">Publish Tunnel URL</button>
-    <span class="status-msg" id="action-status"></span>
+  <div class="gd-toolbar">
+    <button class="rb rb-sm" onclick="refreshFiles()">Refresh</button>
+    <button class="rb rb-sm" onclick="publishTunnel()">Publish Tunnel URL</button>
+    <span class="gd-msg" id="action-status"></span>
   </div>
 
   <div id="files-container">
-    <table class="file-table">
+    <table class="file-tbl">
       <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Type</th></tr></thead>
-      <tbody id="files-body"><tr><td colspan="4" style="color:#666;">Loading...</td></tr></tbody>
+      <tbody id="files-body"><tr><td colspan="4" class="file-empty">Loading...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -60,6 +64,12 @@
 </div>
 
 <script>
+function setVal(id, text, cls) {
+  var el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'gd-val' + (cls ? ' ' + cls : '');
+}
+
 function init() {
   loadStatus();
   loadFiles();
@@ -72,16 +82,12 @@ function loadStatus() {
       document.getElementById('not-configured').style.display = '';
       return;
     }
-    var el = document.getElementById('st-status');
     if (d.authenticated && d.folder_accessible) {
-      el.textContent = 'Connected';
-      el.className = 'status-value status-ok';
+      setVal('st-status', 'Connected', 'ok');
     } else if (d.authenticated) {
-      el.textContent = 'Auth OK (folder error: ' + (d.folder_error || '?') + ')';
-      el.className = 'status-value status-err';
+      setVal('st-status', 'Auth OK (folder error: ' + (d.folder_error || '?') + ')', 'err');
     } else {
-      el.textContent = d.folder_error || 'Not connected';
-      el.className = 'status-value status-err';
+      setVal('st-status', d.folder_error || 'Not connected', 'err');
     }
     document.getElementById('st-remote').textContent = d.remote || '--';
     document.getElementById('st-folder').textContent = d.folder_path || '--';
@@ -92,20 +98,12 @@ function loadStatus() {
       document.getElementById('st-storage').textContent = used + ' / ' + total + ' (' + free + ' free)';
     }
   }).catch(function(e) {
-    document.getElementById('st-status').textContent = 'Error: ' + e.message;
-    document.getElementById('st-status').className = 'status-value status-err';
+    setVal('st-status', 'Error: ' + e.message, 'err');
   });
 
-  // Also fetch tunnel URL
   fetch('/api/tunnel/link-url').then(function(r){return r.json();}).then(function(d) {
-    var el = document.getElementById('st-tunnel');
-    if (d.ws_link) {
-      el.textContent = d.ws_link;
-      el.className = 'status-value status-ok';
-    } else {
-      el.textContent = 'No tunnel active';
-      el.className = 'status-value status-err';
-    }
+    if (d.ws_link) setVal('st-tunnel', d.ws_link, 'ok');
+    else setVal('st-tunnel', 'No tunnel active', 'err');
   }).catch(function(){});
 }
 
@@ -115,7 +113,7 @@ function refreshFiles() {
   fetch('/api/gdrive/files').then(function(r){return r.json();}).then(function(d) {
     var tbody = document.getElementById('files-body');
     if (!d.files || !d.files.length) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">No files</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="file-empty">No files</td></tr>';
       return;
     }
     var html = '';
@@ -128,7 +126,7 @@ function refreshFiles() {
     }
     tbody.innerHTML = html;
   }).catch(function(e) {
-    document.getElementById('files-body').innerHTML = '<tr><td colspan="4" style="color:#e74c3c;">Error: ' + e.message + '</td></tr>';
+    document.getElementById('files-body').innerHTML = '<tr><td colspan="4" class="file-err">Error: ' + e.message + '</td></tr>';
   });
 }
 

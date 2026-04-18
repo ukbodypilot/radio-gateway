@@ -1,24 +1,23 @@
 <!DOCTYPE html>
 <html style="height:100%;margin:0;padding:0"><head>
 <meta charset="utf-8">
+<link rel="stylesheet" href="/pages/common.css">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; overflow: hidden; background: #1a1a2e; }
-  #adsb-frame { width: 100%; height: 100%; border: none; display: block; }
+  html, body { height:100%; overflow:hidden; margin:0; padding:0; background:var(--t-bg); }
+  #adsb-frame { width:100%; height:100%; border:none; display:block; }
   #adsb-error {
-    display: none; height: 100%; align-items: center; justify-content: center;
-    flex-direction: column; gap: 12px; color: #e0e0e0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-    background: #1a1a2e;
+    display:none; height:100%; align-items:center; justify-content:center;
+    flex-direction:column; gap:var(--s-3); color:var(--t-text); background:var(--t-bg);
   }
-  #adsb-error h2 { color: #e74c3c; }
-  #adsb-error code { color: #00d4ff; }
+  #adsb-error h2 { color:var(--t-err); }
+  #adsb-error code { color:var(--t-accent); }
+  #adsb-error .hint { color:var(--t-text-dim); }
 </style>
 </head><body>
 <div id="adsb-error">
   <h2>ADS-B Unavailable</h2>
   <p>dump1090-fa is not running on port 30080</p>
-  <p style="color:#888">Start it with:</p>
+  <p class="hint">Start it with:</p>
   <code>sudo systemctl start dump1090-fa</code>
 </div>
 <iframe id="adsb-frame" src="/adsb/"
