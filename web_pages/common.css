@@ -89,6 +89,10 @@ a:hover { text-decoration: underline; }
   border-color: var(--t-accent);
   color: var(--t-accent);
 }
+.rb.rb-danger  { color: var(--t-err); border-color: var(--t-err); }
+.rb.rb-danger:hover { background: var(--t-err); color: var(--t-bg); border-color: var(--t-err); }
+.rb.rb-primary { color: var(--t-accent); border-color: var(--t-accent); font-weight: 600; }
+.rb.rb-primary:hover { background: var(--t-accent); color: var(--t-bg); border-color: var(--t-accent); }
 
 /* Status text colors */
 .green  { color: var(--t-ok); }
