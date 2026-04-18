@@ -137,6 +137,92 @@ class EmailNotifier:
         subject = f"Gateway Online{' — ' + hostname if hostname else ''}"
         self.send(subject, '\n'.join(lines))
 
+    def send_periodic_status(self):
+        """Send a periodic (daily) status email. Same body as startup, different subject."""
+        import datetime
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        lines = [f"Radio Gateway daily status at {now}", ""]
+
+        if self.gateway and self.gateway.cloudflare_tunnel:
+            url = self.gateway.cloudflare_tunnel.get_url()
+            if url:
+                lines.append(f"Gateway:   {url}")
+                lines.append(f"Config:    {url}/config")
+                lines.append(f"Monitor:   {url}/monitor")
+                lines.append(f"Monitor App: {url}/ws_monitor")
+                tunnel_base = url.rstrip('/')
+                lines.append(f"Voice Tmux: {tunnel_base}/voice")
+                lines.append("")
+
+        port = int(getattr(self.config, 'WEB_CONFIG_PORT', 8080))
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+            lines.append(f"LAN:       http://{lan_ip}:{port}")
+            lines.append(f"LAN App:   http://{lan_ip}:{port}/ws_monitor")
+            lines.append(f"LAN Voice: http://{lan_ip}:{port}/voice")
+        except Exception:
+            pass
+        lines.append(f"Local:     http://localhost:{port}")
+        lines.append("")
+
+        mumble_srv = str(getattr(self.config, 'MUMBLE_SERVER', '') or '')
+        mumble_port = int(getattr(self.config, 'MUMBLE_PORT', 64738))
+        if mumble_srv:
+            lines.append(f"Mumble:    {mumble_srv}:{mumble_port}")
+
+        ddns_host = str(getattr(self.config, 'DDNS_HOSTNAME', '') or '')
+        if ddns_host:
+            lines.append(f"DDNS:      {ddns_host}")
+
+        lines.append("")
+        lines.append("-- Radio Gateway")
+        lines.append("")
+        lines += self._build_status_dump()
+
+        lines.append("")
+        lines.append("--- Recent Log ---")
+        try:
+            import sys as _sys
+            writer = _sys.stdout
+            if hasattr(writer, 'get_log_lines'):
+                import re as _re
+                _ansi_re = _re.compile(r'\x1b\[[0-9;]*m')
+                log_lines = writer.get_log_lines(after_seq=0, limit=200)
+                for _seq, text in log_lines:
+                    lines.append(_ansi_re.sub('', text))
+            else:
+                lines.append("(log not available)")
+        except Exception as e:
+            lines.append(f"(log error: {e})")
+
+        hostname = ''
+        try:
+            import socket
+            hostname = socket.gethostname()
+        except Exception:
+            pass
+
+        subject = f"Gateway Daily Status{' — ' + hostname if hostname else ''}"
+        self.send(subject, '\n'.join(lines))
+
+    def start_periodic_status(self, interval_seconds=86400):
+        """Start a background thread that sends a status email every N seconds (default 24h)."""
+        def _loop():
+            while True:
+                time.sleep(interval_seconds)
+                try:
+                    self.send_periodic_status()
+                except Exception as e:
+                    print(f"  [Email] Periodic status error: {e}")
+
+        t = threading.Thread(target=_loop, daemon=True, name="email-periodic")
+        t.start()
+
     def _build_status_dump(self):
         """Build a list of lines with a detailed gateway and system status dump."""
         lines = []

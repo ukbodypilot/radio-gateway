@@ -18,7 +18,7 @@
   .tg-dot.ok   { color:var(--t-ok); }
   .tg-dot.err  { color:var(--t-err); }
   .tg-dot.warn { color:var(--t-warn); }
-  .tg-stat-big { color:var(--t-accent); font-size:var(--f-lg); font-weight:700; }
+  .tg-stat-big { color:var(--t-accent); font-size:var(--f-xl); font-weight:700; font-variant-numeric:tabular-nums; }
   .tg-feedback { font-size:var(--f-xs); min-height:1.2em; margin-top:var(--s-1);
                  color:var(--t-text-dim); }
   .tg-feedback.ok  { color:var(--t-ok); }
@@ -177,8 +177,8 @@ function tgPoll() {
       cfgState.textContent = 'Disabled, no token';
     }
 
-    document.getElementById('tg-msgs-today').textContent = d.messages_today != null ? d.messages_today : '--';
-    document.getElementById('tg-last-in').textContent = fmtTimestamp(d.last_message_time);
+    setFlash(document.getElementById('tg-msgs-today'), d.messages_today != null ? d.messages_today : '--');
+    setFlash(document.getElementById('tg-last-in'), fmtTimestamp(d.last_message_time));
     document.getElementById('tg-last-out').textContent = fmtTimestamp(d.last_reply_time);
 
     var msgBox = document.getElementById('tg-last-msg');

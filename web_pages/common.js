@@ -116,3 +116,25 @@ function fmtBytes(b) {
   if (b >= 1024) return (b / 1024).toFixed(1) + ' KB/s';
   return b + ' B/s';
 }
+
+
+// ── Motion ─────────────────────────────────────────────────────────────────
+
+// Restart the CSS cell-flash animation on an element — use sparingly for
+// "this value just changed" moments. Pair with setFlash() for set-and-flash.
+function flashValue(el) {
+  if (!el) return;
+  el.classList.remove('flash');
+  void el.offsetWidth;   // force reflow so animation restarts
+  el.classList.add('flash');
+}
+
+// Set text content and flash iff the value actually changed.
+// Drop-in replacement for `el.textContent = x` on live-updating cells.
+function setFlash(el, text) {
+  if (!el) return;
+  var v = (text === null || text === undefined) ? '' : String(text);
+  if (el.textContent === v) return;
+  el.textContent = v;
+  flashValue(el);
+}

@@ -1707,6 +1707,9 @@ class RadioGateway:
                         print(f"  [Email] Notifier ready ({self.email_notifier._recipient})")
                         if getattr(self.config, 'EMAIL_ON_STARTUP', True):
                             self.email_notifier.send_startup_delayed()
+                        periodic_hours = int(getattr(self.config, 'EMAIL_PERIODIC_HOURS', 24) or 0)
+                        if periodic_hours > 0:
+                            self.email_notifier.start_periodic_status(periodic_hours * 3600)
                     else:
                         print(f"  [Email] Missing credentials — skipping")
                         self.email_notifier = None

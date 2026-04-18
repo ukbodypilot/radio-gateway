@@ -190,12 +190,17 @@
       <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     </div></div>
     <span class="shell-pcm">
-      <button id="play-btn" class="rb" onclick="toggleStream()">&#9654; MP3</button>
+      <button id="play-btn" class="rb" onclick="toggleStream()"><span class="icon icon-play"></span> MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="50" oninput="setVolume(this.value)">
-      <button id="ws-btn" class="rb" onclick="toggleWS()">&#9654; PCM</button>
+      <button id="ws-btn" class="rb" onclick="toggleWS()"><span class="icon icon-play"></span> PCM</button>
       <input id="ws-vol" type="range" min="0" max="100" value="50" oninput="setWSVol(this.value)">
-      <button id="mic-btn" class="rb" onclick="toggleMic()">&#127908; MIC</button>
+      <button id="mic-btn" class="rb" onclick="toggleMic()"><span class="icon icon-mic"></span> MIC</button>
     </span>
+  </div>
+  <div class="id-cluster" style="margin-left:auto; padding-left:var(--s-3); border-left:1px solid var(--t-border);">
+    <span class="id-site" id="id-site">--</span>
+    <span class="id-sep">&middot;</span>
+    <span class="id-clock" id="id-clock">--:--:--Z</span>
   </div>
 </div>
 <div id="shell-bars"></div>
@@ -222,6 +227,25 @@ document.addEventListener('click', function(e) {
     document.querySelectorAll('.nav-group').forEach(function(g){ g.classList.remove('open'); });
   }
 });
+
+// Identity: site name from /sysinfo (poll slowly), UTC clock ticks locally.
+function tickClock() {
+  var d = new Date();
+  var hh = String(d.getUTCHours()).padStart(2,'0');
+  var mm = String(d.getUTCMinutes()).padStart(2,'0');
+  var ss = String(d.getUTCSeconds()).padStart(2,'0');
+  document.getElementById('id-clock').textContent = hh+':'+mm+':'+ss+'Z';
+}
+setInterval(tickClock, 1000);
+tickClock();
+function loadIdentity() {
+  fetch('/sysinfo').then(function(r){return r.json();}).then(function(s) {
+    var name = s.gateway_name || s.hostname || '';
+    if (name) document.getElementById('id-site').textContent = name;
+  }).catch(function(){});
+}
+setInterval(loadIdentity, 60000);
+loadIdentity();
 // --- MP3 stream player ---
 var _audio = null;
 var _playing = false;
@@ -236,7 +260,7 @@ function startStream() {
 
   var btn = document.getElementById('play-btn');
   _playing = true;
-  btn.innerHTML = '&#9724; ...'; btn.classList.add('connecting'); btn.classList.remove('live');
+  btn.innerHTML = '<span class="icon icon-stop"></span> ...'; btn.classList.add('connecting'); btn.classList.remove('live');
 
   _audio = new Audio('/stream');
   _audio.volume = document.getElementById('vol-slider').value / 100;
@@ -244,10 +268,10 @@ function startStream() {
   _audio.onplaying = function() {
     _playing = true;
     _streamStart = Date.now();
-    btn.innerHTML = '&#9724; 0:00'; btn.classList.remove('connecting'); btn.classList.add('live');
+    btn.innerHTML = '<span class="icon icon-stop"></span> 0:00'; btn.classList.remove('connecting'); btn.classList.add('live');
     _streamTimer = setInterval(function() {
       var s = Math.floor((Date.now() - _streamStart) / 1000);
-      btn.innerHTML = '&#9724; ' + Math.floor(s/60) + ':' + (s%60<10?'0':'') + s%60;
+      btn.innerHTML = '<span class="icon icon-stop"></span> ' + Math.floor(s/60) + ':' + (s%60<10?'0':'') + s%60;
     }, 1000);
   };
 
@@ -266,7 +290,7 @@ function stopStream() {
   if (_audio) { try { _audio.pause(); _audio.src = ''; } catch(e){} _audio = null; }
   _playing = false;
   var _pb = document.getElementById('play-btn');
-  _pb.innerHTML = '&#9654; MP3';
+  _pb.innerHTML = '<span class="icon icon-play"></span> MP3';
   _pb.classList.remove('connecting', 'live');
 }
 function setVolume(v) {
@@ -304,7 +328,7 @@ function toggleWS() {
 
 function startWS() {
   var btn = document.getElementById('ws-btn');
-  btn.innerHTML = '&#9724; ...';
+  btn.innerHTML = '<span class="icon icon-stop"></span> ...';
   btn.classList.add('connecting'); btn.classList.remove('live');
 
   if (_wsCtx) { stopWS(); return; }
@@ -312,7 +336,7 @@ function startWS() {
   try {
     _wsCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
   } catch(e) {
-    btn.innerHTML = '&#9654; PCM'; btn.classList.remove('connecting', 'live');
+    btn.innerHTML = '<span class="icon icon-play"></span> PCM'; btn.classList.remove('connecting', 'live');
     return;
   }
   if (_wsCtx.state === 'suspended') { _wsCtx.resume(); }
@@ -352,12 +376,12 @@ function startWS() {
       _wsBytes = 0;
       if (navigator.wakeLock) { navigator.wakeLock.request('screen').then(function(wl) { _wakeLock = wl; }).catch(function(){}); }
       btn.classList.remove('connecting'); btn.classList.add('live');
-      btn.innerHTML = '&#9724; 0:00';
+      btn.innerHTML = '<span class="icon icon-stop"></span> 0:00';
       _wsTimer = setInterval(function() {
         var secs = Math.floor((Date.now() - _wsStart) / 1000);
         var m = Math.floor(secs / 60);
         var s = secs % 60;
-        btn.innerHTML = '&#9724; ' + m + ':' + (s < 10 ? '0' : '') + s;
+        btn.innerHTML = '<span class="icon icon-stop"></span> ' + m + ':' + (s < 10 ? '0' : '') + s;
       }, 1000);
     };
 
@@ -433,7 +457,7 @@ function stopWS() {
   _wsPlaying = false;
   if (_wakeLock) { try { _wakeLock.release(); } catch(e){} _wakeLock = null; }
   var _wb = document.getElementById('ws-btn');
-  _wb.innerHTML = '&#9654; PCM';
+  _wb.innerHTML = '<span class="icon icon-play"></span> PCM';
   _wb.classList.remove('connecting', 'live');
 }
 
@@ -450,7 +474,7 @@ function toggleMic() {
   stopMic();
   _micActive = true;
   var btn=document.getElementById('mic-btn');
-  btn.innerHTML = '&#9724; ...'; btn.classList.add('connecting'); btn.classList.remove('live');
+  btn.innerHTML = '<span class="icon icon-stop"></span> ...'; btn.classList.add('connecting'); btn.classList.remove('live');
 
   navigator.mediaDevices.getUserMedia({audio:{sampleRate:48000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
   .then(function(stream) {
@@ -459,7 +483,7 @@ function toggleMic() {
     _micWs = new WebSocket(proto+'//'+location.host+'/ws_mic');
     _micWs.binaryType = 'arraybuffer';
     _micWs.onopen = function() {
-      btn.innerHTML='&#9724; TX'; btn.classList.remove('connecting'); btn.classList.add('live');
+      btn.innerHTML='<span class="icon icon-stop"></span> TX'; btn.classList.remove('connecting'); btn.classList.add('live');
       _micCtx = new AudioContext({sampleRate:48000});
       var src = _micCtx.createMediaStreamSource(stream);
       var proc = _micCtx.createScriptProcessor(2048,1,1);
@@ -475,7 +499,7 @@ function toggleMic() {
     _micWs.onclose = function() { if (_micActive) stopMic(); };
   }).catch(function() {
     _micActive=false;
-    btn.innerHTML='&#127908; MIC'; btn.classList.remove('connecting', 'live');
+    btn.innerHTML='<span class="icon icon-mic"></span> MIC'; btn.classList.remove('connecting', 'live');
   });
 }
 
@@ -486,7 +510,7 @@ function stopMic() {
   if(_micStream){_micStream.getTracks().forEach(function(t){t.stop();});_micStream=null;}
   if(_micWs){try{_micWs.close();}catch(e){}_micWs=null;}
   var btn=document.getElementById('mic-btn');
-  btn.innerHTML='&#127908; MIC'; btn.classList.remove('connecting', 'live');
+  btn.innerHTML='<span class="icon icon-mic"></span> MIC'; btn.classList.remove('connecting', 'live');
 }
 
 // --- Audio level bars (always visible) ---

@@ -27,6 +27,12 @@
   --t-warn:       #e89d3c;
   --t-err:        #e04848;  /* tx, error */
 
+  /* Desaturated variants — for dense log lines, subtle tints.
+     Reserve saturated --t-err/--t-warn for alerts that need to grab the eye. */
+  --t-ok-soft:    #7eb28c;
+  --t-warn-soft:  #c99566;
+  --t-err-soft:   #c47373;
+
   /* Legacy button aliases — widely referenced across pages */
   --t-btn:        #0e131a;
   --t-btn-border: var(--t-border);
@@ -158,3 +164,149 @@ input, select, textarea, button { font-family: inherit; }
 input[type="range"] { accent-color: var(--t-accent); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
 .tgl { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--f-sm); color: var(--t-text-dim); cursor: pointer; user-select: none; }
+
+/* Monochrome icon system — CSS mask approach lets us color glyphs via
+   `color` inheritance, just like text. Usage: <span class="icon icon-mic"></span>.
+   Add new glyphs by defining --icon-mask on a new .icon-xxx class. */
+.icon {
+  display: inline-block;
+  width: 1em; height: 1em;
+  vertical-align: -0.125em;
+  background-color: currentColor;
+  -webkit-mask: var(--icon-mask) no-repeat center / contain;
+          mask: var(--icon-mask) no-repeat center / contain;
+  flex-shrink: 0;
+}
+.icon-sm { width: 12px; height: 12px; }
+.icon-lg { width: 18px; height: 18px; }
+
+.icon-mic     { --icon-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1a2.5 2.5 0 0 0-2.5 2.5v5a2.5 2.5 0 0 0 5 0v-5A2.5 2.5 0 0 0 8 1zm-4.5 6a.5.5 0 0 1 1 0 3.5 3.5 0 0 0 7 0 .5.5 0 0 1 1 0 4.5 4.5 0 0 1-4 4.47V13h2a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1h2v-1.53A4.5 4.5 0 0 1 3.5 7z'/></svg>"); }
+.icon-play    { --icon-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 3l9 5-9 5z'/></svg>"); }
+.icon-stop    { --icon-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M3 3h10v10H3z'/></svg>"); }
+.icon-refresh { --icon-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 2.5V1L4.5 4 8 7V5.5a2.5 2.5 0 1 1-2.5 2.5H4a4 4 0 1 0 4-5.5z'/></svg>"); }
+
+/* Tags — short all-caps labels (CF, LAN, Band A, encoder mode).
+   Not a button, not a dot — a category marker. */
+.tag {
+  display: inline-block;
+  font-size: var(--f-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 1px var(--s-2);
+  border: 1px solid var(--t-border);
+  border-radius: var(--r-sm);
+  color: var(--t-text-dim);
+  background: var(--t-btn);
+  line-height: 1.4;
+}
+.tag.ok     { color: var(--t-ok);     border-color: var(--t-ok); }
+.tag.warn   { color: var(--t-warn);   border-color: var(--t-warn); }
+.tag.err    { color: var(--t-err);    border-color: var(--t-err); }
+.tag.accent { color: var(--t-accent); border-color: var(--t-accent); }
+
+/* Metrics — label-over-value readouts. Use .metric-lg for hero numbers
+   (you want at most 2-3 of these on any page). */
+.metric {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.1;
+}
+.metric .metric-label {
+  font-size: var(--f-xs);
+  color: var(--t-text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.metric .metric-value {
+  font-size: var(--f-md);
+  font-weight: 500;
+  color: var(--t-text);
+  font-variant-numeric: tabular-nums;
+}
+.metric-lg .metric-value { font-size: var(--f-xl); font-weight: 600; color: var(--t-accent); }
+
+/* Empty state — for panels with no data yet.
+   Center a faint glyph + one-line hint. Don't use for error states. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-5) var(--s-4);
+  color: var(--t-text-mute);
+  font-size: var(--f-sm);
+  text-align: center;
+}
+.empty .empty-glyph { font-size: var(--f-xl); color: var(--t-text-mute); opacity: 0.6; }
+.empty .empty-hint  { font-size: var(--f-xs); color: var(--t-text-mute); }
+.empty.err .empty-glyph { color: var(--t-err); opacity: 1; }
+
+/* Identity — "which gateway am I looking at?" anchor.
+   .identity-strip = standalone block (use above iframe content).
+   .id-cluster     = compact inline (drop into an existing header bar). */
+.identity-strip, .id-cluster {
+  font-size: var(--f-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--t-text-dim);
+}
+.identity-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-3);
+  background: var(--t-panel);
+  border: 1px solid var(--t-border);
+  border-radius: var(--r-sm);
+}
+.id-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.id-call  { color: var(--t-accent); font-weight: 700; }
+.id-site  { color: var(--t-text); }
+.id-clock { color: var(--t-text); font-variant-numeric: tabular-nums; }
+.id-sep   { color: var(--t-text-mute); }
+.identity-strip .id-clock { margin-left: auto; }
+
+/* Toasts — restrained annunciator style: panel-bg + accent edge, no flat brand colors. */
+.toast-stack {
+  position: fixed;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 9999;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.toast {
+  background: var(--t-panel);
+  border: 1px solid var(--t-border);
+  border-left: 3px solid var(--t-accent);
+  border-radius: var(--r-sm);
+  padding: var(--s-2) var(--s-3);
+  color: var(--t-text);
+  font-size: var(--f-sm);
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  transition: opacity 0.4s;
+  animation: toast-in 0.2s ease-out;
+}
+.toast.info    { border-left-color: var(--t-accent); }
+.toast.warning { border-left-color: var(--t-warn); }
+.toast.error   { border-left-color: var(--t-err); }
+.toast.fading  { opacity: 0; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+
+/* Motion — slow heartbeat on live dots, quick flash on value changes.
+   Opt-in: add .pulse / .flash where wanted, don't make it global. */
+@keyframes heartbeat { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+.pulse { animation: heartbeat 1.4s ease-in-out infinite; }
+
+@keyframes cell-flash { 0% { background: var(--t-accent); color: var(--t-bg); } 100% { background: transparent; color: inherit; } }
+.flash { animation: cell-flash 0.6s ease-out; }

@@ -5,77 +5,112 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Room Monitor</title>
 <link rel="stylesheet" href="/pages/common.css">
+<style>
+  .mon-intro { color:var(--t-text-dim); margin:0 0 var(--s-4); font-size:var(--f-sm); }
+
+  .mon-status { background:var(--t-panel); border:1px solid var(--t-border);
+                border-radius:var(--r-md); padding:var(--s-4); margin-bottom:var(--s-4); }
+  .mon-head { display:flex; align-items:center; gap:var(--s-3); margin-bottom:var(--s-3); }
+  .mon-dot  { width:12px; height:12px; border-radius:50%;
+              background:var(--t-text-mute); flex-shrink:0;
+              transition:background 0.2s, box-shadow 0.2s; }
+  .mon-dot.live { background:var(--t-ok);
+                  box-shadow:0 0 8px color-mix(in srgb, var(--t-ok) 60%, transparent); }
+  .mon-dot.warn { background:var(--t-warn);
+                  box-shadow:0 0 8px color-mix(in srgb, var(--t-warn) 60%, transparent); }
+  .mon-dot.err  { background:var(--t-err); }
+  .mon-state { font-size:var(--f-md); font-weight:700; color:var(--t-text-dim);
+               letter-spacing:0.04em; }
+  .mon-state.live { color:var(--t-ok); }
+  .mon-state.warn { color:var(--t-warn); }
+  .mon-state.err  { color:var(--t-err); }
+
+  .mon-level-label { color:var(--t-text-dim); font-size:var(--f-xs); }
+  .mon-level-track { background:var(--t-btn); border:1px solid var(--t-border);
+                     border-radius:var(--r-sm); height:18px; overflow:hidden;
+                     margin-top:var(--s-1); }
+  .mon-level-fill  { height:100%; width:0%; background:var(--t-accent);
+                     transition:width 0.08s, background 0.2s; }
+  .mon-level-fill.warn { background:var(--t-warn); }
+  .mon-level-fill.err  { background:var(--t-err); }
+  .mon-db-line { text-align:right; font-size:var(--f-xs);
+                 color:var(--t-text-dim); margin-top:var(--s-1); }
+
+  .mon-stats { display:flex; gap:var(--s-5); font-size:var(--f-xs);
+               color:var(--t-text-dim); }
+  .mon-stats span span { color:var(--t-text); }
+
+  .mon-btn { display:block; width:100%; max-width:400px; margin:0 auto var(--s-5);
+             padding:var(--s-5); font:inherit; font-size:var(--f-md);
+             font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+             border-radius:var(--r-md); cursor:pointer; user-select:none;
+             touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+             background:var(--t-btn); color:var(--t-ok);
+             border:2px solid var(--t-ok);
+             transition:background 0.12s, color 0.12s, border-color 0.12s; }
+  .mon-btn:hover { background:var(--t-ok); color:var(--t-bg); }
+  .mon-btn.live { color:var(--t-err); border-color:var(--t-err); }
+  .mon-btn.live:hover { background:var(--t-err); color:var(--t-bg); }
+  .mon-btn.warn { color:var(--t-warn); border-color:var(--t-warn); }
+  .mon-btn.warn:hover { background:var(--t-warn); color:var(--t-bg); }
+
+  .mon-settings { max-width:400px; margin:0 auto var(--s-5); }
+  .mon-settings summary { cursor:pointer; color:var(--t-text-dim);
+                          font-size:var(--f-sm); padding:var(--s-2) 0; }
+  .mon-settings summary:hover { color:var(--t-text); }
+  .mon-setting-row { margin-bottom:var(--s-3); }
+  .mon-setting-row:last-child { margin-bottom:0; }
+  .mon-setting-label { color:var(--t-text-dim); font-size:var(--f-xs);
+                       display:block; margin-bottom:var(--s-1); }
+  .mon-setting-label span { color:var(--t-text); }
+  .mon-setting-row input[type="range"] { width:100%; }
+  .mon-link-row { text-align:center; margin-top:var(--s-5); }
+</style>
 </head>
 <body>
 
 <h1>Room Monitor</h1>
-<p style="color:#888; margin:0 0 16px; font-size:0.9em;">
-  Streams phone microphone audio into the gateway mixer without triggering PTT.
-</p>
+<p class="mon-intro">Streams phone microphone audio into the gateway mixer without triggering PTT.</p>
 
-<div id="mon-status-panel" style="background:var(--t-panel); border:1px solid var(--t-border);
-  border-radius:8px; padding:16px; margin-bottom:16px;">
-  <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
-    <span id="mon-dot" style="width:12px; height:12px; border-radius:50%; background:#555;
-      display:inline-block; flex-shrink:0;"></span>
-    <span id="mon-state" style="font-size:1.1em; font-weight:bold; color:#888;">Disconnected</span>
+<div class="mon-status">
+  <div class="mon-head">
+    <span id="mon-dot" class="mon-dot"></span>
+    <span id="mon-state" class="mon-state">Disconnected</span>
   </div>
-  <div style="margin-bottom:8px;">
-    <span style="color:#888; font-size:0.85em;">Level</span>
-    <div style="background:rgba(255,255,255,0.05); border-radius:3px; height:18px; overflow:hidden; margin-top:2px;">
-      <div id="mon-level-bar" style="height:100%; width:0%; background:var(--t-accent); border-radius:3px;
-        transition:width 0.08s;"></div>
-    </div>
-    <div style="text-align:right; font-size:0.8em; color:#888; margin-top:2px;">
-      <span id="mon-db">—</span> dB
-    </div>
+  <div style="margin-bottom:var(--s-2);">
+    <span class="mon-level-label">Level</span>
+    <div class="mon-level-track"><div id="mon-level-bar" class="mon-level-fill"></div></div>
+    <div class="mon-db-line"><span id="mon-db">—</span> dB</div>
   </div>
-  <div style="display:flex; gap:24px; font-size:0.85em; color:#888;">
-    <span>Duration: <span id="mon-duration" style="color:#e0e0e0;">0:00</span></span>
-    <span>Sent: <span id="mon-bytes" style="color:#e0e0e0;">0 B</span></span>
+  <div class="mon-stats">
+    <span>Duration: <span id="mon-duration">0:00</span></span>
+    <span>Sent: <span id="mon-bytes">0 B</span></span>
   </div>
 </div>
 
-<button id="mon-btn" onclick="monToggle()" style="
-  display:block; width:100%; max-width:400px; margin:0 auto 20px;
-  padding:20px; font-size:1.3em; font-weight:bold; border-radius:12px;
-  border:3px solid #2ecc71; background:#1a3a1a; color:#e0e0e0;
-  cursor:pointer; touch-action:manipulation; user-select:none;
-  -webkit-tap-highlight-color:transparent;">
-  Start Monitor
-</button>
+<button id="mon-btn" class="mon-btn" onclick="monToggle()">Start Monitor</button>
 
-<details style="max-width:400px; margin:0 auto 20px;">
+<details class="mon-settings panel">
   <summary>Settings</summary>
-  <div style="padding:12px 14px;">
-    <div style="margin-bottom:14px;">
-      <label style="color:#888; font-size:0.85em; display:block; margin-bottom:4px;">
-        Gain: <span id="mon-gain-val">25x</span>
-      </label>
+  <div style="padding:var(--s-3) 0 0;">
+    <div class="mon-setting-row">
+      <label class="mon-setting-label">Gain: <span id="mon-gain-val">25x</span></label>
       <input id="mon-gain" type="range" min="1" max="50" step="1" value="25"
-        style="width:100%; accent-color:var(--t-accent);"
         oninput="document.getElementById('mon-gain-val').textContent=this.value+'x'">
     </div>
-    <div style="margin-bottom:14px;">
-      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-        <input id="mon-vad-en" type="checkbox"
-          style="accent-color:var(--t-accent); width:18px; height:18px;">
-        <span style="color:#888; font-size:0.85em;">VAD (only send when sound detected)</span>
-      </label>
+    <div class="mon-setting-row">
+      <label class="tgl"><input id="mon-vad-en" type="checkbox"> VAD (only send when sound detected)</label>
     </div>
-    <div>
-      <label style="color:#888; font-size:0.85em; display:block; margin-bottom:4px;">
-        VAD Threshold: <span id="mon-vad-val">-45 dB</span>
-      </label>
+    <div class="mon-setting-row">
+      <label class="mon-setting-label">VAD Threshold: <span id="mon-vad-val">-45 dB</span></label>
       <input id="mon-vad-thr" type="range" min="-60" max="-20" step="1" value="-45"
-        style="width:100%; accent-color:var(--t-accent);"
         oninput="document.getElementById('mon-vad-val').textContent=this.value+' dB'">
     </div>
   </div>
 </details>
 
-<div style="text-align:center; margin-top:24px;">
-  <a href="/monitor-apk" style="color:var(--t-accent); font-size:0.9em;">Download Android APK</a>
+<div class="mon-link-row">
+  <a href="/monitor-apk">Download Android APK</a>
 </div>
 
 <script>
@@ -84,33 +119,19 @@ var _monStart=0, _monBytes=0, _monTimer=null, _monReconnTimer=null;
 var _monWakeLock=null, _monSilentAudio=null;
 
 function monToggle() {
-  if (_monActive) { monStop(); } else { monStart(); }
+  if (_monActive) monStop(); else monStart();
 }
 
 function monStart() {
   _monActive = true;
-  var btn = document.getElementById('mon-btn');
-  btn.textContent = 'Connecting...';
-  btn.style.background = '#3a3a1a';
-  btn.style.borderColor = '#f39c12';
-  btn.style.color = '#f39c12';
-  document.getElementById('mon-state').textContent = 'Connecting';
-  document.getElementById('mon-state').style.color = '#f39c12';
-  document.getElementById('mon-dot').style.background = '#f39c12';
-
+  monSetState('warn', 'Connecting', 'Connecting...');
   navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-      channelCount: 1,
-      sampleRate: 48000
-    }
+    audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1, sampleRate:48000 }
   }).then(function(stream) {
     _monStream = stream;
     monConnectWS();
-  }).catch(function(e) {
-    monSetState('error', 'Mic denied');
+  }).catch(function() {
+    monSetState('err', 'Mic denied');
     _monActive = false;
   });
 }
@@ -120,7 +141,6 @@ function monConnectWS() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   _monWs = new WebSocket(proto + '//' + location.host + '/ws_monitor');
   _monWs.binaryType = 'arraybuffer';
-
   _monWs.onopen = function() {
     monSetState('live', 'Live');
     _monStart = Date.now();
@@ -130,14 +150,8 @@ function monConnectWS() {
     monRequestWakeLock();
     monStartSilentAudio();
   };
-
-  _monWs.onerror = function() {
-    monHandleDisconnect();
-  };
-
-  _monWs.onclose = function() {
-    monHandleDisconnect();
-  };
+  _monWs.onerror = monHandleDisconnect;
+  _monWs.onclose = monHandleDisconnect;
 }
 
 function monStartAudio() {
@@ -150,7 +164,6 @@ function monStartAudio() {
     var f32 = e.inputBuffer.getChannelData(0);
     var gain = parseFloat(document.getElementById('mon-gain').value) || 1;
 
-    // Compute RMS and peak
     var sum = 0, peak = 0;
     for (var i = 0; i < f32.length; i++) {
       var s = f32[i] * gain;
@@ -161,17 +174,17 @@ function monStartAudio() {
     var rms = Math.sqrt(sum / f32.length);
     var db = rms > 0 ? 20 * Math.log10(rms) : -100;
 
-    // Update level display
     var pct = Math.min(100, Math.max(0, Math.round((db + 60) * (100 / 60))));
-    document.getElementById('mon-level-bar').style.width = pct + '%';
+    var bar = document.getElementById('mon-level-bar');
+    bar.style.width = pct + '%';
+    bar.classList.toggle('warn', pct >= 70 && pct < 90);
+    bar.classList.toggle('err',  pct >= 90);
     document.getElementById('mon-db').textContent = db > -100 ? db.toFixed(1) : '—';
 
-    // VAD check
     var vadEn = document.getElementById('mon-vad-en').checked;
     var vadThr = parseFloat(document.getElementById('mon-vad-thr').value) || -45;
-    if (vadEn && db < vadThr) return;  // Below threshold — don't send
+    if (vadEn && db < vadThr) return;
 
-    // Convert to 16-bit signed LE PCM with gain applied
     var buf = new ArrayBuffer(f32.length * 2);
     var i16 = new Int16Array(buf);
     for (var i = 0; i < f32.length; i++) {
@@ -193,7 +206,6 @@ function monStartTimer() {
     var m = Math.floor(elapsed / 60);
     var s = elapsed % 60;
     document.getElementById('mon-duration').textContent = m + ':' + (s < 10 ? '0' : '') + s;
-    // Format bytes
     var b = _monBytes;
     var units = ['B', 'KB', 'MB', 'GB'];
     var u = 0;
@@ -206,15 +218,14 @@ function monHandleDisconnect() {
   monStopAudio();
   if (_monTimer) { clearInterval(_monTimer); _monTimer = null; }
   if (_monActive) {
-    // Auto-reconnect
-    monSetState('reconnecting', 'Reconnecting...');
+    monSetState('warn', 'Reconnecting', 'Reconnecting...');
     if (_monReconnTimer) clearTimeout(_monReconnTimer);
     _monReconnTimer = setTimeout(function() {
       _monReconnTimer = null;
       if (_monActive && _monStream) monConnectWS();
     }, 5000);
   } else {
-    monSetState('off', 'Disconnected');
+    monSetState('', 'Disconnected');
   }
 }
 
@@ -227,9 +238,11 @@ function monStop() {
   if (_monTimer) { clearInterval(_monTimer); _monTimer = null; }
   monReleaseWakeLock();
   monStopSilentAudio();
-  monSetState('off', 'Disconnected');
-  document.getElementById('mon-level-bar').style.width = '0%';
-  document.getElementById('mon-db').textContent = '\\u2014';
+  monSetState('', 'Disconnected');
+  var bar = document.getElementById('mon-level-bar');
+  bar.style.width = '0%';
+  bar.classList.remove('warn','err');
+  document.getElementById('mon-db').textContent = '—';
   document.getElementById('mon-duration').textContent = '0:00';
   document.getElementById('mon-bytes').textContent = '0 B';
 }
@@ -239,43 +252,25 @@ function monStopAudio() {
   if (_monCtx) { _monCtx.close().catch(function(){}); _monCtx = null; }
 }
 
-function monSetState(state, text) {
+function monSetState(cls, label, btnLabel) {
   var dot = document.getElementById('mon-dot');
-  var label = document.getElementById('mon-state');
+  var state = document.getElementById('mon-state');
   var btn = document.getElementById('mon-btn');
-  label.textContent = text;
-  if (state === 'live') {
-    dot.style.background = '#2ecc71';
-    label.style.color = '#2ecc71';
-    btn.textContent = 'Stop Monitor';
-    btn.style.background = '#3a1a1a';
-    btn.style.borderColor = '#e74c3c';
-    btn.style.color = '#e74c3c';
-  } else if (state === 'reconnecting') {
-    dot.style.background = '#f39c12';
-    label.style.color = '#f39c12';
-    btn.textContent = 'Stop Monitor';
-    btn.style.background = '#3a3a1a';
-    btn.style.borderColor = '#f39c12';
-    btn.style.color = '#f39c12';
-  } else if (state === 'error') {
-    dot.style.background = '#e74c3c';
-    label.style.color = '#e74c3c';
-    btn.textContent = 'Start Monitor';
-    btn.style.background = '#1a3a1a';
-    btn.style.borderColor = '#2ecc71';
-    btn.style.color = '#e0e0e0';
+  state.textContent = label;
+  dot.className = 'mon-dot' + (cls ? ' ' + cls : '');
+  state.className = 'mon-state' + (cls ? ' ' + cls : '');
+  if (cls === 'live') {
+    btn.className = 'mon-btn live';
+    btn.textContent = btnLabel || 'Stop Monitor';
+  } else if (cls === 'warn') {
+    btn.className = 'mon-btn warn';
+    btn.textContent = btnLabel || 'Stop Monitor';
   } else {
-    dot.style.background = '#555';
-    label.style.color = '#888';
-    btn.textContent = 'Start Monitor';
-    btn.style.background = '#1a3a1a';
-    btn.style.borderColor = '#2ecc71';
-    btn.style.color = '#e0e0e0';
+    btn.className = 'mon-btn';
+    btn.textContent = btnLabel || 'Start Monitor';
   }
 }
 
-// Wake Lock API — keep screen on
 function monRequestWakeLock() {
   if ('wakeLock' in navigator) {
     navigator.wakeLock.request('screen').then(function(wl) {
@@ -287,12 +282,10 @@ function monRequestWakeLock() {
 function monReleaseWakeLock() {
   if (_monWakeLock) { _monWakeLock.release().catch(function(){}); _monWakeLock = null; }
 }
-// Re-acquire wake lock when page becomes visible again
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible' && _monActive) monRequestWakeLock();
 });
 
-// Silent audio loop — backup to prevent tab suspension
 function monStartSilentAudio() {
   if (_monSilentAudio) return;
   _monSilentAudio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');

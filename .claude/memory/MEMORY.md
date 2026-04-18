@@ -58,20 +58,19 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - 500 kHz has parec jitter — use 1 MHz minimum for clean audio
 - D75 endpoint host (192.168.2.134): Intel Celeron N2807, sysbench 1157 evt/s — Pi Zero 2W (~1228 evt/s) is viable replacement
 
-### D75 Link Endpoint (cleaned 2026-04-08, Pi rebuilt 2026-04-13)
-- D75 is link-endpoint-only — all legacy d75_plugin.py code removed (~1,136 lines deleted)
-- `scripts/remote_bt_proxy.py` kept (used by `tools/d75_link_plugin.py`)
-- **Pi Zero 2W** at 192.168.2.186 (static IP, WiFi MAC `88:a2:9e:82:14:99`)
-- DietPi OS, read-only root, tmpfs for /tmp /var/log /var/tmp /var/lib/dhcp /var/lib/systemd /var/lib/bluetooth
-- Code runs from `/home/user/link/run/` (tmpfs), copied from `/home/user/link/` at boot by `deploy-endpoint.service`
-- Self-update: remounts rw briefly to persist updated code to `/home/user/link/`
-- BT firmware: `bluez-firmware` package required (BCM43430A1.hcd)
-- SCO-over-HCI: vendor command `0x3f 0x1c` must be sent via `sudo` before EVERY SCO connect
-- `bt-wifi-coex.service`: loads rfcomm, noscan, txpower 15dBm (runs before bluetooth.service)
-- Waveshare 1.44" ST7735S SPI display: `pi_status_display.py` (4 pages, joystick/buttons)
-- Celeron at 192.168.2.134 still runs as secondary D75+AIOC host
+### Link Endpoints (2026-04-16)
+All endpoints run as systemd **user** services with `Restart=always`, `RestartSec=5`, linger enabled.
+Code at `/home/user/link/`, deployed via scp from gateway.
+
+| Name | Host | IP | Plugin | Notes |
+|------|------|----|--------|-------|
+| celeron-ftm150 | Intel Celeron | .134 | aioc | FTM-150 radio, packet/Winlink TNC |
+| d75-pi | Pi Zero 2W | .121 | d75 | D75 via BT, DietPi read-only root, tmpfs code |
+| cm5-aioc | Pi CM5 | .131 (eth) / .144 (wifi) | aioc | Non-WiFi CM5 variant, USB WiFi (MT7610U), Debian Trixie |
+
 - Pi-hole DNS on gateway (.140:53) + dnscrypt-proxy DoH (127.0.0.1:5053)
 - Gateway static IP .140 (manual NM config)
+- Pi Zero 2W at .186 is the OLD address — now at .121 after rebuild
 
 ### Pi Status Display (2026-04-13)
 - `tools/pi_status_display.py` — Waveshare 1.44" ST7735S (128x128 SPI)
@@ -92,10 +91,18 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - Disabled: bluealsa, mpris-proxy, filter-chain, serial-getty, dietpi-ramlog, fake-hwclock, apt timers, cron
 - ifup timeout override: 30s (was 5min default)
 
+### Packet Radio / Winlink (2026-04-16)
+- AGWPE proxy on gateway (127.0.0.1:8010) forwards Pat → remote Direwolf on celeron endpoint
+- Pat web UI at port 8082, Connect & Sync auto-switches to winlink mode
+- AIOCPlugin mode lock serialises audio↔data transitions; usbhid rebind for CM108 PTT
+- Direwolf uses `hw:X,0` (NOT `plughw:`) — plughw caused silent TX on Debian/AIOC
+- Gateway auto-resends `mode=data` when endpoint reconnects while in winlink/bbs mode
+- Proxy instrumented: per-frame logging with timestamps and gap measurement
+- Root cause of -15 exit: socket.settimeout(2.0) from connect persisted into recv()
+
 ### AudioPlugin Noise Gate (2026-04-08)
 - Default threshold raised -48 → -40 dB (AIOC noise floor ~-45 dB)
 - Gate threshold + enabled state persisted in endpoint `settings.json`
-- FTM-150 endpoint on 192.168.2.121, files at `/home/user/link/`
 
 ### Loop Recorder
 - Toggle off calls `loop_recorder.stop(bus_id)` to close active segment immediately
@@ -187,3 +194,4 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - [project_sdr_single_mode.md](project_sdr_single_mode.md) — SDR single-tuner mode details
 - [project_internet_endpoints.md](project_internet_endpoints.md) — internet endpoint connectivity (WIP)
 - [bugs_2026_04_13.md](bugs_2026_04_13.md) — DietPi rebuild: BT firmware, SCO-over-HCI, rfcomm
+- [project_ui_redesign.md](project_ui_redesign.md) — UI redesign stages (branch ui-redesign), theme picker as stage 7

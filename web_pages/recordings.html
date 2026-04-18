@@ -5,87 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Recordings</title>
 <link rel="stylesheet" href="/pages/common.css">
+<style>
+  .rec-toolbar { display:flex; gap:var(--s-3); flex-wrap:wrap;
+                 align-items:flex-end; margin-bottom:var(--s-3); }
+  .rec-toolbar label { color:var(--t-text-dim); font-size:var(--f-xs); display:block; }
+  .rec-toolbar select { background:var(--t-btn); color:var(--t-text);
+                        border:1px solid var(--t-btn-border);
+                        border-radius:var(--r-sm); padding:var(--s-1) var(--s-2);
+                        font:inherit; font-size:var(--f-sm); margin-top:var(--s-1); }
+  .rec-toolbar select:focus { border-color:var(--t-accent); outline:none; }
+  .rec-actions { margin-left:auto; display:flex; gap:var(--s-1); flex-wrap:wrap; }
+
+  .rec-summary { color:var(--t-text-dim); font-size:var(--f-sm);
+                 margin-bottom:var(--s-2); }
+
+  .rec-tbl-wrap { background:var(--t-panel); border:1px solid var(--t-border);
+                  border-radius:var(--r-md); overflow:hidden; }
+  .rec-tbl { width:100%; border-collapse:collapse; font:inherit;
+             font-size:var(--f-sm); }
+  .rec-tbl thead tr { background:var(--t-bg); text-align:left; }
+  .rec-tbl th { padding:var(--s-2) var(--s-3); font-weight:600;
+                color:var(--t-text-dim); font-size:var(--f-xs);
+                letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; }
+  .rec-tbl th.check { width:30px; cursor:default; }
+  .rec-tbl td { padding:var(--s-1) var(--s-3); border-top:1px solid var(--t-border);
+                color:var(--t-text); }
+  .rec-tbl tbody tr:hover { background:var(--t-panel-hi); }
+  .rec-tbl tbody tr.playing { background:color-mix(in srgb, var(--t-ok) 15%, transparent); }
+  .rec-radio { color:var(--t-accent); }
+  .rec-freq  { color:var(--t-warn); }
+  .rec-size  { text-align:right; color:var(--t-text-dim); }
+
+  .rec-empty { display:none; text-align:center; color:var(--t-text-dim);
+               padding:40px; font-size:var(--f-md); }
+
+  .player-bar { display:none; position:fixed; bottom:0; left:0; right:0;
+                background:var(--t-panel); border-top:1px solid var(--t-accent);
+                padding:var(--s-2) var(--s-4); z-index:999; font:inherit; }
+  .player-row { display:flex; align-items:center; gap:var(--s-3); }
+  .player-time { color:var(--t-text); min-width:100px; font-size:var(--f-sm); }
+  .player-seek { flex:1; cursor:pointer; }
+  .player-name { color:var(--t-accent); font-size:var(--f-sm);
+                 max-width:300px; overflow:hidden;
+                 text-overflow:ellipsis; white-space:nowrap; }
+  .player-vol-label { color:var(--t-text-dim); font-size:var(--f-xs); }
+  .player-vol { width:80px; }
+</style>
 </head>
 <body>
 
-
-<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px;">
+<div class="rec-toolbar">
   <div>
-    <label style="color:#888; font-size:0.85em;">Radio</label><br>
-    <select id="f-radio" onchange="applyFilter()" style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace;">
-      <option value="">All</option>
-    </select>
+    <label>Radio</label>
+    <select id="f-radio" onchange="applyFilter()"><option value="">All</option></select>
   </div>
   <div>
-    <label style="color:#888; font-size:0.85em;">Date</label><br>
-    <select id="f-date" onchange="applyFilter()" style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace;">
-      <option value="">All</option>
-    </select>
+    <label>Date</label>
+    <select id="f-date" onchange="applyFilter()"><option value="">All</option></select>
   </div>
   <div>
-    <label style="color:#888; font-size:0.85em;">Frequency</label><br>
-    <select id="f-freq" onchange="applyFilter()" style="background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace;">
-      <option value="">All</option>
-    </select>
+    <label>Frequency</label>
+    <select id="f-freq" onchange="applyFilter()"><option value="">All</option></select>
   </div>
-  <div style="margin-left:auto; display:flex; gap:6px;">
-    <button onclick="selectAll()" class="rb">Select All</button>
-    <button onclick="selectNone()" class="rb">Select None</button>
-    <button onclick="downloadSelected()" class="rb" style="background:#1a5c3a;">Download Selected</button>
-    <button onclick="deleteSelected()" class="rb" style="background:#5c1a1a;">Delete Selected</button>
-    <button onclick="if(confirm('Delete ALL recordings?'))deleteAll()" class="rb" style="background:#8b0000;">Delete All</button>
+  <div class="rec-actions">
+    <button onclick="selectAll()" class="rb rb-sm">Select All</button>
+    <button onclick="selectNone()" class="rb rb-sm">Select None</button>
+    <button onclick="downloadSelected()" class="rb rb-sm rb-primary">Download Selected</button>
+    <button onclick="deleteSelected()" class="rb rb-sm rb-danger">Delete Selected</button>
+    <button onclick="if(confirm('Delete ALL recordings?'))deleteAll()" class="rb rb-sm rb-danger">Delete All</button>
   </div>
 </div>
 
-<div id="rec-summary" style="color:#888; font-size:0.9em; margin-bottom:8px;"></div>
+<div id="rec-summary" class="rec-summary"></div>
 
-<div style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; overflow:hidden;">
-  <table id="rec-table" style="width:100%; border-collapse:collapse; font-family:monospace; font-size:0.9em;">
+<div class="rec-tbl-wrap">
+  <table id="rec-table" class="rec-tbl">
     <thead>
-      <tr style="background:rgba(0,0,0,0.3); text-align:left;">
-        <th style="padding:8px 10px; width:30px;"><input type="checkbox" id="check-all" onchange="toggleAll(this.checked)" style="accent-color:var(--t-accent);"></th>
-        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('name')">Filename</th>
-        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('radio')">Radio</th>
-        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('freq')">Freq</th>
-        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('date')">Date</th>
-        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('time')">Time</th>
-        <th style="padding:8px 10px; cursor:pointer;" onclick="sortBy('size')">Size</th>
-        <th style="padding:8px 10px;">Play</th>
+      <tr>
+        <th class="check"><input type="checkbox" id="check-all" onchange="toggleAll(this.checked)"></th>
+        <th onclick="sortBy('name')">Filename</th>
+        <th onclick="sortBy('radio')">Radio</th>
+        <th onclick="sortBy('freq')">Freq</th>
+        <th onclick="sortBy('date')">Date</th>
+        <th onclick="sortBy('time')">Time</th>
+        <th onclick="sortBy('size')">Size</th>
+        <th>Play</th>
       </tr>
     </thead>
     <tbody id="rec-body"></tbody>
   </table>
 </div>
-<div id="rec-empty" style="display:none; text-align:center; color:#888; padding:40px; font-size:1.1em;">No recordings found</div>
+<div id="rec-empty" class="rec-empty">No recordings found</div>
 
-<div id="player-bar" style="display:none; position:fixed; bottom:0; left:0; right:0; background:var(--t-panel); border-top:2px solid var(--t-accent); padding:10px 16px; z-index:999; font-family:monospace;">
-  <div style="display:flex; align-items:center; gap:12px;">
-    <button onclick="playerPause()" id="pp-btn" class="rb" style="padding:6px 12px; min-width:50px;">Pause</button>
-    <button onclick="playerStop()" class="rb" style="padding:6px 12px; background:#5c1a1a;">Stop</button>
-    <span id="player-time" style="color:#e0e0e0; min-width:100px;">0:00 / 0:00</span>
-    <input type="range" id="player-seek" min="0" max="1000" value="0" step="1" style="flex:1; accent-color:var(--t-accent); cursor:pointer;">
-    <span style="color:#888; font-size:0.85em;">Vol</span>
-    <input type="range" id="player-vol" min="0" max="100" value="100" style="width:80px; accent-color:var(--t-accent);" oninput="playerVol(this.value)">
-    <span id="player-name" style="color:var(--t-accent); font-size:0.85em; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+<div id="player-bar" class="player-bar">
+  <div class="player-row">
+    <button onclick="playerPause()" id="pp-btn" class="rb rb-sm" style="min-width:50px;">Pause</button>
+    <button onclick="playerStop()" class="rb rb-sm rb-danger">Stop</button>
+    <span id="player-time" class="player-time">0:00 / 0:00</span>
+    <input type="range" id="player-seek" class="player-seek" min="0" max="1000" value="0" step="1">
+    <span class="player-vol-label">Vol</span>
+    <input type="range" id="player-vol" class="player-vol" min="0" max="100" value="100" oninput="playerVol(this.value)">
+    <span id="player-name" class="player-name"></span>
   </div>
   <audio id="audio-player"></audio>
 </div>
-
-<style>
-  .rb { padding:8px 14px; border:1px solid var(--t-btn-border); border-radius:4px;
-    background:var(--t-btn); color:#e0e0e0; cursor:pointer; font-family:monospace; font-size:0.9em; }
-  .rb:hover { background:var(--t-btn-hover); }
-  #rec-table tbody tr:hover { background:rgba(255,255,255,0.05); }
-  #rec-table tbody tr.playing { background:rgba(46,204,113,0.15); }
-  #rec-table td { padding:6px 10px; border-top:1px solid var(--t-border); }
-</style>
 
 <script src="/pages/common.js"></script>
 <script>
 var _allFiles = [], _filtered = [], _sortKey = 'name', _sortAsc = false, _playingFile = '';
 
 function loadFiles() {
-  fetch('/recordingslist').then(r=>r.json()).then(function(files) {
+  fetch('/recordingslist').then(function(r){return r.json();}).then(function(files) {
     _allFiles = files;
     buildFilters();
     applyFilter();
@@ -168,19 +198,19 @@ function render() {
   _filtered.forEach(function(f) {
     var isPlaying = (_playingFile === f.name);
     h += '<tr class="' + (isPlaying ? 'playing' : '') + '">';
-    h += '<td><input type="checkbox" class="f-check" data-name="' + f.name + '" style="accent-color:var(--t-accent);"></td>';
-    h += '<td style="color:#e0e0e0;">' + f.name + '</td>';
-    h += '<td style="color:var(--t-accent);">' + f.radio + '</td>';
-    h += '<td style="color:#f39c12;">' + f.freq + '</td>';
+    h += '<td><input type="checkbox" class="f-check" data-name="' + f.name + '"></td>';
+    h += '<td>' + f.name + '</td>';
+    h += '<td class="rec-radio">' + f.radio + '</td>';
+    h += '<td class="rec-freq">' + f.freq + '</td>';
     h += '<td>' + f.date + '</td>';
     h += '<td>' + f.time + '</td>';
-    h += '<td style="text-align:right;">' + fmtSize(f.size) + '</td>';
+    h += '<td class="rec-size">' + fmtSize(f.size) + '</td>';
     h += '<td>';
     if (f.ext === 'mp3' || f.ext === 'wav') {
       if (isPlaying) {
-        h += '<button onclick="stopPlay()" class="rb" style="padding:4px 8px; background:#5c1a1a;">Stop</button>';
+        h += '<button onclick="stopPlay()" class="rb rb-sm rb-danger">Stop</button>';
       } else {
-        h += '<button onclick="playFile(\\'' + f.name + '\\')" class="rb" style="padding:4px 8px;">Play</button>';
+        h += '<button onclick="playFile(\'' + f.name + '\')" class="rb rb-sm">Play</button>';
       }
     }
     h += '</td></tr>';
@@ -223,15 +253,11 @@ function deleteSelected() {
   var sel = getSelected();
   if (!sel.length) { alert('No files selected'); return; }
   if (!confirm('Delete ' + sel.length + ' file(s)?')) return;
-  postJson('/recordingsdelete', {files:sel}).then(function(d) {
-    loadFiles();
-  });
+  postJson('/recordingsdelete', {files:sel}).then(function() { loadFiles(); });
 }
 
 function deleteAll() {
-  postJson('/recordingsdelete', {delete_all:true}).then(function(d) {
-    loadFiles();
-  });
+  postJson('/recordingsdelete', {delete_all:true}).then(function() { loadFiles(); });
 }
 
 function playFile(fname) {
@@ -276,20 +302,14 @@ function playerVol(val) {
   var seek = document.getElementById('player-seek');
   var dragging = false;
 
-  // Update slider and time display from audio position (only when not dragging)
   player.addEventListener('timeupdate', function() {
     if (dragging) return;
-    if (player.duration) {
-      seek.value = (player.currentTime / player.duration) * 1000;
-    }
+    if (player.duration) seek.value = (player.currentTime / player.duration) * 1000;
     document.getElementById('player-time').textContent = fmtDuration(player.currentTime) + ' / ' + fmtDuration(player.duration);
   });
 
-  // User starts dragging — stop updating slider from audio
   seek.addEventListener('mousedown', function() { dragging = true; });
   seek.addEventListener('touchstart', function() { dragging = true; });
-
-  // User releases — apply the new position
   seek.addEventListener('mouseup', function() {
     if (player.duration) player.currentTime = player.duration * seek.value / 1000;
     dragging = false;
@@ -298,8 +318,6 @@ function playerVol(val) {
     if (player.duration) player.currentTime = player.duration * seek.value / 1000;
     dragging = false;
   });
-
-  // Also handle click (no drag, just a single click on the track)
   seek.addEventListener('change', function() {
     if (player.duration) player.currentTime = player.duration * seek.value / 1000;
     dragging = false;

@@ -6,8 +6,12 @@
 <title>Gateway Logs</title>
 <link rel="stylesheet" href="/pages/common.css">
 <style>
+  /* Full-height flex column — box grows to fill, no calc(100vh-N) fragility. */
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; padding: var(--s-3); }
+
   .log-toolbar { margin-bottom:var(--s-2); display:flex; gap:var(--s-3);
-                 align-items:center; flex-wrap:wrap; }
+                 align-items:center; flex-wrap:wrap; flex-shrink:0; }
   .log-toolbar label { color:var(--t-text-dim); font-size:var(--f-sm); }
   .log-filter { background:var(--t-btn); color:var(--t-text);
                 border:1px solid var(--t-btn-border); border-radius:var(--r-sm);
@@ -15,13 +19,36 @@
   .log-filter:focus { border-color:var(--t-accent); outline:none; }
   .log-status { color:var(--t-text-dim); font-size:var(--f-xs); }
 
+  /* Destructive actions — tucked behind a details menu to avoid fat-fingering
+     "Reboot Host" while scanning logs. */
+  .log-danger { position: relative; margin-left: auto; }
+  .log-danger > summary {
+    list-style: none; cursor: pointer;
+    font-size: var(--f-xs); color: var(--t-text-dim);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 3px var(--s-2);
+    border: 1px solid var(--t-border); border-radius: var(--r-sm);
+    background: var(--t-btn);
+  }
+  .log-danger > summary::-webkit-details-marker { display: none; }
+  .log-danger[open] > summary { color: var(--t-accent); border-color: var(--t-accent); }
+  .log-danger-menu {
+    position: absolute; top: calc(100% + 2px); right: 0;
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-sm); padding: var(--s-1);
+    display: flex; flex-direction: column; gap: var(--s-1);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.6); z-index: 10;
+    min-width: 170px;
+  }
+
   .log-box { background:var(--t-bg); border:1px solid var(--t-border);
              border-radius:var(--r-md); padding:var(--s-2);
-             height:calc(100vh - 160px); overflow-y:auto;
+             flex: 1 1 auto; min-height: 0; overflow-y:auto;
              font-family:inherit; font-size:var(--f-xs); line-height:1.5;
              white-space:pre-wrap; word-break:break-all; color:var(--t-text); }
-  .log-box > div.err   { color:var(--t-err); }
-  .log-box > div.warn  { color:var(--t-warn); }
+  /* Desaturated log-line colors — full saturation reserved for alerts elsewhere. */
+  .log-box > div.err   { color:var(--t-err-soft); }
+  .log-box > div.warn  { color:var(--t-warn-soft); }
   .log-box > div.cat   { color:var(--t-accent); }
 </style>
 </head>
@@ -33,9 +60,14 @@
   <button class="rb rb-sm" onclick="clearLog()">Clear</button>
   <button class="rb rb-sm" id="btn-trace" onclick="toggleTrace('audio')">Audio Trace</button>
   <button class="rb rb-sm" id="btn-watchdog" onclick="toggleTrace('watchdog')">Watchdog Trace</button>
-  <button class="rb rb-sm rb-warn" id="btn-restart-gw" onclick="restartGateway()" style="margin-left:auto;">Restart Gateway</button>
-  <button class="rb rb-sm rb-danger" id="btn-reboot" onclick="rebootHost()">Reboot Host</button>
   <span id="log-status" class="log-status"></span>
+  <details class="log-danger">
+    <summary>Danger &#9662;</summary>
+    <div class="log-danger-menu">
+      <button class="rb rb-sm rb-warn" id="btn-restart-gw" onclick="restartGateway()">Restart Gateway</button>
+      <button class="rb rb-sm rb-danger" id="btn-reboot" onclick="rebootHost()">Reboot Host</button>
+    </div>
+  </details>
 </div>
 <div id="log-box" class="log-box"></div>
 
