@@ -5,20 +5,173 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Controls</title>
 <link rel="stylesheet" href="/pages/common.css">
+<style>
+  /* Controls page — draggable panel grid on top of shared palette. */
+
+  #playback-section {
+    margin-top: var(--s-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    align-items: flex-start;
+  }
+
+  .ctrl-group {
+    background: var(--t-panel);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-md);
+    padding: var(--s-3);
+    min-width: 220px;
+  }
+  .ctrl-group.ctrl-wide { min-width: 260px; flex: 1; }
+  .ctrl-group.ctrl-inline { min-width: 0; display: inline-block; }
+  .ctrl-group h3 {
+    margin: 0 0 var(--s-2);
+    color: var(--t-accent);
+    font-size: var(--f-sm);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* Generic panel button (overridden by .rb where used directly) */
+  .ctrl-group button {
+    padding: var(--s-1) var(--s-3);
+    margin: 2px;
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    background: var(--t-btn);
+    color: var(--t-text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--f-xs);
+  }
+  .ctrl-group button:hover  { background: var(--t-btn-hover); border-color: var(--t-border-hi); }
+  .ctrl-group button:active { background: var(--t-btn-active); }
+  .ctrl-group button.active {
+    background: var(--t-btn-active);
+    border-color: var(--t-accent);
+    color: var(--t-accent);
+  }
+  .ctrl-group button.muted {
+    background: color-mix(in srgb, var(--t-err) 20%, var(--t-panel));
+    border-color: var(--t-err);
+    color: var(--t-err);
+  }
+  .ctrl-group button.dim { opacity: 0.4; }
+
+  /* Shared form controls */
+  .ctrl-input {
+    background: var(--t-btn);
+    color: var(--t-text);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    padding: var(--s-1) var(--s-2);
+    font-family: inherit;
+    font-size: var(--f-sm);
+  }
+  textarea.ctrl-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: var(--s-2);
+    resize: vertical;
+  }
+
+  /* Row helpers inside a control panel */
+  .ctrl-field { display: flex; gap: var(--s-1); align-items: center; }
+  .ctrl-field label {
+    color: var(--t-text-dim);
+    font-size: var(--f-xs);
+    white-space: nowrap;
+  }
+  .ctrl-field label.w4 { width: 4em; }
+  .ctrl-field label.w3 { width: 3em; }
+
+  .ctrl-stack { display: flex; flex-direction: column; gap: var(--s-1); }
+
+  /* Status line — color comes from .st-* class, not inline hex. */
+  .st-line {
+    font-size: var(--f-sm);
+    color: var(--t-text-dim);
+    margin-top: var(--s-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .st-line.working { color: var(--t-warn); }
+  .st-line.ok      { color: var(--t-ok); }
+  .st-line.err     { color: var(--t-err); }
+
+  /* Playback slot layout */
+  .pb-slot { display: block; margin: 1px 0; white-space: nowrap; }
+  .pb-key  { font-weight: 700; display: inline-block; width: 1.5em; }
+
+  /* Playback keypad grid */
+  .pb-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 3px;
+  }
+
+  .bottom-btns { min-width: 140px; flex: 0 1 160px; }
+  .bottom-btns button { width: 100%; box-sizing: border-box; }
+
+  /* Gateway Link panel (dynamically rendered) */
+  .link-meta { font-size: var(--f-xs); color: var(--t-text-dim); margin-bottom: var(--s-2); }
+  .link-body { display: flex; gap: var(--s-3); align-items: flex-start; }
+  .link-ptt {
+    width: 80px; height: 50px;
+    font-size: var(--f-sm);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    background: var(--t-btn);
+    color: var(--t-text);
+    cursor: pointer;
+  }
+  .link-ptt.on {
+    background: var(--t-btn-active);
+    border-color: var(--t-accent);
+    color: var(--t-accent);
+  }
+  .link-col { flex: 1; display: flex; flex-direction: column; gap: var(--s-1); }
+  .link-row { display: flex; align-items: center; gap: var(--s-2); }
+  .link-label { color: var(--t-text-dim); width: 2em; text-align: right; font-size: var(--f-xs); }
+  .link-bar  { flex: 1; height: 12px; background: var(--t-bg); border: 1px solid var(--t-border); border-radius: var(--r-sm); overflow: hidden; }
+  .link-fill { height: 100%; }
+  .link-fill.rx { background: var(--t-ok); }
+  .link-fill.tx { background: var(--t-err); }
+  .link-mute {
+    width: 3em; padding: var(--s-1);
+    font-size: var(--f-xs);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    background: var(--t-btn);
+    color: var(--t-text);
+    cursor: pointer;
+  }
+  .link-mute.on {
+    background: color-mix(in srgb, var(--t-err) 20%, var(--t-panel));
+    border-color: var(--t-err);
+    color: var(--t-err);
+  }
+  .link-gain-val {
+    color: var(--t-text-dim);
+    font-size: var(--f-xs);
+    width: 3.5em;
+    font-variant-numeric: tabular-nums;
+  }
+</style>
 </head>
 <body>
-
 
 <!-- Mute, processing, audio, SDR, and Broadcastify controls removed —
      all handled by routing page (mute buttons, G/H/L/N per bus, gain sliders, P/M toggles) -->
 
-
 <div id="playback-section">
+
   <div class="ctrl-group ctrl-inline" id="playback-group">
-    <h3 style="margin:0 0 10px; color:var(--t-accent); font-size:1.1em;">Playback</h3>
-    <div style="display:flex; gap:18px; flex-wrap:nowrap;">
+    <h3>Playback</h3>
+    <div style="display:flex; gap:var(--s-4); flex-wrap:nowrap;">
       <div>
-        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:3px;">
+        <div class="pb-grid">
           <button onclick="sendKey('1')" id="btn-f1">1</button>
           <button onclick="sendKey('2')" id="btn-f2">2</button>
           <button onclick="sendKey('3')" id="btn-f3">3</button>
@@ -34,37 +187,39 @@
           <button onclick="toggleTestLoop(this)" id="btn-test-loop" title="Loop audio/loop.mp3">Loop</button>
         </div>
       </div>
-      <div style="margin-left:6px; margin-right:6px;">
-        <div id="playback-status" style="font-family:monospace; font-size:0.85em;">Loading...</div>
+      <div>
+        <div id="playback-status" class="st-line">Loading...</div>
       </div>
     </div>
   </div>
+
   <div class="ctrl-group bottom-btns" id="smart-announce-group">
     <h3>Smart Announce</h3>
-    <div style="display:flex; flex-direction:column; gap:3px; margin-bottom:6px;">
+    <div class="ctrl-stack" style="margin-bottom:var(--s-2);">
       <button onclick="sendKey('[')">Smart #1</button>
       <button onclick="sendKey(']')">Smart #2</button>
       <button onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
     </div>
-    <div id="smart-status" style="font-family:monospace; font-size:0.85em; color:#888;">Idle</div>
+    <div id="smart-status" class="st-line">Idle</div>
   </div>
+
   <div class="ctrl-group ctrl-wide" id="aitext-group">
     <h3>Text to AI</h3>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <textarea id="ai-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter prompt for AI to research and speak..."></textarea>
-      <div style="display:flex; gap:4px; align-items:center;">
-        <label style="color:#888; font-size:0.85em; white-space:nowrap; width:4em;">Top text</label>
-        <input id="ai-top" type="text" value="QST" style="flex:1; min-width:0; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+    <div class="ctrl-stack">
+      <textarea id="ai-text" class="ctrl-input" rows="3" placeholder="Enter prompt for AI to research and speak..."></textarea>
+      <div class="ctrl-field">
+        <label class="w4">Top text</label>
+        <input id="ai-top" class="ctrl-input" type="text" value="QST" style="flex:1; min-width:0;">
       </div>
-      <div style="display:flex; gap:4px; align-items:center;">
-        <label style="color:#888; font-size:0.85em; white-space:nowrap; width:4em;">Tail</label>
-        <input id="ai-tail" type="text" value="Callsign" style="flex:1; min-width:0; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+      <div class="ctrl-field">
+        <label class="w4">Tail</label>
+        <input id="ai-tail" class="ctrl-input" type="text" value="Callsign" style="flex:1; min-width:0;">
       </div>
-      <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
-        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Secs</label>
-        <input id="ai-secs" type="number" value="30" min="5" max="120" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
-        <label style="color:#888; font-size:0.85em; white-space:nowrap;">Voice</label>
-        <select id="ai-voice" style="flex:1; min-width:90px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:4px 6px; font-family:monospace; font-size:0.9em;">
+      <div class="ctrl-field" style="flex-wrap:wrap;">
+        <label>Secs</label>
+        <input id="ai-secs" class="ctrl-input" type="number" value="30" min="5" max="120" style="width:55px;">
+        <label>Voice</label>
+        <select id="ai-voice" class="ctrl-input" style="flex:1; min-width:90px;">
           <option value="1">US English</option>
           <option value="2">British</option>
           <option value="3">Australian</option>
@@ -78,35 +233,37 @@
       </div>
       <button onclick="sendAIText()" id="btn-ai-send" style="width:100%;">Send to AI</button>
     </div>
-    <div id="ai-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+    <div id="ai-status" class="st-line">Ready</div>
   </div>
+
   <div class="ctrl-group ctrl-wide" id="cw-group">
     <h3>Text to CW</h3>
-    <div style="display:flex; flex-direction:column; gap:4px;">
-      <textarea id="cw-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter text for CW..."></textarea>
-      <div style="display:flex; gap:4px; align-items:center;">
-        <label style="color:#888; font-size:0.8em; white-space:nowrap; width:3em;">WPM</label>
-        <input id="cw-wpm" type="number" min="5" max="60" value="20" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:3px 5px; font-size:0.9em;">
+    <div class="ctrl-stack">
+      <textarea id="cw-text" class="ctrl-input" rows="3" placeholder="Enter text for CW..."></textarea>
+      <div class="ctrl-field">
+        <label class="w3">WPM</label>
+        <input id="cw-wpm" class="ctrl-input" type="number" min="5" max="60" value="20" style="width:55px;">
       </div>
-      <div style="display:flex; gap:4px; align-items:center;">
-        <label style="color:#888; font-size:0.8em; white-space:nowrap; width:3em;">Freq</label>
-        <input id="cw-freq" type="number" min="200" max="1200" value="600" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:3px 5px; font-size:0.9em;">
-        <span style="color:#888; font-size:0.8em;">Hz</span>
+      <div class="ctrl-field">
+        <label class="w3">Freq</label>
+        <input id="cw-freq" class="ctrl-input" type="number" min="200" max="1200" value="600" style="width:55px;">
+        <label>Hz</label>
       </div>
-      <div style="display:flex; gap:4px; align-items:center;">
-        <label style="color:#888; font-size:0.8em; white-space:nowrap; width:3em;">Vol</label>
-        <input id="cw-vol" type="number" min="0.1" max="2.0" step="0.1" value="1.0" style="width:55px; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:3px 5px; font-size:0.9em;">
+      <div class="ctrl-field">
+        <label class="w3">Vol</label>
+        <input id="cw-vol" class="ctrl-input" type="number" min="0.1" max="2.0" step="0.1" value="1.0" style="width:55px;">
       </div>
       <button onclick="sendCW()" id="btn-cw-send" style="width:100%;">Send CW</button>
     </div>
-    <div id="cw-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+    <div id="cw-status" class="st-line">Ready</div>
   </div>
+
   <div class="ctrl-group ctrl-wide" id="tts-group">
     <h3>Text to Speech</h3>
-    <div style="display:flex; flex-direction:column; gap:3px;">
-      <textarea id="tts-text" rows="3" style="width:100%; box-sizing:border-box; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em; resize:vertical;" placeholder="Enter text to speak..."></textarea>
-      <div style="display:flex; gap:3px; align-items:center;">
-        <select id="tts-voice" style="flex:1; background:var(--t-btn); color:#e0e0e0; border:1px solid var(--t-btn-border); border-radius:4px; padding:6px; font-family:monospace; font-size:0.95em;">
+    <div class="ctrl-stack">
+      <textarea id="tts-text" class="ctrl-input" rows="3" placeholder="Enter text to speak..."></textarea>
+      <div class="ctrl-field">
+        <select id="tts-voice" class="ctrl-input" style="flex:1;">
           <option value="1">US English</option>
           <option value="2">British</option>
           <option value="3">Australian</option>
@@ -120,65 +277,41 @@
         <button onclick="sendTTS()" id="btn-tts-send" style="flex:1;">Send</button>
       </div>
     </div>
-    <div id="tts-status" style="font-family:monospace; font-size:0.85em; color:#888; margin-top:6px;">Ready</div>
+    <div id="tts-status" class="st-line">Ready</div>
   </div>
-</div>
 
-<style>
-  #playback-section { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
-  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-  .ctrl-group { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: 10px; min-width: 220px; }
-  .ctrl-group.ctrl-wide { min-width: 260px; flex: 1; }
-  .ctrl-group.ctrl-inline { min-width: 0; display: inline-block; }
-  .ctrl-group h3 { margin: 0 0 10px; color: var(--t-accent); font-size: 1.1em; }
-  .ctrl-group button { padding: 6px 11px; margin: 2px; border: 1px solid var(--t-btn-border); border-radius: 3px;
-    background: var(--t-btn); color: #e0e0e0; cursor: pointer; font-family: monospace; font-size: 0.75em; }
-  .ctrl-group button:hover { background: var(--t-btn-hover); }
-  .ctrl-group button:active { background: var(--t-btn-active); }
-  .ctrl-group button.active { background: var(--t-btn-active); border-color: var(--t-accent); color: var(--t-accent); }
-  .ctrl-group button.muted { background: #5c1a1a; border-color: #c0392b; color: #ff6b6b; }
-  #status { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: 10px; font-family: monospace; font-size: 1.0em; }
-  .st-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; margin: 8px 0; }
-  .st-item { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
-  .st-label { color: #888; display: inline-block; width: 5.5em; text-align: right; margin-right: 16px; flex-shrink: 0; }
-  .st-val { font-weight: bold; }
-  .bar { display: inline-block; height: 18px; border-radius: 3px; min-width: 4px; vertical-align: middle; }
-  .bar-pct { display: inline-block; width: 3.5em; text-align: right; color: #ccc; }
-  .green { color: #2ecc71; } .red { color: #e74c3c; } .yellow { color: #f39c12; }
-  .cyan { color: var(--t-accent); } .white { color: #e0e0e0; }
-  #playback-section button { margin: 0; }
-  .bottom-btns { min-width: 140px; flex: 0 1 160px; }
-  .bottom-btns button { width: 100%; box-sizing: border-box; }
-  .pb-slot { display: block; margin: 1px 0; white-space: nowrap; }
-  .pb-key { font-weight: bold; display: inline-block; width: 1.5em; }
-</style>
+</div>
 
 <script src="/pages/common.js"></script>
 <script>
+// ── Status line helper — swap class, don't mutate inline style ──
+function setStatus(id, text, cls) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'st-line' + (cls ? ' ' + cls : '');
+  el.textContent = text;
+}
+
 function toggleTestLoop(btn) {
   postJson('/testloop', {}).then(function(d) {
     if (d.looping) {
-      btn.style.background = '#e74c3c';
-      btn.style.color = '#fff';
+      btn.classList.add('muted');
       btn.textContent = 'Stop Loop';
     } else {
-      btn.style.background = '';
-      btn.style.color = '';
+      btn.classList.remove('muted');
       btn.textContent = 'Loop';
     }
     if (d.error) alert(d.error);
   });
 }
-// togProc, togFlag, darkiceCmd removed — handled by routing page
+
 window._lastLinkEndpoints = [];
 function linkCmd(endpoint, cmd) {
   cmd.endpoint = endpoint;
   return postJson('/linkcmd', cmd).catch(function(){return {};});
 }
-// Track PTT state locally for instant toggle (don't rely on poll data)
 window._linkPttState = {};
 function linkPttToggle(endpoint) {
-  // Use local state if we've toggled before, otherwise read from last poll
   if (window._linkPttState[endpoint] === undefined) {
     var eps = window._lastLinkEndpoints || [];
     for(var i=0; i<eps.length; i++) { if(eps[i].name === endpoint) { window._linkPttState[endpoint] = eps[i].ptt_active; break; } }
@@ -194,14 +327,13 @@ function linkGain(endpoint, cmd, db) {
 function linkMuteToggle(endpoint, dir) {
   postJson('/mixer', {action:'toggle', source:'link_'+dir+':'+endpoint}).catch(function(){});
 }
+
 function sendAIText() {
   var text = document.getElementById('ai-text').value.trim();
   if (!text) return;
   var btn = document.getElementById('btn-ai-send');
-  var st = document.getElementById('ai-status');
   btn.disabled = true;
-  st.textContent = 'Submitted \\u2014 processing...';
-  st.style.color = '#f1c40f';
+  setStatus('ai-status', 'Submitted \u2014 processing...', 'working');
   var payload = {
     text: text,
     target_secs: parseInt(document.getElementById('ai-secs').value) || 30,
@@ -211,72 +343,61 @@ function sendAIText() {
   };
   postJson('/aitext', payload)
     .then(function(d){
-      if(d.ok) { st.textContent = 'Running \\u2014 check Smart Announce status'; st.style.color = '#2ecc71'; }
-      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      if(d.ok) setStatus('ai-status', 'Running \u2014 check Smart Announce status', 'ok');
+      else     setStatus('ai-status', 'Error: ' + (d.error||'failed'), 'err');
       btn.disabled = false;
-      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 15000);
+      setTimeout(function(){ setStatus('ai-status', 'Ready'); }, 15000);
     })
-    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+    .catch(function(){ setStatus('ai-status', 'Network error', 'err'); btn.disabled = false; });
   if(document.activeElement) document.activeElement.blur();
 }
+
 function sendCW() {
   var text = document.getElementById('cw-text').value.trim();
   if (!text) return;
   var btn = document.getElementById('btn-cw-send');
-  var st = document.getElementById('cw-status');
   var wpm  = parseFloat(document.getElementById('cw-wpm').value)  || 20;
   var freq = parseFloat(document.getElementById('cw-freq').value) || 600;
   var vol  = parseFloat(document.getElementById('cw-vol').value)  || 1.0;
   btn.disabled = true;
-  st.textContent = 'Sending...';
-  st.style.color = '#f1c40f';
+  setStatus('cw-status', 'Sending...', 'working');
   postJson('/cw', {text:text, wpm:wpm, freq:freq, vol:vol})
     .then(function(d){
-      if(d.ok) { st.textContent = 'Sent \\u2014 playing'; st.style.color = '#2ecc71'; }
-      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      if(d.ok) setStatus('cw-status', 'Sent \u2014 playing', 'ok');
+      else     setStatus('cw-status', 'Error: ' + (d.error||'failed'), 'err');
       btn.disabled = false;
-      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 5000);
+      setTimeout(function(){ setStatus('cw-status', 'Ready'); }, 5000);
     })
-    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+    .catch(function(){ setStatus('cw-status', 'Network error', 'err'); btn.disabled = false; });
   if(document.activeElement) document.activeElement.blur();
 }
+
 function sendTTS() {
   var text = document.getElementById('tts-text').value.trim();
   if (!text) return;
   var voice = document.getElementById('tts-voice').value;
   var btn = document.getElementById('btn-tts-send');
-  var st = document.getElementById('tts-status');
   btn.disabled = true;
-  st.textContent = 'Generating...';
-  st.style.color = '#f1c40f';
+  setStatus('tts-status', 'Generating...', 'working');
   postJson('/tts', {text:text, voice:parseInt(voice)})
     .then(function(d){
-      if(d.ok) { st.textContent = 'Sent \\u2014 playing'; st.style.color = '#2ecc71'; }
-      else { st.textContent = 'Error: ' + (d.error||'failed'); st.style.color = '#e74c3c'; }
+      if(d.ok) setStatus('tts-status', 'Sent \u2014 playing', 'ok');
+      else     setStatus('tts-status', 'Error: ' + (d.error||'failed'), 'err');
       btn.disabled = false;
-      setTimeout(function(){ st.textContent = 'Ready'; st.style.color = '#888'; }, 5000);
+      setTimeout(function(){ setStatus('tts-status', 'Ready'); }, 5000);
     })
-    .catch(function(e){ st.textContent = 'Network error'; st.style.color = '#e74c3c'; btn.disabled = false; });
+    .catch(function(){ setStatus('tts-status', 'Network error', 'err'); btn.disabled = false; });
   if(document.activeElement) document.activeElement.blur();
 }
+
 function refreshSounds() {
   postJson('/refreshsounds', {}).then(function(d){
     if(d.ok) { var n=d.count; alert('Refreshed ' + n + ' sound' + (n!=1?'s':'')); }
   });
 }
 
-function bar(pct, cls, ducked) {
-  var w = Math.round(Math.min(Math.max(pct, 0), 100));
-  var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
-  var pctCol = ducked ? '#e74c3c' : '#2ecc71';
-  return '<span class="bar-pct" style="color:'+pctCol+'">'+p+'%</span><span class="bar '+cls+'" style="width:'+w+'px"></span>';
-}
-
-// Web mic, TX radio selector, and MIC PTT removed — handled by nav bar MIC button + routing page
-
 // --- Status polling for button states ---
 createPoller('/status', 1000, function(s) {
-    // Mute/processing/duck/rebroadcast buttons removed — handled by routing page
     // Smart announce activity status
     var smSt = document.getElementById('smart-status');
     if(smSt && s.smart_activity) {
@@ -287,7 +408,8 @@ createPoller('/status', 1000, function(s) {
         var sClr = sv==='Done'?'green':sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped')?'red':'yellow';
         parts.push('<span class="'+sClr+'">#'+sk+': '+sv+'</span>');
       }
-      smSt.innerHTML = parts.length ? parts.join(' ') : '<span style="color:#888">Idle</span>';
+      smSt.className = 'st-line';
+      smSt.innerHTML = parts.length ? parts.join(' ') : 'Idle';
     }
     // Smart announce countdowns
     if(s.smart_countdowns) {
@@ -317,15 +439,14 @@ createPoller('/status', 1000, function(s) {
       }
       pbDiv.innerHTML = ph || '<span class="white">No files loaded</span>';
     }
-    // Playback button states
+    // Playback button states — class toggle, never opacity mutation
     if(s.files) {
       for(var fk in s.files) {
         var fb = document.getElementById('btn-f'+fk);
         if(fb) {
           var fi = s.files[fk];
-          if(fi.playing) { fb.className='muted'; }
-          else if(fi.loaded) { fb.className=''; }
-          else { fb.className=''; fb.style.opacity='0.4'; }
+          fb.classList.toggle('muted', !!fi.playing);
+          fb.classList.toggle('dim', !fi.loaded);
           if(fi.name) fb.title=fi.name;
         }
       }
@@ -345,7 +466,7 @@ createPoller('/status', 1000, function(s) {
     showIf('btn-o', s.speaker_enabled);
     showIf('btn-j', s.relay_radio_enabled);
     showIf('btn-h', s.relay_charger_enabled);
-    // Broadcastify buttons & status text
+    // Broadcastify buttons & status text (group is removed but kept in case of future re-add)
     var bcGrp = document.getElementById('broadcastify-group');
     if(bcGrp) {
       if(!s.streaming_enabled) { bcGrp.style.display='none'; } else { bcGrp.style.display=''; }
@@ -366,8 +487,7 @@ createPoller('/status', 1000, function(s) {
       setBtn('btn-bc-start', s.darkice_running, 'active');
       setBtn('btn-bc-stop', !s.darkice_running && s.streaming_enabled, 'muted');
     }
-    // Gateway Link controls
-    // Render link endpoint panels into #playback-section so they're draggable
+    // Gateway Link controls — render link endpoint panels into #playback-section
     var pbSection = document.getElementById('playback-section');
     if(pbSection && s.link_enabled) {
       var eps = s.link_endpoints || [];
@@ -376,7 +496,6 @@ createPoller('/status', 1000, function(s) {
         var le = eps[ei];
         var eid = 'link-' + le.name.replace(/[^a-zA-Z0-9_-]/g, '_');
         var existing = document.getElementById(eid);
-        // Only rebuild if panel doesn't exist yet (avoid re-creating on every poll)
         if(!existing) {
           var div = document.createElement('div');
           div.className = 'ctrl-group';
@@ -389,33 +508,31 @@ createPoller('/status', 1000, function(s) {
         var panel = document.getElementById(eid);
         if(!panel) continue;
         var ename = le.name;
+        var connCls = le.connected ? 'green' : 'red';
+        var connTxt = le.connected ? 'connected' : 'offline';
+        var rxGain = (le.endpoint_status && le.endpoint_status.rx_gain_db !== undefined) ? le.endpoint_status.rx_gain_db : 0;
+        var txGain = (le.endpoint_status && le.endpoint_status.tx_gain_db !== undefined) ? le.endpoint_status.tx_gain_db : 0;
+        var pttCls = le.ptt_active ? 'link-ptt on' : 'link-ptt';
+        var rxmCls = le.rx_muted ? 'link-mute on' : 'link-mute';
+        var txmCls = le.tx_muted ? 'link-mute on' : 'link-mute';
         var h = '<h3>Link: '+ename+'</h3>';
-        h += '<div style="font-size:0.85em; color:#888; margin-bottom:8px;">'+le.plugin+' '+(le.connected?'<span style="color:#2ecc71;">connected</span>':'<span style="color:#e74c3c;">offline</span>')+'</div>';
-        h += '<div style="display:flex; gap:10px; align-items:flex-start;">';
+        h += '<div class="link-meta">'+le.plugin+' <span class="'+connCls+'">'+connTxt+'</span></div>';
+        h += '<div class="link-body">';
         if(le.capabilities && le.capabilities.ptt) {
-          var pttStyle = le.ptt_active ? 'background:var(--t-btn-active);border-color:var(--t-accent);color:var(--t-accent);' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
-          h += '<button onclick="linkPttToggle(&quot;'+ename+'&quot;)" style="width:80px; height:50px; font-size:1.1em; border:1px solid; border-radius:4px; cursor:pointer; '+pttStyle+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
+          h += '<button onclick="linkPttToggle(&quot;'+ename+'&quot;)" class="'+pttCls+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
         }
-        h += '<div style="flex:1; display:flex; flex-direction:column; gap:4px;">';
-        h += '<div style="display:flex; align-items:center; gap:6px;">';
-        h += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">RX</span>';
-        h += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.level||0)+'%; background:#2ecc71; border-radius:2px;"></div></div>';
+        h += '<div class="link-col">';
+        h += '<div class="link-row"><span class="link-label">RX</span><div class="link-bar"><div class="link-fill rx" style="width:'+(le.level||0)+'%"></div></div></div>';
+        h += '<div class="link-row"><span class="link-label">TX</span><div class="link-bar"><div class="link-fill tx" style="width:'+(le.tx_level||0)+'%"></div></div></div>';
+        h += '<div class="link-row" style="margin-top:var(--s-1);">';
+        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;rx&quot;)" class="'+rxmCls+'">Mute</button>';
+        h += '<input type="range" min="-10" max="10" step="1" value="'+rxGain+'" style="flex:1;" oninput="linkGain(&quot;'+ename+'&quot;,&quot;rx_gain&quot;,this.value)">';
+        h += '<span class="link-gain-val">'+rxGain+' dB</span>';
         h += '</div>';
-        h += '<div style="display:flex; align-items:center; gap:6px;">';
-        h += '<span style="color:#888; width:2em; text-align:right; font-size:0.8em;">TX</span>';
-        h += '<div style="flex:1; height:12px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;"><div style="height:100%; width:'+(le.tx_level||0)+'%; background:#e74c3c; border-radius:2px;"></div></div>';
-        h += '</div>';
-        var rxmStyle = le.rx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
-        h += '<div style="display:flex; align-items:center; gap:6px; margin-top:4px;">';
-        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;rx&quot;)" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+rxmStyle+'">Mute</button>';
-        h += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(&quot;'+ename+'&quot;,&quot;rx_gain&quot;,this.value)">';
-        h += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined?le.endpoint_status.rx_gain_db:0)+' dB</span>';
-        h += '</div>';
-        var txmStyle = le.tx_muted ? 'background:#5c1a1a;border-color:#c0392b;color:#ff6b6b;' : 'background:var(--t-btn);border-color:var(--t-btn-border);color:#e0e0e0;';
-        h += '<div style="display:flex; align-items:center; gap:6px;">';
-        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;tx&quot;)" style="width:3em; padding:4px; font-size:0.75em; border:1px solid; border-radius:3px; cursor:pointer; '+txmStyle+'">Mute</button>';
-        h += '<input type="range" min="-10" max="10" step="1" value="'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+'" style="flex:1; accent-color:var(--t-accent);" oninput="linkGain(&quot;'+ename+'&quot;,&quot;tx_gain&quot;,this.value)">';
-        h += '<span style="color:#888; font-size:0.8em; width:3.5em;">'+(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined?le.endpoint_status.tx_gain_db:0)+' dB</span>';
+        h += '<div class="link-row">';
+        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;tx&quot;)" class="'+txmCls+'">Mute</button>';
+        h += '<input type="range" min="-10" max="10" step="1" value="'+txGain+'" style="flex:1;" oninput="linkGain(&quot;'+ename+'&quot;,&quot;tx_gain&quot;,this.value)">';
+        h += '<span class="link-gain-val">'+txGain+' dB</span>';
         h += '</div>';
         h += '</div></div>';
         panel.innerHTML = h;
@@ -429,7 +546,6 @@ createPoller('/status', 1000, function(s) {
   if (!container) return;
   var STORAGE_KEY = 'controls_panel_order';
 
-  // Make panels draggable
   function initDrag() {
     var panels = container.querySelectorAll('.ctrl-group[id]');
     panels.forEach(function(p) {
@@ -454,7 +570,6 @@ createPoller('/status', 1000, function(s) {
     e.dataTransfer.dropEffect = 'move';
     var target = e.target.closest('.ctrl-group[id]');
     if (!target || target === dragSrc) return;
-    // Visual feedback
     var panels = Array.from(container.querySelectorAll('.ctrl-group[id]'));
     var dragIdx = panels.indexOf(dragSrc);
     var targetIdx = panels.indexOf(target);
@@ -465,7 +580,7 @@ createPoller('/status', 1000, function(s) {
     }
   });
 
-  container.addEventListener('dragend', function(e) {
+  container.addEventListener('dragend', function() {
     if (dragSrc) dragSrc.style.opacity = '';
     dragSrc = null;
     saveOrder();
