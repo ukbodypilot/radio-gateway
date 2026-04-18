@@ -233,6 +233,28 @@ class _TunerCapture:
                 pass
 
         if data is None:
+            # Underrun: zero-fill so the bus sees a chunk every tick instead
+            # of a gap. rtl_airband has `continuous = false` (deliberate, to
+            # avoid noise-floor pollution of routing levels — see bugs.md
+            # 2026-04-05), so parec stalls during squelch-closed and the
+            # queue drains. Emitting silence here decouples bus cadence from
+            # rtl_airband's output cadence. Zero samples → level meter reads
+            # 0, so levels stay clean.
+            if self.muted or not self.processor:
+                # Keep old behaviour when muted or unconfigured
+                pass
+            else:
+                mono_silence = b'\x00' * (self._chunk_size * 2)
+                self._last_serve_sample = 0
+                self._serve_discontinuity = 0.0
+                self._sub_buffer_after = 0
+                self.audio_level = update_level(self.audio_level, 0)
+                _st = self._stream_trace
+                if _st:
+                    _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
+                    _st.record(_sid, 'zerofill', mono_silence,
+                               self._chunk_queue.qsize(), 'underrun')
+                return mono_silence
             return None
 
         if _drained:
@@ -294,7 +316,7 @@ class _TunerCapture:
         return raw
 
     def cleanup(self):
-        """Stop parec and reader thread."""
+        """Stop parec and reader thread, drain queue for clean restart."""
         self._reader_running = False
         if self._parec_proc:
             try:
@@ -303,6 +325,18 @@ class _TunerCapture:
             except Exception:
                 pass
             self._parec_proc = None
+        if self._reader_thread and self._reader_thread.is_alive():
+            try:
+                self._reader_thread.join(timeout=1.0)
+            except Exception:
+                pass
+        self._reader_thread = None
+        while True:
+            try:
+                self._chunk_queue.get_nowait()
+            except _queue_mod.Empty:
+                break
+        self.audio_level = 0
 
     def get_audio(self, chunk_size=None):
         """Bus-compatible audio interface. Returns (pcm_bytes_or_none, False)."""

@@ -1,5 +1,26 @@
 # Bug History — Radio Gateway
 
+## Multi-bus PCM/MP3 routing interleaved instead of mixed (2026-04-18)
+**Symptom:** Routing two buses (e.g. main + th9800) to the PCM/MP3 sink sounded like the streams were chopped together — chunks from each bus played sequentially, not mixed.
+**Root cause:** `_deliver_audio()` called `self._pcm_queue.append(mixed)` and `push_ws_audio(mixed)` independently for each bus during its own tick. WS client received `busA_chunk, busB_chunk, busA_chunk, busB_chunk…` at 25ms intervals — playback was temporal interleave.
+**Fix:** Staged per-tick contributions into `self._pcm_tick` / `self._mp3_tick` lists during `_deliver_audio`. After all buses deliver each tick, mix staged chunks through `mix_audio_streams` (additive + soft-tanh limiter) and push ONE mixed chunk per tick. Single-bus fast path preserved.
+**Files:** `bus_manager.py`
+**Trace proof:** dual-bus ticks (both buses contributing in same 50ms slot) = 195; all mixed via the new flush path.
+
+## SDR1 parec jitter caused choppy audio (2026-04-18)
+**Symptom:** SDR1 audio choppy/stuttery even when signal was clean. parec_read stdev=16ms, max=88ms, 110/637 events >80ms.
+**Root cause:** rtl_airband runs with `continuous = false` (deliberate — see 2026-04-05 noise-floor bug). When squelch is closed, rtl_airband stops writing to its PulseAudio null sink, so parec reads stall and then burst. The bus consumer pulls at steady 50ms but the upstream queue drains/refills irregularly, so some ticks see an empty queue and the bus sees a gap.
+**Fix:** `_TunerCapture.get_chunk()` now zero-fills on underrun — returns a mono silence buffer instead of `None`, keeping bus cadence continuous. Zero samples → RMS=0 → level meter stays at 0, so the 2026-04-05 noise-floor regression does NOT reappear (zero-fill is gateway-internal, not rtl_airband output).
+**Files:** `sdr_plugin.py` (_TunerCapture.get_chunk)
+**Trace proof:** `get_chunk intervals: stdev=1.8ms min=48.3ms` vs upstream `parec_read stdev=16.1ms` — buffer fully absorbs the jitter.
+
+## Celeron-FTM150 endpoint flooding gateway with silence (2026-04-18)
+**Symptom:** `celeron-ftm150_rx push_audio: 1121 events  SILENT=1121  qd: mean=16.0 max=16  flags={'overflow': 1121}` — endpoint pushed silent zero-chunks to the gateway every 50ms even when radio was idle, saturating the RX queue at max depth with overflow on every push.
+**Root cause:** `AudioPlugin._apply_gate()` returned `b'\x00' * len(data)` when the gate was closed. The reader loop then queued that silence into `_rx_queue`, which the link protocol transmitted to the gateway continuously regardless of signal.
+**Fix:** Added `continue` in the reader loop after gate-close detection — drop the chunk entirely instead of queueing silence. `get_audio()` already handles empty-queue as "no audio this tick" so this is safe.
+**Files:** `gateway_link.py` (AudioPlugin reader loop ~line 1443). Deployed to celeron-ftm150 endpoint separately.
+**Trace proof:** after deploy, `push_audio` dropped to 307 events in 232s (only during real TX), RMS mean=231 (non-silent), no overflow. RX `get_audio UNDERRUN=94%` is the correct idle behavior.
+
 ## Bus processing per-sink IIR filter corruption (2026-04-05)
 **Symptom:** Audio processing buttons (G/H/L/N) on routing page had no audible effect or corrupted audio.
 **Root cause:** `_deliver_audio()` called `AudioProcessor.process()` once per sink inside the loop. IIR filters are stateful — running N times per tick advanced filter state N times, corrupting output for all but the first sink.
@@ -555,3 +576,20 @@ After duck-in (`is_ducked=False`), if AIOC sent any blob, `other_audio_active=Tr
 **Root cause:** `_transmit_audio()` sent all PCM chunks as fast as TCP would allow. ANNIN queue is `maxsize=16` (drop-oldest). A 5.3s voice note = ~106 chunks at 50ms each. First 16 queued, rest dropped. ~0.8s of audio played then silence; PTT released.
 
 **Fix:** Added real-time pacing in `_transmit_audio()`: after each chunk, sleep until `next_send` time (one chunk interval = `chunk_size / sample_rate` seconds). Queue stays full but never overflows.
+
+## AGWPE Proxy 2-Second Session Death (2026-04-16)
+**Symptom:** Winlink Connect & Sync dies after ~2s with exit code -15. Only one TX burst heard.
+**Root cause:** `socket.settimeout(2.0)` set for the connect phase to Direwolf persisted into `recv()` calls in the `_fwd` thread. Any 2-second gap in RF data (normal for AX.25) caused a timeout exception, killing the proxy session. Then `_restart_after_session` ran `pkill -f 'pat connect'`, killing Pat with SIGTERM (-15).
+**Fix:** Added `r.settimeout(None)` after successful connect. Removed `pkill`. Made `_agwpe_proxy_session` block on `done.wait()` so `_proxy_sessions_active` counter stays > 0 while session is live.
+**File:** `packet_radio.py` (_agwpe_proxy_session)
+
+## Spurious AGWPE Session from Pat Startup Test (2026-04-16)
+**Symptom:** Every time winlink mode is entered, Direwolf immediately restarts. Pat can't connect.
+**Root cause:** `_delayed_pat_start` connected to `127.0.0.1:8010` (the AGWPE proxy) to test readiness. The proxy forwarded this to Direwolf, opening a real AGWPE session. The test socket closed immediately → session ended → Direwolf restarted.
+**Fix:** Changed test to connect to the remote KISS port (8001) instead of the local AGWPE proxy.
+**File:** `packet_radio.py` (_delayed_pat_start)
+
+## Zombie Endpoint Process Causing Duplicate Rejections (2026-04-16)
+**Symptom:** Gateway logs flooded with "Duplicate endpoint name 'celeron-ftm150'" every 5 seconds.
+**Root cause:** Manual `nohup` start of endpoint during debugging left a second process running alongside the systemd user service. Both tried to register the same name.
+**Fix:** Killed manual process, confirmed systemd service is sole manager. All endpoints now use consistent systemd user services with linger enabled.

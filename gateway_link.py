@@ -1440,11 +1440,16 @@ class AudioPlugin(RadioPlugin):
                     if self._rx_gain_db != 0.0:
                         data = self._apply_volume(data, self._db_to_linear(self._rx_gain_db))
 
-                    # Noise gate
+                    # Noise gate — when closed, DROP the chunk rather than
+                    # queue silence. The gateway treats missing audio as
+                    # silence naturally, so sending zero bytes wastes link
+                    # bandwidth and, on the gateway side, keeps the receive
+                    # queue saturated (overflow on every push).
                     if self._gate_enabled:
                         data = self._apply_gate(data)
                         if self._gate_open is False:
                             _diag_gated += 1
+                            continue
 
                     # Queue for get_audio
                     try:

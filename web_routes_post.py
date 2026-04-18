@@ -1049,6 +1049,28 @@ def handle_reboothost(handler, parent):
     return
 
 
+def handle_restartgateway(handler, parent):
+    """POST /restartgateway — restart the radio-gateway systemd service."""
+    import subprocess as _sp
+    result = {'ok': False}
+    try:
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(json_mod.dumps({'ok': True}).encode('utf-8'))
+        try:
+            handler.wfile.flush()
+        except Exception:
+            pass
+    except BrokenPipeError:
+        pass
+    try:
+        _sp.Popen(['sudo', 'systemctl', 'restart', 'radio-gateway.service'])
+    except Exception as _e:
+        print(f"  [restart] failed: {_e}")
+    return
+
+
 def handle_refreshsounds(handler, parent):
     """POST /refreshsounds"""
     result = {'ok': False, 'count': 0}

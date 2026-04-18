@@ -206,8 +206,13 @@ def dump_audio_trace(gw):
         aioc_blocked = [r[ABLK] for r in trace if r[ABLK] > 0]
 
         f.write("TICK TIMING (target: 50.0ms)\n")
-        f.write(f"  count={len(dts)}  mean={statistics.mean(dts):.1f}ms  "
-                f"stdev={statistics.stdev(dts):.1f}ms  min={min(dts):.1f}ms  max={max(dts):.1f}ms\n")
+        if len(dts) >= 2:
+            f.write(f"  count={len(dts)}  mean={statistics.mean(dts):.1f}ms  "
+                    f"stdev={statistics.stdev(dts):.1f}ms  min={min(dts):.1f}ms  max={max(dts):.1f}ms\n")
+        elif len(dts) == 1:
+            f.write(f"  count=1  value={dts[0]:.1f}ms (insufficient data for stdev)\n")
+        else:
+            f.write(f"  count=0 (no ticks captured — recording stopped before any tick ran)\n")
         over_60 = sum(1 for d in dts if d > 60)
         over_80 = sum(1 for d in dts if d > 80)
         over_100 = sum(1 for d in dts if d > 100)

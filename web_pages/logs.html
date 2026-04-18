@@ -18,7 +18,8 @@
   <button class="rb rb-sm" onclick="clearLog()">Clear</button>
   <button class="rb rb-sm" id="btn-trace" onclick="toggleTrace('audio')">Audio Trace</button>
   <button class="rb rb-sm" id="btn-watchdog" onclick="toggleTrace('watchdog')">Watchdog Trace</button>
-  <button class="rb rb-sm" id="btn-reboot" onclick="rebootHost()" style="background:#7f0000; border-color:#c0392b; color:#ffcccc; margin-left:auto;">Reboot Host</button>
+  <button class="rb rb-sm" id="btn-restart-gw" onclick="restartGateway()" style="background:#5a3b00; border-color:#c08a2c; color:#ffd98a; margin-left:auto;">Restart Gateway</button>
+  <button class="rb rb-sm" id="btn-reboot" onclick="rebootHost()" style="background:#7f0000; border-color:#c0392b; color:#ffcccc;">Reboot Host</button>
   <span id="log-status" style="color:#888; font-size:0.8em;"></span>
 </div>
 <div id="log-box" style="background:#0a0a0a; border:1px solid var(--t-btn-border); border-radius:4px; padding:8px; height:calc(100vh - 160px); overflow-y:auto; font-family:'Courier New',monospace; font-size:0.82em; line-height:1.5; white-space:pre-wrap; word-break:break-all; color:#c0c0c0;">
@@ -117,6 +118,34 @@ function rebootHost() {
     .catch(function() {
       document.getElementById('log-status').textContent = 'Host reboot initiated';
     });
+}
+
+function restartGateway() {
+  if (!confirm('Restart the radio-gateway service?')) return;
+  var btn = document.getElementById('btn-restart-gw');
+  btn.disabled = true;
+  btn.textContent = 'Restarting...';
+  document.getElementById('log-status').textContent = 'Gateway restart requested — reconnecting...';
+  fetch('/restartgateway', {method:'POST'}).catch(function(){});
+  var _tries = 0;
+  var _poll = setInterval(function() {
+    _tries++;
+    fetch('/logdata?after=0', {cache:'no-store'})
+      .then(function(r){ if (r.ok) return r.json(); throw 0; })
+      .then(function() {
+        clearInterval(_poll);
+        document.getElementById('log-status').textContent = 'Gateway back online — reloading...';
+        setTimeout(function(){ location.reload(); }, 500);
+      })
+      .catch(function(){
+        if (_tries > 60) {
+          clearInterval(_poll);
+          btn.disabled = false;
+          btn.textContent = 'Restart Gateway';
+          document.getElementById('log-status').textContent = 'Gateway still down after 60s — check service status';
+        }
+      });
+  }, 1000);
 }
 
 // Load initial backlog

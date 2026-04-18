@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus
+from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus, mix_audio_streams
 from audio_util import AudioProcessor, pcm_level
 
 
@@ -38,6 +38,11 @@ class BusManager:
         # main loop picks it up and mixes with listen bus output before pushing.
         self._pcm_queue = collections.deque(maxlen=8)  # thread-safe bounded deque
         self._mp3_queue = collections.deque(maxlen=8)
+        # Per-tick staging — collected during each bus's _deliver_audio, mixed
+        # and flushed once at end of tick. Prevents multiple buses routed to
+        # pcm/mp3 from interleaving their chunks into the downstream consumer.
+        self._pcm_tick = []
+        self._mp3_tick = []
         self._bus_levels = {}       # bus_id → audio level (0-100) for routing page
 
         # ── Primary listen bus state ──────────────────────────────────────
@@ -255,6 +260,25 @@ class BusManager:
             if c['type'] == 'source-bus' and c['to'] == self._listen_bus_id:
                 if c['from'] in source_map:
                     should_be_on.add(c['from'])
+
+        # Reconcile SDR tuner parec lifecycle with routing:
+        # an unrouted tuner keeps parec running and overflows its queue forever,
+        # wasting CPU and competing with routed tuners for pipewire scheduling.
+        if gw.sdr_plugin:
+            for _sid, _attr in (('sdr1', '_tuner1'), ('sdr2', '_tuner2')):
+                _tuner = getattr(gw.sdr_plugin, _attr, None)
+                if _tuner is None:
+                    continue
+                _needed = _sid in should_be_on
+                if _needed and not _tuner.active:
+                    if _tuner.setup():
+                        _tuner._stream_trace = getattr(gw, '_stream_trace', None)
+                        print(f"  [sync] Started SDR tuner capture: {_sid}")
+                    else:
+                        print(f"  [sync] Failed to start SDR tuner capture: {_sid}")
+                elif not _needed and _tuner.active:
+                    _tuner.cleanup()
+                    print(f"  [sync] Stopped SDR tuner capture: {_sid} (not routed)")
 
         # Current sources on listen bus
         _before = {s.source.name for s in self.listen_bus.source_slots}
@@ -746,16 +770,14 @@ class BusManager:
         mixed = _processed_audio if _processed_audio is not None else bus_output.mixed_audio
         if mixed is not None:
             if proc_cfg.get('pcm', False):
-                self._pcm_queue.append(mixed)
-                # Direct push to WebSocket clients (bypass main loop drain)
-                _wcs = getattr(gw, 'web_config_server', None)
-                if _wcs and _wcs._ws_clients:
-                    _wcs.push_ws_audio(mixed)
+                # Stage for per-tick mixing — actual queue.append + WS push
+                # happens once at end of tick after all buses have delivered.
+                self._pcm_tick.append(mixed)
                 if _st and _st.active:
-                    _st.record(f'{bus_id}_pcm', 'deposit', mixed,
-                               len(self._pcm_queue))
+                    _st.record(f'{bus_id}_pcm', 'stage', mixed,
+                               len(self._pcm_tick))
             if proc_cfg.get('mp3', False):
-                self._mp3_queue.append(mixed)
+                self._mp3_tick.append(mixed)
             # Loop recording: feed processed audio to LoopRecorder
             if proc_cfg.get('loop', False):
                 _lr = getattr(gw, 'loop_recorder', None)
@@ -955,6 +977,31 @@ class BusManager:
                 except Exception as e:
                     print(f"  [BusManager] {bus_id} tick error: {e}")
                     import traceback; traceback.print_exc()
+
+            # ── Flush per-tick PCM/MP3: mix contributions from all buses ──
+            # Multiple buses routed to pcm/mp3 are mixed (summed with soft
+            # limiter) into one chunk per tick rather than interleaved.
+            if self._pcm_tick:
+                if len(self._pcm_tick) == 1:
+                    _pcm_out = self._pcm_tick[0]
+                else:
+                    _pcm_out = self._pcm_tick[0]
+                    for _extra in self._pcm_tick[1:]:
+                        _pcm_out = mix_audio_streams(_pcm_out, _extra)
+                self._pcm_queue.append(_pcm_out)
+                _wcs = getattr(gw, 'web_config_server', None)
+                if _wcs and _wcs._ws_clients:
+                    _wcs.push_ws_audio(_pcm_out)
+                self._pcm_tick.clear()
+            if self._mp3_tick:
+                if len(self._mp3_tick) == 1:
+                    _mp3_out = self._mp3_tick[0]
+                else:
+                    _mp3_out = self._mp3_tick[0]
+                    for _extra in self._mp3_tick[1:]:
+                        _mp3_out = mix_audio_streams(_mp3_out, _extra)
+                self._mp3_queue.append(_mp3_out)
+                self._mp3_tick.clear()
 
             # ── Auto-PTT key/release for link endpoint TX sinks ─────────
             # PTT commands sent here (outside deliver) to avoid blocking tick

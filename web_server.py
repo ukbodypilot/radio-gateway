@@ -849,6 +849,8 @@ class WebConfigServer:
                     _rp.handle_tracecmd(self, parent)
                 elif self.path == '/reboothost':
                     _rp.handle_reboothost(self, parent)
+                elif self.path == '/restartgateway':
+                    _rp.handle_restartgateway(self, parent)
                 elif self.path == '/refreshsounds':
                     _rp.handle_refreshsounds(self, parent)
                 elif self.path == '/darkicecmd':
