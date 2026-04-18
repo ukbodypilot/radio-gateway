@@ -11,252 +11,248 @@
 
   #drawflow {
     width: 100%;
-    height: calc(100vh - 36px);
+    height: calc(100vh - 40px);
     background: var(--t-bg);
   }
 
-  /* Drawflow theme overrides */
+  /* Drawflow node base — phosphor/instrument sensibility.
+     Title stripe on the left, monochrome body, readable type.
+     Per-type colors are set via --node-color below. */
   .drawflow .drawflow-node {
     background: var(--t-panel);
     border: 1px solid var(--t-border);
-    border-radius: 5px;
-    color: #e0e0e0;
-    min-width: 136px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-    font-size: 0.61rem;
+    border-radius: var(--r-md);
+    color: var(--t-text);
+    min-width: 180px;
+    font-family: inherit;
+    font-size: var(--f-xs);
   }
+  .drawflow .drawflow-node[class*="bus-"] { min-width: 230px; }
   .drawflow .drawflow-node.selected {
-    border-color: #f39c12 !important;
-    box-shadow: 0 0 8px rgba(243,156,18,0.4) !important;
-    background: rgba(243,156,18,0.1) !important;
+    border-color: var(--t-accent) !important;
+    box-shadow: 0 0 0 1px var(--t-accent) !important;
   }
   .drawflow .drawflow-node .title-box {
-    padding: 2px 6px;
+    padding: var(--s-1) var(--s-2);
     border-bottom: 1px solid var(--t-border);
-    font-weight: 700;
-    font-size: 0.61rem;
+    border-left: 3px solid var(--node-color, var(--t-border-hi));
+    background: var(--t-panel-hi);
+    font-weight: 600;
+    font-size: var(--f-xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.4;
   }
   .drawflow .drawflow-node .box {
-    padding: 1px 5px 1px;
-    font-size: 0.53rem;
-    color: #aaa;
-  }
-  /* Source/sink nodes */
-  .drawflow .drawflow-node.source,
-  .drawflow .drawflow-node.sink {
-    min-width: 157px;
-  }
-  .drawflow .drawflow-node.source .box,
-  .drawflow .drawflow-node.sink .box {
-    padding: 1px 5px 1px;
-    font-size: 0.49rem;
-  }
-  .drawflow .drawflow-node.source .title-box,
-  .drawflow .drawflow-node.sink .title-box {
-    padding: 2px 6px;
-    font-size: 0.55rem;
-  }
-  /* Bus nodes: match source/sink sizing */
-  .drawflow .drawflow-node[class*="bus-"] .box {
-    padding: 1px 5px 1px;
-    font-size: 0.49rem;
-  }
-  .drawflow .drawflow-node[class*="bus-"] .title-box {
-    padding: 2px 6px;
-    font-size: 0.55rem;
-  }
-  .drawflow .drawflow-node[class*="bus-"] .proc-btn {
-    width: 14px;
-    height: 12px;
-    font-size: 0.45rem;
-    line-height: 12px;
-  }
-  .drawflow .drawflow-node[class*="bus-"] .proc-buttons {
-    gap: 1px;
-    margin-top: 1px;
-  }
-  .drawflow .drawflow-node[class*="bus-"] .mute-btn {
-    width: 14px;
-    height: 12px;
-    font-size: 0.45rem;
-    line-height: 12px;
-  }
-  .drawflow .connection .main-path {
-    stroke: var(--t-accent);
-    stroke-width: 3;
-  }
-  .drawflow .drawflow-node .input, .drawflow .drawflow-node .output {
-    background: var(--t-accent);
-    border: 2px solid var(--t-accent);
-  }
-  .drawflow .drawflow-node .input:hover, .drawflow .drawflow-node .output:hover {
-    background: #fff;
+    padding: var(--s-1) var(--s-2);
+    font-size: var(--f-xs);
+    color: var(--t-text-dim);
   }
 
-  /* Node type colors */
-  .drawflow .drawflow-node.source .title-box { background: #1a3a2e; border-color: #2ecc71; }
-  .drawflow .drawflow-node.bus-listen .title-box { background: #1a2a3e; border-color: #3498db; }
-  .drawflow .drawflow-node.bus-solo .title-box { background: #3e2a1a; border-color: #f39c12; }
-  .drawflow .drawflow-node.bus-duplex .title-box { background: #1a3a2e; border-color: #2ecc71; }
-  .drawflow .drawflow-node.bus-simplex .title-box { background: #3e1a1a; border-color: #e74c3c; }
-  .drawflow .drawflow-node.sink .title-box { background: #2a1a3e; border-color: #9b59b6; }
+  /* Per-type accent color (drives title stripe + level bar) */
+  .drawflow .drawflow-node.source       { --node-color: var(--t-ok); }
+  .drawflow .drawflow-node.bus-listen   { --node-color: var(--t-accent); }
+  .drawflow .drawflow-node.bus-solo     { --node-color: var(--t-warn); }
+  .drawflow .drawflow-node.bus-duplex   { --node-color: var(--t-ok); }
+  .drawflow .drawflow-node.bus-simplex  { --node-color: var(--t-err); }
+  .drawflow .drawflow-node.sink         { --node-color: var(--t-text-dim); }
+
+  /* Connections + sockets */
+  .drawflow .connection .main-path {
+    stroke: var(--t-border-hi);
+    stroke-width: 2;
+  }
+  .drawflow .connection .main-path.selected {
+    stroke: var(--t-accent);
+  }
+  .drawflow .drawflow-node .input,
+  .drawflow .drawflow-node .output {
+    background: var(--t-panel);
+    border: 2px solid var(--t-border-hi);
+  }
+  .drawflow .drawflow-node .input:hover,
+  .drawflow .drawflow-node .output:hover {
+    background: var(--t-accent);
+    border-color: var(--t-accent);
+  }
 
   /* Node controls (mute + gain) */
   .node-controls {
     display: flex;
     align-items: center;
-    gap: 3px;
-    margin-bottom: 0px;
-    padding: 1px 0;
+    gap: var(--s-1);
+    padding: 2px 0;
   }
-  .mute-btn {
-    width: 16px;
-    height: 14px;
-    border: 1px solid #555;
-    border-radius: 2px;
-    background: #2a2a3e;
-    color: #888;
-    font-size: 0.48rem;
-    font-weight: bold;
-    cursor: pointer;
-    padding: 0;
+  .mute-btn, .proc-btn {
+    height: 16px;
+    min-width: 18px;
+    padding: 0 3px;
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    background: var(--t-btn);
+    color: var(--t-text-dim);
+    font: inherit;
+    font-size: var(--f-xs);
+    font-weight: 600;
     line-height: 14px;
     text-align: center;
+    cursor: pointer;
     flex-shrink: 0;
   }
-  .mute-btn:hover { border-color: #e74c3c; color: #e74c3c; }
+  .mute-btn:hover { border-color: var(--t-err); color: var(--t-err); }
   .mute-btn.muted {
-    background: #e74c3c;
-    color: #fff;
-    border-color: #c0392b;
+    background: var(--t-err);
+    color: var(--t-bg);
+    border-color: var(--t-err);
   }
+  .proc-btn:hover { border-color: var(--t-accent); color: var(--t-accent); }
+  .proc-btn.on {
+    background: var(--t-accent);
+    color: var(--t-bg);
+    border-color: var(--t-accent);
+  }
+  .proc-btn.out-btn.on {
+    background: var(--t-ok);
+    border-color: var(--t-ok);
+  }
+  .proc-sep {
+    width: 1px;
+    height: 12px;
+    background: var(--t-border);
+    margin: 0 3px;
+    flex-shrink: 0;
+  }
+
   .gain-slider {
-    width: 51px;
+    width: 60px;
     flex-shrink: 0;
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: #444;
-    border-radius: 2px;
+    background: var(--t-panel-hi);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
     outline: none;
   }
   .gain-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 9px;
-    height: 9px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     background: var(--t-accent);
     cursor: pointer;
   }
   .gain-val {
-    font-size: 0.48rem;
-    color: #aaa;
-    min-width: 24px;
+    font-size: var(--f-xs);
+    color: var(--t-text-dim);
+    min-width: 28px;
     text-align: right;
     flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
   }
 
-  /* Processing buttons on bus nodes */
   .proc-buttons {
     display: flex;
+    align-items: center;
     gap: 2px;
-    margin-top: 1px;
+    margin-top: 2px;
   }
-  .proc-btn {
-    width: 16px;
-    height: 14px;
-    border: 1px solid #555;
-    border-radius: 2px;
-    background: #2a2a3e;
-    color: #666;
-    font-size: 0.48rem;
-    font-weight: bold;
-    cursor: pointer;
-    padding: 0;
-    text-align: center;
-    line-height: 10px;
-  }
-  .proc-btn:hover { border-color: var(--t-accent); color: var(--t-accent); }
-  .proc-btn.on {
-    background: var(--t-accent);
-    color: #fff;
-    border-color: var(--t-accent);
-  }
-  .proc-btn.out-btn.on {
-    background: #2ecc71;
-    border-color: #27ae60;
-  }
-
-  /* Wider nodes to fit controls */
-  .drawflow .drawflow-node { min-width: 119px; }
-  .drawflow .drawflow-node[class*="bus-"] { min-width: 178px; }
-  .drawflow .drawflow-node .title-box { padding: 1px 4px; font-size: 0.49rem; }
-  .drawflow .drawflow-node.source .title-box,
-  .drawflow .drawflow-node.sink .title-box { padding: 1px 4px; }
 
   /* Level bars inside nodes */
   .level-bar {
     height: 3px;
-    background: rgba(255,255,255,0.08);
+    background: var(--t-bg);
     border-radius: 1px;
-    margin-top: 1px;
+    margin-top: 3px;
     overflow: hidden;
-  }
-  .drawflow-node[class*="bus-"] .level-bar {
-    height: 3px;
-    margin-top: 1px;
   }
   .level-fill {
     height: 100%;
     width: 0%;
-    border-radius: 3px;
-    background: #2ecc71;
+    background: var(--node-color, var(--t-accent));
     transition: width 0.15s;
   }
-  .sink .level-fill { background: #f39c12; }
-  .drawflow-node[class*="bus-"] .level-fill { background: #3498db; }
-  .drawflow-node.node-muted .level-fill { background: #e74c3c !important; }
+  .drawflow-node.node-muted .level-fill,
+  .drawflow-node.ptt-active {
+    --node-color: var(--t-err);
+  }
+  .drawflow-node.ptt-active {
+    border-color: var(--t-err);
+    box-shadow: 0 0 0 1px var(--t-err);
+  }
 
   /* Toolbar */
   .toolbar {
     display: flex;
-    gap: 8px;
-    padding: 6px 12px;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
     background: var(--t-panel);
     border-bottom: 1px solid var(--t-border);
     align-items: center;
-    font-size: 0.8rem;
+    font-size: var(--f-sm);
   }
-  .toolbar button {
-    padding: 4px 12px;
-    border-radius: 4px;
-    border: 1px solid var(--t-btn-border);
-    background: var(--t-btn);
-    color: #e0e0e0;
-    cursor: pointer;
-    font-size: 0.78rem;
-  }
-  .toolbar button:hover { background: var(--t-btn-hover); }
   .toolbar .spacer { flex: 1; }
-  .toolbar .status { color: #888; font-size: 0.72rem; }
+  .toolbar .status {
+    color: var(--t-text-dim);
+    font-size: var(--f-xs);
+    letter-spacing: 0.04em;
+  }
+  .toolbar .hint {
+    color: var(--t-text-mute);
+    font-size: var(--f-xs);
+    margin-left: var(--s-2);
+  }
+  .rb.rb-danger { color: var(--t-err); border-color: var(--t-err); }
+  .rb.rb-danger:hover { background: var(--t-err); color: var(--t-bg); }
+  .rb.rb-primary { color: var(--t-accent); border-color: var(--t-accent); font-weight: 600; }
+  .rb.rb-primary:hover { background: var(--t-accent); color: var(--t-bg); }
 
-  /* Delete key hint */
-  .hint { color: #555; font-size: 0.65rem; margin-left: 8px; }
+  /* Recording indicator — pulsing red LED to the left of the bus name */
+  .rec-dot {
+    display: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--t-err);
+    box-shadow: 0 0 4px var(--t-err);
+    margin-right: var(--s-2);
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+  .drawflow-node.recording .rec-dot {
+    display: inline-block;
+    animation: rec-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes rec-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  /* Inline bus-rename input (replaces inline cssText in JS) */
+  .bus-rename-input {
+    background: var(--t-bg);
+    color: var(--t-text);
+    border: 1px solid var(--t-accent);
+    border-radius: var(--r-sm);
+    padding: 1px var(--s-1);
+    font: inherit;
+    font-size: inherit;
+  }
 </style>
 </head>
 <body>
 
 <div class="toolbar">
-  <button onclick="addBusNode('listen')">+ Listen Bus</button>
-  <button onclick="addBusNode('solo')">+ Solo Bus</button>
-  <button onclick="addBusNode('duplex')">+ Duplex Bus</button>
-  <button onclick="addBusNode('simplex')">+ Simplex Bus</button>
-  <button onclick="deleteSelected()" style="background:#e74c3c;border-color:#c0392b;">Delete Selected</button>
-  <span class="hint">Click a connection to select it, then click Delete Selected (or right-click).</span>
+  <button class="rb rb-sm" onclick="addBusNode('listen')">+ Listen</button>
+  <button class="rb rb-sm" onclick="addBusNode('solo')">+ Solo</button>
+  <button class="rb rb-sm" onclick="addBusNode('duplex')">+ Duplex</button>
+  <button class="rb rb-sm" onclick="addBusNode('simplex')">+ Simplex</button>
+  <button class="rb rb-sm rb-danger" onclick="deleteSelected()">Delete</button>
+  <span class="hint">Click a connection or node, then Delete (or right-click connection).</span>
   <span class="spacer"></span>
-  <button onclick="autoArrange()">Auto-arrange</button>
-  <button onclick="saveRouting()" style="background:#2ecc71;border-color:#27ae60;color:#000;font-weight:bold;">Save</button>
-  <button onclick="loadRouting()">Reload</button>
+  <button class="rb rb-sm" onclick="autoArrange()">Auto-arrange</button>
+  <button class="rb rb-sm rb-primary" onclick="saveRouting()">Save</button>
+  <button class="rb rb-sm" onclick="loadRouting()">Reload</button>
   <span class="status" id="statusBar">Loading...</span>
 </div>
 
@@ -602,19 +598,19 @@ function rebuildEditor() {
       + '<button class="proc-btn' + (proc.hpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'hpf\')" id="proc-' + b.id + '-hpf" title="High Pass Filter">H</button>'
       + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
       + '<button class="proc-btn' + (proc.notch ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'notch\')" id="proc-' + b.id + '-notch" title="Notch Filter">N</button>'
-      + '<span style="margin-left:6px;border-left:1px solid #555;padding-left:6px;"></span>'
+      + '<span class="proc-sep"></span>'
       + '<button class="proc-btn out-btn' + (proc.pcm === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
       + '<button class="proc-btn out-btn' + (proc.mp3 === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'
       + '<button class="proc-btn out-btn' + (proc.vad ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'vad\')" id="proc-' + b.id + '-vad" title="VAD gate">V</button>'
-      + '<button class="proc-btn out-btn' + (proc.loop ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'loop\')" id="proc-' + b.id + '-loop" title="Loop record" style="' + (proc.loop ? 'background:#c0392b;color:#fff' : '') + '">R</button>'
+      + '<button class="proc-btn out-btn' + (proc.loop ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'loop\')" id="proc-' + b.id + '-loop" title="Loop record">R</button>'
       + '<span style="flex-grow:1;"></span>'
       + '<button class="mute-btn' + busMuted + '" onclick="toggleBusMute(\'' + b.id + '\')" id="bus-mute-' + b.id + '" title="Mute bus">M</button>'
       + '</div>'
       + '<div class="level-bar" id="level-bus_' + b.id + '"><div class="level-fill"></div></div>'
       + '</div>';
     var pos = savedPositions['bus-' + b.id] || {x: xBus, y: yBus};
-    var busCls = cls + (b.muted ? ' node-muted' : '');
-    var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, busCls, {id: b.id, type: b.type}, '<span class="bus-name" data-bus="' + b.id + '" ondblclick="renameBus(this,\'' + b.id + '\')">' + b.name + '</span> <span style="opacity:0.5;font-weight:400">(' + b.type + ')</span>\n' + html);
+    var busCls = cls + (b.muted ? ' node-muted' : '') + (proc.loop ? ' recording' : '');
+    var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, busCls, {id: b.id, type: b.type}, '<span class="rec-dot" title="Loop recording"></span><span class="bus-name" data-bus="' + b.id + '" ondblclick="renameBus(this,\'' + b.id + '\')">' + b.name + '</span> <span style="color:var(--t-text-mute);font-weight:400;letter-spacing:0;text-transform:none;">(' + b.type + ')</span>\n' + html);
     _nodeMap['bus-' + b.id] = nodeId;
     yBus += spacing + 20;
   }
@@ -654,10 +650,10 @@ function rebuildEditor() {
         spkEl.style.justifyContent = 'space-between';
         spkEl.style.alignItems = 'center';
         var wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;gap:2px;margin-left:6px;';
-        wrap.innerHTML = '<button class="proc-btn' + (sm === 'virtual' ? ' on' : '') + '" onclick="setSpeakerMode(\'virtual\')" id="spk-virtual" title="Virtual (metering only)" style="width:16px;height:13px;font-size:0.5rem;line-height:13px;">V</button>'
-          + '<button class="proc-btn' + (sm === 'auto' ? ' on' : '') + '" onclick="setSpeakerMode(\'auto\')" id="spk-auto" title="Auto (try device, fallback virtual)" style="width:16px;height:13px;font-size:0.5rem;line-height:13px;">A</button>'
-          + '<button class="proc-btn' + (sm === 'real' ? ' on' : '') + '" onclick="setSpeakerMode(\'real\')" id="spk-real" title="Real (require audio device)" style="width:16px;height:13px;font-size:0.5rem;line-height:13px;">R</button>';
+        wrap.style.cssText = 'display:flex;gap:2px;margin-left:var(--s-2);';
+        wrap.innerHTML = '<button class="proc-btn' + (sm === 'virtual' ? ' on' : '') + '" onclick="setSpeakerMode(\'virtual\')" id="spk-virtual" title="Virtual (metering only)">V</button>'
+          + '<button class="proc-btn' + (sm === 'auto' ? ' on' : '') + '" onclick="setSpeakerMode(\'auto\')" id="spk-auto" title="Auto (try device, fallback virtual)">A</button>'
+          + '<button class="proc-btn' + (sm === 'real' ? ' on' : '') + '" onclick="setSpeakerMode(\'real\')" id="spk-real" title="Real (require audio device)">R</button>';
         spkEl.appendChild(wrap);
       }
     }
@@ -903,7 +899,8 @@ function renameBus(el, busId) {
   var input = document.createElement('input');
   input.type = 'text';
   input.value = current;
-  input.style.cssText = 'background:var(--t-btn);color:#fff;border:1px solid var(--t-accent);border-radius:3px;padding:2px 6px;font-family:monospace;font-size:0.9em;width:' + Math.max(80, current.length * 9) + 'px;';
+  input.className = 'bus-rename-input';
+  input.style.width = Math.max(80, current.length * 9) + 'px';
   el.textContent = '';
   el.appendChild(input);
   input.focus();
@@ -939,8 +936,11 @@ function toggleProc(busId, filter) {
       if (d.ok) {
         var btn = document.getElementById('proc-' + busId + '-' + filter);
         if (btn) {
-          if (d.state) btn.classList.add('on');
-          else btn.classList.remove('on');
+          btn.classList.toggle('on', !!d.state);
+          if (filter === 'loop') {
+            var node = btn.closest('.drawflow-node');
+            if (node) node.classList.toggle('recording', !!d.state);
+          }
         }
         setStatus(busId + ': ' + filter + ' ' + (d.state ? 'ON' : 'OFF'));
       }
@@ -990,20 +990,11 @@ function pollLevels() {
           }
         }
       }
-      // Color TX sink nodes red when PTT is active
       for (var txId in ptt) {
         var lvl = document.getElementById('level-' + txId);
         if (lvl) {
           var dfNode = lvl.closest('.drawflow-node');
-          if (dfNode) {
-            if (ptt[txId]) {
-              dfNode.style.borderColor = '#e74c3c';
-              dfNode.style.boxShadow = '0 0 8px rgba(231,76,60,0.5)';
-            } else {
-              dfNode.style.borderColor = '';
-              dfNode.style.boxShadow = '';
-            }
-          }
+          if (dfNode) dfNode.classList.toggle('ptt-active', !!ptt[txId]);
         }
       }
     })
