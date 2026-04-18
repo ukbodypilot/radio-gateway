@@ -9,54 +9,53 @@
 <body>
 
 
-<div id="status">Loading...</div>
+<div id="status" class="hero">Loading...</div>
 <div id="toast-container" style="position:fixed;top:10px;right:10px;z-index:9999;max-width:400px;"></div>
 
-<div id="sysinfo" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:1.0em; margin-top:10px;">Loading...</div>
+<div id="sysinfo" class="hero">Loading...</div>
 
-<div id="bc-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Broadcastify Stream</h3>
-    <span id="bc-status-badge" style="font-weight:bold;"></span>
+<div id="bc-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">Broadcastify Stream</h2>
+    <span id="bc-status-badge" class="panel-meta"></span>
   </div>
   <div class="st-row" id="bc-stats"></div>
 </div>
 
-<div id="automation-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Automation Engine</h3>
-    <div id="auto-header-status" style="font-size:0.85em;"></div>
+<div id="automation-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">Automation Engine</h2>
+    <div id="auto-header-status" class="panel-meta"></div>
   </div>
-  <div id="auto-current" style="margin-bottom:8px; padding:8px; background:rgba(0,0,0,0.2); border-radius:4px; display:none;">
-    <div style="color:var(--t-accent); font-weight:bold; margin-bottom:4px;">Now Running</div>
+  <div id="auto-current" style="margin-bottom:var(--s-2); padding:var(--s-2); background:var(--t-panel-hi); border-radius:var(--r-sm); display:none;">
+    <div class="panel-title" style="margin-bottom:var(--s-1); color:var(--t-accent);">Now Running</div>
     <div id="auto-current-detail"></div>
   </div>
-  <div id="auto-tasks" style="margin-bottom:8px;"></div>
-  <details id="auto-history-details" style="background:transparent; border:none; margin:0;">
-    <summary style="padding:4px 0; color:var(--t-accent); font-size:0.95em;">Recent History</summary>
-    <div id="auto-history" style="max-height:300px; overflow-y:auto; font-size:0.85em; margin-top:4px;"></div>
+  <div id="auto-tasks" style="margin-bottom:var(--s-2);"></div>
+  <details id="auto-history-details">
+    <summary style="padding:var(--s-1) 0; color:var(--t-accent); font-size:var(--f-sm); cursor:pointer;">Recent History</summary>
+    <div id="auto-history" style="max-height:300px; overflow-y:auto; font-size:var(--f-xs); margin-top:var(--s-1);"></div>
   </details>
 </div>
 
-<div id="loop-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Loop Recorder</h3>
-    <a href="/recorder" target="content" style="font-size:0.85em; color:var(--t-accent); text-decoration:none;">&rarr; Open Recorder</a>
+<div id="loop-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">Loop Recorder</h2>
+    <a href="/recorder" target="content" class="panel-meta">&rarr; Open Recorder</a>
   </div>
-  <div id="loop-buses" style="display:flex; flex-direction:column; gap:4px;"></div>
-  <div id="loop-summary" style="margin-top:6px; color:#888; font-size:0.85em;"></div>
+  <div id="loop-buses" style="display:flex; flex-direction:column; gap:var(--s-1);"></div>
+  <div id="loop-summary" style="margin-top:var(--s-2); color:var(--t-text-dim); font-size:var(--f-xs);"></div>
 </div>
 
-<div id="adsb-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">ADS-B Aircraft Tracking</h3>
-    <a href="/aircraft" target="content" onclick="setActive(document.querySelector('.shell-nav a[href=\\'/aircraft\\']'))"
-       style="font-size:0.85em; color:var(--t-accent); text-decoration:none;">&rarr; Open Map</a>
+<div id="adsb-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">ADS-B Aircraft Tracking</h2>
+    <a href="/aircraft" target="content" onclick="setActive(document.querySelector('.shell-nav a[href=\\'/aircraft\\']'))" class="panel-meta">&rarr; Open Map</a>
   </div>
-  <div class="st-row" style="margin-bottom:8px;">
-    <div class="st-item"><span class="st-label">dump1090-fa:</span><span id="adsb-svc-d1090" class="st-val">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">Web:</span><span id="adsb-svc-web" class="st-val">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">fr24feed:</span><span id="adsb-svc-fr24" class="st-val">&#x25cf;</span></div>
+  <div class="st-row">
+    <div class="st-item"><span class="st-label">dump1090-fa:</span><span id="adsb-svc-d1090" class="st-val dot">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Web:</span><span id="adsb-svc-web" class="st-val dot">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">fr24feed:</span><span id="adsb-svc-fr24" class="st-val dot">&#x25cf;</span></div>
   </div>
   <div class="st-row">
     <div class="st-item"><span class="st-label">Aircraft:</span><span id="adsb-aircraft" class="st-val cyan">--</span></div>
@@ -65,47 +64,47 @@
   </div>
 </div>
 
-<div id="tg-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Telegram Bot</h3>
-    <span id="tg-bot-name" style="font-size:0.85em; color:#aaa;"></span>
+<div id="tg-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">Telegram Bot</h2>
+    <span id="tg-bot-name" class="panel-meta"></span>
   </div>
-  <div class="st-row" style="margin-bottom:8px;">
-    <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val">&#x25cf;</span> <button onclick="openTmux()" style="font-size:0.75em; padding:2px 8px; margin-left:4px; cursor:pointer; background:var(--t-border); color:#fff; border:1px solid #555; border-radius:3px;" title="Open terminal attached to Claude tmux session">Open</button></div>
+  <div class="st-row">
+    <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val dot">&#x25cf;</span></div>
+    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val dot">&#x25cf;</span> <button onclick="openTmux()" class="rb rb-sm" title="Open terminal attached to Claude tmux session">Open</button></div>
     <div class="st-item"><span class="st-label">Session:</span><span id="tg-session" class="st-val white">--</span></div>
   </div>
-  <div class="st-row" style="margin-bottom:6px;">
+  <div class="st-row">
     <div class="st-item"><span class="st-label">Today:</span><span id="tg-msgs-today" class="st-val cyan">--</span><span class="st-label"> msgs</span></div>
     <div class="st-item"><span class="st-label">Last in:</span><span id="tg-last-in" class="st-val white">--</span></div>
     <div class="st-item"><span class="st-label">Last out:</span><span id="tg-last-out" class="st-val green">--</span></div>
   </div>
-  <div style="font-size:0.85em; color:#aaa; margin-top:4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" id="tg-last-text"></div>
+  <div id="tg-last-text" style="font-size:var(--f-xs); color:var(--t-text-dim); margin-top:var(--s-1); overflow:hidden; white-space:nowrap; text-overflow:ellipsis;"></div>
 </div>
 
-<div id="link-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">Gateway Link</h3>
-    <span id="link-status-badge" style="font-weight:bold;"></span>
+<div id="link-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">Gateway Link</h2>
+    <span id="link-status-badge" class="panel-meta"></span>
   </div>
   <div id="link-info"></div>
 </div>
 
-<div id="usbip-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">USB/IP Remote Devices</h3>
-    <span id="usbip-server-label" style="font-size:0.85em; color:#aaa;"></span>
+<div id="usbip-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">USB/IP Remote Devices</h2>
+    <span id="usbip-server-label" class="panel-meta"></span>
   </div>
-  <div id="usbip-status-row" class="st-row" style="margin-bottom:8px;">
-    <div class="st-item"><span class="st-label">Server:</span><span id="usbip-server-dot" class="st-val">&#x25cf;</span></div>
+  <div class="st-row">
+    <div class="st-item"><span class="st-label">Server:</span><span id="usbip-server-dot" class="st-val dot">&#x25cf;</span></div>
   </div>
-  <div id="usbip-devices-list" style="margin-top:6px; font-size:0.9em; color:#ccc;">No devices</div>
+  <div id="usbip-devices-list" style="margin-top:var(--s-2); font-size:var(--f-sm); color:var(--t-text);">No devices</div>
 </div>
 
-<div id="gps-panel" style="background:var(--t-panel); border:1px solid var(--t-border); border-radius:6px; padding:14px; font-family:monospace; font-size:0.95em; margin-top:10px; display:none;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-    <h3 style="margin:0; color:var(--t-accent); font-size:1.1em;">GPS Receiver</h3>
-    <span id="gps-fix-badge" style="font-weight:bold;"></span>
+<div id="gps-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">GPS Receiver</h2>
+    <span id="gps-fix-badge" class="panel-meta"></span>
   </div>
   <div class="st-row" style="margin-bottom:8px;">
     <div class="st-item"><span class="st-label">Lat:</span><span id="gps-lat" class="st-val cyan">--</span></div>
@@ -121,33 +120,25 @@
     <div class="st-item"><span class="st-label">Sats:</span><span id="gps-sats-used" class="st-val green">--</span></div>
     <div class="st-item"><span class="st-label">Fix time:</span><span id="gps-fix-time" class="st-val white">--</span></div>
     <div class="st-item"><span class="st-label">Port:</span><span id="gps-port" class="st-val white">--</span></div>
-    <div class="st-item"><a id="gps-map-link" href="#" target="_blank" style="color:var(--t-accent); font-size:0.9em; text-decoration:none;">View on Map &rarr;</a></div>
+    <div class="st-item"><a id="gps-map-link" href="#" target="_blank" class="panel-meta">View on Map &rarr;</a></div>
   </div>
-  <details style="background:transparent; border:none; margin:4px 0 0;">
-    <summary style="padding:4px 0; color:var(--t-accent); font-size:0.95em;">Satellites in View</summary>
-    <div id="gps-sat-chart" style="margin-top:6px;"></div>
+  <details>
+    <summary style="padding:var(--s-1) 0; color:var(--t-accent); font-size:var(--f-sm); cursor:pointer;">Satellites in View</summary>
+    <div id="gps-sat-chart" style="margin-top:var(--s-2);"></div>
   </details>
 </div>
 
 <style>
-  #status { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: 10px; font-family: monospace; font-size: 1.0em; }
-  .st-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; margin: 8px 0; }
-  .st-item { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
-  .st-label { color: #888; display: inline-block; width: 5.5em; text-align: right; margin-right: 16px; flex-shrink: 0; }
-  .st-val { font-weight: bold; }
-  .bar { display: inline-block; height: 18px; border-radius: 3px; min-width: 4px; vertical-align: middle; }
-  .bar-rx { background: #2ecc71; } .bar-tx { background: #e74c3c; }
-  .bar-sdr1 { background: var(--t-accent); } .bar-sdr2 { background: #e056a0; }
-  .bar-sv { background: #f1c40f; } .bar-cl { background: #2ecc71; }
-  .bar-sp { background: var(--t-accent); } .bar-an { background: #e74c3c; }
-  .bar-d75 { background: #f39c12; }
-  .bar-kv4p { background: #1abc9c; }
-  .bar-pct { display: inline-block; width: 3.5em; text-align: right; color: #ccc; }
-  .green { color: #2ecc71; } .red { color: #e74c3c; } .yellow { color: #f39c12; }
   @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-  .cyan { color: var(--t-accent); } .white { color: #e0e0e0; }
-  input[type="range"] { accent-color: var(--t-accent); }
-  .tgl input { accent-color: var(--t-accent); }
+  .dot { line-height: 1; }
+  .dot.ok { color: var(--t-ok); }
+  .dot.err { color: var(--t-err); }
+  .dim { color: var(--t-text-dim); }
+
+  .dash-tbl { width: 100%; border-collapse: collapse; font-size: var(--f-sm); }
+  .dash-tbl th { text-align: left; padding: var(--s-1) var(--s-3); color: var(--t-text-dim); font-weight: 500; border-bottom: 1px solid var(--t-border); }
+  .dash-tbl td { padding: var(--s-1) var(--s-3); }
+  .dash-tbl tr.active td { background: var(--t-panel-hi); }
 </style>
 
 <script src="/pages/common.js"></script>
@@ -164,9 +155,9 @@ function restartEndpoint(name) {
 function showToast(msg, level) {
   var c = document.getElementById('toast-container');
   if (!c) return;
-  var colors = {error:'#e74c3c',warning:'#f39c12',info:'#3498db'};
+  var colors = {error:'var(--t-err)',warning:'var(--t-warn)',info:'var(--t-accent)'};
   var d = document.createElement('div');
-  d.style.cssText = 'background:'+(colors[level]||colors.error)+';color:#fff;padding:10px 16px;margin-bottom:6px;border-radius:6px;font-size:0.9em;font-family:monospace;opacity:1;transition:opacity 0.5s;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+  d.style.cssText = 'background:'+(colors[level]||colors.error)+';color:var(--t-bg);padding:var(--s-2) var(--s-4);margin-bottom:var(--s-1);border-radius:var(--r-md);font-size:var(--f-sm);font-family:inherit;font-weight:500;opacity:1;transition:opacity 0.5s;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
   d.textContent = msg;
   d.onclick = function(){ d.style.opacity='0'; setTimeout(function(){ d.remove(); }, 500); };
   c.appendChild(d);
@@ -242,7 +233,7 @@ function updateStatus() {
       var conn = ds.connected || s.stream_connected;
       var stClr = conn?'green':'red';
       var stTxt = conn?'LIVE':'OFF';
-      document.getElementById('bc-status-badge').innerHTML = '<span style="color:'+stClr+'">'+stTxt+'</span>';
+      document.getElementById('bc-status-badge').innerHTML = '<span class="'+stClr+'">'+stTxt+'</span>';
       var bh = '';
       if(ds.bitrate) bh += '<div class="st-item"><span class="st-label">Bitrate:</span><span class="st-val cyan">'+ds.bitrate+' kbps MP3</span></div>';
       if(ds.uptime) { var u=ds.uptime; var uh=Math.floor(u/3600); var um=Math.floor((u%3600)/60); var us=Math.floor(u%60); bh += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+uh+'h '+('0'+um).slice(-2)+'m '+('0'+us).slice(-2)+'s</span></div>'; }
@@ -270,7 +261,7 @@ function updateStatus() {
           var _model = est.model || le.plugin || '';
           lh += '<div style="display:flex; justify-content:space-between; margin-bottom:4px;">';
           lh += '<span class="st-val white">'+le.name+'</span>';
-          lh += '<span style="display:flex;align-items:center;gap:6px;"><span class="st-val cyan">'+_model+'</span><button onclick="restartEndpoint(\''+le.name+'\')" style="font-size:0.65em;padding:1px 6px;background:var(--t-btn);color:#888;border:1px solid var(--t-btn-border);border-radius:3px;cursor:pointer;" title="Restart endpoint">&#x21bb;</button></span>';
+          lh += '<span style="display:flex;align-items:center;gap:var(--s-2);"><span class="st-val cyan">'+_model+'</span><button class="rb rb-sm" onclick="restartEndpoint(\''+le.name+'\')" title="Restart endpoint">&#x21bb;</button></span>';
           lh += '</div>';
           // Curated status row
           var eh = '';
@@ -312,11 +303,11 @@ function updateStatus() {
           if(sh) lh += '<div class="st-row">'+sh+'</div>';
         }
         document.getElementById('link-info').innerHTML = lh;
-        document.getElementById('link-status-badge').innerHTML = '<span style="color:#2ecc71">'+eps.length+' connected</span>';
+        document.getElementById('link-status-badge').innerHTML = '<span class="green">'+eps.length+' connected</span>';
       } else {
         linkPanel.style.display = '';
         document.getElementById('link-info').innerHTML = '';
-        document.getElementById('link-status-badge').innerHTML = '<span style="color:#888">No endpoints</span>';
+        document.getElementById('link-status-badge').innerHTML = '<span style="color:var(--t-text-mute)">No endpoints</span>';
       }
     } else {
       linkPanel.style.display = 'none';
@@ -364,13 +355,13 @@ function updateGps() {
 
     var fixBadge = document.getElementById('gps-fix-badge');
     if (!d.connected) {
-      fixBadge.innerHTML = '<span style="color:#e74c3c">Disconnected</span>';
+      fixBadge.innerHTML = '<span class="red">Disconnected</span>';
     } else if (d.fix === 0) {
-      fixBadge.innerHTML = '<span style="color:#f39c12">No Fix</span>';
+      fixBadge.innerHTML = '<span class="yellow">No Fix</span>';
     } else if (d.fix === 1) {
-      fixBadge.innerHTML = '<span style="color:#2ecc71">GPS Fix</span>';
+      fixBadge.innerHTML = '<span class="green">GPS Fix</span>';
     } else {
-      fixBadge.innerHTML = '<span style="color:#2ecc71">DGPS Fix</span>';
+      fixBadge.innerHTML = '<span class="green">DGPS Fix</span>';
     }
 
     document.getElementById('gps-lat').textContent = d.fix > 0 ? d.lat.toFixed(6) : '--';
@@ -397,313 +388,24 @@ function updateGps() {
     for (var i=0; i<sats.length; i++) {
       var s = sats[i];
       var pct = Math.min(100, Math.round(s.snr * 100 / 50));
-      var clr = s.snr >= 35 ? '#2ecc71' : s.snr >= 20 ? '#f1c40f' : '#e74c3c';
-      if (s.snr === 0) clr = '#555';
-      ch += '<div style="display:flex;align-items:center;gap:6px;margin:2px 0;">';
-      ch += '<span style="min-width:32px;text-align:right;color:#888;font-size:0.8em;">PRN '+s.prn+'</span>';
-      ch += '<div style="flex:1;background:#1a1a2e;border:1px solid #333;border-radius:2px;height:14px;overflow:hidden;">';
+      var clr = s.snr === 0 ? 'var(--t-text-mute)' : s.snr >= 35 ? 'var(--t-ok)' : s.snr >= 20 ? 'var(--t-warn)' : 'var(--t-err)';
+      ch += '<div style="display:flex;align-items:center;gap:var(--s-2);margin:2px 0;">';
+      ch += '<span style="min-width:42px;text-align:right;color:var(--t-text-dim);font-size:var(--f-xs);">PRN '+s.prn+'</span>';
+      ch += '<div style="flex:1;background:var(--t-bg);border:1px solid var(--t-border);border-radius:var(--r-sm);height:14px;overflow:hidden;">';
       ch += '<div style="width:'+pct+'%;height:100%;background:'+clr+';"></div></div>';
-      ch += '<span style="min-width:28px;font-size:0.8em;color:#ccc;">'+s.snr+'</span>';
+      ch += '<span style="min-width:28px;font-size:var(--f-xs);color:var(--t-text);">'+s.snr+'</span>';
       ch += '</div>';
     }
-    if (!ch) ch = '<span style="color:#888;font-size:0.85em;">No satellites in view</span>';
+    if (!ch) ch = '<span style="color:var(--t-text-dim);font-size:var(--f-xs);">No satellites in view</span>';
     document.getElementById('gps-sat-chart').innerHTML = ch;
   }).catch(function(){});
 }
 setInterval(updateGps, 3000);
 updateGps();
 
-var _audio = null;
-var _playing = false;
-var _streamTimer = null;
-var _streamStart = 0;
-
-function toggleStream() {
-  if (_playing) {
-    stopStream();
-  } else {
-    startStream();
-  }
-}
-
-function startStream() {
-  // Kill any existing audio first to prevent orphaned streams
-  if (_audio) {
-    _audio.onplaying = null;
-    _audio.onerror = null;
-    _audio.onended = null;
-    _audio.pause();
-    _audio.src = '';
-    _audio = null;
-  }
-  if (_streamTimer) { clearInterval(_streamTimer); _streamTimer = null; }
-
-  var btn = document.getElementById('play-btn');
-  var ind = document.getElementById('stream-indicator');
-  var st = document.getElementById('stream-status');
-  _playing = true;  // Set immediately to prevent double-click restart
-  btn.innerHTML = '&#9724; MP3';
-  btn.style.color = '#f39c12';
-  btn.style.borderColor = '#f39c12';
-  st.innerHTML = '<span style="color:#f39c12">Buffering...</span>';
-
-  _audio = new Audio('/stream');
-  _audio.volume = document.getElementById('vol-slider').value / 100;
-
-  _audio.onplaying = function() {
-    _playing = true;
-    _streamStart = Date.now();
-    btn.innerHTML = '&#9724; MP3';
-    btn.style.color = '#2ecc71';
-    btn.style.borderColor = '#2ecc71';
-    ind.style.display = 'inline-block';
-    st.innerHTML = '<span style="color:#2ecc71">0:00</span> <span style="color:#666">96kbps</span>';
-    _streamTimer = setInterval(function() {
-      var secs = Math.floor((Date.now() - _streamStart) / 1000);
-      var m = Math.floor(secs / 60);
-      var s = secs % 60;
-      var t = m + ':' + (s < 10 ? '0' : '') + s;
-      st.innerHTML = '<span style="color:#2ecc71">' + t + '</span> <span style="color:#666">96kbps</span>';
-    }, 1000);
-  };
-
-  _audio.onerror = function() {
-    st.innerHTML = '<span style="color:#e74c3c">Stream error</span>';
-    stopStream();
-  };
-
-  _audio.onended = function() { stopStream(); };
-
-  _audio.play().catch(function(e) {
-    st.innerHTML = '<span style="color:#e74c3c">Error: ' + e.message + '</span>';
-    stopStream();
-  });
-}
-
-function stopStream() {
-  if (_streamTimer) { clearInterval(_streamTimer); _streamTimer = null; }
-  if (_audio) {
-    _audio.pause();
-    _audio.src = '';
-    _audio = null;
-  }
-  _playing = false;
-  document.getElementById('play-btn').innerHTML = '&#9654; MP3';
-  document.getElementById('play-btn').style.color = '#e0e0e0';
-  document.getElementById('play-btn').style.borderColor = _T.btnBorder;
-  document.getElementById('stream-indicator').style.display = 'none';
-  document.getElementById('stream-status').innerHTML = '';
-}
-
-function setVolume(v) {
-  if (_audio) _audio.volume = v / 100;
-}
-
-// --- Low-latency WebSocket PCM player ---
-var _ws = null;
-var _wsCtx = null;
-var _wsGain = null;
-var _wsPlaying = false;
-var _wsTimer = null;
-var _wsStart = 0;
-var _wsBytes = 0;
-var _wsWorklet = null;
-var _wakeLock = null;
-
-function toggleWS() {
-  if (_wsPlaying) { stopWS(); } else { startWS(); }
-}
-
-function startWS() {
-  var btn = document.getElementById('ws-btn');
-  var ind = document.getElementById('ws-indicator');
-  var st = document.getElementById('ws-status');
-  btn.innerHTML = '&#9724; PCM';
-  btn.style.color = '#f39c12';
-  btn.style.borderColor = '#f39c12';
-  st.innerHTML = '<span style="color:#f39c12">Connecting...</span>';
-
-  // Prevent double-click race
-  if (_wsCtx) { stopWS(); return; }
-
-  try {
-    _wsCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
-    console.log('[WS-Audio] AudioContext created, state:', _wsCtx.state, 'requested: 48000, actual sampleRate:', _wsCtx.sampleRate);
-    if (_wsCtx.sampleRate !== 48000) console.warn('[WS-Audio] SAMPLE RATE MISMATCH — audio may play at wrong speed!');
-  } catch(e) {
-    st.innerHTML = '<span style="color:#e74c3c">No AudioContext</span>';
-    btn.innerHTML = '&#9654; PCM';
-    btn.style.color = '#e0e0e0';
-    return;
-  }
-
-  // Resume AudioContext (browsers require user gesture)
-  if (_wsCtx.state === 'suspended') {
-    _wsCtx.resume().then(function() { console.log('[WS-Audio] AudioContext resumed'); });
-  }
-
-  // Create gain node for volume control
-  _wsGain = _wsCtx.createGain();
-  _wsGain.gain.value = document.getElementById('ws-vol').value / 100;
-  _wsGain.connect(_wsCtx.destination);
-
-  // PCM ring buffer shared between WS onmessage and audio output
-  var _pcmBuf = [];
-  var _pcmPos = 0;
-  var _pcmTotal = 0;
-  var _pcmReady = false;
-
-  function _drainPCM(output) {
-    var w = 0, need = output.length;
-    // Pre-buffer 50ms (2400 samples at 48kHz) before starting playback
-    if (!_pcmReady) {
-      if (_pcmTotal < 2400) { for (w = 0; w < need; w++) output[w] = 0; return; }
-      _pcmReady = true;
-    }
-    // Cap buffer at 200ms (9600 samples) — skip ahead if falling behind
-    while (_pcmTotal > 9600 && _pcmBuf.length > 1) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
-    while (w < need) {
-      if (!_pcmBuf.length) { for (; w < need; w++) output[w] = 0; break; }
-      var cur = _pcmBuf[0], avail = cur.length - _pcmPos;
-      var take = Math.min(avail, need - w);
-      for (var j = 0; j < take; j++) output[w++] = cur[_pcmPos++];
-      if (_pcmPos >= cur.length) { _pcmTotal -= cur.length; _pcmBuf.shift(); _pcmPos = 0; }
-    }
-  }
-
-  function _connectWS() {
-    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    _ws = new WebSocket(proto + '//' + location.host + '/ws_audio');
-    _ws.binaryType = 'arraybuffer';
-
-    _ws.onopen = function() {
-      console.log('[WS-Audio] WebSocket connected');
-      _wsPlaying = true;
-      _wsStart = Date.now();
-      _wsBytes = 0;
-      if (navigator.wakeLock) { navigator.wakeLock.request('screen').then(function(wl) { _wakeLock = wl; }).catch(function(){}); }
-      btn.innerHTML = '&#9724; PCM';
-      btn.style.color = _T.accent;
-      btn.style.borderColor = _T.accent;
-      ind.style.display = 'inline-block';
-      st.innerHTML = '<span style="color:var(--t-accent)">0:00</span>';
-      _wsTimer = setInterval(function() {
-        var secs = Math.floor((Date.now() - _wsStart) / 1000);
-        var m = Math.floor(secs / 60);
-        var s = secs % 60;
-        var t = m + ':' + (s < 10 ? '0' : '') + s;
-        var kb = (_wsBytes / 1024).toFixed(0);
-        var unit = 'KB';
-        if (_wsBytes >= 1048576) { kb = (_wsBytes / 1048576).toFixed(1); unit = 'MB'; }
-        var kbps = secs > 0 ? ((_wsBytes * 8 / secs / 1000).toFixed(0) + 'kbps') : '';
-        st.innerHTML = '<span style="color:var(--t-accent)">' + t + '</span> <span style="color:#666">' + kb + unit + (kbps ? ' ' + kbps : '') + '</span>';
-      }, 1000);
-    };
-
-    // Resample ratio: server sends 48kHz, AudioContext may run at different rate
-    var _srcRate = 48000;
-    var _dstRate = _wsCtx.sampleRate;
-    var _resample = (_dstRate !== _srcRate);
-    if (_resample) console.log('[WS-Audio] Resampling', _srcRate, '→', _dstRate);
-
-    _ws.onmessage = function(ev) {
-      if (ev.data instanceof ArrayBuffer) {
-        _wsBytes += ev.data.byteLength;
-        var int16 = new Int16Array(ev.data);
-        var float32 = new Float32Array(int16.length);
-        for (var i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
-        // Resample if AudioContext rate differs from source
-        if (_resample) {
-          var ratio = _srcRate / _dstRate;
-          var outLen = Math.round(float32.length / ratio);
-          var resampled = new Float32Array(outLen);
-          for (var i = 0; i < outLen; i++) {
-            var srcIdx = i * ratio;
-            var idx0 = Math.floor(srcIdx);
-            var frac = srcIdx - idx0;
-            var s0 = float32[idx0] || 0;
-            var s1 = float32[Math.min(idx0 + 1, float32.length - 1)] || 0;
-            resampled[i] = s0 + frac * (s1 - s0);
-          }
-          float32 = resampled;
-        }
-        if (_wsWorklet && _wsWorklet.port) {
-          _wsWorklet.port.postMessage(float32);
-        } else {
-          _pcmBuf.push(float32);
-          _pcmTotal += float32.length;
-          // Cap buffer to ~200ms to prevent buildup
-          while (_pcmBuf.length > 4) { _pcmTotal -= _pcmBuf[0].length; _pcmBuf.shift(); _pcmPos = 0; }
-        }
-      }
-    };
-
-    _ws.onerror = function(ev) {
-      console.log('[WS-Audio] WebSocket error:', ev);
-      st.innerHTML = '<span style="color:#e74c3c">WS error</span>';
-      stopWS();
-    };
-
-    _ws.onclose = function(ev) {
-      console.log('[WS-Audio] WebSocket closed, code:', ev.code, 'reason:', ev.reason);
-      if (_wsPlaying) stopWS();
-    };
-  }
-
-  // Try AudioWorklet first (requires secure context), fall back to ScriptProcessor
-  if (_wsCtx.audioWorklet) {
-    var workletCode = 'class P extends AudioWorkletProcessor{constructor(){super();this.b=[];this.p=0;this.tot=0;this.ready=false;this.port.onmessage=e=>{this.b.push(e.data);this.tot+=e.data.length;if(!this.ready&&this.tot>=2400)this.ready=true;if(this.tot>9600){while(this.tot>2400&&this.b.length>1){this.tot-=this.b[0].length;this.b.shift()}this.p=0}}}process(i,o){var c=o[0][0];if(!c)return true;var n=c.length,w=0;if(!this.ready){for(w=0;w<n;w++)c[w]=0;return true}while(w<n){if(!this.b.length){for(;w<n;w++)c[w]=0;break}var r=this.b[0],a=r.length-this.p,t=Math.min(a,n-w);for(var j=0;j<t;j++)c[w++]=r[this.p++];if(this.p>=r.length){this.b.shift();this.p=0;this.tot-=r.length}}return true}}registerProcessor("p",P)';
-    var blob = new Blob([workletCode], {type: 'application/javascript'});
-    var blobURL = URL.createObjectURL(blob);
-    _wsCtx.audioWorklet.addModule(blobURL).then(function() {
-      URL.revokeObjectURL(blobURL);
-      console.log('[WS-Audio] AudioWorklet loaded OK');
-      _wsWorklet = new AudioWorkletNode(_wsCtx, 'p', {outputChannelCount:[1], numberOfOutputs:1});
-      _wsWorklet.connect(_wsGain);
-      _connectWS();
-    }).catch(function(e) {
-      // AudioWorklet failed — use ScriptProcessor fallback
-      URL.revokeObjectURL(blobURL);
-      console.log('[WS-Audio] AudioWorklet failed:', e.message, '— using ScriptProcessor');
-      var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
-      sp.onaudioprocess = function(ev) { _drainPCM(ev.outputBuffer.getChannelData(0)); };
-      sp.connect(_wsGain);
-      _wsWorklet = sp;  // store for cleanup
-      _connectWS();
-    });
-  } else {
-    // No AudioWorklet at all — ScriptProcessor
-    var sp = _wsCtx.createScriptProcessor(2048, 0, 1);
-    sp.onaudioprocess = function(ev) { _drainPCM(ev.outputBuffer.getChannelData(0)); };
-    sp.connect(_wsGain);
-    _wsWorklet = sp;
-    _connectWS();
-  }
-}
-
-function stopWS() {
-  if (_wsTimer) { clearInterval(_wsTimer); _wsTimer = null; }
-  if (_ws) { try { _ws.close(); } catch(e){} _ws = null; }
-  if (_wsWorklet) { try { _wsWorklet.disconnect(); } catch(e){} _wsWorklet = null; }
-  if (_wsGain) { try { _wsGain.disconnect(); } catch(e){} _wsGain = null; }
-  if (_wsCtx) { try { _wsCtx.close(); } catch(e){} _wsCtx = null; }
-  _wsPlaying = false;
-  if (_wakeLock) { try { _wakeLock.release(); } catch(e){} _wakeLock = null; }
-  document.getElementById('ws-btn').innerHTML = '&#9654; PCM';
-  document.getElementById('ws-btn').style.color = '#e0e0e0';
-  document.getElementById('ws-btn').style.borderColor = _T.btnBorder;
-  document.getElementById('ws-indicator').style.display = 'none';
-  document.getElementById('ws-status').innerHTML = '';
-  _wsBytes = 0;
-}
-
-function setWSVol(v) {
-  if (_wsGain) _wsGain.gain.value = v / 100;
-}
-
 // --- System Status ---
 function sysBar(pct, color) {
-  var c = pct > 80 ? '#e74c3c' : pct > 60 ? '#f39c12' : (color || '#2ecc71');
+  var c = pct > 80 ? 'var(--t-err)' : pct > 60 ? 'var(--t-warn)' : (color || 'var(--t-ok)');
   var w = Math.round(Math.min(Math.max(pct, 0), 100));
   var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
   return '<span class="bar-pct">'+p+'%</span><span class="bar" style="width:'+w+'px;background:'+c+'"></span>';
@@ -712,12 +414,12 @@ createPoller('/sysinfo', 2000, function(s) {
   var h = '<div class="st-row">';
   h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(s.cpu_pct)+'</div>';
   h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val cyan">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
-  h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, _T.accent)+'<span class="st-label">'+s.mem_used_mb+'/'+s.mem_total_mb+'MB</span></div>';
+  h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, 'var(--t-accent)')+'<span class="st-label">'+s.mem_used_mb+'/'+s.mem_total_mb+'MB</span></div>';
   if (s.swap_total_mb > 0) {
     var swPct = Math.round(100*s.swap_used_mb/s.swap_total_mb);
-    h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, '#e056a0')+'<span class="st-label">'+s.swap_used_mb+'/'+s.swap_total_mb+'MB</span></div>';
+    h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, 'var(--t-warn)')+'<span class="st-label">'+s.swap_used_mb+'/'+s.swap_total_mb+'MB</span></div>';
   }
-  h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, '#f1c40f')+'<span class="st-label">'+s.disk_used_gb+'/'+s.disk_total_gb+'GB</span></div>';
+  h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, 'var(--t-warn)')+'<span class="st-label">'+s.disk_used_gb+'/'+s.disk_total_gb+'GB</span></div>';
   h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green">R:'+fmtBytes(s.disk_read_bps)+'</span> <span class="st-val yellow">W:'+fmtBytes(s.disk_write_bps)+'</span></div>';
   h += '</div>';
   h += '<div class="st-row">';
@@ -738,7 +440,7 @@ createPoller('/sysinfo', 2000, function(s) {
     for (var i=0; i<s.ips.length; i++) {
       h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
     }
-    if (s.tunnel_url) h += '<div class="st-item"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" style="color:#2ecc71; text-decoration:none;">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
+    if (s.tunnel_url) h += '<div class="st-item"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green" style="text-decoration:none;">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
     h += '</div>';
   }
   document.getElementById('sysinfo').innerHTML = h;
@@ -770,7 +472,7 @@ function updateAutomation() {
       curDiv.style.display = '';
       var ct = null;
       for (var i=0; i<a.tasks.length; i++) { if (a.tasks[i].name===a.current_task) { ct=a.tasks[i]; break; } }
-      var d = '<span style="color:#fff">'+a.current_task+'</span>';
+      var d = '<span class="white">'+a.current_task+'</span>';
       if (ct) d += ' &mdash; <span class="yellow">'+ct.action+'</span> on <span class="cyan">'+ct.radio+'</span>';
       if (a.recording) d += ' <span class="red">[RECORDING]</span>';
       curDetail.innerHTML = d;
@@ -779,20 +481,19 @@ function updateAutomation() {
     }
 
     // Task queue
-    var t = '<table style="width:100%; border-collapse:collapse; font-size:0.9em;">';
-    t += '<tr style="color:#888; text-align:left;"><th style="padding:2px 8px;">Task</th><th style="padding:2px 8px;">Action</th><th style="padding:2px 8px;">Radio</th><th style="padding:2px 8px;">Next</th><th style="padding:2px 8px;">Last</th></tr>';
+    var t = '<table class="dash-tbl">';
+    t += '<tr><th>Task</th><th>Action</th><th>Radio</th><th>Next</th><th>Last</th></tr>';
     for (var i=0; i<a.tasks.length; i++) {
       var tk = a.tasks[i];
       var active = (tk.name === a.current_task);
-      var row_style = active ? 'background:rgba(46,204,113,0.15);' : '';
       var next = tk.schedule_type==='interval' ? fmtSecs(tk.next_run_secs) : ('at '+tk.at+(tk.last_run_date?' (done)':''));
       var last = tk.last_run_ago !== null ? fmtSecs(tk.last_run_ago)+' ago' : '--';
-      t += '<tr style="'+row_style+'">';
-      t += '<td style="padding:2px 8px; color:#fff;">'+(active?'&#9654; ':'')+tk.name+'</td>';
-      t += '<td style="padding:2px 8px; color:#f39c12;">'+tk.action+'</td>';
-      t += '<td style="padding:2px 8px; color:var(--t-accent);">'+tk.radio+'</td>';
-      t += '<td style="padding:2px 8px;">'+next+'</td>';
-      t += '<td style="padding:2px 8px; color:#888;">'+last+'</td>';
+      t += '<tr'+(active?' class="active"':'')+'>';
+      t += '<td class="white">'+(active?'&#9654; ':'')+tk.name+'</td>';
+      t += '<td class="yellow">'+tk.action+'</td>';
+      t += '<td class="cyan">'+tk.radio+'</td>';
+      t += '<td>'+next+'</td>';
+      t += '<td class="dim">'+last+'</td>';
       t += '</tr>';
     }
     t += '</table>';
@@ -804,9 +505,9 @@ function updateAutoHistory() {
   _autoHistBusy = true;
   var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
   fetch('/automationhistory', {signal:_ac.signal}).then(r=>r.json()).then(function(hist) {
-    if (!hist.length) { document.getElementById('auto-history').innerHTML='<span style="color:#888;">No completed tasks yet</span>'; return; }
-    var h = '<table style="width:100%; border-collapse:collapse;">';
-    h += '<tr style="color:#888; text-align:left;"><th style="padding:2px 6px;">Time</th><th style="padding:2px 6px;">Task</th><th style="padding:2px 6px;">Radio</th><th style="padding:2px 6px;">Duration</th><th style="padding:2px 6px;">Result</th></tr>';
+    if (!hist.length) { document.getElementById('auto-history').innerHTML='<span class="dim">No completed tasks yet</span>'; return; }
+    var h = '<table class="dash-tbl">';
+    h += '<tr><th>Time</th><th>Task</th><th>Radio</th><th>Duration</th><th>Result</th></tr>';
     for (var i=0; i<Math.min(hist.length,20); i++) {
       var e = hist[i];
       var res = '';
@@ -820,11 +521,11 @@ function updateAutoHistory() {
         else if (e.result.scanned) res = e.result.scanned+' scanned, '+e.result.active+' active';
         else if (e.result.text) res = 'TTS: '+e.result.text.substring(0,30)+'...';
       }
-      h += '<tr><td style="padding:2px 6px; color:#888;">'+e.time+'</td>';
-      h += '<td style="padding:2px 6px; color:#fff;">'+e.task+'</td>';
-      h += '<td style="padding:2px 6px; color:var(--t-accent);">'+e.radio+'</td>';
-      h += '<td style="padding:2px 6px;">'+e.elapsed+'s</td>';
-      h += '<td style="padding:2px 6px;">'+res+'</td></tr>';
+      h += '<tr><td class="dim">'+e.time+'</td>';
+      h += '<td class="white">'+e.task+'</td>';
+      h += '<td class="cyan">'+e.radio+'</td>';
+      h += '<td>'+e.elapsed+'s</td>';
+      h += '<td>'+res+'</td></tr>';
     }
     h += '</table>';
     document.getElementById('auto-history').innerHTML = h;
@@ -842,7 +543,8 @@ createPoller('/adsbstatus', 3000, function(d) {
   panel.style.display='';
   function svcDot(el, ok) {
     el.textContent = '\u25cf';
-    el.style.color = ok ? '#2ecc71' : '#e74c3c';
+    el.classList.toggle('ok', !!ok);
+    el.classList.toggle('err', !ok);
     el.title = ok ? 'running' : 'stopped';
   }
   svcDot(document.getElementById('adsb-svc-d1090'), d.dump1090);
@@ -861,16 +563,17 @@ createPoller('/usbipstatus', 10000, function(d) {
   document.getElementById('usbip-server-label').textContent = d.server || '';
   var dot = document.getElementById('usbip-server-dot');
   dot.textContent = '\u25cf';
-  dot.style.color = d.server_reachable ? '#2ecc71' : '#e74c3c';
+  dot.classList.toggle('ok', !!d.server_reachable);
+  dot.classList.toggle('err', !d.server_reachable);
   dot.title = d.server_reachable ? 'reachable' : (d.last_error || 'unreachable');
   var list = document.getElementById('usbip-devices-list');
   if (!d.devices || d.devices.length === 0) {
     list.textContent = d.server_reachable ? 'No exported devices' : 'Server unreachable';
   } else {
     list.innerHTML = d.devices.map(function(dev) {
-      var dot = '<span style="color:' + (dev.attached ? '#2ecc71' : '#e74c3c') + '">&#x25cf;</span>';
+      var dot = '<span class="dot ' + (dev.attached ? 'ok' : 'err') + '">&#x25cf;</span>';
       var status = dev.attached ? 'attached' : 'not attached';
-      return dot + ' <b>' + dev.bus_id + '</b> &nbsp;' + dev.description + ' <span style="color:#888;font-size:0.85em;">(' + status + ')</span>';
+      return dot + ' <b>' + dev.bus_id + '</b> &nbsp;' + dev.description + ' <span style="color:var(--t-text-dim);font-size:var(--f-xs);">(' + status + ')</span>';
     }).join('<br>');
   }
 });
@@ -883,7 +586,8 @@ createPoller('/telegramstatus', 5000, function(d) {
   function dot(id, ok, title) {
     var el = document.getElementById(id);
     el.textContent = '\u25cf';
-    el.style.color = ok ? '#2ecc71' : '#e74c3c';
+    el.classList.toggle('ok', !!ok);
+    el.classList.toggle('err', !ok);
     el.title = title || (ok ? 'ok' : 'offline');
   }
   dot('tg-dot-bot', d.bot_running, d.bot_running ? 'bot running' : 'bot not running');
@@ -908,7 +612,7 @@ function updateLoopRecorder() {
       var b = buses[i];
       totalSegs += b.segments;
       totalMB += (b.disk_mb || 0);
-      var dot = b.active ? '<span style="color:#c0392b;">&#x25cf;</span>' : '<span style="color:#555;">&#x25cf;</span>';
+      var dot = b.active ? '<span class="dot" style="color:var(--t-err);">&#x25cf;</span>' : '<span class="dot" style="color:var(--t-text-mute);">&#x25cf;</span>';
       var durStr = '--';
       if (b.segments > 0) {
         var durSec = b.latest - b.earliest;
@@ -922,13 +626,13 @@ function updateLoopRecorder() {
         var rateMBh = (b.disk_mb || 0) / ((b.latest - b.earliest) / 3600);
         rateStr = rateMBh.toFixed(0) + ' MB/h';
       }
-      html += '<div style="display:flex; gap:12px; align-items:center; padding:2px 0;">'
-        + dot + ' <span style="color:#e0e0e0; min-width:80px;">' + (b.name || b.id) + '</span>'
-        + '<span style="color:#aaa; min-width:60px;">' + b.segments + ' segs</span>'
-        + '<span style="color:#888; min-width:55px;">' + durStr + '</span>'
-        + '<span style="color:#2ecc71; min-width:55px;">' + diskStr + '</span>'
-        + (rateStr ? '<span style="color:#555; font-size:0.85em;">' + rateStr + '</span>' : '')
-        + '<span style="color:#555; font-size:0.85em; margin-left:auto;">ret ' + (b.retention_hours || 24) + 'h</span>'
+      html += '<div style="display:flex; gap:var(--s-3); align-items:center; padding:2px 0; font-size:var(--f-sm);">'
+        + dot + ' <span style="color:var(--t-text); min-width:80px;">' + (b.name || b.id) + '</span>'
+        + '<span style="color:var(--t-text-dim); min-width:60px;">' + b.segments + ' segs</span>'
+        + '<span style="color:var(--t-text-dim); min-width:55px;">' + durStr + '</span>'
+        + '<span class="green" style="min-width:55px;">' + diskStr + '</span>'
+        + (rateStr ? '<span style="color:var(--t-text-mute); font-size:var(--f-xs);">' + rateStr + '</span>' : '')
+        + '<span style="color:var(--t-text-mute); font-size:var(--f-xs); margin-left:auto;">ret ' + (b.retention_hours || 24) + 'h</span>'
         + '</div>';
     }
     document.getElementById('loop-buses').innerHTML = html;

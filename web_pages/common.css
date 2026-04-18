@@ -109,6 +109,44 @@ a:hover { text-decoration: underline; }
 .bar-rx { background: var(--t-ok); }
 .bar-tx { background: var(--t-err); }
 
+/* Panels — reusable card container */
+.panel {
+  background: var(--t-panel);
+  border: 1px solid var(--t-border);
+  border-radius: var(--r-md);
+  padding: var(--s-3) var(--s-4);
+  margin-top: var(--s-3);
+}
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.panel-title {
+  margin: 0;
+  font-size: var(--f-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--t-text-dim);
+}
+.panel-meta {
+  font-size: var(--f-xs);
+  color: var(--t-text-dim);
+  letter-spacing: 0.04em;
+}
+
+/* Hero — primary status blocks, stronger border */
+.hero {
+  background: var(--t-panel);
+  border: 1px solid var(--t-border-hi);
+  border-radius: var(--r-md);
+  padding: var(--s-3) var(--s-4);
+  margin-top: var(--s-3);
+}
+
 /* Form controls */
 input, select, textarea, button { font-family: inherit; }
 input[type="range"] { accent-color: var(--t-accent); }
