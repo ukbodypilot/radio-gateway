@@ -1764,6 +1764,11 @@ class LinkAudioSource(AudioSource):
         self.muted = False
         self.audio_level = 0
         self._chunk_bytes = int(getattr(config, 'AUDIO_RATE', 48000)) * 2 * int(getattr(config, 'AUDIO_CHANNELS', 1)) // 20  # 50ms
+        # Jitter buffer. Single producer (link reader thread → push_audio)
+        # and single consumer (bus tick → get_audio). deque's append/popleft
+        # are individually atomic under the GIL; compound ops (e.g. len()
+        # followed by popleft) are NOT safe. Do not add a second producer or
+        # consumer without switching to queue.Queue.
         self._chunk_queue = _queue_mod.deque(maxlen=16)
         self._sub_buffer = b''
         self._link_server = None  # Set by gateway_core after init

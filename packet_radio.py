@@ -163,8 +163,18 @@ class PacketRadioPlugin:
                              args=(client, addr), daemon=True,
                              name="agwpe-proxy-conn").start()
 
+    _AGWPE_MAX_SESSIONS = 10
+
     def _agwpe_proxy_handle(self, client, addr):
         """Handle one Pat → endpoint AGWPE forwarding session."""
+        if self._proxy_sessions_active >= self._AGWPE_MAX_SESSIONS:
+            print(f"  [Packet] AGWPE proxy: session cap reached "
+                  f"({self._proxy_sessions_active}), rejecting {addr}")
+            try:
+                client.close()
+            except Exception:
+                pass
+            return
         self._proxy_sessions_active += 1
         try:
             self._agwpe_proxy_session(client, addr)

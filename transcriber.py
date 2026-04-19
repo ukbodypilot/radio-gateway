@@ -52,29 +52,24 @@ _HALLUCINATION_BLOCKLIST = frozenset([
     '',
     'you',
     'thanks for watching',
-    'thanks for watching.',
-    'thanks for watching!',
     'thank you for watching',
-    'thank you for watching.',
-    'thank you.',
     'thank you',
     'please subscribe',
-    'please subscribe.',
     'subscribe',
     'bye',
-    'bye.',
     'bye-bye',
-    '.',
-    'okay.',
     'okay',
-    'ok.',
     'ok',
 ])
+
+# Strip these trailing characters before blocklist lookup so punctuation
+# variants ("Okay.", "okay!") all normalise to the same key.
+_HALLUCINATION_STRIP = ' \t\n\r.,!?'
 
 
 def _is_hallucination(text):
     """True if text matches a known ASR hallucination phrase."""
-    return text.strip().lower() in _HALLUCINATION_BLOCKLIST
+    return text.strip(_HALLUCINATION_STRIP).lower() in _HALLUCINATION_BLOCKLIST
 
 
 def _resolve_freq_tag(gateway, source_id):
@@ -206,6 +201,8 @@ class RadioTranscriber:
         _raw_thresh = float(_saved.get('vad_threshold',
                                        getattr(config, 'TRANSCRIBE_VAD_THRESHOLD', 0.5)))
         if _raw_thresh < 0 or _raw_thresh > 1:
+            print(f"  [Transcribe] Ignoring legacy vad_threshold={_raw_thresh}; "
+                  f"using default 0.5 (threshold is now a probability 0.0-1.0)")
             _raw_thresh = 0.5
         self._vad_threshold = _raw_thresh
         self._vad_hold_time = float(_saved.get('vad_hold', getattr(config, 'TRANSCRIBE_VAD_HOLD', 1.0)))
@@ -251,6 +248,9 @@ class RadioTranscriber:
                                     getattr(config, 'TRANSCRIBE_DENOISE_MIX', 0.5)))
         self._denoise_mix = max(0.0, min(1.0, _raw_mix))
         self._denoise_stream = None
+        # Guards all three denoise fields: writes from HTTP/MCP threads race
+        # with reads/writes from the bus tick thread in feed().
+        self._denoise_lock = threading.Lock()
 
         self._max_samples_16k = int(_MAX_UTTERANCE_SECS * _SILERO_SR)
         self._soft_cap_samples_16k = int(_SOFT_CAP_SECS * _SILERO_SR)
@@ -285,20 +285,22 @@ class RadioTranscriber:
         """Toggle neural denoise on the ASR path. Tears down the stream when
         disabled so we don't keep an unused RNNoise state in memory."""
         enabled = bool(enabled)
-        if enabled == self._denoise_enabled:
-            return
-        self._denoise_enabled = enabled
-        if not enabled and self._denoise_stream is not None:
-            try:
-                self._denoise_stream.close()
-            except Exception:
-                pass
-            self._denoise_stream = None
+        with self._denoise_lock:
+            if enabled == self._denoise_enabled:
+                return
+            self._denoise_enabled = enabled
+            if not enabled and self._denoise_stream is not None:
+                try:
+                    self._denoise_stream.close()
+                except Exception:
+                    pass
+                self._denoise_stream = None
         self._save()
 
     def set_denoise_mix(self, mix):
         """Set denoise wet/dry mix (0.0–1.0)."""
-        self._denoise_mix = max(0.0, min(1.0, float(mix)))
+        with self._denoise_lock:
+            self._denoise_mix = max(0.0, min(1.0, float(mix)))
         self._save()
 
     def stop(self):
@@ -306,6 +308,21 @@ class RadioTranscriber:
         self._pending_evt.set()
         if self._thread:
             self._thread.join(timeout=5)
+        # Release ONNX + RNNoise resources so repeated start/stop cycles
+        # don't accumulate sessions in memory.
+        with self._denoise_lock:
+            if self._denoise_stream is not None:
+                try:
+                    self._denoise_stream.close()
+                except Exception:
+                    pass
+                self._denoise_stream = None
+        if self._vad is not None:
+            try:
+                self._vad._sess = None
+            except Exception:
+                pass
+            self._vad = None
 
     def feed(self, pcm_48k, source_id=None):
         """Feed 48kHz 16-bit mono PCM from the mixer. Called every tick (~50ms)."""
@@ -325,36 +342,45 @@ class RadioTranscriber:
         # pass. Lazy-load the stream on first enable; silently disable on
         # library failure so a missing dep never kills the audio path.
         arr_48k_i16 = np.frombuffer(pcm_48k, dtype=np.int16)
-        if self._denoise_enabled:
-            if self._denoise_stream is None:
+        # Snapshot denoise state under the lock so a concurrent
+        # set_denoise(False) can't pull the stream out from under us mid-call.
+        # Lazy-init the RNNoise stream on first enable while holding the lock.
+        with self._denoise_lock:
+            _den_enabled = self._denoise_enabled
+            _den_mix = self._denoise_mix
+            _den_stream = self._denoise_stream
+            if _den_enabled and _den_stream is None:
                 try:
-                    self._denoise_stream = _RNNoiseStream()
+                    _den_stream = _RNNoiseStream()
+                    self._denoise_stream = _den_stream
                 except Exception as e:
                     print(f"  [Transcribe] Denoise unavailable: {e}")
                     self._denoise_enabled = False
-            if self._denoise_stream is not None:
-                try:
-                    denoised = self._denoise_stream.process(arr_48k_i16)
-                    # Align lengths (startup residue → dry-fill the gap),
-                    # then blend wet/dry per _denoise_mix so we don't wipe
-                    # out the signal when RNNoise mis-classifies the band.
-                    if denoised.size == 0:
-                        pass  # nothing processed yet; keep dry input
-                    else:
-                        if denoised.size < arr_48k_i16.size:
-                            denoised = np.concatenate([denoised, arr_48k_i16[denoised.size:]])
-                        elif denoised.size > arr_48k_i16.size:
-                            denoised = denoised[: arr_48k_i16.size]
-                        w = self._denoise_mix
-                        if w >= 0.999:
-                            arr_48k_i16 = denoised
-                        elif w > 0.001:
-                            mixed = (arr_48k_i16.astype(np.int32) * (1.0 - w)
-                                     + denoised.astype(np.int32) * w)
-                            arr_48k_i16 = np.clip(mixed, -32768, 32767).astype(np.int16)
-                        # else w ≈ 0 → keep dry
-                except Exception as e:
-                    print(f"  [Transcribe] Denoise error: {e}")
+                    _den_enabled = False
+                    _den_stream = None
+        if _den_enabled and _den_stream is not None:
+            try:
+                denoised = _den_stream.process(arr_48k_i16)
+                # Align lengths (startup residue → dry-fill the gap),
+                # then blend wet/dry per _denoise_mix so we don't wipe
+                # out the signal when RNNoise mis-classifies the band.
+                if denoised.size == 0:
+                    pass  # nothing processed yet; keep dry input
+                else:
+                    if denoised.size < arr_48k_i16.size:
+                        denoised = np.concatenate([denoised, arr_48k_i16[denoised.size:]])
+                    elif denoised.size > arr_48k_i16.size:
+                        denoised = denoised[: arr_48k_i16.size]
+                    w = _den_mix
+                    if w >= 0.999:
+                        arr_48k_i16 = denoised
+                    elif w > 0.001:
+                        mixed = (arr_48k_i16.astype(np.int32) * (1.0 - w)
+                                 + denoised.astype(np.int32) * w)
+                        arr_48k_i16 = np.clip(mixed, -32768, 32767).astype(np.int16)
+                    # else w ≈ 0 → keep dry
+            except Exception as e:
+                print(f"  [Transcribe] Denoise error: {e}")
 
         # Convert to float32 [-1, 1] and resample once.
         arr_48k = arr_48k_i16.astype(np.float32) / 32768.0

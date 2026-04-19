@@ -41,6 +41,8 @@ class BusManager:
         # Per-tick staging — collected during each bus's _deliver_audio, mixed
         # and flushed once at end of tick. Prevents multiple buses routed to
         # pcm/mp3 from interleaving their chunks into the downstream consumer.
+        # Invariant: mutated only from the single bus-tick thread. Do not
+        # append or clear from HTTP handlers, link readers, or any other thread.
         self._pcm_tick = []
         self._mp3_tick = []
         self._bus_levels = {}       # bus_id → audio level (0-100) for routing page

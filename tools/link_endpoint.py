@@ -202,8 +202,23 @@ def _compute_local_version():
     return h.hexdigest()[:16]
 
 
+# Serializes concurrent update attempts so startup, on_connect and the
+# hourly checker don't race on the file write. Non-blocking acquire: if
+# an update is already in flight, the next caller is a no-op.
+_update_lock = threading.Lock()
+
+
 def _check_for_update(gateway_url):
     """Check gateway for newer endpoint code. Returns True if updated + restart needed."""
+    if not _update_lock.acquire(blocking=False):
+        return False
+    try:
+        return _check_for_update_locked(gateway_url)
+    finally:
+        _update_lock.release()
+
+
+def _check_for_update_locked(gateway_url):
     import urllib.request, base64
     try:
         # Check version
