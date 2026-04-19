@@ -1325,7 +1325,7 @@ class WebConfigServer:
     --t-border-hi: {t.get('border_hi', t['btn_active_bg'])};
     --t-text: {t.get('text', '#d6dee6')};
     --t-text-dim: {t.get('text_dim', '#7a8a99')};
-    --t-text-mute: {t.get('text_mute', '#4d5a68')};
+    --t-text-mute: {t.get('text_mute', '#6b7a8a')};
     --t-ok: {t.get('ok', '#5dc47a')};
     --t-warn: {t.get('warn', '#e89d3c')};
     --t-err: {t.get('err', '#e04848')};

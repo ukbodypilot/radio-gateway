@@ -33,7 +33,7 @@
   --t-accent:     #4fd6e6;  /* live/active/focused */
   --t-text:       #d6dee6;
   --t-text-dim:   #7a8a99;  /* labels, secondary */
-  --t-text-mute:  #4d5a68;  /* disabled, tertiary */
+  --t-text-mute:  #6b7a8a;  /* disabled, tertiary (WCAG AA on --t-bg) */
   --t-ok:         #5dc47a;  /* rx, success */
   --t-warn:       #e89d3c;
   --t-err:        #e04848;  /* tx, error */
