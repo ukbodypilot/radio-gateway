@@ -416,7 +416,7 @@ class Config:
             'WEB_CONFIG_PASSWORD': '',    # Basic auth password (user: admin), blank = no auth
             'WEB_CONFIG_HTTPS': False,    # false, self-signed, or letsencrypt
             'GATEWAY_NAME': '',           # Display name shown at top of dashboard (blank = none)
-            'WEB_THEME': 'blue',          # Dashboard color theme: blue, red, green, purple, amber, teal, pink
+            'WEB_THEME': 'grey',          # Dashboard color theme: grey, blue, red, green, purple, amber, teal, pink
             # Cloudflare Tunnel (free public HTTPS access, no port forwarding needed)
             'SDR_INTERNAL_AUTOSTART': True,    # Auto-start internal SDR (rtl_airband) on gateway startup
             'SDR_INTERNAL_AUTOSTART_CHANNEL': 1,   # Channel slot to recall on autostart (-1 = use last settings)

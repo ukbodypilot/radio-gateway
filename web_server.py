@@ -609,8 +609,8 @@ class WebConfigServer:
 
     def _get_theme(self):
         """Return the current theme color dict."""
-        name = str(getattr(self.config, 'WEB_THEME', 'blue')).lower().strip()
-        return self.THEMES.get(name, self.THEMES['blue'])
+        name = str(getattr(self.config, 'WEB_THEME', 'grey')).lower().strip()
+        return self.THEMES.get(name, self.THEMES['grey'])
 
     def start(self):
         """Start the HTTP server on a daemon thread."""
