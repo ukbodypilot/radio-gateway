@@ -2,7 +2,7 @@
 
 Continuous per-bus audio recording with visual waveform review, playback, and export.
 
-![Loop Recorder Screenshot](loop-recorder-screenshot.png)
+![Loop Recorder Screenshot](screenshots/recorder.png)
 
 ## Overview
 

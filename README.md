@@ -1,6 +1,6 @@
 # Radio Gateway
 
-A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, Telegram bot control, AI-powered announcements, and a 20-page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support, per-stream diagnostic tracing, and 55+ MCP tools for AI control -- all from a single Python process.
+A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, Telegram bot control, AI-powered announcements, and a 20-page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support, per-stream diagnostic tracing, and 95+ MCP tools for AI control -- all from a single Python process.
 
 **Radios:** TH-9800 (AIOC), TH-D75 (Bluetooth), KV4P (USB serial), FTM-150 (remote endpoint), RSPduo dual SDR receiver.
 **Packet:** Winlink email via Direwolf TNC + Pat client. APRS decode with station mapping. BBS terminal. Gateway proximity map from Winlink CMS directory.
@@ -23,7 +23,7 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 
 | Loop Recorder |
 |:-:|
-| ![Loop Recorder](docs/loop-recorder-screenshot.png) |
+| ![Loop Recorder](docs/screenshots/recorder.png) |
 
 ## v2.0 Highlights
 
@@ -114,7 +114,7 @@ The installer handles system packages (Python, PortAudio, FFmpeg, HIDAPI, scipy)
 
 ## Web Interface
 
-Built-in HTTP server (no Flask). Shell frame with persistent audio level bars visible on every page. Compact nav bar with inline MP3/PCM/MIC controls. 17 pages served from static HTML files in `web_pages/`.
+Built-in HTTP server (no Flask). Shell frame with persistent audio level bars visible on every page. Compact nav bar with inline MP3/PCM/MIC controls. 19 pages served from static HTML files in `web_pages/`.
 
 ```ini
 [web]
@@ -435,21 +435,26 @@ Decodes all standard APRS position formats (uncompressed, compressed, MIC-E, tim
 
 ## MCP Server
 
-`gateway_mcp.py` is a stdio-based MCP server with 55+ tools that gives Claude (or any MCP-compatible AI) full control of the gateway via its HTTP API.
+`gateway_mcp.py` is a stdio-based MCP server with 95+ tools that gives Claude (or any MCP-compatible AI) full control of the gateway via its HTTP API.
 
 ### Tool Categories
 
 | Category | Tools | What They Do |
 |----------|-------|-------------|
-| **Status** | `gateway_status`, `sdr_status`, `cat_status`, `system_info`, `d75_status`, `kv4p_status`, `telegram_status` | Read current state of any subsystem |
-| **Radio Control** | `radio_ptt`, `radio_tts`, `radio_cw`, `radio_ai_announce`, `radio_set_tx`, `radio_get_tx`, `radio_frequency`, `d75_command`, `d75_frequency`, `kv4p_command` | Key radios, speak, send CW, tune frequencies |
-| **SDR** | `sdr_tune`, `sdr_restart`, `sdr_stop` | Control SDR receivers |
-| **Routing** | `routing_status`, `routing_levels`, `routing_connect`, `routing_disconnect`, `bus_create`, `bus_delete`, `bus_mute`, `sink_mute`, `bus_toggle_processing`, `set_gain` | Wire audio paths, create/delete busses, mute/unmute, adjust gains |
-| **Automation** | `automation_status`, `automation_history`, `automation_reload`, `automation_trigger` | Inspect and trigger scheduled automation tasks |
-| **Recordings** | `recordings_list`, `recordings_delete`, `recording_playback` | Browse and manage recorded audio |
-| **System** | `gateway_logs`, `gateway_key`, `audio_trace_toggle`, `config_read`, `process_control` | Logs, diagnostics, config, process management |
+| **Status** | `gateway_status`, `sdr_status`, `cat_status`, `system_info`, `d75_status`, `kv4p_status`, `telegram_status`, `gps_status`, `cloudflare_status` | Read current state of any subsystem |
+| **Radio Control** | `radio_ptt`, `radio_tts`, `radio_cw`, `radio_ai_announce`, `radio_set_tx`, `radio_get_tx`, `radio_frequency`, `d75_command`, `d75_frequency`, `d75_memscan`, `kv4p_command` | Key radios, speak, send CW, tune frequencies |
+| **SDR** | `sdr_tune`, `sdr_single_tune`, `sdr_restart`, `sdr_stop`, `sdr_set_mode`, `sdr_add_channel`, `sdr_remove_channel` | Control SDR receivers, manage channels |
+| **Routing** | `routing_status`, `routing_levels`, `routing_connect`, `routing_disconnect`, `bus_create`, `bus_delete`, `bus_mute`, `bus_rename`, `sink_mute`, `bus_toggle_processing`, `set_gain`, `speaker_mode` | Wire audio paths, create/delete busses, mute/unmute, adjust gains |
+| **Loop Recorder** | `loop_recorder_status`, `loop_recorder_toggle`, `loop_recorder_activity`, `loop_recorder_summary`, `loop_recorder_export`, `loop_recorder_archive_all`, `loop_recorder_delete_all`, `loop_playback_control` | Per-bus continuous recording and waveform export |
+| **Transcription** | `transcription_status`, `transcription_config` | Live voice-to-text status and configuration |
+| **Repeaters** | `nearby_repeaters`, `repeater_info`, `repeater_tune`, `repeater_refresh` | ARD repeater database queries and tuning |
+| **Packet / Winlink** | `packet_status`, `packet_mode`, `packet_decoded`, `packet_aprs_stations`, `packet_send_aprs`, `packet_log`, `winlink_compose`, `winlink_connect`, `winlink_gateways`, `winlink_messages`, `winlink_read`, `winlink_log` | Packet radio, APRS, and Winlink email |
+| **Gateway Link** | `link_endpoint_status`, `link_endpoint_command`, `endpoint_ping`, `endpoint_reboot`, `endpoint_battery`, `endpoint_version`, `endpoint_ssh` | Remote endpoint management |
+| **Automation** | `automation_status`, `automation_history`, `automation_reload`, `automation_trigger`, `automation_scheme_read`, `automation_scheme_edit` | Inspect, edit, and trigger scheduled automation tasks |
+| **Recordings** | `recordings_list`, `recordings_delete`, `recording_playback` | Browse and manage recorded audio files |
+| **GDrive** | `gdrive_status`, `gdrive_list_files`, `gdrive_publish_tunnel` | Google Drive integration and tunnel URL publishing |
+| **System** | `gateway_logs`, `gateway_restart`, `gateway_key`, `audio_trace_toggle`, `stream_trace_toggle`, `stream_trace_read`, `config_read`, `process_control` | Logs, diagnostics, config, process management |
 | **Telegram** | `telegram_reply`, `telegram_status` | Send replies through the Telegram bot |
-| **Mixer** | `mixer_control` | Legacy mixer controls |
 
 ### Setup
 
