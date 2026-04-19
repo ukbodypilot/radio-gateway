@@ -12,7 +12,7 @@
 <div id="status" class="hero">Loading...</div>
 <div id="toast-container" class="toast-stack"></div>
 
-<div id="sysinfo" class="hero">Loading...</div>
+<div id="sysinfo" class="panel">Loading...</div>
 
 <div id="bc-panel" class="panel" style="display:none;">
   <div class="panel-head">
@@ -143,7 +143,6 @@
   .dot { line-height: 1; color: var(--t-text-mute); }
   .dot.ok { color: var(--t-ok); }
   .dot.err { color: var(--t-err); }
-  .dim { color: var(--t-text-dim); }
 
   /* Dashboard-local utility classes */
   .trunc { font-size: var(--f-xs); color: var(--t-text-dim); margin-top: var(--s-1);
@@ -217,6 +216,25 @@
 
   .dash-tbl { width: 100%; border-collapse: collapse; font-size: var(--f-sm); }
   .dash-tbl th { text-align: left; padding: var(--s-1) var(--s-3); color: var(--t-text-dim); font-weight: 500; border-bottom: 1px solid var(--t-border); }
+
+  /* Wide-screen 2-column layout — the hero/status and sysinfo blocks span
+     the full width, all other panels flow into two balanced columns so
+     critical info isn't pushed below the fold. */
+  @media (min-width: 1400px) {
+    body {
+      column-count: 2;
+      column-gap: var(--s-4);
+      column-fill: balance;
+    }
+    #status, #sysinfo, #toast-container {
+      column-span: all;
+      break-after: auto;
+    }
+    .hero, .panel {
+      break-inside: avoid;
+      display: block;
+    }
+  }
   .dash-tbl td { padding: var(--s-1) var(--s-3); }
   .dash-tbl tr.active td { background: var(--t-panel-hi); }
 </style>
@@ -311,7 +329,7 @@ function updateStatus() {
 
     // Timers row: uptime + smart announce countdowns
     h += '<div class="st-row timer-row">';
-    h += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val cyan">'+s.uptime+'</span></div>';
+    h += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
     for(var i=0;i<s.smart_countdowns.length;i++) {
       var sc=s.smart_countdowns[i];
       var scClr=sc.mode==='manual'?'cyan':'yellow';
@@ -512,7 +530,7 @@ function sysBar(pct, tone) {
 createPoller('/sysinfo', 2000, function(s) {
   var h = '<div class="st-row">';
   h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(s.cpu_pct)+'</div>';
-  h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val cyan">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
+  h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val white">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
   h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, 'accent')+'<span class="st-label">'+s.mem_used_mb+'/'+s.mem_total_mb+'MB</span></div>';
   if (s.swap_total_mb > 0) {
     var swPct = Math.round(100*s.swap_used_mb/s.swap_total_mb);
@@ -535,7 +553,7 @@ createPoller('/sysinfo', 2000, function(s) {
   if (s.ips && s.ips.length) {
     h += '<div class="st-row">';
     if (s.gateway_name) h += '<div class="st-item"><span class="st-label">Name:</span><span class="st-val white">'+s.gateway_name+'</span></div>';
-    if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val cyan">'+s.hostname+'</span></div>';
+    if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';
     for (var i=0; i<s.ips.length; i++) {
       h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
     }

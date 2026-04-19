@@ -2099,6 +2099,9 @@ class WebConfigServer:
             # Hostname
             info['hostname'] = socket.gethostname()
             info['gateway_name'] = str(getattr(self.config, 'GATEWAY_NAME', '') or '').strip() if self.gateway else ''
+            # Callsign (from PACKET_CALLSIGN) — shown in the shell identity plate.
+            cs = str(getattr(self.config, 'PACKET_CALLSIGN', '') or '').strip().upper()
+            info['callsign'] = cs if cs and cs != 'N0CALL' else ''
 
             # Cloudflare tunnel URL for display in system status
             if self.gateway and self.gateway.cloudflare_tunnel:

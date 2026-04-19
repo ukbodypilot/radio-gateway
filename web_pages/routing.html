@@ -36,13 +36,17 @@
   .drawflow .drawflow-node .title-box {
     padding: var(--s-1) var(--s-2);
     border-bottom: 1px solid var(--t-border);
-    border-left: 3px solid var(--node-color, var(--t-border-hi));
-    background: var(--t-panel-hi);
-    font-weight: 600;
+    border-left: 6px solid var(--node-color, var(--t-border-hi));
+    background:
+      linear-gradient(90deg,
+        color-mix(in srgb, var(--node-color, var(--t-border-hi)) 14%, var(--t-panel-hi)) 0%,
+        var(--t-panel-hi) 60%);
+    font-weight: 700;
     font-size: var(--f-xs);
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     line-height: 1.4;
+    box-shadow: inset 0 -1px 0 rgba(0,0,0,0.25);
   }
   .drawflow .drawflow-node .box {
     padding: var(--s-1) var(--s-2);
@@ -62,19 +66,41 @@
   .drawflow .connection .main-path {
     stroke: var(--t-border-hi);
     stroke-width: 2;
+    transition: stroke 0.2s;
   }
   .drawflow .connection .main-path.selected {
     stroke: var(--t-accent);
+  }
+  /* Signal-flow animation — connections marked .flowing (set from JS when
+     the source bus has a non-zero level) get a dashed stroke that slides
+     along the path. Pure CSS; no layout cost. */
+  @keyframes rf-flow { to { stroke-dashoffset: -24; } }
+  .drawflow .connection.flowing .main-path {
+    stroke: var(--t-ok);
+    stroke-width: 2.5;
+    stroke-dasharray: 6 6;
+    animation: rf-flow 1.2s linear infinite;
+    filter: drop-shadow(0 0 3px rgba(93,196,122,0.55));
   }
   .drawflow .drawflow-node .input,
   .drawflow .drawflow-node .output {
     background: var(--t-panel);
     border: 2px solid var(--t-border-hi);
+    transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
   }
+  /* Colour sockets by node role — outputs on sources glow green (RX),
+     outputs on sinks don't exist; inputs on sinks pick up the accent
+     on connect. Applied via parent class selectors to avoid JS. */
+  .drawflow .drawflow-node.source .output  { border-color: var(--t-ok); }
+  .drawflow .drawflow-node.bus-listen  .output,
+  .drawflow .drawflow-node.bus-simplex .output { border-color: var(--t-accent); }
+  .drawflow .drawflow-node.bus-duplex  .output { border-color: var(--t-ok); }
+  .drawflow .drawflow-node.sink .input { border-color: var(--t-err); }
   .drawflow .drawflow-node .input:hover,
   .drawflow .drawflow-node .output:hover {
     background: var(--t-accent);
     border-color: var(--t-accent);
+    box-shadow: 0 0 6px var(--t-accent);
   }
 
   /* Node controls (mute + gain) */
@@ -132,7 +158,7 @@
     font-size: 10px;
     color: var(--t-fg);
   }
-  .dfn-mix-row.dim { opacity: 0.4; }
+  .dfn-mix-row.dim-op { opacity: 0.4; }
   .dfn-mix-label {
     color: var(--t-fg-dim);
     font-size: 9px;
@@ -670,7 +696,7 @@ function rebuildEditor() {
       + (function() {
           var mix = (proc.dfn_mix !== undefined) ? proc.dfn_mix : 0.5;
           var pct = Math.round(mix * 100);
-          var cls = 'dfn-mix-row' + (proc.dfn ? '' : ' dim');
+          var cls = 'dfn-mix-row' + (proc.dfn ? '' : ' dim-op');
           return '<div class="' + cls + '" id="dfn-mix-row-' + b.id + '">'
             + '<span class="dfn-mix-label">DFN mix</span>'
             + '<input type="range" class="dfn-mix-slider" min="0" max="1" step="0.05" value="' + mix + '" '
@@ -1018,7 +1044,7 @@ function toggleProc(busId, filter) {
         }
         if (filter === 'dfn') {
           var row = document.getElementById('dfn-mix-row-' + busId);
-          if (row) row.classList.toggle('dim', !d.state);
+          if (row) row.classList.toggle('dim-op', !d.state);
         }
         setStatus(busId + ': ' + filter + ' ' + (d.state ? 'ON' : 'OFF'));
       }
@@ -1102,6 +1128,29 @@ function pollLevels() {
         if (lvl) {
           var dfNode = lvl.closest('.drawflow-node');
           if (dfNode) dfNode.classList.toggle('ptt-active', !!ptt[txId]);
+        }
+      }
+      // Signal-flow animation: mark connections .flowing when the source
+      // (or bus, for bus→sink links) has a non-trivial level. Drawflow
+      // emits connection DOM with node_in_node-<target> + node_out_node-<source>
+      // classes keyed by numeric drawflow ids; _nodeMap translates ours.
+      if (_state && _state.connections && _nodeMap) {
+        for (var j = 0; j < _state.connections.length; j++) {
+          var c = _state.connections[j];
+          var fromId = null, toId = null, lev = 0;
+          if (c.type === 'source-bus') {
+            fromId = _nodeMap['src-' + c.from];
+            toId   = _nodeMap['bus-' + c.to];
+            lev = d[c.from] || 0;
+          } else if (c.type === 'bus-sink') {
+            fromId = _nodeMap['bus-' + c.from];
+            toId   = _nodeMap['sink-' + c.to];
+            lev = d['bus_' + c.from] || 0;
+          }
+          if (fromId && toId) {
+            var cEl = document.querySelector('.connection.node_out_node-' + fromId + '.node_in_node-' + toId);
+            if (cEl) cEl.classList.toggle('flowing', lev > 3);
+          }
         }
       }
     })

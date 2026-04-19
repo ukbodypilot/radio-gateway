@@ -87,39 +87,37 @@
     border-left: 1px solid var(--t-border);
     margin-left: var(--s-1);
   }
-  .shell-pcm .rb {
-    min-width: 62px; text-align: center;
-    padding: 3px var(--s-2);
-    font-size: var(--f-xs);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
+  /* Uses .rb-caps + .rb-sm from common.css — only the min-width is shell-local. */
+  .shell-pcm .rb { min-width: 62px; text-align: center; }
   .shell-pcm .rb.connecting { color: var(--t-warn); border-color: var(--t-warn); }
   .shell-pcm .rb.live { color: var(--t-err); border-color: var(--t-err); }
   .shell-pcm input[type="range"] { width: 52px; height: 3px; }
 
   #shell-frame { flex: 1; border: none; width: 100%; background: var(--t-bg); }
 
-  /* Level meter strip — primary signal real-estate */
+  /* Level meter strip — primary signal real-estate. This is the gateway's
+     vital-sign display: give it weight, inset channels, phosphor glow. */
   #shell-bars {
-    background: var(--t-panel);
+    background:
+      linear-gradient(180deg, var(--t-panel) 0%, color-mix(in srgb, var(--t-panel) 92%, #000) 100%);
     border-bottom: 1px solid var(--t-border);
-    padding: var(--s-1) var(--s-3);
+    padding: var(--s-2) var(--s-3);
     display: flex; flex-wrap: wrap;
-    gap: var(--s-1) var(--s-4);
+    gap: var(--s-2) var(--s-4);
     align-items: center;
     flex-shrink: 0;
-    min-height: 22px;
+    min-height: 44px;
   }
   #shell-bars .sb {
     display: flex; gap: var(--s-2); align-items: center;
-    white-space: nowrap; min-width: 200px;
+    white-space: nowrap; min-width: 220px;
   }
   #shell-bars .sb-label {
     color: var(--t-text-dim);
     font-size: var(--f-xs);
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
+    font-weight: 600;
     min-width: 3.4em;
     text-align: right;
     flex-shrink: 0;
@@ -133,21 +131,41 @@
   }
   #shell-bars .sb-pct.ducked { color: var(--t-warn); }
   #shell-bars .sb-track {
-    width: 120px; height: 12px;
-    background: var(--t-bg);
+    position: relative;
+    width: 140px; height: 18px;
+    background: #05080b;
     border: 1px solid var(--t-border);
     border-radius: var(--r-sm);
     flex-shrink: 0; overflow: hidden;
+    box-shadow:
+      inset 0 1px 2px rgba(0,0,0,0.7),
+      inset 0 -1px 0 rgba(255,255,255,0.02);
   }
+  /* Zone ticks at 70% (warn onset) and 95% (ceiling) — live inside the track,
+     behind the bar fill but visible through it, so you can read headroom. */
+  #shell-bars .sb-track::before,
+  #shell-bars .sb-track::after {
+    content: '';
+    position: absolute;
+    top: 2px; bottom: 2px;
+    width: 1px;
+    pointer-events: none;
+    z-index: 2;
+  }
+  #shell-bars .sb-track::before { left: 70%; background: var(--t-warn); opacity: 0.35; }
+  #shell-bars .sb-track::after  { left: 95%; background: var(--t-err);  opacity: 0.45; }
   #shell-bars .sb-bar {
     display: block; height: 100%;
     transition: width 0.08s linear;
+    box-shadow: 0 0 6px currentColor;
+    position: relative; z-index: 1;
   }
-  /* Semantic bar colors: in=receive, out=transmit, loc=local output */
-  .sb-in  { background: var(--t-ok); }
-  .sb-out { background: var(--t-err); }
-  .sb-loc { background: var(--t-accent); }
-  .sb-ducked-bar { background: var(--t-warn); }
+  /* Semantic bar colors: in=receive, out=transmit, loc=local output.
+     color = background so the currentColor glow matches the fill hue. */
+  .sb-in  { background: var(--t-ok);     color: var(--t-ok); }
+  .sb-out { background: var(--t-err);    color: var(--t-err); }
+  .sb-loc { background: var(--t-accent); color: var(--t-accent); }
+  .sb-ducked-bar { background: var(--t-warn); color: var(--t-warn); }
 
   #shell-bars .mute-ind {
     color: var(--t-err);
@@ -160,15 +178,60 @@
   @media (max-width: 768px) {
     body { height: auto; overflow: auto; }
     #shell-bars { flex-shrink: 1; }
-    #shell-frame { flex: none; height: calc(100vh - 34px); }
+    #shell-frame { flex: none; height: calc(100vh - 78px); }
   }
 
-  /* Header identity cluster — pushed to the right with a divider */
+  /* Header identity cluster — pushed right, styled as a callsign plate.
+     Small beacon LED (pulses green when server healthy), callsign in
+     display font + phosphor, site name, UTC clock. */
   .id-cluster.shell-id {
     margin-left: auto;
-    padding-left: var(--s-3);
-    border-left: 1px solid var(--t-border);
+    padding: 2px var(--s-3);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    background: linear-gradient(180deg, #0a0f14 0%, #05080b 100%);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.02),
+      inset 0 -1px 0 rgba(0,0,0,0.4);
   }
+  .id-led {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--t-ok);
+    box-shadow: 0 0 6px var(--t-ok);
+    flex-shrink: 0;
+    animation: id-beacon 2.4s ease-in-out infinite;
+  }
+  .id-led.stale { background: var(--t-warn); box-shadow: 0 0 6px var(--t-warn); }
+  .id-led.dead  { background: var(--t-err);  box-shadow: 0 0 6px var(--t-err); animation: none; }
+  @keyframes id-beacon {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+  }
+  .id-cluster.shell-id .id-call {
+    font-family: var(--font-display);
+    color: var(--t-accent);
+    font-weight: 700;
+    font-size: var(--f-sm);
+    letter-spacing: 0.08em;
+    text-shadow: 0 0 10px rgba(79, 214, 230, 0.35);
+  }
+  .id-cluster.shell-id .id-site {
+    color: var(--t-text);
+    font-size: var(--f-xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .id-cluster.shell-id .id-clock {
+    font-family: var(--font-display);
+    color: var(--t-text);
+    font-size: var(--f-sm);
+    letter-spacing: 0.06em;
+    margin-left: 0;
+  }
+  .id-cluster.shell-id .id-sep { color: var(--t-border-hi); }
 </style>
 </head><body>
 <div id="shell-bar">
@@ -198,14 +261,17 @@
       <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     </div></div>
     <span class="shell-pcm">
-      <button id="play-btn" class="rb" onclick="toggleStream()"><span class="icon icon-play"></span> MP3</button>
+      <button id="play-btn" class="rb rb-caps rb-sm" onclick="toggleStream()"><span class="icon icon-play"></span> MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="50" oninput="setVolume(this.value)">
-      <button id="ws-btn" class="rb" onclick="toggleWS()"><span class="icon icon-play"></span> PCM</button>
+      <button id="ws-btn" class="rb rb-caps rb-sm" onclick="toggleWS()"><span class="icon icon-play"></span> PCM</button>
       <input id="ws-vol" type="range" min="0" max="100" value="50" oninput="setWSVol(this.value)">
-      <button id="mic-btn" class="rb" onclick="toggleMic()"><span class="icon icon-mic"></span> MIC</button>
+      <button id="mic-btn" class="rb rb-caps rb-sm" onclick="toggleMic()"><span class="icon icon-mic"></span> MIC</button>
     </span>
   </div>
-  <div class="id-cluster shell-id">
+  <div class="id-cluster shell-id" title="Gateway identity">
+    <span class="id-led" id="id-led" title="Gateway healthy"></span>
+    <span class="id-call" id="id-call" style="display:none"></span>
+    <span class="id-sep" id="id-call-sep" style="display:none">&middot;</span>
     <span class="id-site" id="id-site">--</span>
     <span class="id-sep">&middot;</span>
     <span class="id-clock" id="id-clock">--:--:--Z</span>
@@ -250,7 +316,23 @@ function loadIdentity() {
   fetch('/sysinfo').then(function(r){return r.json();}).then(function(s) {
     var name = s.gateway_name || s.hostname || '';
     if (name) document.getElementById('id-site').textContent = name;
-  }).catch(function(){});
+    var call = (s.callsign || '').trim();
+    var callEl = document.getElementById('id-call');
+    var sepEl  = document.getElementById('id-call-sep');
+    if (call) {
+      callEl.textContent = call;
+      callEl.style.display = '';
+      sepEl.style.display = '';
+    } else {
+      callEl.style.display = 'none';
+      sepEl.style.display = 'none';
+    }
+    var led = document.getElementById('id-led');
+    led.classList.remove('stale','dead');
+  }).catch(function(){
+    var led = document.getElementById('id-led');
+    led.classList.remove('stale'); led.classList.add('dead');
+  });
 }
 setInterval(loadIdentity, 60000);
 loadIdentity();

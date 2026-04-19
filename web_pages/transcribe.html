@@ -111,8 +111,8 @@
 
 <div class="status-bar">
   <span><label class="tgl"><input type="checkbox" id="st-enabled" onchange="setConfig('enabled', this.checked)" checked> <span class="dot" id="st-dot"></span> <span id="st-state">—</span></label></span>
-  <span><span class="st-label">Engine:</span> <span id="st-engine" class="cyan">moonshine</span></span>
-  <span><span class="st-label">Model:</span> <span id="st-model-disp" class="cyan">—</span></span>
+  <span><span class="st-label">Engine:</span> <span id="st-engine" class="white">moonshine</span></span>
+  <span><span class="st-label">Model:</span> <span id="st-model-disp" class="white">—</span></span>
   <span><div class="vad-bar"><div class="vad-fill" id="st-vad"></div><div id="st-vad-mark" class="vad-mark"></div></div> <span id="st-vad-db" class="vad-db">—</span></span>
   <span><span class="st-label">Pending:</span> <span id="st-pending">0</span></span>
   <span><span class="st-label">Total:</span> <span id="st-total">0</span></span>
@@ -196,7 +196,11 @@
 </div>
 
 <div id="transcript-list">
-  <div class="empty-msg">Waiting for transmissions...</div>
+  <div class="empty empty-live">
+    <span class="empty-glyph icon icon-signal"></span>
+    <span>Listening for transmissions</span>
+    <span class="empty-hint" id="tx-last-age">no events yet</span>
+  </div>
 </div>
 
 <script src="/pages/common.js"></script>
@@ -317,7 +321,12 @@ function poll() {
 function renderList() {
   var list = document.getElementById('transcript-list');
   if (!_entries.length) {
-    list.innerHTML = '<div class="empty-msg">Waiting for transmissions...</div>';
+    list.innerHTML =
+      '<div class="empty empty-live">' +
+        '<span class="empty-glyph icon icon-signal"></span>' +
+        '<span>Listening for transmissions</span>' +
+        '<span class="empty-hint" id="tx-last-age">no events yet</span>' +
+      '</div>';
     return;
   }
   // Show newest first

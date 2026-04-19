@@ -22,6 +22,17 @@
   font-display: swap;
 }
 
+/* Display face — hero numerics only (frequency, clock, big metrics).
+   Drop a woff2 at /pages/fonts/display.woff2 to override the stack;
+   otherwise falls back to narrower/geometric options, then JBM. */
+@font-face {
+  font-family: 'Gateway Display';
+  src: url('/pages/fonts/display.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* Palette — phosphor/instrument-panel: deep base, hairline borders,
      one bright accent (cyan) + green/red/amber signal colors. */
@@ -55,20 +66,45 @@
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px;  --s-4: 16px;  --s-5: 24px;  --s-6: 32px;
   --f-xs: 11px; --f-sm: 12px; --f-base: 13px; --f-md: 15px; --f-lg: 18px; --f-xl: 24px;
   --r-sm: 2px; --r-md: 4px;
+
+  /* Font stacks — base monospace + display for hero numerics. */
+  --font-base:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Gateway Display', 'Chakra Petch', 'Orbitron', 'Rajdhani', 'Teko', var(--font-base);
 }
 
 * { box-sizing: border-box; }
 
 body {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-base);
   font-size: var(--f-base);
   line-height: 1.45;
-  background: var(--t-bg);
   color: var(--t-text);
   margin: 0;
   padding: var(--s-4);
   -webkit-font-smoothing: antialiased;
+  /* Atmosphere — subtle vignette from phosphor-lit panel centre to dim edges.
+     Fixed attachment so scrolling doesn't drag the highlight. */
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -10%, #0d1520 0%, #080b0e 70%, #05080a 100%);
+  background-attachment: fixed;
+  background-color: var(--t-bg);
+  min-height: 100vh;
 }
+
+/* 2% noise grain — fixed overlay, below content, above the gradient.
+   Fractal-noise SVG avoids an HTTP request. pointer-events:none so it
+   never eats clicks. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.85  0 0 0 0 0.87  0 0 0 0 0.9  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  mix-blend-mode: overlay;
+}
+body > * { position: relative; z-index: 1; }
 
 ::selection { background: var(--t-accent); color: var(--t-bg); }
 :focus-visible { outline: 1px solid var(--t-accent); outline-offset: 2px; }
@@ -101,6 +137,14 @@ a:hover { text-decoration: underline; }
 }
 .rb:hover { background: var(--t-btn-hover); border-color: var(--t-border-hi); }
 .rb-sm { padding: 3px var(--s-2); font-size: var(--f-xs); }
+/* .rb-caps — small uppercase button variant used across the shell/PCM cluster,
+   mode selectors, etc. Pair with .rb (base) and optionally .rb-sm for size.
+   Example: <button class="rb rb-caps">PCM</button>. */
+.rb-caps {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
 .rb-active {
   background: var(--t-btn-active);
   border-color: var(--t-accent);
@@ -119,6 +163,12 @@ a:hover { text-decoration: underline; }
 .yellow { color: var(--t-warn); }
 .cyan   { color: var(--t-accent); }
 .white  { color: var(--t-text); }
+/* Dim = secondary text (labels, timestamps, inactive).
+   For "faded out" use .dim-op (opacity) instead — keeps semantic meaning
+   but shows an element is disabled/ghosted. */
+.dim    { color: var(--t-text-dim); }
+.mute   { color: var(--t-text-mute); }
+.dim-op { opacity: 0.4; }
 
 /* Status grid rows (key/value readouts) */
 .st-row  { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s-2) var(--s-4); margin: var(--s-2) 0; }
@@ -161,13 +211,30 @@ a:hover { text-decoration: underline; }
   letter-spacing: 0.04em;
 }
 
-/* Hero — primary status blocks, stronger border */
+/* Hero — the single "what you came here for" block on a page.
+   Use sparingly: at most one per page. Stronger border, subtle top-edge
+   accent glow, and a panel-hi gradient make it read as "primary" without
+   shouting. Everything else is .panel. */
 .hero {
-  background: var(--t-panel);
+  position: relative;
+  background:
+    linear-gradient(180deg, var(--t-panel-hi) 0%, var(--t-panel) 40%);
   border: 1px solid var(--t-border-hi);
   border-radius: var(--r-md);
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-4) var(--s-4);
   margin-top: var(--s-3);
+  box-shadow:
+    inset 0 1px 0 rgba(79, 214, 230, 0.06),
+    0 2px 8px rgba(0,0,0,0.25);
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: var(--s-4); right: var(--s-4);
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--t-accent) 50%, transparent 100%);
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 /* Form controls */
@@ -244,10 +311,33 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
   color: var(--t-text);
   font-variant-numeric: tabular-nums;
 }
-.metric-lg .metric-value { font-size: var(--f-xl); font-weight: 600; color: var(--t-accent); }
+.metric-lg .metric-value {
+  font-size: var(--f-xl); font-weight: 600; color: var(--t-accent);
+  font-family: var(--font-display);
+  letter-spacing: 0.03em;
+  text-shadow: 0 0 18px rgba(79, 214, 230, 0.22);
+}
+
+/* Hero numeric type — apply display face + phosphor bloom anywhere a value
+   is meant to read as a primary readout. Pages opt in via these selectors
+   or the .phosphor utility. */
+.freq-display, .id-clock, .hero-num {
+  font-family: var(--font-display);
+  letter-spacing: 0.03em;
+}
+.phosphor,
+.freq-display,
+.metric-lg .metric-value {
+  text-shadow: 0 0 18px rgba(79, 214, 230, 0.22);
+}
+.phosphor-green { text-shadow: 0 0 14px rgba(93, 196, 122, 0.35); }
+.phosphor-amber { text-shadow: 0 0 14px rgba(232, 157, 60, 0.35); }
+.phosphor-red   { text-shadow: 0 0 14px rgba(224, 72, 72, 0.35); }
 
 /* Empty state — for panels with no data yet.
-   Center a faint glyph + one-line hint. Don't use for error states. */
+   Center a faint glyph + one-line hint. Don't use for error states.
+   A subtle scanning pulse + swept highlight keep the panel feeling *live*
+   rather than dead. Add .empty .empty-live to animate (opt-in). */
 .empty {
   display: flex;
   flex-direction: column;
@@ -257,10 +347,40 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
   color: var(--t-text-mute);
   font-size: var(--f-sm);
   text-align: center;
+  position: relative;
+  overflow: hidden;
 }
 .empty .empty-glyph { font-size: var(--f-xl); color: var(--t-text-mute); opacity: 0.6; }
 .empty .empty-hint  { font-size: var(--f-xs); color: var(--t-text-mute); }
 .empty.err .empty-glyph { color: var(--t-err); opacity: 1; }
+
+/* Scanning sweep — a thin accent line crosses the empty state every few
+   seconds, like a scope refresh. Lightweight; GPU-composited. */
+.empty.empty-live::before {
+  content: '';
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(79, 214, 230, 0.12) 48%,
+    rgba(79, 214, 230, 0.18) 50%,
+    rgba(79, 214, 230, 0.12) 52%,
+    transparent 100%);
+  transform: translateX(-100%);
+  animation: empty-sweep 3.8s ease-in-out infinite;
+}
+@keyframes empty-sweep {
+  0%   { transform: translateX(-100%); }
+  55%  { transform: translateX(100%); }
+  100% { transform: translateX(100%); }
+}
+.empty.empty-live .empty-glyph {
+  animation: empty-breath 2.6s ease-in-out infinite;
+}
+@keyframes empty-breath {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.8; }
+}
 
 /* Identity — "which gateway am I looking at?" anchor.
    .identity-strip = standalone block (use above iframe content).
