@@ -4,6 +4,58 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Added
+- **Design pass** — phosphor/instrument-panel aesthetic applied across all pages via `common.css`:
+  - Radial vignette + 3% fractal-noise grain overlay on body
+  - Elevated level-meter strip in shell bar: 44px tall, inset recessed channels, 70%/95% zone ticks, per-channel coloured glow
+  - Identity plate redesigned: beacon LED (green pulse / warn / dead), callsign from `PACKET_CALLSIGN`, display-font stack for clock + call
+  - `--font-display` CSS variable with fallback chain; phosphor text-shadow on hero numerics
+  - `.hero` block: gradient + top-edge accent line + drop shadow; one hero per page enforced
+  - Dashboard 2-column layout at ≥1400px
+  - `.empty-live` scanning sweep + breathing glyph; transcribe + recordings updated
+  - `.rb-caps` button modifier added to `common.css`; shell-pcm buttons migrated
+  - Animated `.flowing` dashed stroke on routing connections when source level > 3
+  - Routing node title stripes widened (3px → 6px) with hue-tinted gradient; sockets colour-coded by node role
+  - `.dim`, `.mute`, `.dim-op` utility classes hoisted to `common.css`
+
+### Fixed
+- **WCAG AA contrast** — `--t-text-mute` raised from `#4d5a68` (2.7:1) to `#6b7a8a` (4.5:1)
+- **Concurrency** — `_denoise_lock` in transcriber; non-blocking `_update_lock` in link_endpoint; GIL-safe deque doc comments
+- **Resource leaks** — ONNX session + RNNoise stream released in `transcriber.stop()`
+
+## [3.2.0] -- 2026-04-19
+
+### Added
+- **Moonshine ASR** — replaced Whisper with Moonshine ONNX (`useful-moonshine-onnx`). English-only, CPU-efficient. Real-time on Haswell i5 at base model. `StreamingTranscriber` removed; single utterance-close path.
+- **Silero VAD** — replaced dBFS envelope follower with Silero v5 ML speech classifier. Probability threshold (0.0–1.0, default 0.5) with hysteresis (exit = threshold − 0.15). Ignores squelch tails, DTMF, pilot tones, carrier noise. Smoothed probability bar for UI polling (fast-attack 0.5, slow-decay 0.05).
+- **RNNoise neural denoise** — per-bus "D" toggle button in routing page with wet/dry mix slider. Shared singleton via pyrnnoise ctypes binding; per-bus stream state. Also available on ASR path via transcribe controls. Soft-clip (tanh) on audio boost path to prevent Silero detection regression.
+- **Anti-aliased ASR resampling** — `scipy.signal.resample_poly(audio_48k, 1, 3)` replaces bare `audio_48k[::3]` decimation.
+- **Hallucination blocklist** — post-transcription filter drops common no-speech outputs.
+- **30-second utterance cap** — hard buffer limit independent of `TRANSCRIBE_MAX_BUFFER`; prevents OOM on stuck-open VAD.
+- **Transcript source + frequency** — each entry shows radio name and tuned frequency (e.g. `SDR1 · 446.760 MHz`). TH-9800 reads left VFO from `cat_client._vfo_text['LEFT']`.
+- **SDR single-tuner multi-channel mode** — RSPduo one tuner at configurable sample rate (up to 10.66 MHz BW) with up to 2 demodulated channels. Band overview visualisation. Auto-center. 57% CPU reduction vs dual-tuner at equivalent channel count.
+- **SDR1/SDR2 as independent routing nodes** — each tuner channel independently routable to any bus.
+- **Google Drive integration** — Cloudflare tunnel URL published to Drive as `tunnel_url.json`. Drive file list, storage stats, and publish button on `/gdrive`.
+- **Packet auto-discovery** — Gateway Link AIOC endpoint discovered via mDNS. Internal AGWPE proxy eliminates per-endpoint Pat configuration.
+- **Gateway Link** — endpoint self-update; internet WebSocket transport with auto-upgrade to LAN TCP; Pi Zero 2W support; jitter buffer; async TX sends.
+- **Broadcastify health monitoring** — byte-rate and RTT tracking with alerts.
+- **Bus rename** — double-click bus name on routing page for inline editing.
+- **Gain slider reset** — double-click any gain slider to reset to 100%.
+- **UI redesign** — phosphor/instrument-panel theme across all 20 pages. JetBrains Mono throughout, cyan reserved for live signals, green/amber/red signal vocabulary. See commit history `ui-redesign` series.
+
+### Fixed
+- **Routing: selected node background** — overrides Drawflow's bundled `background:red`.
+- **Packet AGWPE session cap** — `_AGWPE_MAX_SESSIONS = 10` prevents unbounded sessions.
+- **Loop recorder toggle-off** — `stop(bus_id)` called immediately; disabled buses filtered from API.
+- **Link endpoint noise gate** — default threshold raised −48 → −40 dB; settings persist.
+- **PCM WebSocket stutter** — audio pushed from bus tick thread; duplicate main-loop push removed.
+- **Stuck PTT** — level threshold, bus reload cleanup, 60s safety timeout.
+
+### Removed
+- **Whisper / faster-whisper / ctranslate2** — fully replaced by Moonshine.
+- **Streaming transcription mode** — `StreamingTranscriber` and `mode` config field removed.
+- **Legacy D75 plugin** — `d75_plugin.py` deleted; D75 is link-endpoint-only.
+
 ## [3.1.0] -- 2026-04-09
 
 ### Added

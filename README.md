@@ -1,10 +1,19 @@
 # Radio Gateway
 
-A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, Telegram bot control, AI-powered announcements, and a 17-page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support, per-stream diagnostic tracing, and 55+ MCP tools for AI control -- all from a single Python process.
+A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, Telegram bot control, AI-powered announcements, and a 20-page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support, per-stream diagnostic tracing, and 55+ MCP tools for AI control -- all from a single Python process.
 
 **Radios:** TH-9800 (AIOC), TH-D75 (Bluetooth), KV4P (USB serial), FTM-150 (remote endpoint), RSPduo dual SDR receiver.
 **Packet:** Winlink email via Direwolf TNC + Pat client. APRS decode with station mapping. BBS terminal. Gateway proximity map from Winlink CMS directory.
 **Audio:** Sub-millisecond jitter bus mixer with per-stream trace diagnostics. Fire-and-forget PTT. Direct ALSA capture bypassing PipeWire.
+
+## v3.2 Highlights
+
+- **Moonshine ASR + Silero VAD** -- Replaced Whisper with [Moonshine](https://github.com/usefulsensors/moonshine) (ONNX, CPU-efficient, English). Replaced the dBFS envelope-follower VAD with [Silero v5](https://github.com/snakers4/silero-vad) ML speech classifier. False opens on squelch tails, carrier noise, DTMF, and pilot tones are now filtered at the VAD stage rather than sent to the ASR model.
+- **Neural denoise** -- [RNNoise](https://jmvalin.ca/demo/rnnoise/) per-bus toggle ("D" button in routing page) with wet/dry mix slider. Also available on the ASR path (Denoise toggle in transcribe controls). 30ms frame processing, <1ms latency, runs comfortably alongside Moonshine on a Haswell i5.
+- **UI redesign** -- Phosphor/instrument-panel aesthetic across all 20 pages. JetBrains Mono throughout, cyan accent reserved for live signals, green/amber/red signal vocabulary enforced. Elevated level-meter strip in shell bar (inset channels, zone ticks, per-channel glow). Identity plate with callsign + beacon LED. Animated signal-flow on active routing connections. Scanning sweep on empty states.
+- **SDR single-tuner multi-channel mode** -- RSPduo runs one tuner at up to 10.66 MHz bandwidth with up to 2 demodulated channels. 57% CPU reduction vs dual-tuner mode at the same sample count.
+- **Packet radio auto-discovery** -- Gateway Link AIOC endpoint auto-discovers via mDNS; no hardcoded IPs. Internal AGWPE proxy eliminates per-endpoint IP configuration in Pat.
+- **Google Drive integration** -- Cloudflare tunnel URL published to Drive for internet-accessible link endpoints.
 
 ## v3.0 Highlights
 
@@ -33,29 +42,29 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 |:-:|:-:|:-:|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Routing](docs/screenshots/routing.png) | ![Controls](docs/screenshots/controls.png) |
 
-| TH-9800 | TH-9800 (full) | TH-D75 |
+| TH-9800 | TH-D75 | KV4P |
 |:-:|:-:|:-:|
-| ![TH-9800](docs/screenshots/th9800.png) | ![TH-9800 Full](docs/screenshots/th9800-full.png) | ![TH-D75](docs/screenshots/thd75.png) |
+| ![TH-9800](docs/screenshots/th9800.png) | ![TH-D75](docs/screenshots/thd75.png) | ![KV4P](docs/screenshots/kv4p.png) |
 
-| KV4P | SDR | ADS-B |
+| SDR | ADS-B | Repeaters |
 |:-:|:-:|:-:|
-| ![KV4P](docs/screenshots/kv4p.png) | ![SDR](docs/screenshots/sdr.png) | ![ADS-B](docs/screenshots/adsb.png) |
+| ![SDR](docs/screenshots/sdr.png) | ![ADS-B](docs/screenshots/adsb.png) | ![Repeaters](docs/screenshots/repeaters.png) |
 
-| Telegram | Monitor | Recordings |
+| GPS | Telegram | Packet Radio |
 |:-:|:-:|:-:|
-| ![Telegram](docs/screenshots/telegram.png) | ![Monitor](docs/screenshots/monitor.png) | ![Recordings](docs/screenshots/recordings.png) |
+| ![GPS](docs/screenshots/gps.png) | ![Telegram](docs/screenshots/telegram.png) | ![Packet Status](docs/screenshots/packet-status.png) |
 
-| GPS | Repeaters | Transcription |
+| Transcription | Loop Recorder | Recordings |
 |:-:|:-:|:-:|
-| ![GPS](docs/screenshots/gps.png) | ![Repeaters](docs/screenshots/repeaters.png) | ![Transcription](docs/screenshots/transcribe.png) |
+| ![Transcription](docs/screenshots/transcribe.png) | ![Loop Recorder](docs/screenshots/recorder.png) | ![Recordings](docs/screenshots/recordings.png) |
 
-| Packet Status | Packet APRS Map | Packet Winlink |
+| Voice Relay | GDrive | Monitor |
 |:-:|:-:|:-:|
-| ![Packet Status](docs/screenshots/packet-status.png) | ![APRS Map](docs/screenshots/packet-aprs.png) | ![Winlink](docs/screenshots/packet-winlink.png) |
+| ![Voice](docs/screenshots/voice.png) | ![GDrive](docs/screenshots/gdrive.png) | ![Monitor](docs/screenshots/monitor.png) |
 
-| Packet BBS | Config | Logs |
+| Config | Logs |  |
 |:-:|:-:|:-:|
-| ![BBS Terminal](docs/screenshots/packet-bbs.png) | ![Config](docs/screenshots/config.png) | ![Logs](docs/screenshots/logs.png) |
+| ![Config](docs/screenshots/config.png) | ![Logs](docs/screenshots/logs.png) | |
 
 ## Quick Start
 
@@ -132,11 +141,12 @@ WEB_THEME = blue             # blue, red, green, purple, amber, teal, pink
 | Monitor | `/monitor` | Room monitor: streams device mic, gain/VAD/level controls |
 | Recordings | `/recordings` | Browse, play, download, delete recorded audio; filter by source/date |
 | Loop Recorder | `/recorder` | Per-bus continuous recording: visual waveform, zoom/pan, click-to-play, export |
-| Transcribe | `/transcribe` | Live voice-to-text with Whisper, freq-tagged output, Mumble/Telegram forwarding |
+| Transcribe | `/transcribe` | Live voice-to-text (Moonshine ONNX + Silero VAD), freq-tagged output, Mumble/Telegram forwarding |
 | Config | `/config` | INI editor with collapsible sections, Save & Restart |
 | Packet | `/packet` | Packet radio: Direwolf TNC, APRS map, Winlink email, BBS terminal |
 | Logs | `/logs` | Live scrolling log viewer with regex filter, Audio Trace, Watchdog Trace |
 | Voice | `/voice` | Voice relay to Claude Code via tmux |
+| GDrive | `/gdrive` | Google Drive status, tunnel URL publishing, file list |
 
 **Nav bar buttons:** MP3 stream toggle, PCM stream toggle, MIC (web microphone -- sends browser audio to the routing system).
 
@@ -177,12 +187,13 @@ Each node shows a live audio level bar. Sources and sinks have inline mute and g
 
 ### Per-Bus Processing
 
-Each bus has its own audio processing chain, toggled independently:
+Each bus has its own audio processing chain, toggled independently via the G/H/L/N/D buttons on each node:
 
-- **Noise Gate** -- removes background noise below threshold
-- **HPF** -- high-pass filter (cuts low-frequency rumble)
-- **LPF** -- low-pass filter (cuts high-frequency hiss)
-- **Notch Filter** -- narrow-band rejection at configurable frequency
+- **Noise Gate (G)** -- removes background noise below threshold
+- **HPF (H)** -- high-pass filter (cuts low-frequency rumble)
+- **LPF (L)** -- low-pass filter (cuts high-frequency hiss)
+- **Notch Filter (N)** -- narrow-band rejection at configurable frequency
+- **Neural Denoise (D)** -- RNNoise ML noise suppressor with wet/dry mix slider (0–100%). Shared model instance; per-bus streaming state. Effective against in-band noise that classical filters can't touch.
 
 ### Per-Bus Streaming
 
@@ -251,16 +262,19 @@ KV4P_PORT = /dev/kv4p
 
 ![KV4P](docs/screenshots/kv4p.png)
 
-### SDR (RSPduo Dual Tuner)
+### SDR (RSPduo)
 
-Two simultaneous SDR receivers via RTLSDR-Airband + SoapySDR Master/Slave mode. Audio captured through PipeWire virtual sinks.
+RSPduo SDR receiver with two modes selectable from the web UI:
 
-- RSPduo runs both tuners via Master (mode 4) + Slave (mode 8) -- NOT mode 2
-- Start order is critical: Master must stream before Slave starts (gateway enforces this)
-- Requires [fventuri's SoapySDRPlay3 fork](https://github.com/fventuri/SoapySDRPlay3/tree/dual-tuner-submodes) (`dual-tuner-submodes` branch)
-- 2.0 MSps per tuner limit in Master/Slave mode
-- 10-slot channel memory persisted in `sdr_channels.json`
-- Full web control: frequency, modulation (AM/NFM), sample rate, antenna, AGC/manual gain, squelch
+**Single Tuner (Multi-Channel)** -- One tuner, configurable bandwidth (0.25–10.66 MHz), up to 2 demodulated channels within the band. 57% CPU reduction vs dual-tuner at same channel count. Best for monitoring multiple nearby frequencies.
+
+**Dual Tuner (Master/Slave)** -- Two completely independent tuners at different frequencies. RSPduo Master (mode 4) + Slave (mode 8). Requires [fventuri's SoapySDRPlay3 fork](https://github.com/fventuri/SoapySDRPlay3/tree/dual-tuner-submodes) (`dual-tuner-submodes` branch). Start order enforced by gateway; 2.0 MSps per tuner limit.
+
+Common features:
+- Each tuner channel appears as an independent source node in the routing page
+- Per-channel audio level bars; full band overview visualisation in single-tuner mode
+- AM/NFM demodulation, AGC/manual gain, RF/DAB/IQ notch, squelch
+- Channel list persisted in `sdr_channels.json`; auto-center button
 
 ```ini
 ENABLE_SDR = true
@@ -421,7 +435,7 @@ Decodes all standard APRS position formats (uncompressed, compressed, MIC-E, tim
 
 ## MCP Server
 
-`gateway_mcp.py` is a stdio-based MCP server with 44+ tools that gives Claude (or any MCP-compatible AI) full control of the gateway via its HTTP API.
+`gateway_mcp.py` is a stdio-based MCP server with 55+ tools that gives Claude (or any MCP-compatible AI) full control of the gateway via its HTTP API.
 
 ### Tool Categories
 
@@ -564,14 +578,16 @@ REPEATER_RADIUS_KM = 50
 
 ## Transcription
 
-Live voice-to-text using OpenAI Whisper (local, no cloud API). Transcriptions are tagged with the source frequency so you know which radio/channel produced each line.
+Live voice-to-text using [Moonshine](https://github.com/usefulsensors/moonshine) ONNX (local, no cloud API, English-only). Each transcription is tagged with the source radio name and frequency.
 
-- Two modes: **Chunked** (transcribe after each transmission) and **Streaming** (rolling buffer, partial results)
-- VAD-gated: only transcribes when signal is present
-- Frequency tagging: output prefixed with `[446.760/462.550]` showing which radio/SDR tuner the audio came from
-- Forward to Mumble chat and/or Telegram
-- Configurable: model size (tiny/base), VAD threshold, hold time, audio boost
-- Engine: Moonshine (English-only, CPU-efficient ONNX)
+- **ASR engine:** Moonshine base/tiny -- CPU-efficient ONNX inference, real-time on a Haswell i5. Much faster and lighter than Whisper.
+- **VAD:** Silero v5 ML speech classifier with probability threshold (default 0.5) and hysteresis. Ignores squelch tails, carrier noise, DTMF, pilot tones, and dead air that trigger a dBFS envelope follower.
+- **Neural denoise (optional):** RNNoise wet/dry mix on the ASR audio path. Toggle in Controls panel.
+- **Anti-aliased resampling:** polyphase filter (scipy `resample_poly`) from 48 kHz to 16 kHz -- no aliasing artifacts from bare decimation.
+- **Hallucination filter:** drops common no-speech outputs ("thanks for watching", etc.) from Moonshine's output.
+- Frequency + source tagging: each entry shows radio name and frequency (e.g. `SDR1 · 446.760 MHz`).
+- Forward to Mumble chat and/or Telegram.
+- Configurable: model size, VAD threshold, VAD hold, min duration, audio boost, denoise mix.
 
 ```ini
 ENABLE_TRANSCRIPTION = true
@@ -682,7 +698,7 @@ radio-gateway/
 +-- bus_manager.py             # Bus lifecycle and routing manager
 +-- audio_sources.py           # Audio source classes
 +-- ptt.py                     # PTT control (relay, GPIO)
-+-- transcriber.py             # Whisper voice-to-text (streaming + chunked)
++-- transcriber.py             # Moonshine/Silero voice-to-text (ONNX ASR + ML VAD + RNNoise)
 +-- th9800_plugin.py           # TH-9800 radio plugin
 +-- kv4p_plugin.py             # KV4P HT radio plugin
 +-- sdr_plugin.py              # RSPduo dual tuner plugin
@@ -699,12 +715,12 @@ radio-gateway/
 +-- usbip_manager.py           # USB/IP remote device manager
 +-- gps_manager.py             # GPS receiver (serial NMEA + simulate)
 +-- gateway_config.txt         # Configuration (gitignored)
-+-- web_pages/                 # Static HTML pages (20 files)
++-- web_pages/                 # Static HTML pages (19 content pages + shell frame)
 |   +-- dashboard.html, routing.html, controls.html
 |   +-- radio.html, d75.html, kv4p.html, sdr.html
 |   +-- gps.html, repeaters.html, aircraft.html
 |   +-- telegram.html, monitor.html, recordings.html
-|   +-- transcribe.html, logs.html, voice.html, config.html
+|   +-- transcribe.html, logs.html, voice.html, gdrive.html
 |   +-- recorder.html, packet.html
 |   +-- shell.html, common.css, common.js
 +-- plugins/
@@ -714,7 +730,7 @@ radio-gateway/
 |   +-- link_endpoint.py       # Gateway Link endpoint
 |   +-- room-monitor.apk       # Android room monitor app
 +-- docs/
-|   +-- screenshots/           # Web UI screenshots (18 images)
+|   +-- screenshots/           # Web UI screenshots (23 images)
 |   +-- gateway_link.md        # Gateway Link protocol spec
 |   +-- loop-recorder.md       # Loop Recorder user guide
 |   +-- plugin-development.md  # Plugin developer guide
