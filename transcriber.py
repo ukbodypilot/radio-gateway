@@ -72,18 +72,61 @@ def _is_hallucination(text):
     return text.strip(_HALLUCINATION_STRIP).lower() in _HALLUCINATION_BLOCKLIST
 
 
+def _bus_sdr_sources(gateway, bus_id):
+    """Return the set of SDR source ids ('sdr1'/'sdr2') wired to this bus."""
+    try:
+        bm = getattr(gateway, 'bus_manager', None)
+        if not bm:
+            return set()
+        bus = bm._busses.get(bus_id) if hasattr(bm, '_busses') else None
+        if not bus:
+            return set()
+        out = set()
+        for slot in getattr(bus, 'source_slots', []):
+            rid = getattr(slot, 'routing_id', None) or getattr(slot.source, 'name', '')
+            if rid in ('sdr1', 'sdr2'):
+                out.add(rid)
+        return out
+    except Exception:
+        return set()
+
+
 def _resolve_freq_tag(gateway, source_id):
     """Look up the current frequency for a bus/source ID. Returns e.g. '446.760' or ''."""
     if not source_id or not gateway:
         return ''
     try:
         sdr = getattr(gateway, 'sdr_plugin', None)
-        if sdr and source_id in ('main', 'sdr', 'sdr_rspduo'):
+        # Per-tuner attribution (preferred — comes from dominant-source tracking).
+        if sdr and source_id == 'sdr1':
             f1 = getattr(sdr, 'frequency', 0)
-            f2 = getattr(sdr, 'frequency2', 0)
-            if f1 and f2:
-                return f'{f1:.3f}/{f2:.3f}'
             return f'{f1:.3f}' if f1 else ''
+        if sdr and source_id == 'sdr2':
+            f2 = getattr(sdr, 'frequency2', 0)
+            return f'{f2:.3f}' if f2 else ''
+        # Bus-id fallback: only emit freqs for SDR tuners actually wired to
+        # this bus, not whatever the plugin has tuned. Avoids reporting two
+        # frequencies when only one tuner is routed.
+        if source_id in ('main', 'sdr', 'sdr_rspduo'):
+            wired = _bus_sdr_sources(gateway, source_id)
+            if not wired and sdr and source_id != 'main':
+                # Legacy 'sdr'/'sdr_rspduo' ids with no routing info — keep
+                # old behaviour as a last resort.
+                f1 = getattr(sdr, 'frequency', 0)
+                f2 = getattr(sdr, 'frequency2', 0)
+                if f1 and f2:
+                    return f'{f1:.3f}/{f2:.3f}'
+                return f'{f1:.3f}' if f1 else ''
+            freqs = []
+            if 'sdr1' in wired:
+                f1 = getattr(sdr, 'frequency', 0)
+                if f1:
+                    freqs.append(f'{f1:.3f}')
+            if 'sdr2' in wired:
+                f2 = getattr(sdr, 'frequency2', 0)
+                if f2:
+                    freqs.append(f'{f2:.3f}')
+            return '/'.join(freqs)
         if source_id in ('th9800', 'aioc'):
             cat = getattr(gateway, 'cat_client', None)
             if cat:
@@ -145,26 +188,34 @@ class _SileroVAD:
     Skips the silero_vad package's torch-dependent loader. Requires the
     silero-vad pip package installed (for the bundled .onnx file path) but
     does not import it directly.
+
+    The ONNX session is shared class-wide — first instance loads it, subsequent
+    instances reuse. Only the per-instance state tensor (_state / _context)
+    is kept per Silero stream, so one instance per bus is cheap.
     """
 
-    def __init__(self):
+    _sess = None  # shared InferenceSession across instances
+    _sr = np.array(_SILERO_SR, dtype=np.int64)
+
+    @classmethod
+    def _ensure_session(cls):
+        if cls._sess is not None:
+            return
         import onnxruntime as ort
-        # Locate the bundled ONNX file without importing silero_vad (which
-        # pulls torch). importlib.resources gives us the file path.
         try:
             from importlib.resources import files
             model_path = str(files('silero_vad.data').joinpath('silero_vad.onnx'))
         except Exception:
-            # Fallback to known site-packages layout.
             import silero_vad.data as _d
             model_path = os.path.join(os.path.dirname(_d.__file__), 'silero_vad.onnx')
-
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = 1
         opts.intra_op_num_threads = 1
-        self._sess = ort.InferenceSession(
+        cls._sess = ort.InferenceSession(
             model_path, providers=['CPUExecutionProvider'], sess_options=opts)
-        self._sr = np.array(_SILERO_SR, dtype=np.int64)
+
+    def __init__(self):
+        self._ensure_session()
         self.reset()
 
     def reset(self):
@@ -181,15 +232,55 @@ class _SileroVAD:
         return float(out[0, 0])
 
 
+class _StreamState:
+    """Per-bus transcription pipeline state.
+
+    One instance per bus wired to the transcription sink. Each holds its own
+    Silero VAD context, frame accumulator, utterance buffer, and RNNoise
+    state — so two buses feeding the sink in the same tick don't scramble
+    each other's audio or VAD timing.
+    """
+    __slots__ = (
+        'vad', 'denoise_stream',
+        'frame_acc', 'audio_buf_16k', 'audio_buf_samples', 'buf_start_time',
+        'vad_open', 'vad_close_time',
+        'vad_last_prob', 'vad_prob_env', 'vad_prob_peak', 'vad_envelope',
+        'upstream_counts', 'last_upstream_source',
+    )
+
+    def __init__(self):
+        self.vad = _SileroVAD()
+        # None = never attempted; False = attempted and failed (don't retry);
+        # _RNNoiseStream instance = active.
+        self.denoise_stream = None
+        self.frame_acc = np.zeros(0, dtype=np.float32)
+        self.audio_buf_16k = []
+        self.audio_buf_samples = 0
+        self.buf_start_time = 0
+        self.vad_open = False
+        self.vad_close_time = 0
+        self.vad_last_prob = 0.0
+        self.vad_prob_env = 0.0
+        self.vad_prob_peak = 0.0
+        self.vad_envelope = -100.0
+        self.upstream_counts = {}
+        self.last_upstream_source = None
+
+
 class RadioTranscriber:
-    """Silero-gated, Moonshine-powered audio transcription engine."""
+    """Silero-gated, Moonshine-powered audio transcription engine.
+
+    Holds a dict of per-bus _StreamState instances so multiple buses wired to
+    the transcription sink get independent VAD + attribution. Shared config
+    (model, VAD threshold, denoise enable, boost) applies across all streams.
+    """
 
     def __init__(self, config, gateway=None):
         self._config = config
         self._gateway = gateway
         self._model = None
         self._tokenizer = None
-        self._vad = None
+        self._vad_ready = False
         self._running = False
         self._thread = None
 
@@ -208,21 +299,11 @@ class RadioTranscriber:
         self._vad_hold_time = float(_saved.get('vad_hold', getattr(config, 'TRANSCRIBE_VAD_HOLD', 1.0)))
         self._min_duration = float(_saved.get('min_duration', getattr(config, 'TRANSCRIBE_MIN_DURATION', 0.5)))
 
-        # VAD state
-        self._vad_open = False
-        self._vad_close_time = 0
-        self._vad_last_prob = 0.0
-        self._vad_prob_env = 0.0  # smoothed prob for display (fast attack, slow decay)
-        self._vad_envelope = -100.0  # dBFS for display only
-
-        # Accumulator for resampled 16 kHz audio before dispatching to Silero
-        # in 512-sample frames.
-        self._frame_acc = np.zeros(0, dtype=np.float32)
-
-        # Utterance audio buffer (16 kHz, float32, normalized [-1, 1])
-        self._audio_buf_16k = []
-        self._audio_buf_samples = 0
-        self._buf_start_time = 0
+        # Per-bus pipeline state. {source_id (=bus id): _StreamState}. Created
+        # lazily on first feed() from that bus. Lock guards dict mutation
+        # (creation from bus tick thread vs iteration from HTTP status thread).
+        self._streams = {}
+        self._streams_lock = threading.Lock()
 
         self._results = collections.deque(maxlen=100)
         self._results_lock = threading.Lock()
@@ -232,6 +313,32 @@ class RadioTranscriber:
 
         self._pending = collections.deque(maxlen=5)
         self._pending_evt = threading.Event()
+
+        # Feed queue: audio enqueued by bus tick, drained by _feed_worker
+        # thread. Keeps per-frame VAD / RNNoise / resample off the bus tick
+        # path so a slow ONNX inference or GC pause can't cause SDR choppiness.
+        # maxlen caps memory if the worker falls behind (old samples are
+        # dropped — better than blowing RAM and better than blocking tick).
+        self._feed_queue = collections.deque(maxlen=200)
+        self._feed_queue_lock = threading.Lock()
+        self._feed_evt = threading.Event()
+        self._feed_thread = None
+
+        # Feed-path health counters. Always on (zero cost) — read via
+        # get_status() so we have actual numbers when audio misbehaves
+        # instead of having to guess. Reset on start().
+        self._feed_stats = {
+            'enqueued': 0,            # total items successfully enqueued
+            'dropped_full': 0,        # items dropped because queue hit maxlen
+            'enqueue_blocks': 0,      # times feed() blocked > 5ms on the lock
+            'peak_qd': 0,             # highest observed queue depth
+            'processed': 0,           # items processed by worker
+            'worker_errors': 0,       # exceptions in _process_feed
+            'proc_total_ms': 0.0,     # total time in _process_feed
+            'proc_max_ms': 0.0,       # worst single-call duration
+            'proc_last_ms': 0.0,      # most recent call duration
+            'per_stream_ms': {},      # {source_id: cumulative ms in _process_feed}
+        }
 
         _raw_model = str(_saved.get('model', getattr(config, 'TRANSCRIBE_MODEL', 'base')))
         self._model_size = _raw_model if _raw_model in ('tiny', 'base') else 'base'
@@ -247,22 +354,23 @@ class RadioTranscriber:
         _raw_mix = float(_saved.get('denoise_mix',
                                     getattr(config, 'TRANSCRIBE_DENOISE_MIX', 0.5)))
         self._denoise_mix = max(0.0, min(1.0, _raw_mix))
-        self._denoise_stream = None
-        # Guards all three denoise fields: writes from HTTP/MCP threads race
-        # with reads/writes from the bus tick thread in feed().
+        # Guards denoise enable/mix across HTTP/MCP and tick threads.
         self._denoise_lock = threading.Lock()
 
         self._max_samples_16k = int(_MAX_UTTERANCE_SECS * _SILERO_SR)
         self._soft_cap_samples_16k = int(_SOFT_CAP_SECS * _SILERO_SR)
 
     def start(self):
-        """Start transcriber — loads model in background thread."""
+        """Start transcriber — loads model + spawns feed worker."""
         if self._running:
             return
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name="Transcriber")
         self._thread.start()
+        self._feed_thread = threading.Thread(target=self._feed_worker, daemon=True,
+                                             name="TranscriberFeed")
+        self._feed_thread.start()
         self._save()
         print(f"  [Transcribe] Started (model=moonshine/{self._model_size}, "
               f"vad_thresh={self._vad_threshold:.2f}, boost={int(self._audio_boost*100)}%)")
@@ -282,19 +390,23 @@ class RadioTranscriber:
         })
 
     def set_denoise(self, enabled):
-        """Toggle neural denoise on the ASR path. Tears down the stream when
-        disabled so we don't keep an unused RNNoise state in memory."""
+        """Toggle neural denoise on the ASR path. Tears down all per-bus
+        RNNoise streams when disabled so idle state doesn't linger."""
         enabled = bool(enabled)
         with self._denoise_lock:
             if enabled == self._denoise_enabled:
                 return
             self._denoise_enabled = enabled
-            if not enabled and self._denoise_stream is not None:
-                try:
-                    self._denoise_stream.close()
-                except Exception:
-                    pass
-                self._denoise_stream = None
+        if not enabled:
+            with self._streams_lock:
+                streams = list(self._streams.values())
+            for s in streams:
+                if s.denoise_stream and s.denoise_stream is not False:
+                    try:
+                        s.denoise_stream.close()
+                    except Exception:
+                        pass
+                s.denoise_stream = None
         self._save()
 
     def set_denoise_mix(self, mix):
@@ -306,81 +418,158 @@ class RadioTranscriber:
     def stop(self):
         self._running = False
         self._pending_evt.set()
+        self._feed_evt.set()
         if self._thread:
             self._thread.join(timeout=5)
-        # Release ONNX + RNNoise resources so repeated start/stop cycles
-        # don't accumulate sessions in memory.
-        with self._denoise_lock:
-            if self._denoise_stream is not None:
+        if self._feed_thread:
+            self._feed_thread.join(timeout=5)
+        # Release per-stream resources (RNNoise + Silero state).
+        with self._streams_lock:
+            streams = list(self._streams.values())
+            self._streams.clear()
+        for s in streams:
+            if s.denoise_stream and s.denoise_stream is not False:
                 try:
-                    self._denoise_stream.close()
+                    s.denoise_stream.close()
                 except Exception:
                     pass
-                self._denoise_stream = None
-        if self._vad is not None:
-            try:
-                self._vad._sess = None
-            except Exception:
-                pass
-            self._vad = None
+        # Drop the shared Silero ONNX session so a subsequent start() reloads
+        # it cleanly (avoids lingering runtime state across restarts).
+        _SileroVAD._sess = None
+        self._vad_ready = False
 
-    def feed(self, pcm_48k, source_id=None):
-        """Feed 48kHz 16-bit mono PCM from the mixer. Called every tick (~50ms)."""
-        if not self._enabled or self._vad is None:
+    def feed(self, pcm_48k, source_id=None, upstream_source=None):
+        """Enqueue 48kHz 16-bit PCM for background processing. Called from
+        the bus tick; MUST return in microseconds so the tick meets its 50 ms
+        budget. All per-frame work (VAD, RNNoise, resample) runs on the
+        _feed_worker thread.
+
+        Instrumentation: records enqueue event to stream_trace when active,
+        bumps feed_stats counters, and logs if the lock acquisition blocks
+        >5ms (a real-world warning sign of worker contention).
+        """
+        if not self._enabled or not self._vad_ready:
             return
-        self._current_source = source_id
+        if source_id is None:
+            source_id = '_default'
+        _t0 = time.monotonic()
+        # Check + evict under lock so queue depth and drop count are consistent.
+        with self._feed_queue_lock:
+            _lock_ms = (time.monotonic() - _t0) * 1000
+            _dropped = False
+            # maxlen behaviour: appending to a full deque silently drops the
+            # oldest. We detect that up-front so it shows in the stats.
+            if len(self._feed_queue) >= self._feed_queue.maxlen:
+                self._feed_stats['dropped_full'] += 1
+                _dropped = True
+            self._feed_queue.append((pcm_48k, source_id, upstream_source))
+            _qd = len(self._feed_queue)
+            if _qd > self._feed_stats['peak_qd']:
+                self._feed_stats['peak_qd'] = _qd
+            self._feed_stats['enqueued'] += 1
+        if _lock_ms > 5.0:
+            self._feed_stats['enqueue_blocks'] += 1
+        _st = getattr(self._gateway, '_stream_trace', None) if self._gateway else None
+        if _st and _st.active:
+            _extra = f'drop_full qd={_qd}' if _dropped else (f'lock={_lock_ms:.1f}ms' if _lock_ms > 1 else '')
+            _st.record(f'trans_feed_{source_id}', 'enqueue', pcm_48k, _qd, _extra)
+        self._feed_evt.set()
+
+    def _feed_worker(self):
+        """Background thread: drain _feed_queue, run the per-frame pipeline."""
+        _stats = self._feed_stats
+        while self._running:
+            self._feed_evt.wait(timeout=0.5)
+            self._feed_evt.clear()
+            while self._running:
+                with self._feed_queue_lock:
+                    if not self._feed_queue:
+                        break
+                    item = self._feed_queue.popleft()
+                pcm_48k, source_id, upstream_source = item
+                _t0 = time.monotonic()
+                try:
+                    self._process_feed(pcm_48k, source_id, upstream_source)
+                except Exception as e:
+                    _stats['worker_errors'] += 1
+                    if not getattr(self, '_feed_err_logged', False):
+                        self._feed_err_logged = True
+                        print(f"  [Transcribe] feed worker error: {e}")
+                _dur_ms = (time.monotonic() - _t0) * 1000
+                _stats['processed'] += 1
+                _stats['proc_total_ms'] += _dur_ms
+                _stats['proc_last_ms'] = _dur_ms
+                if _dur_ms > _stats['proc_max_ms']:
+                    _stats['proc_max_ms'] = _dur_ms
+                _stats['per_stream_ms'][source_id] = (
+                    _stats['per_stream_ms'].get(source_id, 0.0) + _dur_ms)
+                # Stream trace: record the process event so we can see per-bus
+                # timing and catch slow outliers in the dump.
+                _st = getattr(self._gateway, '_stream_trace', None) if self._gateway else None
+                if _st and _st.active and _dur_ms > 5.0:
+                    _st.record(f'trans_proc_{source_id}', 'process', pcm_48k, -1, f'{_dur_ms:.1f}ms')
+
+    def _process_feed(self, pcm_48k, source_id, upstream_source):
+        """Run the full per-frame pipeline for one audio chunk from one bus.
+
+        Called from _feed_worker, never from the bus tick. Does the heavy
+        work: dBFS metering, RNNoise denoise, anti-aliased resample, Silero
+        VAD, utterance buffering.
+        """
+        stream = self._get_or_create_stream(source_id)
+        if stream is None:
+            return
+        stream.last_upstream_source = upstream_source
 
         # dBFS envelope — display only, not used for gating.
         db = pcm_db(pcm_48k)
-        if db > self._vad_envelope:
-            self._vad_envelope += (db - self._vad_envelope) * 0.3
+        if db > stream.vad_envelope:
+            stream.vad_envelope += (db - stream.vad_envelope) * 0.3
         else:
-            self._vad_envelope += (db - self._vad_envelope) * 0.05
+            stream.vad_envelope += (db - stream.vad_envelope) * 0.05
 
         # Optional neural denoise at 48 kHz (RNNoise's native rate) before
-        # resampling. Cleans both VAD input and the utterance buffer in one
-        # pass. Lazy-load the stream on first enable; silently disable on
-        # library failure so a missing dep never kills the audio path.
+        # resampling. Per-bus RNNoise state — instance initialised lazily on
+        # first enable. False sentinel = construction failed, don't retry.
         arr_48k_i16 = np.frombuffer(pcm_48k, dtype=np.int16)
-        # Snapshot denoise state under the lock so a concurrent
-        # set_denoise(False) can't pull the stream out from under us mid-call.
-        # Lazy-init the RNNoise stream on first enable while holding the lock.
         with self._denoise_lock:
             _den_enabled = self._denoise_enabled
             _den_mix = self._denoise_mix
-            _den_stream = self._denoise_stream
-            if _den_enabled and _den_stream is None:
+        if _den_enabled:
+            if stream.denoise_stream is None:
                 try:
-                    _den_stream = _RNNoiseStream()
-                    self._denoise_stream = _den_stream
+                    stream.denoise_stream = _RNNoiseStream()
                 except Exception as e:
-                    print(f"  [Transcribe] Denoise unavailable: {e}")
-                    self._denoise_enabled = False
-                    _den_enabled = False
-                    _den_stream = None
-        if _den_enabled and _den_stream is not None:
+                    print(f"  [Transcribe] Denoise unavailable ({source_id}): {e}")
+                    stream.denoise_stream = False
+            if stream.denoise_stream and stream.denoise_stream is not False:
+                try:
+                    denoised = stream.denoise_stream.process(arr_48k_i16)
+                    # Align lengths (startup residue → dry-fill the gap),
+                    # then blend wet/dry per _denoise_mix so we don't wipe
+                    # out the signal when RNNoise mis-classifies the band.
+                    if denoised.size > 0:
+                        if denoised.size < arr_48k_i16.size:
+                            denoised = np.concatenate([denoised, arr_48k_i16[denoised.size:]])
+                        elif denoised.size > arr_48k_i16.size:
+                            denoised = denoised[: arr_48k_i16.size]
+                        w = _den_mix
+                        if w >= 0.999:
+                            arr_48k_i16 = denoised
+                        elif w > 0.001:
+                            mixed = (arr_48k_i16.astype(np.int32) * (1.0 - w)
+                                     + denoised.astype(np.int32) * w)
+                            arr_48k_i16 = np.clip(mixed, -32768, 32767).astype(np.int16)
+                        # else w ≈ 0 → keep dry
+                except Exception as e:
+                    print(f"  [Transcribe] Denoise error ({source_id}): {e}")
+        elif stream.denoise_stream and stream.denoise_stream is not False:
+            # Denoise toggled off — release this stream's RNNoise state.
             try:
-                denoised = _den_stream.process(arr_48k_i16)
-                # Align lengths (startup residue → dry-fill the gap),
-                # then blend wet/dry per _denoise_mix so we don't wipe
-                # out the signal when RNNoise mis-classifies the band.
-                if denoised.size == 0:
-                    pass  # nothing processed yet; keep dry input
-                else:
-                    if denoised.size < arr_48k_i16.size:
-                        denoised = np.concatenate([denoised, arr_48k_i16[denoised.size:]])
-                    elif denoised.size > arr_48k_i16.size:
-                        denoised = denoised[: arr_48k_i16.size]
-                    w = _den_mix
-                    if w >= 0.999:
-                        arr_48k_i16 = denoised
-                    elif w > 0.001:
-                        mixed = (arr_48k_i16.astype(np.int32) * (1.0 - w)
-                                 + denoised.astype(np.int32) * w)
-                        arr_48k_i16 = np.clip(mixed, -32768, 32767).astype(np.int16)
-                    # else w ≈ 0 → keep dry
-            except Exception as e:
-                print(f"  [Transcribe] Denoise error: {e}")
+                stream.denoise_stream.close()
+            except Exception:
+                pass
+            stream.denoise_stream = None
 
         # Convert to float32 [-1, 1] and resample once.
         arr_48k = arr_48k_i16.astype(np.float32) / 32768.0
@@ -391,77 +580,117 @@ class RadioTranscriber:
             # (trained on natural speech) mishandles.
             arr_16k = np.tanh(arr_16k * self._audio_boost).astype(np.float32)
 
-        # Append to frame accumulator; process 512-sample frames until drained.
-        self._frame_acc = np.concatenate([self._frame_acc, arr_16k])
-        while len(self._frame_acc) >= _SILERO_FRAME:
-            frame = self._frame_acc[:_SILERO_FRAME]
-            self._frame_acc = self._frame_acc[_SILERO_FRAME:]
-            self._process_frame(frame)
+        # Per-bus frame accumulator.
+        stream.frame_acc = np.concatenate([stream.frame_acc, arr_16k])
+        while len(stream.frame_acc) >= _SILERO_FRAME:
+            frame = stream.frame_acc[:_SILERO_FRAME]
+            stream.frame_acc = stream.frame_acc[_SILERO_FRAME:]
+            self._process_frame(frame, stream, source_id)
 
-    def _process_frame(self, frame_16k):
-        """Run Silero on one 32 ms frame and drive VAD state."""
-        prob = self._vad.probability(frame_16k)
-        self._vad_last_prob = prob
+    def _get_or_create_stream(self, source_id):
+        """Return the _StreamState for this bus, creating it lazily.
+
+        Silero instance construction reuses the shared ONNX session, so the
+        only per-bus cost is a pair of small numpy state arrays.
+        """
+        stream = self._streams.get(source_id)
+        if stream is not None:
+            return stream
+        try:
+            stream = _StreamState()
+        except Exception as e:
+            print(f"  [Transcribe] Stream init failed for {source_id}: {e}")
+            return None
+        with self._streams_lock:
+            # Another caller may have raced us.
+            existing = self._streams.get(source_id)
+            if existing is not None:
+                return existing
+            self._streams[source_id] = stream
+        return stream
+
+    def _process_frame(self, frame_16k, stream, source_id):
+        """Run Silero on one 32 ms frame and drive VAD state for this stream."""
+        prob = stream.vad.probability(frame_16k)
+        stream.vad_last_prob = prob
+        if prob > stream.vad_prob_peak:
+            stream.vad_prob_peak = prob
         # Smoothed envelope for the UI bar: fast attack, slow decay so the
-        # status poll (every ~2s) catches peaks rather than silence gaps.
-        if prob > self._vad_prob_env:
-            self._vad_prob_env += (prob - self._vad_prob_env) * 0.5
+        # status poll catches peaks rather than silence gaps.
+        if prob > stream.vad_prob_env:
+            stream.vad_prob_env += (prob - stream.vad_prob_env) * 0.5
         else:
-            self._vad_prob_env += (prob - self._vad_prob_env) * 0.05
+            stream.vad_prob_env += (prob - stream.vad_prob_env) * 0.05
         now = time.time()
         exit_thresh = max(0.0, self._vad_threshold - _VAD_HYSTERESIS)
 
-        if self._vad_open:
+        if stream.vad_open:
             # Always buffer while VAD is open.
-            self._audio_buf_16k.append(frame_16k.copy())
-            self._audio_buf_samples += _SILERO_FRAME
+            stream.audio_buf_16k.append(frame_16k.copy())
+            stream.audio_buf_samples += _SILERO_FRAME
+            # Tally upstream source for attribution at utterance close.
+            _us = stream.last_upstream_source
+            if _us:
+                stream.upstream_counts[_us] = stream.upstream_counts.get(_us, 0) + 1
 
             # Hard 60s cap — force close to stay under Moonshine's 64s limit.
-            if self._audio_buf_samples >= self._max_samples_16k:
-                self._submit_utterance()
+            if stream.audio_buf_samples >= self._max_samples_16k:
+                self._submit_utterance(stream, source_id)
                 return
 
             # Inside the soft-cap zone, take any probability dip as a cut
             # point so long utterances split on natural pauses rather than
             # mid-word at the hard cap. If speech continues, VAD re-opens on
             # the next above-threshold frame with no audio lost.
-            if (self._audio_buf_samples >= self._soft_cap_samples_16k
+            if (stream.audio_buf_samples >= self._soft_cap_samples_16k
                     and prob < exit_thresh):
-                self._submit_utterance()
+                self._submit_utterance(stream, source_id)
                 return
 
             if prob < exit_thresh:
-                if self._vad_close_time == 0:
-                    self._vad_close_time = now
-                elif now - self._vad_close_time > self._vad_hold_time:
-                    self._submit_utterance()
+                if stream.vad_close_time == 0:
+                    stream.vad_close_time = now
+                elif now - stream.vad_close_time > self._vad_hold_time:
+                    self._submit_utterance(stream, source_id)
             else:
                 # Speech resumed during hold window — reset close timer.
-                self._vad_close_time = 0
+                stream.vad_close_time = 0
         else:
             if prob >= self._vad_threshold:
-                self._vad_open = True
-                self._vad_close_time = 0
-                self._audio_buf_16k = [frame_16k.copy()]
-                self._audio_buf_samples = _SILERO_FRAME
-                self._buf_start_time = now
+                stream.vad_open = True
+                stream.vad_close_time = 0
+                stream.audio_buf_16k = [frame_16k.copy()]
+                stream.audio_buf_samples = _SILERO_FRAME
+                stream.buf_start_time = now
+                # Reset upstream tally at utterance open, seed with this frame.
+                stream.upstream_counts = {}
+                _us = stream.last_upstream_source
+                if _us:
+                    stream.upstream_counts[_us] = 1
 
-    def _submit_utterance(self):
-        """Finalize the current utterance and queue it for transcription."""
-        self._vad_open = False
-        self._vad_close_time = 0
-        duration = self._audio_buf_samples / _SILERO_SR
-        if duration >= self._min_duration and self._audio_buf_16k:
-            audio_16k = np.concatenate(self._audio_buf_16k)
+    def _submit_utterance(self, stream, source_id):
+        """Finalize this stream's current utterance and queue it for transcription."""
+        stream.vad_open = False
+        stream.vad_close_time = 0
+        duration = stream.audio_buf_samples / _SILERO_SR
+        if duration >= self._min_duration and stream.audio_buf_16k:
+            audio_16k = np.concatenate(stream.audio_buf_16k)
+            # Pick the upstream source that had the most frames during this
+            # utterance. If nothing was tallied, fall back to the bus id.
+            _dominant = None
+            if stream.upstream_counts:
+                _dominant = max(stream.upstream_counts.items(), key=lambda kv: kv[1])[0]
             self._pending.append({
                 'audio_16k': audio_16k,
-                'start_time': self._buf_start_time,
+                'start_time': stream.buf_start_time,
                 'duration': duration,
-                'source_id': getattr(self, '_current_source', None),
+                'source_id': source_id,
+                'upstream_source': _dominant,
             })
             self._pending_evt.set()
-        self._audio_buf_16k = []
-        self._audio_buf_samples = 0
+        stream.audio_buf_16k = []
+        stream.audio_buf_samples = 0
+        stream.upstream_counts = {}
 
     def get_results(self, since=0, limit=50):
         with self._results_lock:
@@ -469,6 +698,36 @@ class RadioTranscriber:
             return results[-limit:]
 
     def get_status(self):
+        # Aggregate VAD indicators across all active per-bus streams. Peaks
+        # are reset per-stream so short speech bursts between polls are still
+        # visible on the bar. Per-stream detail is also exposed for future UI.
+        with self._streams_lock:
+            items = list(self._streams.items())
+        any_open = False
+        max_prob = 0.0
+        max_peak = 0.0
+        max_env = 0.0
+        max_db = -100.0
+        streams_payload = []
+        for sid, s in items:
+            if s.vad_open:
+                any_open = True
+            if s.vad_last_prob > max_prob:
+                max_prob = s.vad_last_prob
+            if s.vad_prob_env > max_env:
+                max_env = s.vad_prob_env
+            if s.vad_prob_peak > max_peak:
+                max_peak = s.vad_prob_peak
+            if s.vad_envelope > max_db:
+                max_db = s.vad_envelope
+            streams_payload.append({
+                'id': sid,
+                'vad_open': s.vad_open,
+                'vad_prob': round(max(s.vad_last_prob, s.vad_prob_env, s.vad_prob_peak), 3),
+                'vad_db': round(s.vad_envelope, 1),
+                'upstream': s.last_upstream_source,
+            })
+            s.vad_prob_peak = 0.0
         return {
             'running': self._running,
             'enabled': self._enabled,
@@ -476,9 +735,9 @@ class RadioTranscriber:
             'vad_engine': 'silero',
             'model': self._model_size,
             'model_loaded': self._model is not None,
-            'vad_open': self._vad_open,
-            'vad_prob': round(max(self._vad_last_prob, self._vad_prob_env), 3),
-            'vad_db': round(self._vad_envelope, 1),
+            'vad_open': any_open,
+            'vad_prob': round(max(max_prob, max_env, max_peak), 3),
+            'vad_db': round(max_db, 1),
             'vad_threshold': self._vad_threshold,
             'vad_hold': self._vad_hold_time,
             'min_duration': self._min_duration,
@@ -489,7 +748,35 @@ class RadioTranscriber:
             'denoise_mix': round(self._denoise_mix, 2),
             'pending': len(self._pending),
             'total_transcriptions': len(self._results),
+            'streams': streams_payload,
             'stats': self.get_stats(),
+            'feed': self._get_feed_health(),
+        }
+
+    def _get_feed_health(self):
+        """Snapshot of feed-path counters — queue health, worker load, drops.
+
+        Read via get_status() / transcription_status MCP tool. All counters
+        are monotonic since start; compare two readings to get rates.
+        """
+        _s = self._feed_stats
+        _processed = _s['processed']
+        return {
+            'queue_depth': len(self._feed_queue),
+            'queue_max': self._feed_queue.maxlen,
+            'peak_qd': _s['peak_qd'],
+            'enqueued': _s['enqueued'],
+            'processed': _processed,
+            'dropped_full': _s['dropped_full'],
+            'enqueue_blocks_gt_5ms': _s['enqueue_blocks'],
+            'worker_errors': _s['worker_errors'],
+            'proc_last_ms': round(_s['proc_last_ms'], 2),
+            'proc_max_ms': round(_s['proc_max_ms'], 2),
+            'proc_mean_ms': round(_s['proc_total_ms'] / _processed, 2) if _processed else 0.0,
+            'per_stream_mean_ms': {
+                sid: round(ms / max(_processed, 1), 2)
+                for sid, ms in _s['per_stream_ms'].items()
+            },
         }
 
     def get_stats(self):
@@ -516,7 +803,10 @@ class RadioTranscriber:
     def _run(self):
         """Background thread: load models, process pending transcriptions."""
         try:
-            self._vad = _SileroVAD()
+            # Prime the shared Silero ONNX session so per-bus streams don't
+            # each pay the load cost on first feed().
+            _SileroVAD._ensure_session()
+            self._vad_ready = True
             print(f"  [Transcribe] Silero VAD loaded")
         except Exception as e:
             print(f"  [Transcribe] Failed to load Silero VAD: {e}")
@@ -559,7 +849,11 @@ class RadioTranscriber:
                         self._stats.append(_stat)
                     print(f"  [Transcribe] {_duration:.1f}s audio → {_proc_time:.1f}s process ({_ratio:.2f}x realtime)")
                     if text and text.strip() and not _is_hallucination(text):
-                        freq_tag = _resolve_freq_tag(self._gateway, item.get('source_id'))
+                        # Prefer the upstream source (sdr1/sdr2/aioc) for
+                        # tagging — gives per-tuner freqs. Fall back to the
+                        # bus id if attribution didn't land.
+                        _tag_id = item.get('upstream_source') or item.get('source_id')
+                        freq_tag = _resolve_freq_tag(self._gateway, _tag_id)
                         result = {
                             'timestamp': item['start_time'],
                             'duration': round(item['duration'], 1),
@@ -567,7 +861,7 @@ class RadioTranscriber:
                             'ratio': round(_ratio, 2),
                             'text': text.strip(),
                             'freq': freq_tag,
-                            'source': item.get('source_id', ''),
+                            'source': _tag_id or item.get('source_id', ''),
                             'time_str': time.strftime('%H:%M:%S',
                                                       time.localtime(item['start_time'])),
                         }

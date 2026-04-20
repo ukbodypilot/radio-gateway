@@ -290,7 +290,7 @@ class BusManager:
             plugin, prio, duck = source_map[sid]
             if plugin.name not in _before:
                 _det = getattr(plugin, 'ptt_control', False)
-                self.listen_bus.add_source(plugin, bus_priority=prio, duckable=duck, deterministic=_det)
+                self.listen_bus.add_source(plugin, bus_priority=prio, duckable=duck, deterministic=_det, routing_id=sid)
                 print(f"  [sync] Added {sid} to listen bus (prio={prio} duck={duck} det={_det})")
 
         # Remove extras (only for sources we manage)
@@ -429,20 +429,30 @@ class BusManager:
                         radio = self._get_radio_plugin(c['from'])
                         if radio:
                             _solo_radio = radio
-                            bus.set_radio(radio)
+                            bus.set_radio(radio, routing_id=c['from'])
                             print(f"  [BusManager] {bus_name}: radio from source {c['from']}")
                             break
-                # TX-only sinks (e.g. aioc_tx) — set as radio for TX but skip RX
+                # TX-only sinks (e.g. aioc_tx) — set first as primary radio,
+                # register remaining *_tx sinks as extras so PTT + audio fan
+                # out to every wired radio.
                 if not _solo_radio:
                     for c in connections:
                         if c['type'] == 'bus-sink' and c['from'] == bus_id and c['to'].endswith('_tx'):
                             radio = self._get_radio_plugin(c['to'])
                             if radio:
                                 _solo_radio = radio
-                                bus.set_radio(radio)
+                                bus.set_radio(radio, routing_id=c['to'])
                                 bus._tx_only = True  # Don't call get_audio()
                                 print(f"  [BusManager] {bus_name}: TX-only radio from sink {c['to']}")
                                 break
+                # Register additional *_tx sinks as extra TX radios (simulcast).
+                # Skips the one already set as the primary radio.
+                for c in connections:
+                    if c['type'] == 'bus-sink' and c['from'] == bus_id and c['to'].endswith('_tx'):
+                        radio = self._get_radio_plugin(c['to'])
+                        if radio and radio is not _solo_radio:
+                            bus.add_extra_tx_radio(radio, routing_id=c['to'])
+                            print(f"  [BusManager] {bus_name}: +extra TX radio {c['to']}")
                 # Add TX sources (skip the radio itself)
                 for c in connections:
                     if c['type'] == 'source-bus' and c['to'] == bus_id:
@@ -507,7 +517,7 @@ class BusManager:
                                 _duck = getattr(source, 'duck', True)
                                 _prio = getattr(source, 'sdr_priority', getattr(source, 'priority', 5))
                                 _det = getattr(source, 'ptt_control', False)
-                                bus.add_source(source, bus_priority=_prio, duckable=_duck, deterministic=_det)
+                                bus.add_source(source, bus_priority=_prio, duckable=_duck, deterministic=_det, routing_id=c['from'])
                 # Add sinks for all listen buses
                 for c in connections:
                     if c['type'] == 'bus-sink' and c['from'] == bus_id:
@@ -706,13 +716,18 @@ class BusManager:
                 pass  # TODO: recording sink
             elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
                 try:
-                    gw.transcriber.feed(audio, source_id=bus_id)
+                    _bus_obj = self._busses.get(bus_id)
+                    _upstream = getattr(_bus_obj, 'last_dominant_source', None) if _bus_obj else None
+                    gw.transcriber.feed(audio, source_id=bus_id, upstream_source=_upstream)
                     if _audio_level > getattr(gw, 'transcription_audio_level', 0):
                         gw.transcription_audio_level = _audio_level
                     else:
                         gw.transcription_audio_level = int(getattr(gw, 'transcription_audio_level', 0) * 0.7 + _audio_level * 0.3)
-                except Exception:
-                    pass
+                except Exception as _te:
+                    # Log once so future regressions are visible instead of silent.
+                    if not hasattr(self, '_trans_err_logged'):
+                        self._trans_err_logged = True
+                        print(f"  [Transcribe] feed error: {_te}")
             elif sink_id == 'remote_audio_tx' and getattr(gw, 'remote_audio_server', None):
                 if gw.remote_audio_server.connected:
                     try:

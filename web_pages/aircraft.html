@@ -21,7 +21,106 @@
   <code>sudo systemctl start dump1090-fa</code>
 </div>
 <iframe id="adsb-frame" src="/adsb/"
-  onload="document.getElementById('adsb-error').style.display='none';this.style.display='block';"
+  onload="adsbOnLoad(this)"
   onerror="document.getElementById('adsb-error').style.display='flex';this.style.display='none';">
 </iframe>
+<script>
+// Inject theme CSS into the same-origin SkyAware iframe to match the
+// gateway's grey/phosphor palette. Re-injects on every iframe load
+// (SkyAware does internal page swaps that re-run body scripts).
+function adsbOnLoad(frm) {
+  document.getElementById('adsb-error').style.display = 'none';
+  frm.style.display = 'block';
+  try {
+    var doc = frm.contentDocument || frm.contentWindow.document;
+    if (!doc) return;
+    if (doc.getElementById('adsb-theme-override')) return;
+    // SkyAware is NOT Bootstrap — it uses custom classes (#header, .button,
+    // .infoHeading, .infoBlockTitle) and inline gradients. Overrides below
+    // target the actual selectors from /adsb/style.css and dark-mode.css.
+    var css = `
+      /* Base surfaces */
+      html, body { background: #0b1014 !important; color: #d6dee6 !important; }
+      #layout_container, #map_container, #map_canvas,
+      #sidebar_canvas, #sidebar_container {
+        background: #0b1014 !important; color: #d6dee6 !important;
+      }
+
+      /* Top blue header bar — #002f5d gradient in upstream CSS */
+      #header, #header[class] {
+        background: #121820 !important;
+        background-image: linear-gradient(#1a2230, #1a2230 60%, #0b1014) !important;
+        box-shadow: -6px 0 8px rgba(0,0,0,0.6) !important;
+      }
+      .infoHeading, .infoHeading sub { color: #d6dee6 !important; }
+      .buttonText { color: #d6dee6 !important; }
+
+      /* The cyan-blue pill buttons (.button = #00a0e2 upstream) */
+      .button, .button[class] {
+        background: #1a2230 !important;
+        background-color: #1a2230 !important;
+        border: 1px solid #1e2a38 !important;
+        color: #4fd6e6 !important;
+      }
+      .button:hover { background: #2c3e52 !important; }
+
+      /* Info blocks / panels */
+      #selected_infoblock, .infoblock-container,
+      #planes_table_container, .settingsContainer, .filterContainer {
+        background: #121820 !important; color: #d6dee6 !important;
+        border-color: #1e2a38 !important;
+      }
+      .infoBlockTitle, .sectionTitle, .blockTitle {
+        background: #1a2230 !important; color: #d6dee6 !important;
+        border-color: #1e2a38 !important;
+      }
+      .infoData, .columnOptionText { color: #d6dee6 !important; }
+
+      /* Table */
+      #planes_table, #planes_table thead, #planes_table tbody,
+      #planes_table tr, #planes_table td, #planes_table th {
+        background: #121820 !important; color: #d6dee6 !important;
+        border-color: #1e2a38 !important;
+      }
+      #planes_table thead, #planes_table thead th {
+        background: #1a2230 !important;
+      }
+      #planes_table tbody tr:hover,
+      #planes_table tbody tr.selected,
+      #planes_table tbody tr.vPosition.selected {
+        background: #2c3e52 !important;
+      }
+      #planes_table tbody tr.vPosition { background: #121820 !important; }
+
+      /* Close button on infoblock */
+      #close-button { background: #1a2230 !important; color: #d6dee6 !important; border-color: #1e2a38 !important; }
+      #splitter-infoblock { background-color: #1e2a38 !important; }
+
+      /* Form controls + misc */
+      input, select, textarea, button {
+        background: #121820 !important; color: #d6dee6 !important;
+        border-color: #1e2a38 !important;
+      }
+      a, a:hover, a:focus { color: #4fd6e6 !important; }
+      hr { border-color: #1e2a38 !important; }
+
+      /* jQuery UI dialog (settings dropdown, etc.) */
+      .ui-widget, .ui-widget-content, .ui-dialog, .ui-widget-header {
+        background: #121820 !important; color: #d6dee6 !important;
+        border-color: #1e2a38 !important;
+      }
+      .ui-widget-header { background: #1a2230 !important; }
+
+      /* Menu/hamburger toggle */
+      .menuContainer, .navToggle { background: transparent !important; color: #d6dee6 !important; }
+    `;
+    var style = doc.createElement('style');
+    style.id = 'adsb-theme-override';
+    style.textContent = css;
+    (doc.head || doc.documentElement).appendChild(style);
+  } catch (e) {
+    // Cross-origin or iframe not ready — bail silently; the base page still works.
+  }
+}
+</script>
 </body></html>

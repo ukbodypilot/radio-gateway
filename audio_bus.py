@@ -119,11 +119,14 @@ class BusOutput:
 class SourceSlot:
     """Per-source per-bus state. Tracks signal detection, ducking, and inclusion."""
 
-    def __init__(self, source, bus_priority, duckable=True, deterministic=False):
+    def __init__(self, source, bus_priority, duckable=True, deterministic=False, routing_id=None):
         self.source = source
         self.bus_priority = bus_priority
         self.duckable = duckable
         self.deterministic = deterministic
+        # Routing graph id (e.g. 'sdr1', 'sdr2', 'aioc') — distinct from
+        # source.name, used for attributing audio back to the original node.
+        self.routing_id = routing_id
 
         # Signal detection (hysteresis)
         self.has_signal = False
@@ -224,11 +227,21 @@ class AudioBus:
         self.source_slots = []
         self.sink_names = []
         self.enabled = True
+        # Tracks the routing_id of the source that contributed the most
+        # energy this tick. None when the bus output is silent / mixed
+        # with no clear winner. Downstream sinks (transcription) use this
+        # to attribute audio back to an upstream node.
+        self.last_dominant_source = None
 
-    def add_source(self, source, bus_priority, duckable=True, deterministic=False):
-        """Add a source to this bus with the given priority."""
+    def add_source(self, source, bus_priority, duckable=True, deterministic=False, routing_id=None):
+        """Add a source to this bus with the given priority.
+
+        routing_id is the node id in the routing graph (e.g. 'sdr1'), used
+        for attributing audio upstream to the correct source. If omitted,
+        falls back to source.name.
+        """
         slot = SourceSlot(source, bus_priority, duckable=duckable,
-                          deterministic=deterministic)
+                          deterministic=deterministic, routing_id=routing_id)
         self.source_slots.append(slot)
         self.source_slots.sort(key=lambda s: s.bus_priority)
 
@@ -507,6 +520,29 @@ class ListenBus(AudioBus):
             else:
                 slot.prev_included = False
 
+        # Dominant-source attribution: pick the slot with the highest energy
+        # this tick (among those actually contributing to the bus output).
+        # Falls back to the ducker-tier source when no duckee is included.
+        # Used downstream by the transcription sink to tag transcripts with
+        # the actual upstream radio/tuner rather than the bus id.
+        _dominant_id = None
+        _dominant_db = -120.0
+        for _slot, _audio in to_include.items():
+            if _audio is None:
+                continue
+            _db = pcm_db(_audio)
+            if _db > _dominant_db:
+                _dominant_db = _db
+                _dominant_id = _slot.routing_id or getattr(_slot.source, 'name', None)
+        if _dominant_id is None and ptt_audio is None and non_ptt_audio is not None:
+            # Ducker-tier supplied audio but no duckee contributed — attribute
+            # to the first ducker slot that had audio.
+            for _slot in ducker_slots:
+                if _slot.routing_id or getattr(_slot.source, 'name', None):
+                    _dominant_id = _slot.routing_id or _slot.source.name
+                    break
+        self.last_dominant_source = _dominant_id
+
         # ── Phase 5: Mix included duckees ──
         duckee_pcm_list = [a for a in to_include.values() if a is not None]
         duckee_mix = additive_mix(duckee_pcm_list)
@@ -588,17 +624,42 @@ class SoloBus(AudioBus):
 
     def __init__(self, name, config):
         super().__init__(name, 'solo', config)
-        self._radio = None          # The radio plugin (has get_audio/put_audio)
+        self._radio = None          # Primary radio plugin (handles RX + TX)
         self._tx_only = False       # If True, radio is TX-only (don't call get_audio)
         self._tx_sources = []       # SourceSlots for TX sources (webmic, announce, etc.)
+        # Extra TX-only radios: the solo bus fans TX audio + PTT out to each
+        # in addition to self._radio. Populated when the bus has multiple
+        # *_tx sinks wired up (e.g. announce → grunge → ftm_tx + aioc_tx).
+        # [(plugin, routing_id), ...]
+        self._extra_tx_radios = []
         self._ptt_active = False
         self._ptt_hold_until = 0.0
         self._ptt_release_delay = float(getattr(config, 'PTT_RELEASE_DELAY', 1.0))
         self.call_count = 0
 
-    def set_radio(self, radio_plugin):
-        """Set the radio plugin at the center of this bus."""
+    def set_radio(self, radio_plugin, routing_id=None):
+        """Set the primary radio plugin at the center of this bus.
+
+        routing_id is the node id in the routing graph (e.g. 'aioc') —
+        used by downstream sinks to attribute audio.
+        """
         self._radio = radio_plugin
+        self._radio_routing_id = routing_id
+
+    def add_extra_tx_radio(self, radio_plugin, routing_id=None):
+        """Register an additional TX-only radio that mirrors the primary.
+
+        When the bus keys PTT or pushes TX audio, every extra radio gets
+        the same call. Lets one source (e.g. Announcements) simulcast to
+        multiple radios on a single solo bus.
+        """
+        if radio_plugin is None or radio_plugin is self._radio:
+            return
+        # Dedupe — same plugin shouldn't be registered twice.
+        for existing, _ in self._extra_tx_radios:
+            if existing is radio_plugin:
+                return
+        self._extra_tx_radios.append((radio_plugin, routing_id))
 
     def add_tx_source(self, source, bus_priority=0):
         """Add a TX source (webmic, announcements, etc.) that feeds the radio."""
@@ -611,12 +672,15 @@ class SoloBus(AudioBus):
         """Fire-and-forget PTT — never block the bus tick loop.
 
         CAT RTS switching + HID write can take 150-600ms (measured),
-        which stalls ALL buses if done synchronously.
+        which stalls ALL buses if done synchronously. Fans out across
+        every TX radio registered to this bus (primary + extras).
         """
         import threading
-        radio = self._radio
-        def _do():
+        radios = [self._radio] + [r for r, _ in self._extra_tx_radios]
+        def _do(radio):
             try:
+                if radio is None:
+                    return
                 # Check link endpoint mode before keying PTT
                 if state and hasattr(radio, 'endpoint_name'):
                     _ep_name = radio.endpoint_name
@@ -634,8 +698,12 @@ class SoloBus(AudioBus):
                 elif not state and hasattr(radio, 'ptt_off'):
                     radio.ptt_off()
             except Exception as e:
-                print(f"  [SoloBus:{self.name}] PTT error: {e}")
-        threading.Thread(target=_do, daemon=True, name=f"PTT-{self.name}").start()
+                print(f"  [SoloBus:{self.name}] PTT error on {type(radio).__name__}: {e}")
+        for r in radios:
+            if r is None:
+                continue
+            threading.Thread(target=_do, args=(r,), daemon=True,
+                             name=f"PTT-{self.name}-{type(r).__name__}").start()
 
     def tick(self, chunk_size):
         """Process one audio cycle.
@@ -685,12 +753,15 @@ class SoloBus(AudioBus):
             self._ptt_active = False
             self._fire_ptt(False)
 
-        # ── Phase 3: Send TX audio to radio ──
-        if tx_audio is not None and self._radio and self._ptt_active:
-            if hasattr(self._radio, 'put_audio'):
-                self._radio.put_audio(tx_audio)
-            elif hasattr(self._radio, 'write_tx_audio'):
-                self._radio.write_tx_audio(tx_audio)
+        # ── Phase 3: Send TX audio to all registered radios ──
+        if tx_audio is not None and self._ptt_active:
+            for _r in ([self._radio] + [r for r, _ in self._extra_tx_radios]):
+                if _r is None:
+                    continue
+                if hasattr(_r, 'put_audio'):
+                    _r.put_audio(tx_audio)
+                elif hasattr(_r, 'write_tx_audio'):
+                    _r.write_tx_audio(tx_audio)
 
         # ── Phase 4: Get RX audio from radio (skip during TX and if TX-only) ──
         rx_audio = None
@@ -708,6 +779,11 @@ class SoloBus(AudioBus):
         # If no radio, route TX audio directly to sinks (e.g. Mumble TX as sink)
         # For tx_only buses, use tx_audio so sink level bars show activity
         _output_audio = rx_audio if (self._radio and not getattr(self, '_tx_only', False)) else tx_audio
+        # Dominant-source attribution: solo bus RX comes from exactly one radio.
+        if rx_audio is not None and self._radio:
+            self.last_dominant_source = self._radio_routing_id or getattr(self._radio, 'name', None)
+        else:
+            self.last_dominant_source = None
         audio_dict = {sink: _output_audio for sink in self.sink_names}
         if not self.sink_names:
             audio_dict['_default'] = _output_audio

@@ -1429,6 +1429,29 @@ def transcription_status() -> str:
     stats = status.get('stats', {})
     if stats.get('count', 0) > 0:
         lines.append(f"Perf: avg {stats.get('avg_ratio', '?')}x realtime, {stats.get('realtime_pct', '?')}% under realtime")
+    # Per-bus stream health — vad_prob/vad_db, so you can see which bus is firing
+    _streams = status.get('streams') or []
+    if _streams:
+        lines.append("Streams:")
+        for s in _streams:
+            _open = 'OPEN' if s.get('vad_open') else 'idle'
+            lines.append(f"  {s.get('id','?'):<12} {_open:<4}  vad_prob={s.get('vad_prob',0):.2f}  "
+                         f"vad_db={s.get('vad_db',-100):.0f}  upstream={s.get('upstream') or '-'}")
+    # Feed-worker health: queue depth, drops, processing time distribution.
+    # High dropped_full or enqueue_blocks means the worker can't keep up with
+    # the bus tick rate — expect audio attribution jitter or missed utterances.
+    _feed = status.get('feed') or {}
+    if _feed:
+        lines.append(f"Feed: qd={_feed.get('queue_depth',0)}/{_feed.get('queue_max',0)}  "
+                     f"peak={_feed.get('peak_qd',0)}  enq={_feed.get('enqueued',0)}  "
+                     f"proc={_feed.get('processed',0)}  drops={_feed.get('dropped_full',0)}  "
+                     f"blocks>5ms={_feed.get('enqueue_blocks_gt_5ms',0)}  err={_feed.get('worker_errors',0)}")
+        lines.append(f"Feed timing: last={_feed.get('proc_last_ms',0):.1f}ms  "
+                     f"mean={_feed.get('proc_mean_ms',0):.1f}ms  max={_feed.get('proc_max_ms',0):.1f}ms")
+        _ps = _feed.get('per_stream_mean_ms') or {}
+        if _ps:
+            lines.append("Per-bus mean proc time: " +
+                         ', '.join(f"{k}={v:.1f}ms" for k, v in _ps.items()))
     if results:
         lines.append(f"\nRecent ({len(results)}):")
         for r in results[-10:]:

@@ -88,14 +88,13 @@
     border: 2px solid var(--t-border-hi);
     transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
   }
-  /* Colour sockets by node role — outputs on sources glow green (RX),
-     outputs on sinks don't exist; inputs on sinks pick up the accent
-     on connect. Applied via parent class selectors to avoid JS. */
-  .drawflow .drawflow-node.source .output  { border-color: var(--t-ok); }
-  .drawflow .drawflow-node.bus-listen  .output,
-  .drawflow .drawflow-node.bus-simplex .output { border-color: var(--t-accent); }
-  .drawflow .drawflow-node.bus-duplex  .output { border-color: var(--t-ok); }
-  .drawflow .drawflow-node.sink .input { border-color: var(--t-err); }
+  /* Colour sockets by node role — source outputs glow green (RX),
+     sink inputs glow red, and every bus socket (input or output, any
+     type) glows cyan so the bus row reads as a unified rail. */
+  .drawflow .drawflow-node.source .output { border-color: var(--t-ok); }
+  .drawflow .drawflow-node.sink   .input  { border-color: var(--t-err); }
+  .drawflow .drawflow-node[class*="bus-"] .input,
+  .drawflow .drawflow-node[class*="bus-"] .output { border-color: var(--t-accent); }
   .drawflow .drawflow-node .input:hover,
   .drawflow .drawflow-node .output:hover {
     background: var(--t-accent);

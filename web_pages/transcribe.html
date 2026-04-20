@@ -21,8 +21,9 @@
     width: 120px; height: 12px; background: var(--t-bg);
     border: 1px solid var(--t-border); border-radius: var(--r-sm);
     overflow: hidden; position: relative;
+    flex-shrink: 0;
   }
-  .vad-fill { height: 100%; background: var(--t-warn); transition: width 0.2s, background 0.2s; }
+  .vad-fill { display: block; height: 100%; background: var(--t-warn); transition: width 0.2s, background 0.2s; }
   .vad-fill.speech  { background: var(--t-ok); }
   .vad-fill.edge    { background: var(--t-warn); }
   .vad-fill.gated   { background: var(--t-err); }
@@ -30,7 +31,18 @@
     position: absolute; top: 0; bottom: 0; width: 2px;
     background: var(--t-text); opacity: 0.7;
   }
-  .vad-db { color: var(--t-text-dim); font-size: var(--f-xs); }
+  .vad-db { color: var(--t-text-dim); font-size: var(--f-xs); font-variant-numeric: tabular-nums; width: 42px; display: inline-block; text-align: right; flex-shrink: 0; }
+  .meter-label { color: var(--t-text-dim); font-size: var(--f-xs); text-transform: uppercase; letter-spacing: 0.05em; width: 60px; flex-shrink: 0; }
+  /* Fixed-width meter cluster: label + bar + numeric readout never shift.
+     Isolated from the status-bar's flex so siblings don't push them around. */
+  .meter-cluster { display: inline-flex; align-items: center; gap: var(--s-1); flex: 0 0 auto; }
+  .lvl-bar {
+    width: 100px; height: 12px; background: var(--t-bg);
+    border: 1px solid var(--t-border); border-radius: var(--r-sm);
+    overflow: hidden; position: relative;
+    flex-shrink: 0;
+  }
+  .lvl-fill { display: block; height: 100%; background: var(--t-accent); transition: width 0.1s; }
 
   #transcript-list {
     display: flex; flex-direction: column; gap: var(--s-1);
@@ -102,9 +114,27 @@
   .ps-bar.ok  { background: var(--t-ok); }
   .ps-bar.err { background: var(--t-err); }
 
+  .tx-state { display: inline-block; min-width: 110px; }
   .tx-state.warn { color: var(--t-warn); }
   .tx-state.ok   { color: var(--t-ok); }
   .tx-state.dim  { color: var(--t-text-dim); }
+
+  /* Feed health readout — compact monospace line showing worker queue
+     depth, drop count, and per-call processing timing. Numbers go amber
+     when they indicate pressure, red when they indicate a real problem. */
+  .feed-health {
+    display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-1);
+    padding: var(--s-1) var(--s-2);
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-sm); font-size: var(--f-xs);
+    color: var(--t-text-dim); font-variant-numeric: tabular-nums;
+  }
+  .feed-health .fh-label { text-transform: uppercase; letter-spacing: 0.06em; }
+  .feed-health .fh-val { color: var(--t-text); }
+  .feed-health .fh-val.warn { color: var(--t-warn); }
+  .feed-health .fh-val.err  { color: var(--t-err); }
+  .feed-health .fh-sep { color: var(--t-border-hi); }
+  .feed-health .fh-group { display: inline-flex; gap: 4px; align-items: center; }
 </style>
 </head>
 <body>
@@ -113,9 +143,19 @@
   <span><label class="tgl"><input type="checkbox" id="st-enabled" onchange="setConfig('enabled', this.checked)" checked> <span class="dot" id="st-dot"></span> <span id="st-state">—</span></label></span>
   <span><span class="st-label">Engine:</span> <span id="st-engine" class="white">moonshine</span></span>
   <span><span class="st-label">Model:</span> <span id="st-model-disp" class="white">—</span></span>
-  <span><div class="vad-bar"><div class="vad-fill" id="st-vad"></div><div id="st-vad-mark" class="vad-mark"></div></div> <span id="st-vad-db" class="vad-db">—</span></span>
+  <span class="meter-cluster"><span class="meter-label">Audio</span><span class="lvl-bar"><span class="lvl-fill" id="st-lvl"></span></span><span id="st-lvl-db" class="vad-db">—</span></span>
+  <span class="meter-cluster"><span class="meter-label">Speech</span><span class="vad-bar"><span class="vad-fill" id="st-vad"></span><span id="st-vad-mark" class="vad-mark"></span></span><span id="st-vad-db" class="vad-db">—</span></span>
   <span><span class="st-label">Pending:</span> <span id="st-pending">0</span></span>
   <span><span class="st-label">Total:</span> <span id="st-total">0</span></span>
+</div>
+
+<div class="feed-health" id="feed-health" title="Transcription feed-worker health — queue depth, drops, and per-call processing time">
+  <span class="fh-group"><span class="fh-label">Queue</span> <span class="fh-val" id="fh-qd">0/200</span></span>
+  <span class="fh-group"><span class="fh-label">Peak</span> <span class="fh-val" id="fh-peak">0</span></span>
+  <span class="fh-group"><span class="fh-label">Drops</span> <span class="fh-val" id="fh-drops">0</span></span>
+  <span class="fh-group"><span class="fh-label">Blocks&gt;5ms</span> <span class="fh-val" id="fh-blocks">0</span></span>
+  <span class="fh-group"><span class="fh-label">Proc</span> <span class="fh-val" id="fh-proc">—</span></span>
+  <span class="fh-group"><span class="fh-label">Per-bus</span> <span class="fh-val" id="fh-perbus">—</span></span>
 </div>
 
 <details id="ctrl-panel-wrap">
@@ -241,10 +281,43 @@ function poll() {
       vadFill.className = 'vad-fill ' + (_vprob >= _vth ? 'speech' : (_vprob >= _vexit ? 'edge' : 'gated'));
       document.getElementById('st-vad-mark').style.left = (_vth * 100) + '%';
       document.getElementById('st-vad-db').textContent = _vprob.toFixed(2);
+      // Audio-level meter: vad_db is dBFS envelope (-96..0). Map -60..0 → 0..100%.
+      var _vdb = (s.vad_db !== undefined) ? s.vad_db : -96;
+      var lvl_pct = Math.max(0, Math.min(100, (_vdb + 60) * 100 / 60));
+      var lvlFill = document.getElementById('st-lvl');
+      lvlFill.style.width = lvl_pct + '%';
+      // Colour audio bar: green when signal is healthy (>-40), amber -40..-55, red below
+      lvlFill.style.background = (_vdb > -40) ? 'var(--t-ok)' : (_vdb > -55 ? 'var(--t-warn)' : 'var(--t-err)');
+      document.getElementById('st-lvl-db').textContent = (_vdb > -95) ? (_vdb.toFixed(0) + 'dB') : '—';
       document.getElementById('st-pending').textContent = s.pending || 0;
       document.getElementById('st-total').textContent = s.total_transcriptions || 0;
       document.getElementById('st-engine').textContent = s.engine || 'moonshine';
       document.getElementById('st-model-disp').textContent = s.model || '—';
+
+      // Feed-worker health: colour-code anything worrying.
+      var fh = s.feed || {};
+      var fhQd = fh.queue_depth || 0, fhMax = fh.queue_max || 200;
+      var fhEl = document.getElementById('fh-qd');
+      fhEl.textContent = fhQd + '/' + fhMax;
+      fhEl.className = 'fh-val' + (fhQd > fhMax * 0.5 ? ' err' : (fhQd > fhMax * 0.2 ? ' warn' : ''));
+      var fhPk = document.getElementById('fh-peak');
+      fhPk.textContent = fh.peak_qd || 0;
+      fhPk.className = 'fh-val' + ((fh.peak_qd || 0) > fhMax * 0.5 ? ' warn' : '');
+      var fhDr = document.getElementById('fh-drops');
+      fhDr.textContent = fh.dropped_full || 0;
+      fhDr.className = 'fh-val' + ((fh.dropped_full || 0) > 0 ? ' err' : '');
+      var fhBl = document.getElementById('fh-blocks');
+      fhBl.textContent = fh.enqueue_blocks_gt_5ms || 0;
+      fhBl.className = 'fh-val' + ((fh.enqueue_blocks_gt_5ms || 0) > 0 ? ' warn' : '');
+      var fhPr = document.getElementById('fh-proc');
+      var _lm = fh.proc_last_ms || 0, _mn = fh.proc_mean_ms || 0, _mx = fh.proc_max_ms || 0;
+      fhPr.textContent = 'last ' + _lm.toFixed(1) + ' / mean ' + _mn.toFixed(1) + ' / max ' + _mx.toFixed(1) + 'ms';
+      fhPr.className = 'fh-val' + (_mn > 20 ? ' err' : (_mn > 10 ? ' warn' : ''));
+      var _ps = fh.per_stream_mean_ms || {};
+      var _parts = [];
+      for (var sid in _ps) _parts.push(sid + '=' + _ps[sid].toFixed(1) + 'ms');
+      var fhPb = document.getElementById('fh-perbus');
+      fhPb.textContent = _parts.length ? _parts.join(' ') : '—';
 
       // Sync control values from server on first poll
       if (!_configSynced && s.model_loaded) {
@@ -392,7 +465,7 @@ document.getElementById('st-vad-thresh').addEventListener('input', function() {
   document.getElementById('st-vad-val').textContent = parseFloat(this.value).toFixed(2);
 });
 
-setInterval(poll, 2000);
+setInterval(poll, 500);
 poll();
 </script>
 </body>
