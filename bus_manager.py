@@ -257,10 +257,22 @@ class BusManager:
         except (FileNotFoundError, json.JSONDecodeError):
             return
 
+        # Two separate sets:
+        #  - tuner_needed: sources whose capture process must be running
+        #    (any bus consumes them — listen, solo, duplex, simplex).
+        #    Previously we only counted listen-bus connections, which
+        #    meant e.g. SDR2 wired to a solo bus had its tuner stopped as
+        #    "not routed" (bug in dual-tuner mode with a solo-bus SDR2).
+        #  - should_be_on: sources that specifically belong on the listen
+        #    bus (used below for add/remove, which should NOT pull
+        #    solo-bus sources into the listen bus).
+        tuner_needed = set()
         should_be_on = set()
+        _listen_id = self._listen_bus_id
         for c in data.get('connections', []):
-            if c['type'] == 'source-bus' and c['to'] == self._listen_bus_id:
-                if c['from'] in source_map:
+            if c['type'] == 'source-bus' and c['from'] in source_map:
+                tuner_needed.add(c['from'])
+                if c['to'] == _listen_id:
                     should_be_on.add(c['from'])
 
         # Reconcile SDR tuner parec lifecycle with routing:
@@ -271,7 +283,7 @@ class BusManager:
                 _tuner = getattr(gw.sdr_plugin, _attr, None)
                 if _tuner is None:
                     continue
-                _needed = _sid in should_be_on
+                _needed = _sid in tuner_needed
                 if _needed and not _tuner.active:
                     if _tuner.setup():
                         _tuner._stream_trace = getattr(gw, '_stream_trace', None)
