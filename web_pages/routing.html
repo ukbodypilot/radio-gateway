@@ -205,12 +205,16 @@
   .dfn-engine-pill {
     font: inherit; font-size: 10px; font-weight: 600;
     letter-spacing: 0.05em; text-transform: uppercase;
-    padding: 1px 6px; border-radius: var(--r-sm);
+    padding: 2px 8px; border-radius: var(--r-sm);
     background: var(--t-panel-hi);
     border: 1px solid var(--t-border-hi);
     color: var(--t-text);
-    cursor: pointer; flex-shrink: 0;
-    min-width: 36px; text-align: center;
+    cursor: pointer !important; flex-shrink: 0;
+    min-width: 42px; text-align: center;
+    /* Override drawflow's default move-cursor on node descendants. */
+    pointer-events: auto;
+    user-select: none;
+    touch-action: manipulation;
   }
   .dfn-engine-pill[data-engine="deepfilternet"] {
     color: var(--t-accent);
@@ -375,16 +379,20 @@ editor = new Drawflow(container);
 editor.reroute = true;
 editor.start();
 
-// Prevent Drawflow node drag from stealing slider/button interactions
+// Prevent Drawflow node drag from stealing slider/button/pill interactions.
+// Capture phase + list every interactive descendant class so drawflow never
+// starts a "move" gesture on them (that's the "cursor stuck in move mode"
+// symptom when one of these slips through).
+var _INTERACTIVE_SEL =
+  '.gain-slider, .mute-btn, .proc-btn, .dfn-mix-slider, .dfn-engine-pill, .bus-name, button, input, select, textarea';
 container.addEventListener('mousedown', function(e) {
-  if (e.target.closest('.gain-slider, .mute-btn, .proc-btn, button, input')) {
-    e.stopPropagation();
-  }
+  if (e.target.closest(_INTERACTIVE_SEL)) e.stopPropagation();
 }, true);
 container.addEventListener('pointerdown', function(e) {
-  if (e.target.closest('.gain-slider, .mute-btn, .proc-btn, button, input')) {
-    e.stopPropagation();
-  }
+  if (e.target.closest(_INTERACTIVE_SEL)) e.stopPropagation();
+}, true);
+container.addEventListener('touchstart', function(e) {
+  if (e.target.closest(_INTERACTIVE_SEL)) e.stopPropagation();
 }, true);
 
 // Auto-arrange: 3-column layout with connection-aware ordering
@@ -718,7 +726,10 @@ function rebuildEditor() {
             + '<button class="dfn-engine-pill" id="dfn-engine-' + b.id + '" '
             +   'data-engine="' + eng + '" '
             +   'title="Click to swap denoise engine (RNNoise ↔ DeepFilterNet)" '
-            +   'onclick="toggleDfnEngine(\'' + b.id + '\')">' + engLabel + '</button>'
+            +   'onmousedown="event.stopPropagation()" '
+            +   'onpointerdown="event.stopPropagation()" '
+            +   'ontouchstart="event.stopPropagation()" '
+            +   'onclick="event.stopPropagation(); toggleDfnEngine(\'' + b.id + '\')">' + engLabel + '</button>'
             + '<span class="dfn-mix-label">mix</span>'
             + '<input type="range" class="dfn-mix-slider" min="0" max="1" step="0.05" value="' + mix + '" '
             +   'id="dfn-mix-' + b.id + '" '
