@@ -246,6 +246,11 @@ class _StreamState:
         'vad_open', 'vad_close_time',
         'vad_last_prob', 'vad_prob_env', 'vad_prob_peak', 'vad_envelope',
         'upstream_counts', 'last_upstream_source',
+        # Per-stream feed queue + worker. One thread per bus so multiple
+        # buses' denoise can run in parallel instead of serialising through
+        # a single worker — halves total latency when 2+ buses wire to the
+        # transcription sink and both run DFN3.
+        'feed_queue', 'feed_lock', 'feed_evt', 'feed_thread',
     )
 
     def __init__(self):
@@ -268,6 +273,13 @@ class _StreamState:
         self.vad_envelope = -100.0
         self.upstream_counts = {}
         self.last_upstream_source = None
+        # Feed queue + worker initialised by RadioTranscriber on stream
+        # creation so the thread has access to the transcriber's config/
+        # stats/pending deque.
+        self.feed_queue = None
+        self.feed_lock = None
+        self.feed_evt = None
+        self.feed_thread = None
 
 
 class RadioTranscriber:
@@ -317,15 +329,10 @@ class RadioTranscriber:
         self._pending = collections.deque(maxlen=5)
         self._pending_evt = threading.Event()
 
-        # Feed queue: audio enqueued by bus tick, drained by _feed_worker
-        # thread. Keeps per-frame VAD / RNNoise / resample off the bus tick
-        # path so a slow ONNX inference or GC pause can't cause SDR choppiness.
-        # maxlen caps memory if the worker falls behind (old samples are
-        # dropped — better than blowing RAM and better than blocking tick).
-        self._feed_queue = collections.deque(maxlen=200)
-        self._feed_queue_lock = threading.Lock()
-        self._feed_evt = threading.Event()
-        self._feed_thread = None
+        # Per-stream queues live on each _StreamState. RadioTranscriber
+        # keeps one lock to guard `_feed_stats` updates from multiple worker
+        # threads (one per bus — see _get_or_create_stream).
+        self._feed_stats_lock = threading.Lock()
 
         # Feed-path health counters. Always on (zero cost) — read via
         # get_status() so we have actual numbers when audio misbehaves
@@ -374,16 +381,14 @@ class RadioTranscriber:
         self._soft_cap_samples_16k = int(_SOFT_CAP_SECS * _SILERO_SR)
 
     def start(self):
-        """Start transcriber — loads model + spawns feed worker."""
+        """Start transcriber — loads model. Feed workers spawn per-bus on
+        first feed() call from that bus."""
         if self._running:
             return
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name="Transcriber")
         self._thread.start()
-        self._feed_thread = threading.Thread(target=self._feed_worker, daemon=True,
-                                             name="TranscriberFeed")
-        self._feed_thread.start()
         self._save()
         print(f"  [Transcribe] Started (model=moonshine/{self._model_size}, "
               f"vad_thresh={self._vad_threshold:.2f}, boost={int(self._audio_boost*100)}%)")
@@ -453,14 +458,19 @@ class RadioTranscriber:
     def stop(self):
         self._running = False
         self._pending_evt.set()
-        self._feed_evt.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-        if self._feed_thread:
-            self._feed_thread.join(timeout=5)
-        # Release per-stream resources (RNNoise + Silero state).
+        # Wake every per-stream worker so they can notice _running=False.
         with self._streams_lock:
             streams = list(self._streams.values())
+        for s in streams:
+            if s.feed_evt is not None:
+                s.feed_evt.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        for s in streams:
+            if s.feed_thread is not None:
+                s.feed_thread.join(timeout=5)
+        # Release per-stream resources (RNNoise/DFN + Silero state).
+        with self._streams_lock:
             self._streams.clear()
         for s in streams:
             if s.denoise_stream and s.denoise_stream is not False:
@@ -474,84 +484,86 @@ class RadioTranscriber:
         self._vad_ready = False
 
     def feed(self, pcm_48k, source_id=None, upstream_source=None):
-        """Enqueue 48kHz 16-bit PCM for background processing. Called from
-        the bus tick; MUST return in microseconds so the tick meets its 50 ms
-        budget. All per-frame work (VAD, RNNoise, resample) runs on the
-        _feed_worker thread.
-
-        Instrumentation: records enqueue event to stream_trace when active,
-        bumps feed_stats counters, and logs if the lock acquisition blocks
-        >5ms (a real-world warning sign of worker contention).
+        """Enqueue 48kHz 16-bit PCM onto this bus's per-stream feed queue.
+        Called from the bus tick; returns in microseconds so the tick meets
+        its 50 ms budget. Each bus has its own worker thread — two buses
+        with DFN enabled can denoise in parallel on separate cores.
         """
         if not self._enabled or not self._vad_ready:
             return
         if source_id is None:
             source_id = '_default'
+        stream = self._get_or_create_stream(source_id)
+        if stream is None:
+            return
         _t0 = time.monotonic()
-        # Check + evict under lock so queue depth and drop count are consistent.
-        with self._feed_queue_lock:
+        with stream.feed_lock:
             _lock_ms = (time.monotonic() - _t0) * 1000
             _dropped = False
-            # maxlen behaviour: appending to a full deque silently drops the
-            # oldest. We detect that up-front so it shows in the stats.
-            if len(self._feed_queue) >= self._feed_queue.maxlen:
-                self._feed_stats['dropped_full'] += 1
+            if len(stream.feed_queue) >= stream.feed_queue.maxlen:
+                with self._feed_stats_lock:
+                    self._feed_stats['dropped_full'] += 1
                 _dropped = True
-            self._feed_queue.append((pcm_48k, source_id, upstream_source))
-            _qd = len(self._feed_queue)
+            stream.feed_queue.append((pcm_48k, upstream_source))
+            _qd = len(stream.feed_queue)
+        with self._feed_stats_lock:
             if _qd > self._feed_stats['peak_qd']:
                 self._feed_stats['peak_qd'] = _qd
             self._feed_stats['enqueued'] += 1
-        if _lock_ms > 5.0:
-            self._feed_stats['enqueue_blocks'] += 1
+            if _lock_ms > 5.0:
+                self._feed_stats['enqueue_blocks'] += 1
         _st = getattr(self._gateway, '_stream_trace', None) if self._gateway else None
         if _st and _st.active:
             _extra = f'drop_full qd={_qd}' if _dropped else (f'lock={_lock_ms:.1f}ms' if _lock_ms > 1 else '')
             _st.record(f'trans_feed_{source_id}', 'enqueue', pcm_48k, _qd, _extra)
-        self._feed_evt.set()
+        stream.feed_evt.set()
 
-    def _feed_worker(self):
-        """Background thread: drain _feed_queue, run the per-frame pipeline."""
-        _stats = self._feed_stats
+    def _stream_worker(self, stream, source_id):
+        """Per-stream background thread: drain stream.feed_queue, run the
+        full per-frame pipeline. Runs independently of other streams so DFN
+        on bus A doesn't block DFN on bus B (the main reason we spun one
+        worker per stream instead of one shared worker)."""
         while self._running:
-            self._feed_evt.wait(timeout=0.5)
-            self._feed_evt.clear()
+            stream.feed_evt.wait(timeout=0.5)
+            stream.feed_evt.clear()
             while self._running:
-                with self._feed_queue_lock:
-                    if not self._feed_queue:
+                with stream.feed_lock:
+                    if not stream.feed_queue:
                         break
-                    item = self._feed_queue.popleft()
-                pcm_48k, source_id, upstream_source = item
+                    item = stream.feed_queue.popleft()
+                pcm_48k, upstream_source = item
                 _t0 = time.monotonic()
                 try:
-                    self._process_feed(pcm_48k, source_id, upstream_source)
+                    self._process_feed(pcm_48k, source_id, upstream_source, stream)
                 except Exception as e:
-                    _stats['worker_errors'] += 1
+                    with self._feed_stats_lock:
+                        self._feed_stats['worker_errors'] += 1
                     if not getattr(self, '_feed_err_logged', False):
                         self._feed_err_logged = True
-                        print(f"  [Transcribe] feed worker error: {e}")
+                        print(f"  [Transcribe] feed worker error ({source_id}): {e}")
                 _dur_ms = (time.monotonic() - _t0) * 1000
-                _stats['processed'] += 1
-                _stats['proc_total_ms'] += _dur_ms
-                _stats['proc_last_ms'] = _dur_ms
-                if _dur_ms > _stats['proc_max_ms']:
-                    _stats['proc_max_ms'] = _dur_ms
-                _stats['per_stream_ms'][source_id] = (
-                    _stats['per_stream_ms'].get(source_id, 0.0) + _dur_ms)
-                # Stream trace: record the process event so we can see per-bus
-                # timing and catch slow outliers in the dump.
+                with self._feed_stats_lock:
+                    _stats = self._feed_stats
+                    _stats['processed'] += 1
+                    _stats['proc_total_ms'] += _dur_ms
+                    _stats['proc_last_ms'] = _dur_ms
+                    if _dur_ms > _stats['proc_max_ms']:
+                        _stats['proc_max_ms'] = _dur_ms
+                    _stats['per_stream_ms'][source_id] = (
+                        _stats['per_stream_ms'].get(source_id, 0.0) + _dur_ms)
                 _st = getattr(self._gateway, '_stream_trace', None) if self._gateway else None
                 if _st and _st.active and _dur_ms > 5.0:
                     _st.record(f'trans_proc_{source_id}', 'process', pcm_48k, -1, f'{_dur_ms:.1f}ms')
 
-    def _process_feed(self, pcm_48k, source_id, upstream_source):
+    def _process_feed(self, pcm_48k, source_id, upstream_source, stream=None):
         """Run the full per-frame pipeline for one audio chunk from one bus.
 
-        Called from _feed_worker, never from the bus tick. Does the heavy
-        work: dBFS metering, RNNoise denoise, anti-aliased resample, Silero
+        Called from _stream_worker, never from the bus tick. Does the heavy
+        work: dBFS metering, neural denoise, anti-aliased resample, Silero
         VAD, utterance buffering.
         """
-        stream = self._get_or_create_stream(source_id)
+        if stream is None:
+            stream = self._get_or_create_stream(source_id)
         if stream is None:
             return
         stream.last_upstream_source = upstream_source
@@ -590,10 +602,11 @@ class RadioTranscriber:
                     # a naive wet+dry add would create on delayed engines.
                     mixed = stream.denoise_stream.process_mix(arr_48k_i16, _den_mix)
                     _den_ms = (time.monotonic() - _t_den) * 1000
-                    _dms = self._feed_stats['denoise_engine_ms']
-                    _dcs = self._feed_stats['denoise_engine_calls']
-                    _dms[_den_engine] = _dms.get(_den_engine, 0.0) + _den_ms
-                    _dcs[_den_engine] = _dcs.get(_den_engine, 0) + 1
+                    with self._feed_stats_lock:
+                        _dms = self._feed_stats['denoise_engine_ms']
+                        _dcs = self._feed_stats['denoise_engine_calls']
+                        _dms[_den_engine] = _dms.get(_den_engine, 0.0) + _den_ms
+                        _dcs[_den_engine] = _dcs.get(_den_engine, 0) + 1
                     # Length alignment — sub-frame residue on first few
                     # calls means process_mix can return fewer samples than
                     # input. Pad with the original dry tail so downstream
@@ -637,7 +650,8 @@ class RadioTranscriber:
         """Return the _StreamState for this bus, creating it lazily.
 
         Silero instance construction reuses the shared ONNX session, so the
-        only per-bus cost is a pair of small numpy state arrays.
+        only per-bus cost is a pair of small numpy state arrays + a feed
+        queue and worker thread (started here on first use).
         """
         stream = self._streams.get(source_id)
         if stream is not None:
@@ -647,12 +661,26 @@ class RadioTranscriber:
         except Exception as e:
             print(f"  [Transcribe] Stream init failed for {source_id}: {e}")
             return None
+        # Initialise per-stream feed infrastructure.
+        # 100-deep deque = ~5 s of buffered audio before oldest drops — same
+        # safety as the old shared 200-deep queue but per bus.
+        stream.feed_queue = collections.deque(maxlen=100)
+        stream.feed_lock = threading.Lock()
+        stream.feed_evt = threading.Event()
         with self._streams_lock:
-            # Another caller may have raced us.
             existing = self._streams.get(source_id)
             if existing is not None:
                 return existing
             self._streams[source_id] = stream
+        # Spawn the worker AFTER the stream is in the dict so any parallel
+        # feed() for this stream finds it. The worker reads self._running
+        # + captures stream/source_id closure.
+        t = threading.Thread(
+            target=self._stream_worker, args=(stream, source_id),
+            daemon=True, name=f'TranscribeFeed-{source_id}')
+        stream.feed_thread = t
+        t.start()
+        print(f"  [Transcribe] Spawned per-stream worker for '{source_id}'")
         return stream
 
     def _process_frame(self, frame_16k, stream, source_id):
@@ -807,11 +835,31 @@ class RadioTranscriber:
         Read via get_status() / transcription_status MCP tool. All counters
         are monotonic since start; compare two readings to get rates.
         """
-        _s = self._feed_stats
+        # Aggregate per-stream queue depths — the queues live on each
+        # _StreamState now (one per bus). Expose total + per-stream for
+        # visibility into which bus is backing up vs keeping pace.
+        with self._streams_lock:
+            items = list(self._streams.items())
+        _qd_total = 0
+        _qd_max = 0
+        _per_queue = {}
+        for sid, st in items:
+            if st.feed_queue is None:
+                continue
+            q = len(st.feed_queue)
+            _qd_total += q
+            _qd_max = max(_qd_max, st.feed_queue.maxlen or 0)
+            _per_queue[sid] = {'depth': q, 'max': st.feed_queue.maxlen}
+        with self._feed_stats_lock:
+            _s = dict(self._feed_stats)
+            _s['per_stream_ms'] = dict(_s.get('per_stream_ms') or {})
+            _s['denoise_engine_ms'] = dict(_s.get('denoise_engine_ms') or {})
+            _s['denoise_engine_calls'] = dict(_s.get('denoise_engine_calls') or {})
         _processed = _s['processed']
         return {
-            'queue_depth': len(self._feed_queue),
-            'queue_max': self._feed_queue.maxlen,
+            'queue_depth': _qd_total,
+            'queue_max': _qd_max,
+            'per_queue': _per_queue,
             'peak_qd': _s['peak_qd'],
             'enqueued': _s['enqueued'],
             'processed': _processed,
@@ -825,13 +873,12 @@ class RadioTranscriber:
                 sid: round(ms / max(_processed, 1), 2)
                 for sid, ms in _s['per_stream_ms'].items()
             },
-            # Per-engine mean denoise time — lets you A/B RNNoise vs
-            # DeepFilterNet cost on your actual hardware.
             'denoise_engine_mean_ms': {
                 eng: round(ms / max(_s['denoise_engine_calls'].get(eng, 1), 1), 2)
                 for eng, ms in _s['denoise_engine_ms'].items()
             },
             'denoise_engine_calls': dict(_s['denoise_engine_calls']),
+            'worker_count': sum(1 for _, st in items if st.feed_thread is not None),
         }
 
     def get_stats(self):

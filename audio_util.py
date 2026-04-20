@@ -349,13 +349,19 @@ class _DFN3Stream:
             path = _dfn3_ensure_model()
             import onnxruntime as ort
             opts = ort.SessionOptions()
-            opts.intra_op_num_threads = 1
+            # intra=2 lets a single DFN call use two cores — cuts per-call
+            # time ~30-40% on multi-core hardware. Trade-off is slightly
+            # less predictable latency and higher peak CPU, both acceptable
+            # given we now run per-stream workers (so multiple buses also
+            # parallelise). inter stays at 1 — DFN is a deep sequential
+            # graph, no benefit from parallel op dispatch.
+            opts.intra_op_num_threads = 2
             opts.inter_op_num_threads = 1
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
             opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
             cls._sess = ort.InferenceSession(
                 path, sess_options=opts, providers=['CPUExecutionProvider'])
-            print(f"  [DFN3] ONNX session ready")
+            print(f"  [DFN3] ONNX session ready (intra=2)")
 
     def __init__(self):
         self._ensure_session()
