@@ -62,9 +62,10 @@ class _RNNoiseStream:
     # Algorithmic delay of the denoised output relative to the input. Used
     # by process_mix() to delay the dry signal before blending so wet+dry
     # stay phase-aligned (otherwise the mix acts as a comb filter and
-    # introduces an audible chorus/reverb smear). RNNoise processes per
-    # 480-sample frame without STFT lookahead, so delay ≈ 0.
-    dry_delay_samples = 0
+    # introduces an audible chorus/reverb smear). Measured empirically with
+    # an impulse test — pyrnnoise's overlap-add plus internal lookahead adds
+    # 960 samples (20 ms). Don't assume zero.
+    dry_delay_samples = 960
 
     def __init__(self):
         mod = _load_rnnoise()
@@ -286,13 +287,14 @@ class _DFN3Stream:
     """
 
     native_rate = 48000
-    # DFN3 uses a 960-sample STFT with 480-sample hop. The first `fft-hop`
-    # samples of the model's output are the "look-behind" from the analysis
-    # window, so the output frame at time T corresponds to the INPUT from
-    # T - 480 samples. Dry must be delayed by the same 480 samples before
-    # blending; without that the mix becomes a comb filter (chorus/reverb
-    # smear on the dry component).
-    dry_delay_samples = 480
+    # Measured algorithmic delay: 1440 samples (30 ms). Not fft-hop (480)
+    # as the reference impl's trim suggests — that's only the STFT window
+    # portion; the deep-filtering stage adds its own latency on top. Impulse
+    # probe confirmed 3 × hop = 1440 samples end-to-end. Dry path must be
+    # delayed by the same amount before blending, otherwise wet+dry acts as
+    # a comb filter with nulls at 33 Hz fundamental and harmonics → audible
+    # chorus/reverb smear exactly as users reported.
+    dry_delay_samples = 1440
 
     _sess = None          # shared onnxruntime InferenceSession
     _lock = None          # init lock — build session once across threads
