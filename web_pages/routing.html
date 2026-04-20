@@ -27,7 +27,14 @@
     font-family: inherit;
     font-size: var(--f-xs);
   }
-  .drawflow .drawflow-node[class*="bus-"] { min-width: 230px; }
+  /* Bus nodes need more horizontal room than sources/sinks — their content
+     row holds 9 proc buttons + separator + mute button, and the rightmost
+     mute was overlapping the output socket on the old 230 px width. Tighter
+     vertical padding on title/box so the taller row doesn't create a tall
+     node — we want wider + shorter. */
+  .drawflow .drawflow-node[class*="bus-"] { min-width: 290px; }
+  .drawflow .drawflow-node[class*="bus-"] .title-box { padding: 2px var(--s-2); }
+  .drawflow .drawflow-node[class*="bus-"] .box       { padding: 2px var(--s-2); }
   .drawflow .drawflow-node.selected {
     background: var(--t-panel) !important;
     border-color: var(--t-accent) !important;
@@ -153,7 +160,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 6px 4px;
+    padding: 1px 6px 2px;
     font-size: 10px;
     color: var(--t-fg);
   }
