@@ -1447,7 +1447,10 @@ class WebConfigServer:
         _spk_mode = str(getattr(gw.config, 'SPEAKER_MODE', 'virtual')).lower() if gw else 'virtual'
         sinks.append({'id': 'speaker', 'name': 'Speaker', 'type': 'Local',
                       'enabled': True, 'speaker_mode': _spk_mode})
-        sinks.append({'id': 'recording', 'name': 'Recording', 'type': 'File', 'enabled': True})
+        # 'recording' sink removed — it was a v1 stub that never got a
+        # v2.0 implementation. The Loop Recorder's per-bus "R" button is
+        # the real recording mechanism now. Stale nodes in existing
+        # routing_config.json are stripped by bus_manager on load.
         if gw and getattr(gw, 'transcriber', None):
             sinks.append({'id': 'transcription', 'name': 'Transcription', 'type': 'AI',
                           'enabled': True})
@@ -1755,7 +1758,7 @@ class WebConfigServer:
         elif cmd == 'mute':
             target_id = data.get('id', '')
             # Check if it's a sink without a plugin object
-            _sink_ids = ('speaker', 'broadcastify', 'mumble', 'recording', 'remote_audio_tx')
+            _sink_ids = ('speaker', 'broadcastify', 'mumble', 'remote_audio_tx')
             if target_id in _sink_ids and self.gateway:
                 muted_sinks = getattr(self.gateway, '_muted_sinks', set())
                 if target_id in muted_sinks:
@@ -1795,8 +1798,8 @@ class WebConfigServer:
                     _gw._source_gains[target_id] = value
                     _gw._save_source_gains()
                 return {'ok': True, 'gain': value}
-            # Passive sinks (mumble, broadcastify, speaker, recording, etc.)
-            _passive_sinks = ('mumble', 'broadcastify', 'speaker', 'recording',
+            # Passive sinks (mumble, broadcastify, speaker, etc.)
+            _passive_sinks = ('mumble', 'broadcastify', 'speaker',
                               'transcription', 'remote_audio_tx')
             if target_id in _passive_sinks and _gw:
                 _gw._sink_gains[target_id] = value / 100.0

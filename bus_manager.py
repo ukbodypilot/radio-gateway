@@ -426,6 +426,31 @@ class BusManager:
         busses = data.get('busses', [])
         connections = data.get('connections', [])
 
+        # One-time migration: strip any stale 'recording' sink leftovers
+        # from pre-D11 configs (the sink was never implemented in v2.0 —
+        # Loop Recorder's per-bus R button is the actual mechanism). Drops
+        # any bus→recording connection and any Drawflow node with that id.
+        _before_conns = len(connections)
+        connections = [c for c in connections
+                       if not (c.get('type') == 'bus-sink' and c.get('to') == 'recording')]
+        _drawflow = data.get('layout', {}).get('drawflow', {}).get('Home', {}).get('data', {})
+        _stripped_nodes = []
+        for _nk in list(_drawflow.keys()):
+            _n = _drawflow.get(_nk) or {}
+            if _n.get('class') == 'sink' and (_n.get('data') or {}).get('id') == 'recording':
+                del _drawflow[_nk]
+                _stripped_nodes.append(_nk)
+        if _before_conns != len(connections) or _stripped_nodes:
+            print(f"  [BusManager] Migration: removed dangling 'recording' sink "
+                  f"({_before_conns - len(connections)} connection(s), "
+                  f"{len(_stripped_nodes)} node(s))")
+            data['connections'] = connections
+            try:
+                with open(self._config_path, 'w') as f:
+                    json.dump(data, f, indent=2)
+            except Exception as _e:
+                print(f"  [BusManager] Migration save failed: {_e}")
+
         for bus_cfg in busses:
             bus_id = bus_cfg['id']
             bus_type = bus_cfg['type']
@@ -746,8 +771,6 @@ class BusManager:
                 _bcast_ms = (time.monotonic() - _t_sink) * 1000
                 if _st and _bcast_ms > 5:
                     _st.record(f'{bus_id}_deliver', 'broadcastify', audio, -1, f'{_bcast_ms:.1f}ms')
-            elif sink_id == 'recording':
-                pass  # TODO: recording sink
             elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
                 try:
                     _bus_obj = self._busses.get(bus_id)

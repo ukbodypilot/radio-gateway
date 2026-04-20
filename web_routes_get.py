@@ -846,7 +846,6 @@ def handle_routing_levels(handler, parent):
         data['speaker'] = gw.speaker_audio_level if 'speaker' in _all_connected else 0
         data['broadcastify'] = gw.stream_audio_level if 'broadcastify' in _all_connected else 0
         data['mumble'] = gw.mumble_tx_level if 'mumble' in _all_connected else 0
-        data['recording'] = 0
         data['transcription'] = getattr(gw, 'transcription_audio_level', 0) if 'transcription' in _all_connected else 0
         gw.transcription_audio_level = max(0, int(getattr(gw, 'transcription_audio_level', 0) * 0.8))
         gw.remote_audio_tx_level = max(0, int(getattr(gw, 'remote_audio_tx_level', 0) * 0.8))
