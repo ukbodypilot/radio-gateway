@@ -622,22 +622,33 @@ class AudioProcessor:
         self.notch_state = None
         self.gate_envelope = 0.0
         self.dfn_stream = None
+        # Off-tick denoise worker. _apply_dfn pushes raw audio into
+        # _dn_in_queue and pops the previous tick's denoised audio from
+        # _dn_out_queue, so the heavy neural inference doesn't happen on
+        # the bus tick thread. Cost: one-tick latency (~50 ms) on the
+        # listener audio path; benefit: bus tick stays under budget even
+        # when multiple buses run DFN3. Lazy-started on first _apply_dfn
+        # when DFN is enabled.
+        import collections as _c
+        self._dn_queue_in = _c.deque(maxlen=2)   # raw (pcm_bytes, mix, engine, atten)
+        self._dn_queue_out = _c.deque(maxlen=2)  # denoised pcm_bytes
+        self._dn_lock = None                     # threading.Lock — lazy init
+        self._dn_evt = None                      # threading.Event — lazy init
+        self._dn_thread = None
+        self._dn_running = False
 
     def set_dfn_engine(self, engine):
-        """Switch denoise engine. Drops the existing stream so the next
-        process() call reinitialises with the new backend."""
+        """Switch denoise engine. Signals the worker to rebuild the stream
+        with the new backend on its next loop iteration."""
         if engine == self.dfn_engine:
             return
         if engine not in DENOISE_ENGINE_IDS:
             print(f"  [AudioProcessor] rejecting unknown dfn_engine '{engine}'")
             return
         self.dfn_engine = engine
-        if self.dfn_stream is not None:
-            try:
-                self.dfn_stream.close()
-            except Exception:
-                pass
-            self.dfn_stream = None
+        # Worker owns the stream — signal it to rebuild. We can't just
+        # close the stream here since we don't hold the worker's lock.
+        self._dn_engine_dirty = True
 
     def reset_state(self):
         """Reset all filter states (e.g. when source restarts)."""
@@ -645,9 +656,22 @@ class AudioProcessor:
         self.lowpass_state = None
         self.notch_state = None
         self.gate_envelope = 0.0
-        if self.dfn_stream is not None:
-            self.dfn_stream.close()
-            self.dfn_stream = None
+        self._dn_stop_worker()
+
+    def _dn_stop_worker(self):
+        """Signal the denoise worker to exit and wait for it. Called on
+        reset or DFN disable."""
+        self._dn_running = False
+        if self._dn_evt is not None:
+            self._dn_evt.set()
+        if self._dn_thread is not None:
+            try:
+                self._dn_thread.join(timeout=2)
+            except Exception:
+                pass
+            self._dn_thread = None
+        self._dn_queue_in.clear()
+        self._dn_queue_out.clear()
 
     def process(self, pcm_data):
         """Run the full processing chain on PCM data. Order:
@@ -771,52 +795,107 @@ class AudioProcessor:
             return pcm_data
 
     def _apply_dfn(self, pcm_data):
-        """Neural denoise — engine picked by self.dfn_engine.
+        """Enqueue this tick's audio for off-tick denoise and return the
+        previous tick's denoised result.
 
-        Assumes 48 kHz mono int16 input — the gateway-wide AUDIO_RATE. If
-        the chosen engine can't be loaded, silently pass-through so a missing
-        dep doesn't kill the audio path.
+        The heavy neural inference happens on self._dn_thread so the bus
+        tick never blocks on ONNX. Trade-off: one-tick (~50 ms) of extra
+        end-to-end latency on the listener audio path. In exchange the bus
+        tick stays under budget even when multiple buses run DFN3.
 
-        Output is a wet/dry mix via `dfn_mix` (1.0 = fully denoised, 0.0 =
-        pass-through). RNNoise over-cuts radio audio at full wet so 0.5 is
-        a safe default; DFN3 tolerates higher wet values.
+        Contract preserved: block-in = block-out, same pcm_data type.
+        Startup: no denoised output available yet → emit dry for the first
+        1–2 ticks, then steady-state matches the tick rate.
         """
+        self._dn_ensure_worker()
+        # Snapshot params — mix, engine, atten can all change mid-flight
+        # from the HTTP/MCP threads; capturing at enqueue time keeps the
+        # tick's decision stable through the denoise pipeline.
+        wet = max(0.0, min(1.0, float(getattr(self, 'dfn_mix', 0.5))))
+        atten = float(getattr(self, 'dfn_atten_db', 18.0))
+        engine = self.dfn_engine
         try:
-            if self.dfn_stream is None:
-                self.dfn_stream = make_denoise_stream(self.dfn_engine)
-                if self.dfn_stream is None:
-                    # Factory already logged why; downgrade and stop trying.
-                    self.enable_dfn = False
-                    return pcm_data
-
-            samples = np.frombuffer(pcm_data, dtype=np.int16)
-            if samples.size == 0:
-                return pcm_data
-
-            # Keep the DFN attenuation cap in sync — cheap even on every
-            # tick (just updates a 0-d ndarray). RNNoise stream ignores it.
-            self.dfn_stream.set_atten_lim_db(float(getattr(self, 'dfn_atten_db', 18.0)))
-
-            wet = float(getattr(self, 'dfn_mix', 0.5))
-            wet = max(0.0, min(1.0, wet))
-            # process_mix handles the wet/dry blend with engine-specific
-            # dry-path delay compensation so DFN3's 10 ms algorithmic delay
-            # doesn't comb-filter the signal.
-            mixed = self.dfn_stream.process_mix(samples, wet)
-            if mixed.size == 0:
-                # Sub-frame residue; emit dry so we don't drop audio.
-                return pcm_data
-
-            # Block-in = block-out contract for downstream sinks.
-            if mixed.size < samples.size:
-                mixed = np.concatenate([mixed, samples[mixed.size:]])
-            elif mixed.size > samples.size:
-                mixed = mixed[: samples.size]
-
-            return mixed.astype(np.int16).tobytes()
+            with self._dn_lock:
+                self._dn_queue_in.append((pcm_data, wet, atten, engine))
+                self._dn_evt.set()
+                if self._dn_queue_out:
+                    return self._dn_queue_out.popleft()
         except Exception as e:
-            print(f"[DFN] {self.name}: process error — {e}")
-            return pcm_data
+            print(f"[DFN] {self.name}: enqueue error — {e}")
+        # No denoised output ready yet (cold start / worker behind) —
+        # pass-through dry so the audio path never gaps.
+        return pcm_data
+
+    def _dn_ensure_worker(self):
+        """Lazy-start the per-bus denoise worker thread on first use."""
+        if self._dn_thread is not None and self._dn_thread.is_alive():
+            return
+        import threading
+        if self._dn_lock is None:
+            self._dn_lock = threading.Lock()
+            self._dn_evt = threading.Event()
+        self._dn_engine_dirty = False
+        self._dn_running = True
+        self._dn_thread = threading.Thread(
+            target=self._dn_worker_loop, daemon=True,
+            name=f'Denoise-{self.name}')
+        self._dn_thread.start()
+
+    def _dn_worker_loop(self):
+        """Per-bus denoise worker: pulls raw audio from _dn_queue_in,
+        runs the engine, pushes denoised output to _dn_queue_out.
+
+        Owns `dfn_stream` — AudioProcessor.dfn_stream is deprecated in
+        favour of this local; only the worker touches the stream state
+        so there's no cross-thread synchronisation needed on the state
+        tensors that carry recurrent model history.
+        """
+        stream = None
+        current_engine = None
+        while self._dn_running:
+            self._dn_evt.wait(timeout=0.5)
+            self._dn_evt.clear()
+            while self._dn_running:
+                with self._dn_lock:
+                    if not self._dn_queue_in:
+                        break
+                    item = self._dn_queue_in.popleft()
+                pcm_data, wet, atten, engine = item
+                # Rebuild stream if engine changed (or first call).
+                if stream is None or engine != current_engine:
+                    if stream is not None:
+                        try: stream.close()
+                        except Exception: pass
+                    stream = make_denoise_stream(engine)
+                    current_engine = engine
+                    if stream is None:
+                        # Engine unavailable — emit dry so the bus keeps
+                        # flowing; the pass-through mirrors the old
+                        # "downgrade and stop trying" behaviour.
+                        with self._dn_lock:
+                            self._dn_queue_out.append(pcm_data)
+                        continue
+                try:
+                    stream.set_atten_lim_db(atten)
+                    samples = np.frombuffer(pcm_data, dtype=np.int16)
+                    mixed = stream.process_mix(samples, wet)
+                    if mixed.size == 0:
+                        out_bytes = pcm_data  # sub-frame residue
+                    else:
+                        if mixed.size < samples.size:
+                            mixed = np.concatenate([mixed, samples[mixed.size:]])
+                        elif mixed.size > samples.size:
+                            mixed = mixed[: samples.size]
+                        out_bytes = mixed.astype(np.int16).tobytes()
+                except Exception as e:
+                    print(f"[DFN] {self.name}: worker process error — {e}")
+                    out_bytes = pcm_data
+                with self._dn_lock:
+                    self._dn_queue_out.append(out_bytes)
+        # Shutdown — release the stream.
+        if stream is not None:
+            try: stream.close()
+            except Exception: pass
 
     def _apply_noise_gate(self, pcm_data):
         """Noise gate with attack/release envelope."""
