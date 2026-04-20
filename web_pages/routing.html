@@ -24,21 +24,9 @@
     border-radius: var(--r-md);
     color: var(--t-text);
     min-width: 180px;
-    /* Uniform min-height across sources, buses, and sinks so rows line up
-       neatly on the canvas. Sized to fit the tallest bus state (proc
-       buttons row + DFN mix row + level bar). Shorter nodes pad out to
-       match; taller content (rare) still grows naturally. */
-    min-height: 78px;
-    display: flex;
-    flex-direction: column;
     font-family: inherit;
     font-size: var(--f-xs);
   }
-  /* Level bar lives at the bottom — flex-push the title/box content up so
-     the shorter nodes have whitespace padding beneath their content rather
-     than stretched controls. */
-  .drawflow .drawflow-node .box { flex: 1 1 auto; display: flex; flex-direction: column; }
-  .drawflow .drawflow-node .box > .level-bar { margin-top: auto; }
   /* Bus nodes need more horizontal room than sources/sinks — their content
      row holds 9 proc buttons + separator + mute button, and the rightmost
      mute was overlapping the output socket on the old 230 px width. Tighter
