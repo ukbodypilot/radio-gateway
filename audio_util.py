@@ -59,6 +59,12 @@ class _RNNoiseStream:
     """
 
     native_rate = 48000
+    # Algorithmic delay of the denoised output relative to the input. Used
+    # by process_mix() to delay the dry signal before blending so wet+dry
+    # stay phase-aligned (otherwise the mix acts as a comb filter and
+    # introduces an audible chorus/reverb smear). RNNoise processes per
+    # 480-sample frame without STFT lookahead, so delay ≈ 0.
+    dry_delay_samples = 0
 
     def __init__(self):
         mod = _load_rnnoise()
@@ -67,6 +73,7 @@ class _RNNoiseStream:
         self._mod = mod
         self._state = mod.create()
         self._buf = np.empty(0, dtype=np.int16)
+        self._dry_delay_buf = np.empty(0, dtype=np.int16)  # used by process_mix
         self.last_prob = 0.0
 
     def close(self):
@@ -105,6 +112,65 @@ class _RNNoiseStream:
         self._buf = buf[n_frames * frame_size :].copy()
         self.last_prob = last_prob
         return np.concatenate(out_chunks)
+
+    def process_mix(self, samples_i16, mix):
+        """Process + wet/dry blend with dry-path delay compensation.
+
+        Calls process() to get the wet output, delays the dry path by
+        self.dry_delay_samples so the two are phase-aligned, and returns
+        a length-matched int16 blend. mix: 0.0 dry, 1.0 wet.
+        """
+        return _mix_with_dry_delay(self, samples_i16, mix)
+
+
+def _mix_with_dry_delay(stream, samples_i16, mix):
+    """Shared wet/dry blender used by every DenoiseStream subclass.
+
+    Keeps a persistent dry-delay buffer sized by stream.dry_delay_samples
+    so the wet stream's algorithmic latency (DFN3 ≈ 10 ms) is matched
+    on the dry path — without this, the blend is literally a comb filter
+    and the signal gets a chorus/reverb smear.
+    """
+    denoised = stream.process(samples_i16)
+    if mix <= 0.001:
+        # All dry — but the wet path still needs to advance (it's stateful),
+        # which stream.process() already did. Just return the (undelayed) dry.
+        return samples_i16
+
+    # Maintain a dry FIFO that mirrors the wet path's latency. New input in,
+    # delayed samples out, 1:1 correspondence with the denoised output we
+    # just got back.
+    delay_n = getattr(stream, 'dry_delay_samples', 0)
+    if delay_n <= 0:
+        dry_aligned = samples_i16
+    else:
+        if not hasattr(stream, '_dry_delay_buf') or stream._dry_delay_buf.size == 0:
+            # First call: prime with silence so we emit something the same
+            # length as the wet stream's residue handling.
+            stream._dry_delay_buf = np.zeros(delay_n, dtype=np.int16)
+        combined = np.concatenate([stream._dry_delay_buf, samples_i16])
+        # Take the OLDEST `len(denoised)` samples off the front as the
+        # dry-aligned slice (those correspond to the wet frames we just
+        # emitted). Retain the remaining delay-sized tail for next call.
+        n_out = denoised.size
+        if n_out == 0:
+            # Wet produced nothing (sub-frame residue); keep full tail.
+            stream._dry_delay_buf = combined
+            return np.empty(0, dtype=np.int16)
+        if n_out > combined.size:
+            # Can't happen with a properly-primed buffer, but be defensive.
+            dry_aligned = combined
+            stream._dry_delay_buf = np.empty(0, dtype=np.int16)
+        else:
+            dry_aligned = combined[:n_out]
+            stream._dry_delay_buf = combined[n_out:]
+
+    if mix >= 0.999:
+        return denoised
+    n = min(dry_aligned.size, denoised.size)
+    mixed = (dry_aligned[:n].astype(np.int32) * int((1.0 - mix) * 65536)
+             + denoised[:n].astype(np.int32) * int(mix * 65536)) >> 16
+    return np.clip(mixed, -32768, 32767).astype(np.int16)
 
 
 # ── DeepFilterNet 3 (DFN3) streaming via onnxruntime ────────────────────────
@@ -220,6 +286,13 @@ class _DFN3Stream:
     """
 
     native_rate = 48000
+    # DFN3 uses a 960-sample STFT with 480-sample hop. The first `fft-hop`
+    # samples of the model's output are the "look-behind" from the analysis
+    # window, so the output frame at time T corresponds to the INPUT from
+    # T - 480 samples. Dry must be delayed by the same 480 samples before
+    # blending; without that the mix becomes a comb filter (chorus/reverb
+    # smear on the dry component).
+    dry_delay_samples = 480
 
     _sess = None          # shared onnxruntime InferenceSession
     _lock = None          # init lock — build session once across threads
@@ -289,6 +362,10 @@ class _DFN3Stream:
         # bare numpy scalar. 0 = no attenuation cap.
         self._atten_lim = np.array(0.0, dtype=np.float32)
         self._buf = np.empty(0, dtype=np.int16)
+        # FIFO for the dry path used by process_mix() — keeps wet/dry in
+        # phase so the blend doesn't comb-filter. Primed with silence on
+        # first call (see _mix_with_dry_delay).
+        self._dry_delay_buf = np.empty(0, dtype=np.int16)
         self.last_lsnr = 0.0
 
     def close(self):
@@ -332,7 +409,12 @@ class _DFN3Stream:
         self._state = _state
         self._buf = buf[n_frames * _DFN3_FRAME_SIZE :].copy()
         self.last_lsnr = last_lsnr
-        return np.concatenate(out_chunks)
+        return np.concatenate(out_chunks) if out_chunks else np.empty(0, dtype=np.int16)
+
+    def process_mix(self, samples_i16, mix):
+        """Process + wet/dry blend with DFN's 480-sample dry-path delay
+        compensation. See _mix_with_dry_delay for mechanics."""
+        return _mix_with_dry_delay(self, samples_i16, mix)
 
 
 # Engine registry. Missing entries fall back cleanly via
@@ -660,33 +742,23 @@ class AudioProcessor:
             if samples.size == 0:
                 return pcm_data
 
-            denoised = self.dfn_stream.process(samples)
-            if denoised.size == 0:
-                # All samples buffered as <1 frame residue; emit the dry
-                # signal so we don't drop audio at startup.
-                return pcm_data
-
-            # Align lengths — block-in = block-out contract for downstream sinks.
-            if denoised.size < samples.size:
-                denoised = np.concatenate([
-                    denoised,
-                    samples[denoised.size:],  # dry fill, not silence
-                ])
-            elif denoised.size > samples.size:
-                denoised = denoised[: samples.size]
-
             wet = float(getattr(self, 'dfn_mix', 0.5))
             wet = max(0.0, min(1.0, wet))
-            if wet >= 0.999:
-                out = denoised
-            elif wet <= 0.001:
-                out = samples
-            else:
-                mixed = (samples.astype(np.int32) * (1.0 - wet)
-                         + denoised.astype(np.int32) * wet)
-                out = np.clip(mixed, -32768, 32767).astype(np.int16)
+            # process_mix handles the wet/dry blend with engine-specific
+            # dry-path delay compensation so DFN3's 10 ms algorithmic delay
+            # doesn't comb-filter the signal.
+            mixed = self.dfn_stream.process_mix(samples, wet)
+            if mixed.size == 0:
+                # Sub-frame residue; emit dry so we don't drop audio.
+                return pcm_data
 
-            return out.astype(np.int16).tobytes()
+            # Block-in = block-out contract for downstream sinks.
+            if mixed.size < samples.size:
+                mixed = np.concatenate([mixed, samples[mixed.size:]])
+            elif mixed.size > samples.size:
+                mixed = mixed[: samples.size]
+
+            return mixed.astype(np.int16).tobytes()
         except Exception as e:
             print(f"[DFN] {self.name}: process error — {e}")
             return pcm_data

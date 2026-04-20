@@ -584,30 +584,29 @@ class RadioTranscriber:
         if _den_enabled and stream.denoise_stream is not None:
                 try:
                     _t_den = time.monotonic()
-                    denoised = stream.denoise_stream.process(arr_48k_i16)
+                    # process_mix handles the wet/dry blend with engine-
+                    # specific dry-path delay compensation (DFN3 = 480
+                    # samples). Prevents the comb-filter chorus/smear that
+                    # a naive wet+dry add would create on delayed engines.
+                    mixed = stream.denoise_stream.process_mix(arr_48k_i16, _den_mix)
                     _den_ms = (time.monotonic() - _t_den) * 1000
-                    # Per-engine timing — lets users see at a glance which
-                    # engine is actually cheap/expensive on their hardware.
                     _dms = self._feed_stats['denoise_engine_ms']
                     _dcs = self._feed_stats['denoise_engine_calls']
                     _dms[_den_engine] = _dms.get(_den_engine, 0.0) + _den_ms
                     _dcs[_den_engine] = _dcs.get(_den_engine, 0) + 1
-                    # Align lengths (startup residue → dry-fill the gap),
-                    # then blend wet/dry per _denoise_mix so we don't wipe
-                    # out the signal when the engine mis-classifies the band.
-                    if denoised.size > 0:
-                        if denoised.size < arr_48k_i16.size:
-                            denoised = np.concatenate([denoised, arr_48k_i16[denoised.size:]])
-                        elif denoised.size > arr_48k_i16.size:
-                            denoised = denoised[: arr_48k_i16.size]
-                        w = _den_mix
-                        if w >= 0.999:
-                            arr_48k_i16 = denoised
-                        elif w > 0.001:
-                            mixed = (arr_48k_i16.astype(np.int32) * (1.0 - w)
-                                     + denoised.astype(np.int32) * w)
-                            arr_48k_i16 = np.clip(mixed, -32768, 32767).astype(np.int16)
-                        # else w ≈ 0 → keep dry
+                    # Length alignment — sub-frame residue on first few
+                    # calls means process_mix can return fewer samples than
+                    # input. Pad with the original dry tail so downstream
+                    # gets a full chunk.
+                    if mixed.size > 0:
+                        if mixed.size < arr_48k_i16.size:
+                            arr_48k_i16 = np.concatenate(
+                                [mixed, arr_48k_i16[mixed.size:]])
+                        elif mixed.size > arr_48k_i16.size:
+                            arr_48k_i16 = mixed[: arr_48k_i16.size]
+                        else:
+                            arr_48k_i16 = mixed
+                    # else residue-only → keep dry
                 except Exception as e:
                     print(f"  [Transcribe] Denoise error ({source_id}, engine={_den_engine}): {e}")
         elif stream.denoise_stream and stream.denoise_stream is not False:
