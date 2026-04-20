@@ -123,6 +123,11 @@ class _RNNoiseStream:
         """
         return _mix_with_dry_delay(self, samples_i16, mix)
 
+    def set_atten_lim_db(self, atten_lim_db):
+        """No-op — RNNoise has no attenuation-cap parameter. Kept so the
+        caller can uniformly set it across engines without type-checking."""
+        pass
+
 
 def _mix_with_dry_delay(stream, samples_i16, mix):
     """Shared wet/dry blender used by every DenoiseStream subclass.
@@ -363,18 +368,30 @@ class _DFN3Stream:
                 path, sess_options=opts, providers=['CPUExecutionProvider'])
             print(f"  [DFN3] ONNX session ready (intra=2)")
 
-    def __init__(self):
+    def __init__(self, atten_lim_db=18.0):
         self._ensure_session()
         self._state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
-        # atten_lim_db is a 0-d tensor — ORT requires an ndarray, not a
-        # bare numpy scalar. 0 = no attenuation cap.
-        self._atten_lim = np.array(0.0, dtype=np.float32)
+        # atten_lim_db caps how hard the model can attenuate a frame. 0 =
+        # unlimited (pumping on marginal signals); typical real-world use
+        # is 15–25 dB. 18 dB is a decent default for radio audio — the
+        # floor stops breathing but noise is still well-reduced.
+        # ORT expects a 0-d ndarray, not a bare numpy scalar.
+        self._atten_lim = np.array(float(atten_lim_db), dtype=np.float32)
         self._buf = np.empty(0, dtype=np.int16)
         # FIFO for the dry path used by process_mix() — keeps wet/dry in
         # phase so the blend doesn't comb-filter. Primed with silence on
         # first call (see _mix_with_dry_delay).
         self._dry_delay_buf = np.empty(0, dtype=np.int16)
         self.last_lsnr = 0.0
+
+    def set_atten_lim_db(self, atten_lim_db):
+        """Update the attenuation cap for subsequent frames.
+
+        0 = unlimited (model decides); positive = hard cap at that many dB
+        of attenuation. Changes take effect on the next process() call with
+        no state reset needed.
+        """
+        self._atten_lim = np.array(float(atten_lim_db), dtype=np.float32)
 
     def close(self):
         # Nothing to release per-instance — the shared session stays alive.
@@ -572,6 +589,11 @@ class AudioProcessor:
                                       # on radio audio, so default to 50%.
                                       # Per-bus override via routing cmd
                                       # 'dfn_mix' (see web_server.py).
+        self.dfn_atten_db = 18.0      # DFN-only: caps max attenuation per
+                                      # frame to prevent the neural gate
+                                      # pumping. 0 = model decides (can
+                                      # pump). Applied only when engine is
+                                      # DeepFilterNet; RNNoise ignores it.
 
         # Filter state (persists across audio chunks for continuity)
         self.highpass_state = None
@@ -749,6 +771,10 @@ class AudioProcessor:
             samples = np.frombuffer(pcm_data, dtype=np.int16)
             if samples.size == 0:
                 return pcm_data
+
+            # Keep the DFN attenuation cap in sync — cheap even on every
+            # tick (just updates a 0-d ndarray). RNNoise stream ignores it.
+            self.dfn_stream.set_atten_lim_db(float(getattr(self, 'dfn_atten_db', 18.0)))
 
             wet = float(getattr(self, 'dfn_mix', 0.5))
             wet = max(0.0, min(1.0, wet))

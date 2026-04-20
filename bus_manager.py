@@ -539,6 +539,11 @@ class BusManager:
                 proc.enable_notch = proc_cfg.get('notch', False)
                 proc.enable_dfn = proc_cfg.get('dfn', False)
                 proc.dfn_mix = max(0.0, min(1.0, float(proc_cfg.get('dfn_mix', 0.5))))
+                # DFN attenuation cap (dB). 0 = unlimited; typical 15-25.
+                # Missing key → 18 dB (prevents neural-gate pumping on radio
+                # audio). Clamp to a sane range.
+                proc.dfn_atten_db = max(0.0, min(60.0,
+                    float(proc_cfg.get('dfn_atten_db', 18.0))))
                 # Back-compat: missing 'dfn_engine' → 'rnnoise' (existing
                 # deployments' behaviour). Use set_dfn_engine so an invalid
                 # saved value is rejected without killing the bus.

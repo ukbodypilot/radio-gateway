@@ -220,6 +220,22 @@
     text-align: right;
     flex-shrink: 0;
   }
+  /* DFN-only attenuation cap input. Hidden when engine=RNNoise. */
+  .dfn-atten-wrap {
+    display: inline-flex; align-items: center; gap: 3px;
+    flex-shrink: 0; margin-left: 4px;
+  }
+  .dfn-atten-input {
+    width: 36px; height: 16px; padding: 0 3px;
+    font: inherit; font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    background: var(--t-panel-hi); color: var(--t-text);
+    border: 1px solid var(--t-border-hi); border-radius: var(--r-sm);
+    text-align: right;
+  }
+  .dfn-atten-input::-webkit-inner-spin-button,
+  .dfn-atten-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+
   /* Engine pill: tiny toggle badge next to the mix slider. RNN→DFN swap. */
   .dfn-engine-pill {
     font: inherit; font-size: 10px; font-weight: 600;
@@ -741,6 +757,8 @@ function rebuildEditor() {
           var eng = (proc.dfn_engine === 'deepfilternet') ? 'deepfilternet' : 'rnnoise';
           var engLabel = (eng === 'deepfilternet') ? 'DFN' : 'RNN';
           var cls = 'dfn-mix-row' + (proc.dfn ? '' : ' dim-op');
+          var atten = (proc.dfn_atten_db !== undefined) ? proc.dfn_atten_db : 18;
+          var attenHidden = (eng === 'deepfilternet') ? '' : ' style="display:none"';
           return '<div class="' + cls + '" id="dfn-mix-row-' + b.id + '">'
             + '<button class="dfn-engine-pill" id="dfn-engine-' + b.id + '" '
             +   'data-engine="' + eng + '" '
@@ -755,6 +773,15 @@ function rebuildEditor() {
             +   'oninput="setDfnMix(\'' + b.id + '\', this.value, true)" '
             +   'onchange="setDfnMix(\'' + b.id + '\', this.value, false)">'
             + '<span class="dfn-mix-val" id="dfn-mix-val-' + b.id + '">' + pct + '%</span>'
+            + '<span class="dfn-atten-wrap" id="dfn-atten-wrap-' + b.id + '"' + attenHidden + '>'
+            +   '<span class="dfn-mix-label" title="Attenuation cap (dB). 0=unlimited, 15–25 typical. Stops pumping.">cap</span>'
+            +   '<input type="number" class="dfn-atten-input" min="0" max="60" step="1" value="' + atten + '" '
+            +     'id="dfn-atten-' + b.id + '" '
+            +     'onmousedown="event.stopPropagation()" '
+            +     'onpointerdown="event.stopPropagation()" '
+            +     'onchange="setDfnAtten(\'' + b.id + '\', this.value)">'
+            +   '<span class="dfn-mix-label">dB</span>'
+            + '</span>'
             + '</div>';
         })()
       + '<div class="level-bar" id="level-bus_' + b.id + '"><div class="level-fill"></div></div>'
@@ -1146,11 +1173,35 @@ function toggleDfnEngine(busId) {
       if (d.ok) {
         pill.setAttribute('data-engine', d.engine);
         pill.textContent = (d.engine === 'deepfilternet') ? 'DFN' : 'RNN';
+        // Show/hide the DFN-only atten cap input so it only surfaces for
+        // the engine it applies to.
+        var attenWrap = document.getElementById('dfn-atten-wrap-' + busId);
+        if (attenWrap) attenWrap.style.display = (d.engine === 'deepfilternet') ? '' : 'none';
         setStatus(busId + ': engine → ' + (d.engine === 'deepfilternet' ? 'DeepFilterNet' : 'RNNoise'));
       } else {
         setStatus('engine swap failed: ' + (d.error || 'unknown'), true);
       }
     }).catch(function() { setStatus('engine swap network error', true); });
+}
+
+// DFN-only attenuation cap — bounds how aggressively the model attenuates
+// per frame. Prevents neural-gate pumping on marginal-SNR radio audio.
+function setDfnAtten(busId, value) {
+  var v = parseFloat(value);
+  if (isNaN(v)) return;
+  v = Math.max(0, Math.min(60, v));
+  fetch('/routing/cmd', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd: 'set_dfn_atten', bus: busId, atten_db: v})
+  }).then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        setStatus(busId + ': DFN cap ' + d.atten_db + ' dB');
+      } else {
+        setStatus('atten cap failed: ' + (d.error || 'unknown'), true);
+      }
+    });
 }
 
 // Speaker mode selector

@@ -1666,6 +1666,29 @@ class WebConfigServer:
                     return {'ok': True, 'mix': mix}
             return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
+        elif cmd == 'set_dfn_atten':
+            # DFN attenuation cap in dB. 0 = model decides (can pump);
+            # 15–25 is typical real-world range. Clamped to [0, 60].
+            bus_id = data.get('bus', '')
+            try:
+                atten = max(0.0, min(60.0, float(data.get('atten_db', 18.0))))
+            except (ValueError, TypeError):
+                return {'ok': False, 'error': 'invalid atten_db value'}
+            for b in busses:
+                if b['id'] == bus_id:
+                    proc = b.setdefault('processing', {})
+                    proc['dfn_atten_db'] = atten
+                    self._save_routing_config(busses, connections)
+                    bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
+                    if bm:
+                        if bus_id in bm._bus_config:
+                            bm._bus_config[bus_id]['dfn_atten_db'] = atten
+                        _bp = bm._bus_processors.get(bus_id)
+                        if _bp is not None:
+                            _bp.dfn_atten_db = atten
+                    return {'ok': True, 'atten_db': atten}
+            return {'ok': False, 'error': f'bus not found: {bus_id}'}
+
         elif cmd == 'set_dfn_engine':
             # Per-bus denoise engine selection — 'rnnoise' | 'deepfilternet'.
             # Persists to routing_config.json and applies live via
