@@ -1452,12 +1452,6 @@ def transcription_status() -> str:
         if _ps:
             lines.append("Per-bus mean proc time: " +
                          ', '.join(f"{k}={v:.1f}ms" for k, v in _ps.items()))
-        _de = _feed.get('denoise_engine_mean_ms') or {}
-        _dc = _feed.get('denoise_engine_calls') or {}
-        if _de:
-            lines.append("Denoise engines: " +
-                         ', '.join(f"{k}={v:.1f}ms over {_dc.get(k,0)} calls"
-                                   for k, v in _de.items()))
     if results:
         lines.append(f"\nRecent ({len(results)}):")
         for r in results[-10:]:
@@ -1484,14 +1478,15 @@ def transcription_config(
                'audio_boost' — percentage, e.g. 200
                'forward_mumble' — true/false
                'forward_telegram' — true/false
-               'denoise'     — true/false (neural denoise on ASR path)
-               'denoise_engine' — 'rnnoise' or 'deepfilternet'
-               'denoise_mix' — wet/dry mix 0.0–1.0 (default 0.5)
                'restart'     — restart transcriber with saved settings
                'clear'       — clear all results
+
+               NOTE: denoise is a per-bus setting now — use
+               bus_toggle_processing / bus_set_denoise_engine on the bus
+               that feeds the transcription sink.
         value: The value to set (ignored for restart/clear).
     """
-    if key in ('enabled', 'forward_mumble', 'forward_telegram', 'denoise'):
+    if key in ('enabled', 'forward_mumble', 'forward_telegram'):
         value = value.lower() in ('true', '1', 'yes')
     result = _post('/transcribe_config', {'key': key, 'value': value})
     if result.get('ok'):

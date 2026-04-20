@@ -156,7 +156,6 @@
   <span class="fh-group"><span class="fh-label">Blocks&gt;5ms</span> <span class="fh-val" id="fh-blocks">0</span></span>
   <span class="fh-group"><span class="fh-label">Proc</span> <span class="fh-val" id="fh-proc">—</span></span>
   <span class="fh-group"><span class="fh-label">Per-bus</span> <span class="fh-val" id="fh-perbus">—</span></span>
-  <span class="fh-group"><span class="fh-label">Denoise</span> <span class="fh-val" id="fh-denoise">—</span></span>
 </div>
 
 <details id="ctrl-panel-wrap">
@@ -191,24 +190,6 @@
       <input type="range" id="st-boost" min="100" max="1000" step="50" value="100" oninput="document.getElementById('st-boost-val').textContent=this.value+'%'" onchange="setConfig('audio_boost', this.value)">
       <span id="st-boost-val" class="ctrl-val">100%</span>
       <div class="ctrl-hint">Amplify before transcription</div>
-    </div>
-    <div class="ctrl-group">
-      <label class="st-label">Denoise</label>
-      <label class="tgl"><input type="checkbox" id="st-denoise" onchange="setConfig('denoise', this.checked)"> Neural denoise (<span id="st-denoise-engine-label">RNNoise</span>)</label>
-    </div>
-    <div class="ctrl-field">
-      <label>Engine</label>
-      <select id="st-denoise-engine" class="ctrl-sel" onchange="document.getElementById('st-denoise-engine-label').textContent=(this.value==='deepfilternet'?'DeepFilterNet':'RNNoise'); setConfig('denoise_engine', this.value)">
-        <option value="rnnoise">RNNoise — aggressive, &lt;1 ms/frame</option>
-        <option value="deepfilternet">DeepFilterNet 3 — speech-preserving, ~3 ms/frame</option>
-      </select>
-      <div class="ctrl-hint">RNNoise cuts more noise; DFN preserves voice naturalness.</div>
-    </div>
-    <div class="ctrl-field">
-      <label>Denoise Mix</label>
-      <input type="range" id="st-denoise-mix" min="0" max="1" step="0.05" value="0.5" oninput="document.getElementById('st-denoise-mix-val').textContent=Math.round(this.value*100)+'%'" onchange="setConfig('denoise_mix', this.value)">
-      <span id="st-denoise-mix-val" class="ctrl-val">50%</span>
-      <div class="ctrl-hint">0% = dry, 100% = fully denoised</div>
     </div>
     <div class="ctrl-group">
       <label class="st-label">Forward to</label>
@@ -327,16 +308,6 @@ function poll() {
       for (var sid in _ps) _parts.push(sid + '=' + _ps[sid].toFixed(1) + 'ms');
       var fhPb = document.getElementById('fh-perbus');
       fhPb.textContent = _parts.length ? _parts.join(' ') : '—';
-      var _de = fh.denoise_engine_mean_ms || {};
-      var _dc = fh.denoise_engine_calls || {};
-      var _dparts = [];
-      for (var eng in _de) {
-        var short = (eng === 'deepfilternet') ? 'DFN' : 'RNN';
-        _dparts.push(short + '=' + _de[eng].toFixed(1) + 'ms×' + (_dc[eng] || 0));
-      }
-      var fhDen = document.getElementById('fh-denoise');
-      fhDen.textContent = _dparts.length ? _dparts.join(' ') : '—';
-
       // Sync control values from server on first poll
       if (!_configSynced && s.model_loaded) {
         _configSynced = true;
@@ -356,16 +327,6 @@ function poll() {
         }
         if (s.forward_mumble !== undefined) document.getElementById('st-mumble').checked = s.forward_mumble;
         if (s.forward_telegram !== undefined) document.getElementById('st-telegram').checked = s.forward_telegram;
-        if (s.denoise !== undefined) document.getElementById('st-denoise').checked = s.denoise;
-        if (s.denoise_engine) {
-          document.getElementById('st-denoise-engine').value = s.denoise_engine;
-          document.getElementById('st-denoise-engine-label').textContent =
-            (s.denoise_engine === 'deepfilternet') ? 'DeepFilterNet' : 'RNNoise';
-        }
-        if (s.denoise_mix !== undefined) {
-          document.getElementById('st-denoise-mix').value = s.denoise_mix;
-          document.getElementById('st-denoise-mix-val').textContent = Math.round(s.denoise_mix * 100) + '%';
-        }
         if (s.audio_boost) {
           document.getElementById('st-boost').value = s.audio_boost;
           document.getElementById('st-boost-val').textContent = s.audio_boost + '%';

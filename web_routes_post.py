@@ -80,15 +80,11 @@ def handle_transcribe_config(handler, parent):
         elif key == 'audio_boost':
             tx._audio_boost = float(value) / 100.0
             tx._save(); result = {'ok': True}
-        elif key == 'denoise':
-            tx.set_denoise(bool(value))
-            result = {'ok': True}
-        elif key == 'denoise_mix':
-            tx.set_denoise_mix(float(value))
-            result = {'ok': True}
-        elif key == 'denoise_engine':
-            tx.set_denoise_engine(str(value))
-            result = {'ok': True, 'engine': tx._denoise_engine}
+        elif key in ('denoise', 'denoise_mix', 'denoise_engine'):
+            # Denoise moved to per-bus "D" filter. Keep the endpoint
+            # friendly with a short-lived no-op so old UI / saved settings
+            # don't error out, but steer users to the routing page.
+            result = {'ok': True, 'note': 'denoise is now a per-bus setting — use the routing page'}
         elif key == 'clear':
             with tx._results_lock:
                 tx._results.clear()

@@ -18,7 +18,7 @@ import numpy as np
 import threading
 import time
 
-from audio_util import pcm_db, make_denoise_stream, DENOISE_ENGINE_IDS
+from audio_util import pcm_db
 
 # Silence huggingface_hub's unauthenticated-download warning — it fires on
 # every cache hit and clutters the gateway log. We don't need HF auth for
@@ -241,26 +241,19 @@ class _StreamState:
     each other's audio or VAD timing.
     """
     __slots__ = (
-        'vad', 'denoise_stream', 'denoise_retry_after',
+        'vad',
         'frame_acc', 'audio_buf_16k', 'audio_buf_samples', 'buf_start_time',
         'vad_open', 'vad_close_time',
         'vad_last_prob', 'vad_prob_env', 'vad_prob_peak', 'vad_envelope',
         'upstream_counts', 'last_upstream_source',
-        # Per-stream feed queue + worker. One thread per bus so multiple
-        # buses' denoise can run in parallel instead of serialising through
-        # a single worker — halves total latency when 2+ buses wire to the
-        # transcription sink and both run DFN3.
+        # Per-stream feed queue + worker. One thread per bus so the VAD /
+        # resample / Moonshine-dispatch work for different buses can run
+        # in parallel rather than serialising through a single worker.
         'feed_queue', 'feed_lock', 'feed_evt', 'feed_thread',
     )
 
     def __init__(self):
         self.vad = _SileroVAD()
-        # None = never attempted; False = attempted and failed (don't retry);
-        # _RNNoiseStream / _DFN3Stream instance = active.
-        self.denoise_stream = None
-        # monotonic() time to wait past before re-attempting construction
-        # when the last attempt returned None (DFN download in progress, etc.)
-        self.denoise_retry_after = 0.0
         self.frame_acc = np.zeros(0, dtype=np.float32)
         self.audio_buf_16k = []
         self.audio_buf_samples = 0
@@ -287,7 +280,7 @@ class RadioTranscriber:
 
     Holds a dict of per-bus _StreamState instances so multiple buses wired to
     the transcription sink get independent VAD + attribution. Shared config
-    (model, VAD threshold, denoise enable, boost) applies across all streams.
+    (model, VAD threshold, audio boost) applies across all streams.
     """
 
     def __init__(self, config, gateway=None):
@@ -348,10 +341,6 @@ class RadioTranscriber:
             'proc_max_ms': 0.0,       # worst single-call duration
             'proc_last_ms': 0.0,      # most recent call duration
             'per_stream_ms': {},      # {source_id: cumulative ms in _process_feed}
-            # Denoise-specific sub-timing. Keyed by engine ('rnnoise' /
-            # 'deepfilternet') so engine-vs-engine comparisons are easy.
-            'denoise_engine_ms': {},  # {engine: cumulative ms in .process()}
-            'denoise_engine_calls': {},  # {engine: call count}
         }
 
         _raw_model = str(_saved.get('model', getattr(config, 'TRANSCRIBE_MODEL', 'base')))
@@ -360,22 +349,12 @@ class RadioTranscriber:
         self._forward_mumble = _saved.get('forward_mumble', bool(getattr(config, 'TRANSCRIBE_FORWARD_MUMBLE', True)))
         self._forward_telegram = _saved.get('forward_telegram', bool(getattr(config, 'TRANSCRIBE_FORWARD_TELEGRAM', False)))
         self._audio_boost = float(_saved.get('audio_boost', 100)) / 100.0
-        self._denoise_enabled = bool(_saved.get('denoise',
-                                               getattr(config, 'TRANSCRIBE_DENOISE', False)))
-        # Wet/dry mix — 1.0 = fully denoised, 0.0 = pass-through. RNNoise
-        # over-cuts on radio audio; 0.5 leaves voice audible while knocking
-        # the noise floor down ~6 dB.
-        _raw_mix = float(_saved.get('denoise_mix',
-                                    getattr(config, 'TRANSCRIBE_DENOISE_MIX', 0.5)))
-        self._denoise_mix = max(0.0, min(1.0, _raw_mix))
-        # Denoise engine selector — 'rnnoise' (default) or 'deepfilternet'.
-        # Back-compat: missing key → 'rnnoise' (matches pre-engine behaviour).
-        _raw_engine = str(_saved.get('denoise_engine',
-                                     getattr(config, 'TRANSCRIBE_DENOISE_ENGINE',
-                                             'rnnoise')))
-        self._denoise_engine = _raw_engine if _raw_engine in DENOISE_ENGINE_IDS else 'rnnoise'
-        # Guards denoise enable/mix/engine across HTTP/MCP and tick threads.
-        self._denoise_lock = threading.Lock()
+        # NOTE: denoise moved entirely to the per-bus "D" filter on the
+        # routing page. The transcription sink receives whatever audio the
+        # bus produces (denoised by the bus's AudioProcessor if D is on),
+        # so no separate ASR-path denoise is needed. Old keys (denoise,
+        # denoise_mix, denoise_engine) in .transcribe_settings.json are
+        # silently ignored by _load_saved_settings.
 
         self._max_samples_16k = int(_MAX_UTTERANCE_SECS * _SILERO_SR)
         self._soft_cap_samples_16k = int(_SOFT_CAP_SECS * _SILERO_SR)
@@ -403,57 +382,7 @@ class RadioTranscriber:
             'forward_mumble': self._forward_mumble,
             'forward_telegram': self._forward_telegram,
             'audio_boost': int(self._audio_boost * 100),
-            'denoise': self._denoise_enabled,
-            'denoise_mix': self._denoise_mix,
-            'denoise_engine': self._denoise_engine,
         })
-
-    def set_denoise(self, enabled):
-        """Toggle neural denoise on the ASR path. Tears down all per-bus
-        denoise streams when disabled so idle state doesn't linger."""
-        enabled = bool(enabled)
-        with self._denoise_lock:
-            if enabled == self._denoise_enabled:
-                return
-            self._denoise_enabled = enabled
-        if not enabled:
-            self._drop_all_denoise_streams()
-        self._save()
-
-    def set_denoise_engine(self, engine):
-        """Switch denoise engine ('rnnoise' | 'deepfilternet').
-
-        Drops every per-bus stream so the next feed() rebuilds with the new
-        engine. Preserves the enabled/mix state so the user doesn't have to
-        re-toggle after swapping.
-        """
-        engine = str(engine)
-        if engine not in DENOISE_ENGINE_IDS:
-            print(f"  [Transcribe] rejecting unknown denoise_engine '{engine}'")
-            return
-        with self._denoise_lock:
-            if engine == self._denoise_engine:
-                return
-            self._denoise_engine = engine
-        self._drop_all_denoise_streams()
-        self._save()
-
-    def _drop_all_denoise_streams(self):
-        with self._streams_lock:
-            streams = list(self._streams.values())
-        for s in streams:
-            if s.denoise_stream and s.denoise_stream is not False:
-                try:
-                    s.denoise_stream.close()
-                except Exception:
-                    pass
-            s.denoise_stream = None
-
-    def set_denoise_mix(self, mix):
-        """Set denoise wet/dry mix (0.0–1.0)."""
-        with self._denoise_lock:
-            self._denoise_mix = max(0.0, min(1.0, float(mix)))
-        self._save()
 
     def stop(self):
         self._running = False
@@ -469,15 +398,9 @@ class RadioTranscriber:
         for s in streams:
             if s.feed_thread is not None:
                 s.feed_thread.join(timeout=5)
-        # Release per-stream resources (RNNoise/DFN + Silero state).
+        # Release per-stream resources (Silero state).
         with self._streams_lock:
             self._streams.clear()
-        for s in streams:
-            if s.denoise_stream and s.denoise_stream is not False:
-                try:
-                    s.denoise_stream.close()
-                except Exception:
-                    pass
         # Drop the shared Silero ONNX session so a subsequent start() reloads
         # it cleanly (avoids lingering runtime state across restarts).
         _SileroVAD._sess = None
@@ -486,8 +409,8 @@ class RadioTranscriber:
     def feed(self, pcm_48k, source_id=None, upstream_source=None):
         """Enqueue 48kHz 16-bit PCM onto this bus's per-stream feed queue.
         Called from the bus tick; returns in microseconds so the tick meets
-        its 50 ms budget. Each bus has its own worker thread — two buses
-        with DFN enabled can denoise in parallel on separate cores.
+        its 50 ms budget. Each bus gets its own worker thread so VAD /
+        resample / Moonshine-dispatch work for different buses parallelises.
         """
         if not self._enabled or not self._vad_ready:
             return
@@ -559,8 +482,10 @@ class RadioTranscriber:
         """Run the full per-frame pipeline for one audio chunk from one bus.
 
         Called from _stream_worker, never from the bus tick. Does the heavy
-        work: dBFS metering, neural denoise, anti-aliased resample, Silero
-        VAD, utterance buffering.
+        work: dBFS metering, anti-aliased resample, Silero VAD, utterance
+        buffering. Denoise is NOT done here — it's a per-bus filter on the
+        routing page and has already been applied by the time audio reaches
+        this sink.
         """
         if stream is None:
             stream = self._get_or_create_stream(source_id)
@@ -575,60 +500,10 @@ class RadioTranscriber:
         else:
             stream.vad_envelope += (db - stream.vad_envelope) * 0.05
 
-        # Optional neural denoise at 48 kHz (both engines are 48 kHz native)
-        # before resampling. Per-bus stream initialised lazily on first enable
-        # via make_denoise_stream(engine). If construction returns None (DFN
-        # downloading / pyrnnoise missing), back off for 2 s and retry — the
-        # audio path keeps running dry in the meantime so SDR audio never
-        # stalls waiting on a slow network.
+        # Audio already carries whatever denoise (or none) the feeding bus
+        # applied via its "D" filter — there's intentionally no second
+        # denoise stage here so users have exactly one knob per bus.
         arr_48k_i16 = np.frombuffer(pcm_48k, dtype=np.int16)
-        with self._denoise_lock:
-            _den_enabled = self._denoise_enabled
-            _den_mix = self._denoise_mix
-            _den_engine = self._denoise_engine
-        _now = time.monotonic()
-        if _den_enabled and stream.denoise_stream is None and _now >= stream.denoise_retry_after:
-            built = make_denoise_stream(_den_engine)
-            if built is None:
-                stream.denoise_retry_after = _now + 2.0
-            else:
-                stream.denoise_stream = built
-        if _den_enabled and stream.denoise_stream is not None:
-                try:
-                    _t_den = time.monotonic()
-                    # process_mix handles the wet/dry blend with engine-
-                    # specific dry-path delay compensation (DFN3 = 480
-                    # samples). Prevents the comb-filter chorus/smear that
-                    # a naive wet+dry add would create on delayed engines.
-                    mixed = stream.denoise_stream.process_mix(arr_48k_i16, _den_mix)
-                    _den_ms = (time.monotonic() - _t_den) * 1000
-                    with self._feed_stats_lock:
-                        _dms = self._feed_stats['denoise_engine_ms']
-                        _dcs = self._feed_stats['denoise_engine_calls']
-                        _dms[_den_engine] = _dms.get(_den_engine, 0.0) + _den_ms
-                        _dcs[_den_engine] = _dcs.get(_den_engine, 0) + 1
-                    # Length alignment — sub-frame residue on first few
-                    # calls means process_mix can return fewer samples than
-                    # input. Pad with the original dry tail so downstream
-                    # gets a full chunk.
-                    if mixed.size > 0:
-                        if mixed.size < arr_48k_i16.size:
-                            arr_48k_i16 = np.concatenate(
-                                [mixed, arr_48k_i16[mixed.size:]])
-                        elif mixed.size > arr_48k_i16.size:
-                            arr_48k_i16 = mixed[: arr_48k_i16.size]
-                        else:
-                            arr_48k_i16 = mixed
-                    # else residue-only → keep dry
-                except Exception as e:
-                    print(f"  [Transcribe] Denoise error ({source_id}, engine={_den_engine}): {e}")
-        elif stream.denoise_stream and stream.denoise_stream is not False:
-            # Denoise toggled off — release this stream's RNNoise state.
-            try:
-                stream.denoise_stream.close()
-            except Exception:
-                pass
-            stream.denoise_stream = None
 
         # Convert to float32 [-1, 1] and resample once.
         arr_48k = arr_48k_i16.astype(np.float32) / 32768.0
@@ -818,10 +693,6 @@ class RadioTranscriber:
             'forward_mumble': self._forward_mumble,
             'forward_telegram': self._forward_telegram,
             'audio_boost': int(self._audio_boost * 100),
-            'denoise': self._denoise_enabled,
-            'denoise_mix': round(self._denoise_mix, 2),
-            'denoise_engine': self._denoise_engine,
-            'denoise_engines': list(DENOISE_ENGINE_IDS),
             'pending': len(self._pending),
             'total_transcriptions': len(self._results),
             'streams': streams_payload,
@@ -853,8 +724,6 @@ class RadioTranscriber:
         with self._feed_stats_lock:
             _s = dict(self._feed_stats)
             _s['per_stream_ms'] = dict(_s.get('per_stream_ms') or {})
-            _s['denoise_engine_ms'] = dict(_s.get('denoise_engine_ms') or {})
-            _s['denoise_engine_calls'] = dict(_s.get('denoise_engine_calls') or {})
         _processed = _s['processed']
         return {
             'queue_depth': _qd_total,
@@ -873,11 +742,6 @@ class RadioTranscriber:
                 sid: round(ms / max(_processed, 1), 2)
                 for sid, ms in _s['per_stream_ms'].items()
             },
-            'denoise_engine_mean_ms': {
-                eng: round(ms / max(_s['denoise_engine_calls'].get(eng, 1), 1), 2)
-                for eng, ms in _s['denoise_engine_ms'].items()
-            },
-            'denoise_engine_calls': dict(_s['denoise_engine_calls']),
             'worker_count': sum(1 for _, st in items if st.feed_thread is not None),
         }
 
