@@ -1216,7 +1216,11 @@ devices:
                 pass
             subprocess.run(['sudo', 'killall', '-9', 'sdrplay_apiService'],
                            capture_output=True, timeout=3)
-            time.sleep(1)
+            # 2s (not 1s): libusb needs a beat to release the RSPduo's
+            # interface handles before the next sdrplay_apiService start
+            # re-claims them. Shorter gaps triggered the "device still
+            # referenced" warning + SEGV cascade on 2026-04-19.
+            time.sleep(2)
             subprocess.run(['sudo', 'systemctl', 'start', 'sdrplay.service'],
                            capture_output=True, timeout=10)
             time.sleep(5)
@@ -1498,7 +1502,9 @@ devices:
                 pass
             subprocess.run(['sudo', 'killall', '-9', 'sdrplay_apiService'],
                            capture_output=True, timeout=3)
-            time.sleep(1)
+            # See _restart_rtl_airband(): 2s grace for libusb to release
+            # USB handles avoids the SEGV cascade during rapid mode switches.
+            time.sleep(2)
             subprocess.run(['sudo', 'systemctl', 'start', 'sdrplay.service'],
                            capture_output=True, timeout=10)
             time.sleep(5)
