@@ -6,6 +6,17 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 **Packet:** Winlink email via Direwolf TNC + Pat client. APRS decode with station mapping. BBS terminal. Gateway proximity map from Winlink CMS directory.
 **Audio:** Sub-millisecond jitter bus mixer with per-stream trace diagnostics. Fire-and-forget PTT. Direct ALSA capture bypassing PipeWire.
 
+## v3.3 Highlights
+
+- **Two neural denoise engines, per-bus selectable** — RNNoise (tiny, aggressive) for broadband cleanup, or [DeepFilterNet 3](https://github.com/Rikorose/DeepFilterNet) (16 MB ONNX) for speech-preserving denoise with narrowband noise removal. The "D" button on a bus opens the engine pill (RNN ↔ DFN), mix slider, and (DFN only) an attenuation cap in dB to prevent neural-gate pumping. DFN3 model is vendored in the repo — no runtime download.
+- **Phase-aligned wet/dry mix** — engine-specific dry-path delay compensation (RNN 960 samples, DFN3 1440 samples) eliminates the chorus/reverb smear that naive wet+dry addition produced at any mix < 1.0. Delays measured empirically with impulse probes.
+- **Per-stream transcription feed workers** — each bus wired to the transcription sink gets its own worker thread. Combined with collapsing the duplicate ASR-path denoise, feed-worker mean processing time dropped ~13× (25.6 ms → 1.9 ms). Queue saturation and drops eliminated.
+- **DFN session warmup at startup** — 80 dummy frames through ORT synchronously during bus manager init so graph optimisation / thread pool / CPU cache is hot before the first real audio tick. Killed the 1+ minute cold-start stutter window.
+- **Moonshine repetition-suppressed decoder** — no-repeat-3-gram logit masking + low-diversity early exit replaces upstream's pure greedy argmax. Stops the runaway "Anno, Anno, Anno…" loops Moonshine produces on ambiguous audio.
+- **Multi-radio TX on one solo bus** — one source (e.g. Announcements) can now simulcast to multiple radio TX sinks. PTT + audio fan out to every wired radio simultaneously.
+- **Dominant-source attribution** — when multiple sources share a bus, each transcript is tagged with the actual upstream tuner's frequency rather than the bus id. Tracks per-frame RMS at mix time and picks the winner across the VAD window.
+- **Peak-normalised file playback + tanh soft-clip on gain** — quiet announcement files get brought up to −1 dBFS on decode; gain sliders above 100% saturate smoothly instead of square-wave clipping. Covers all five routing-path gain stages.
+
 ## v3.2 Highlights
 
 - **Moonshine ASR + Silero VAD** -- Replaced Whisper with [Moonshine](https://github.com/usefulsensors/moonshine) (ONNX, CPU-efficient, English). Replaced the dBFS envelope-follower VAD with [Silero v5](https://github.com/snakers4/silero-vad) ML speech classifier. False opens on squelch tails, carrier noise, DTMF, and pilot tones are now filtered at the VAD stage rather than sent to the ASR model.

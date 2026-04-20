@@ -4,33 +4,47 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [3.3.0] -- 2026-04-19
+
 ### Added
-- **DeepFilterNet 3 denoise engine** — second neural denoiser option alongside RNNoise, selectable per bus and on the ASR path.
-  - New `_DFN3Stream` in `audio_util.py`: streaming ONNX (16 MB, DFN3 stateful export), runs via existing onnxruntime, no new Python deps. ~40 dB cut on white noise, RTF ≈ 0.4 on Haswell i5 smoke test.
-  - Model lazy-downloaded on first enable into `~/.cache/radio-gateway/dfn3/`, SHA-256-pinned.
-  - Engine abstraction: `make_denoise_stream(engine)` factory, `DENOISE_ENGINE_IDS` tuple. `_RNNoiseStream` conforms to the same duck-type.
-  - Routing page: small `RNN` / `DFN` pill next to the per-bus mix slider, click to swap engine (live — next audio frame rebuilds the stream).
-  - Transcribe page: Engine `<select>` below the denoise checkbox; checkbox label updates to match.
-  - New HTTP cmd `set_dfn_engine`, MCP tool `bus_set_denoise_engine`, `transcription_config denoise_engine` key.
-  - Per-engine timing telemetry: `denoise_engine_mean_ms` + `denoise_engine_calls` in `feed` block of `transcription_status`. Shown on transcribe page feed-health row as `RNN=…ms×N  DFN=…ms×N`.
-  - Back-compat: existing `routing_config.json` / `.transcribe_settings.json` without `dfn_engine` key default to `rnnoise` → zero behaviour change for current users.
-- **Design pass** — phosphor/instrument-panel aesthetic applied across all pages via `common.css`:
-  - Radial vignette + 3% fractal-noise grain overlay on body
-  - Elevated level-meter strip in shell bar: 44px tall, inset recessed channels, 70%/95% zone ticks, per-channel coloured glow
-  - Identity plate redesigned: beacon LED (green pulse / warn / dead), callsign from `PACKET_CALLSIGN`, display-font stack for clock + call
-  - `--font-display` CSS variable with fallback chain; phosphor text-shadow on hero numerics
-  - `.hero` block: gradient + top-edge accent line + drop shadow; one hero per page enforced
-  - Dashboard 2-column layout at ≥1400px
-  - `.empty-live` scanning sweep + breathing glyph; transcribe + recordings updated
-  - `.rb-caps` button modifier added to `common.css`; shell-pcm buttons migrated
-  - Animated `.flowing` dashed stroke on routing connections when source level > 3
-  - Routing node title stripes widened (3px → 6px) with hue-tinted gradient; sockets colour-coded by node role
-  - `.dim`, `.mute`, `.dim-op` utility classes hoisted to `common.css`
+- **DeepFilterNet 3 denoise engine** — second neural denoiser alongside RNNoise, selectable per bus.
+  - `_DFN3Stream` in `audio_util.py`: stateful streaming ONNX (16 MB) via existing onnxruntime. No new Python deps, no numpy conflict. ~40 dB cut on white noise. Model vendored in-repo at `tools/models/dfn3/denoiser_model.onnx` — no runtime download.
+  - Engine abstraction: `DenoiseStream` duck-type, `make_denoise_stream(engine)` factory, shared `_mix_with_dry_delay()` helper. `_RNNoiseStream` conforms to the same interface.
+  - Per-bus engine selector: routing-page pill (`RNN` / `DFN`) next to the mix slider, click to swap live. Hidden when denoise is off. Per-bus `dfn_atten_db` input (default 18 dB) to cap neural-gate pumping.
+  - **Phase-aligned wet/dry mix** with engine-specific dry-path delay (RNN 960 samples / DFN3 1440 samples). Killed the chorus/reverb smear the naive add produced at any mix < 1.0.
+  - HTTP: `set_dfn_engine`, `set_dfn_atten`, `set_dfn_mix` handlers. MCP: `bus_set_denoise_engine`, `bus_set_denoise_atten` tools.
+  - ONNX session warmup (80 frames, ~350 ms) runs synchronously at startup — eliminates the cold-start bus-tick spikes that caused "first-few-minutes-of-stutters".
+  - ORT `intra_op_num_threads = 2` (optimum per benchmark; 3+ regresses on DFN's sequential GRU graph).
+- **Per-stream transcription feed workers** — each bus wired to the transcription sink gets its own worker thread (`TranscribeFeed-<bus_id>`). Two buses' audio no longer serialises through one worker. Combined with the D7 refactor, transcription feed-worker load dropped from 25.6 ms mean / 1185 ms max → **1.9 ms / 9 ms**.
+- **Moonshine repetition-suppressed decoder** — custom greedy decoder wraps `MoonshineOnnxModel.generate()` with no-repeat-3-gram logit masking + low-diversity early exit. Eliminates the "Anno, Anno, Anno, Anno, …" loops that upstream's pure argmax produced on ambiguous audio.
+- **Multi-radio TX on a single solo bus** — `SoloBus.add_extra_tx_radio()` + fan-out in `_fire_ptt` and Phase 3 audio push. Announce → grunge → ftm_tx + aioc_tx now keys both radios simultaneously. Caveat: slight lead/lag possible if the two radios have very different TX settle times.
+- **Dominant-source attribution for transcripts** — when multiple sources feed one bus (e.g. SDR1 + SDR2 on the same listen bus), each utterance is now tagged with the actual upstream tuner's frequency rather than the bus id. Tracks per-frame RMS at mix time, picks the mode across the VAD window.
+- **Shared `apply_gain()` with tanh soft-clip** — hoisted to `audio_util.py`. All five routing-path gain sites (listen ducker/duckee, solo TX mix, solo RX boost, per-sink gain) now route through it. Gain > 100% saturates smoothly instead of flat-topping into square-wave harmonics.
+- **File playback peak-normalisation on decode** — `FilePlaybackSource` now brings quiet files up to −1 dBFS before the gain slider path. Solves "announcements too quiet" complaint without boosting noise.
+- **Telemetry** — `transcription_status` exposes per-stream VAD state, per-queue depth, `proc_mean_ms / max_ms`, `worker_count`. Feed-health readout on the transcribe page surfaces it live.
+- **Design pass** — phosphor/instrument-panel aesthetic across all pages:
+  - Radial vignette + 3% fractal-noise grain overlay
+  - 44 px tall level-meter strip in shell bar with inset channels + 70/95% zone ticks + per-channel glow
+  - Identity plate: beacon LED (green/warn/dead), callsign, display-font clock
+  - Dashboard 2-column layout ≥1400px
+  - `.empty-live` scanning sweep + breathing glyph
+  - Routing: widened bus nodes (230 → 290 px) + tightened padding; colour-coded sockets (green=source, cyan=bus, red=sink); `.flowing` animated signal flow on active connections
+  - SkyAware (ADS-B) iframe styled to match (grey nav + buttons instead of PiAware blue)
+  - Logs: Danger dropdown removed; Restart Gateway + Reboot Host buttons inline
+  - Transcribe: fixed-width Audio / Speech meters; status-line 110 px pin to stop jitter
 
 ### Fixed
-- **WCAG AA contrast** — `--t-text-mute` raised from `#4d5a68` (2.7:1) to `#6b7a8a` (4.5:1)
-- **Concurrency** — `_denoise_lock` in transcriber; non-blocking `_update_lock` in link_endpoint; GIL-safe deque doc comments
-- **Resource leaks** — ONNX session + RNNoise stream released in `transcriber.stop()`
+- **Chorus / volume pumping on denoise** — see "Phase-aligned wet/dry mix" above. Measured delays: RNN 960, DFN3 1440.
+- **NameError in bus_manager transcription dispatch** — referenced `bus` where only `bus_id` was in scope. Silently caught by try/except, so feed() was never called. Transcription appeared dead.
+- **Dual-tuner SDR2 not capturing when wired to a solo bus** — `sync_listen_bus` only counted listen-bus connections, so tuner2 got stopped as "not routed". Now splits into `tuner_needed` (any bus → keeps tuner alive) vs `should_be_on` (listen bus only → add to listen-bus mix).
+- **Removed Recording sink stub** — was a v1 leftover that never got a v2.0 implementation (`pass` in the dispatcher, level hardcoded to 0). Loop Recorder's per-bus R button is the actual mechanism. One-time migration strips dangling `bus → recording` connections on load.
+- **WCAG AA contrast** — `--t-text-mute` raised from `#4d5a68` (2.7:1) to `#6b7a8a` (4.5:1).
+- **Concurrency** — feed-stats lock, non-blocking `_update_lock` in link_endpoint, GIL-safe deque docs.
+- **Resource leaks** — ONNX session + per-stream denoise state released in `transcriber.stop()`.
+
+### Removed
+- **ASR-path denoise duplicate** — D7 refactor collapsed the two denoise paths into one. Transcription sink inherits whatever the bus already processed. One knob (per-bus D + engine + mix + cap). No more double-denoise footgun; ~200 lines of duplicate code gone.
+- **Recording sink node + handlers** — see "Removed Recording sink stub" above.
 
 ## [3.2.0] -- 2026-04-19
 
