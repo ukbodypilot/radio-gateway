@@ -104,29 +104,34 @@ def _resolve_freq_tag(gateway, source_id):
         if sdr and source_id == 'sdr2':
             f2 = getattr(sdr, 'frequency2', 0)
             return f'{f2:.3f}' if f2 else ''
-        # Bus-id fallback: only emit freqs for SDR tuners actually wired to
-        # this bus, not whatever the plugin has tuned. Avoids reporting two
-        # frequencies when only one tuner is routed.
-        if source_id in ('main', 'sdr', 'sdr_rspduo'):
+        # Bus-id fallback: treat any unknown id as potentially a bus, and
+        # emit freqs only for SDR tuners actually wired to it. Covers
+        # legacy aliases ('sdr', 'sdr_rspduo') AND user-named buses like
+        # 'tester' that contain an SDR source without a separate radio
+        # plugin (so dominant-source tracking resolved to a tx_source id
+        # but may have still fallen back to the bus id).
+        if sdr:
             wired = _bus_sdr_sources(gateway, source_id)
-            if not wired and sdr and source_id != 'main':
-                # Legacy 'sdr'/'sdr_rspduo' ids with no routing info — keep
-                # old behaviour as a last resort.
+            if wired:
+                freqs = []
+                if 'sdr1' in wired:
+                    f1 = getattr(sdr, 'frequency', 0)
+                    if f1:
+                        freqs.append(f'{f1:.3f}')
+                if 'sdr2' in wired:
+                    f2 = getattr(sdr, 'frequency2', 0)
+                    if f2:
+                        freqs.append(f'{f2:.3f}')
+                if freqs:
+                    return '/'.join(freqs)
+            # Legacy 'sdr'/'sdr_rspduo' aliases — return whatever the
+            # plugin has tuned as a last resort.
+            if source_id in ('sdr', 'sdr_rspduo'):
                 f1 = getattr(sdr, 'frequency', 0)
                 f2 = getattr(sdr, 'frequency2', 0)
                 if f1 and f2:
                     return f'{f1:.3f}/{f2:.3f}'
                 return f'{f1:.3f}' if f1 else ''
-            freqs = []
-            if 'sdr1' in wired:
-                f1 = getattr(sdr, 'frequency', 0)
-                if f1:
-                    freqs.append(f'{f1:.3f}')
-            if 'sdr2' in wired:
-                f2 = getattr(sdr, 'frequency2', 0)
-                if f2:
-                    freqs.append(f'{f2:.3f}')
-            return '/'.join(freqs)
         if source_id in ('th9800', 'aioc'):
             cat = getattr(gateway, 'cat_client', None)
             if cat:

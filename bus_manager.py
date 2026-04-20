@@ -495,7 +495,7 @@ class BusManager:
                     if c['type'] == 'source-bus' and c['to'] == bus_id:
                         source = self._get_source(c['from'])
                         if source and source is not _solo_radio:
-                            bus.add_tx_source(source)
+                            bus.add_tx_source(source, routing_id=c['from'])
                 # Add non-radio sinks (and radio TX sink for level display)
                 for c in connections:
                     if c['type'] == 'bus-sink' and c['from'] == bus_id:

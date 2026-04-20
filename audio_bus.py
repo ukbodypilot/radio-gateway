@@ -659,10 +659,15 @@ class SoloBus(AudioBus):
                 return
         self._extra_tx_radios.append((radio_plugin, routing_id))
 
-    def add_tx_source(self, source, bus_priority=0):
-        """Add a TX source (webmic, announcements, etc.) that feeds the radio."""
+    def add_tx_source(self, source, bus_priority=0, routing_id=None):
+        """Add a TX source (webmic, announcements, etc.) that feeds the radio.
+
+        routing_id is the node id in the routing graph (e.g. 'sdr2') — used
+        for dominant-source attribution when the bus has no radio and a
+        tx_source is effectively the bus's audio producer.
+        """
         slot = SourceSlot(source, bus_priority, duckable=False,
-                          deterministic=source.ptt_control)
+                          deterministic=source.ptt_control, routing_id=routing_id)
         self._tx_sources.append(slot)
         self._tx_sources.sort(key=lambda s: s.bus_priority)
 
@@ -716,6 +721,11 @@ class SoloBus(AudioBus):
         active_sources = []
         ptt_needed = False
         tx_audio = None
+        # Track dominant tx_source by RMS — used for attribution when this
+        # solo bus has no radio (SDR2 → solo tester → recording sink case:
+        # tx_source IS effectively the bus's audio producer, not a mic).
+        _tx_dominant_id = None
+        _tx_dominant_db = -120.0
 
         # ── Phase 1: Collect TX source audio ──
         for slot in self._tx_sources:
@@ -728,6 +738,11 @@ class SoloBus(AudioBus):
             _boost = getattr(slot.source, 'audio_boost', 1.0)
             if _boost != 1.0:
                 audio = apply_gain(audio, _boost)
+            # Track loudest contributor for dominant-source attribution.
+            _db = pcm_db(audio)
+            if _db > _tx_dominant_db:
+                _tx_dominant_db = _db
+                _tx_dominant_id = slot.routing_id or getattr(slot.source, 'name', None)
             active_sources.append(slot.source.name)
             if ptt and slot.source.ptt_control:
                 ptt_needed = True
@@ -775,9 +790,15 @@ class SoloBus(AudioBus):
         # If no radio, route TX audio directly to sinks (e.g. Mumble TX as sink)
         # For tx_only buses, use tx_audio so sink level bars show activity
         _output_audio = rx_audio if (self._radio and not getattr(self, '_tx_only', False)) else tx_audio
-        # Dominant-source attribution: solo bus RX comes from exactly one radio.
+        # Dominant-source attribution. Solo bus RX comes from exactly one
+        # radio when present. When there's no radio (source → solo → sink
+        # pattern, e.g. SDR2 → tester → recording), fall back to the
+        # loudest tx_source from Phase 1 so downstream consumers (the
+        # transcription sink) can still tag audio with its true origin.
         if rx_audio is not None and self._radio:
             self.last_dominant_source = self._radio_routing_id or getattr(self._radio, 'name', None)
+        elif _tx_dominant_id is not None:
+            self.last_dominant_source = _tx_dominant_id
         else:
             self.last_dominant_source = None
         audio_dict = {sink: _output_audio for sink in self.sink_names}
