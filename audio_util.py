@@ -352,7 +352,7 @@ class _DFN3Stream:
             if cls._sess is not None:
                 return
             path = _dfn3_ensure_model()
-            import onnxruntime as ort
+            import time as _t, onnxruntime as ort
             opts = ort.SessionOptions()
             # intra=2 lets a single DFN call use two cores — cuts per-call
             # time ~30-40% on multi-core hardware. Trade-off is slightly
@@ -366,7 +366,28 @@ class _DFN3Stream:
             opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
             cls._sess = ort.InferenceSession(
                 path, sess_options=opts, providers=['CPUExecutionProvider'])
-            print(f"  [DFN3] ONNX session ready (intra=2)")
+            # ORT spends the first handful of inference calls doing graph
+            # finalisation / thread-pool binding / CPU-cache population —
+            # we've seen the first ~50 frames run 5-10× slower than steady
+            # state, which is exactly the bus-tick spike that caused the
+            # reported "first few minutes of SDR stutters". Warm up
+            # synchronously here so the first real audio frame flies.
+            _t0 = _t.monotonic()
+            _warmup_state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
+            _warmup_atten = np.array(18.0, dtype=np.float32)
+            # Mixed amplitude noise to exercise the DF path, not just the
+            # cheap "all silence" branch.
+            import numpy as _np
+            _rng = _np.random.default_rng(0)
+            for _i in range(80):
+                _frame = (_rng.standard_normal(_DFN3_FRAME_SIZE).astype(np.float32)
+                          * (0.1 if _i % 4 else 0.001))
+                _out, _warmup_state, _ = cls._sess.run(
+                    None,
+                    {'input_frame': _frame, 'states': _warmup_state,
+                     'atten_lim_db': _warmup_atten})
+            _dur = (_t.monotonic() - _t0) * 1000
+            print(f"  [DFN3] ONNX session ready (intra=2, warmup {_dur:.0f}ms / 80 frames)")
 
     def __init__(self, atten_lim_db=18.0):
         self._ensure_session()

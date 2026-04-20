@@ -549,6 +549,16 @@ class BusManager:
                 # saved value is rejected without killing the bus.
                 proc.set_dfn_engine(str(proc_cfg.get('dfn_engine', 'rnnoise')))
                 self._bus_processors[bus_id] = proc
+                # Eagerly construct the denoise stream so ORT session
+                # setup + warmup (80 frames inside _ensure_session) runs
+                # synchronously at startup instead of landing on the first
+                # live audio tick. Silently skipped if denoise is off or
+                # the engine isn't available.
+                if proc.enable_dfn:
+                    from audio_util import make_denoise_stream
+                    _ds = make_denoise_stream(proc.dfn_engine)
+                    if _ds is not None:
+                        proc.dfn_stream = _ds
                 _tags = [k.upper() if k != 'dfn' else f"DFN({proc.dfn_engine})"
                          for k in ('gate', 'hpf', 'lpf', 'notch', 'dfn')
                          if proc_cfg.get(k)]
