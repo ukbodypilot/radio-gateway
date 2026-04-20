@@ -797,11 +797,14 @@ function rebuildEditor() {
   for (var i = 0; i < _state.sinks.length; i++) {
     var s = _state.sinks[i];
     var muted = s.muted ? ' muted' : '';
+    var isNul = (s.id === 'nul');
     var html = '<div class="box">'
       + '<div class="node-controls">'
-      + '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">M</button>'
-      + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" ondblclick="this.value=100;setGain(\'' + s.id + '\',100)" title="Gain (double-click to reset)">'
-      + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>'
+      + (isNul
+          ? '<button class="mute-btn muted" disabled title="NUL Sink: always muted" id="mute-' + s.id + '">M</button>'
+          : '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">M</button>'
+            + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" ondblclick="this.value=100;setGain(\'' + s.id + '\',100)" title="Gain (double-click to reset)">'
+            + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>')
       + '</div>'
       + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>';
     // Speaker mode selector — injected into title-box via JS after node creation
@@ -952,8 +955,10 @@ editor.on('connectionCreated', function(info) {
   var toClass = toNode.class || '';
   var fromIsBus = fromClass.indexOf('bus') >= 0;
   var toIsBus = toClass.indexOf('bus') >= 0;
-  var fromIsSource = fromClass === 'source';
-  var toIsSink = toClass === 'sink';
+  // Use whole-word match so sinks/sources that also carry modifier classes
+  // (e.g. 'sink node-muted' for a permanently-muted NUL sink) still validate.
+  var fromIsSource = (' ' + fromClass + ' ').indexOf(' source ') >= 0;
+  var toIsSink = (' ' + toClass + ' ').indexOf(' sink ') >= 0;
   // Valid: source→bus or bus→sink
   var valid = (fromIsSource && toIsBus) || (fromIsBus && toIsSink);
   if (!valid) {

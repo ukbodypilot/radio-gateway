@@ -850,6 +850,8 @@ def handle_routing_levels(handler, parent):
         gw.transcription_audio_level = max(0, int(getattr(gw, 'transcription_audio_level', 0) * 0.8))
         gw.remote_audio_tx_level = max(0, int(getattr(gw, 'remote_audio_tx_level', 0) * 0.8))
         data['remote_audio_tx'] = getattr(gw, 'remote_audio_tx_level', 0) if 'remote_audio_tx' in _all_connected else 0
+        gw.nul_audio_level = max(0, int(getattr(gw, 'nul_audio_level', 0) * 0.8))
+        data['nul'] = getattr(gw, 'nul_audio_level', 0) if 'nul' in _all_connected else 0
         # Bus output levels
         _bm = getattr(gw, 'bus_manager', None)
         if _bm:

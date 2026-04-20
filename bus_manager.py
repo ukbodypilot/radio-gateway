@@ -705,6 +705,16 @@ class BusManager:
         for sink_id, audio in bus_output.audio.items():
             if audio is None:
                 continue
+            # NUL sink: drop audio, but still meter activity for the UI.
+            # Must run before the _muted_sinks check so the level updates
+            # even though NUL is presented as permanently muted.
+            if sink_id == 'nul':
+                _lvl = gw.calculate_audio_level(audio)
+                _prev = getattr(gw, 'nul_audio_level', 0)
+                gw.nul_audio_level = _lvl if _lvl > _prev else int(_prev * 0.7 + _lvl * 0.3)
+                if _st:
+                    _st.record(f'{bus_id}_deliver', 'nul', audio)
+                continue
             if sink_id in _muted_sinks:
                 continue
 
