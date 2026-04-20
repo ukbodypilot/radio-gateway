@@ -661,6 +661,19 @@ class FilePlaybackSource(AudioSource):
                         indices = (np.arange(new_length) / ratio).astype(int)
                         audio_data = audio_data[indices]
 
+                # Peak-normalise quiet files so the gain slider isn't the only
+                # way to get reasonable loudness. Targets −1 dBFS; leaves files
+                # already at or above −1 dBFS untouched (one-way ratchet, never
+                # attenuates). Caller's volume slider still applies afterwards,
+                # but on already-normalised audio so ≤100% stays clean.
+                _peak = int(np.max(np.abs(audio_data))) if len(audio_data) else 0
+                if 0 < _peak < 29204:  # 29204 ≈ −1 dBFS on int16
+                    _ratio = 29204.0 / _peak
+                    _f32 = audio_data.astype(np.float32) * _ratio
+                    audio_data = np.clip(_f32, -32768, 32767).astype(np.int16)
+                    if self.gateway.config.VERBOSE_LOGGING:
+                        print(f"  Normalised peak {_peak} → 29204 (+{20*np.log10(_ratio):.1f} dB)")
+
                 duration_sec = len(audio_data) / self.config.AUDIO_RATE
                 if self.gateway.config.VERBOSE_LOGGING:
                     print(f"  ✓ Decoded {duration_sec:.1f}s of audio")
@@ -863,10 +876,18 @@ class FilePlaybackSource(AudioSource):
         if len(chunk) < chunk_bytes:
             chunk += b'\x00' * (chunk_bytes - len(chunk))
         
-        # Apply volume
+        # Apply volume. Soft-clip via tanh for volume > 1 so pushing the
+        # slider past 100% rolls off cleanly instead of flat-topping into
+        # square-wave harmonics. At volume ≤ 1 this is a pure gain (tanh is
+        # near-linear in the small-signal region).
         if self.volume != 1.0:
             arr = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-            chunk = np.clip(arr * self.volume, -32768, 32767).astype(np.int16).tobytes()
+            if self.volume > 1.0:
+                # Normalise → scale → tanh → back to int16.
+                boosted = np.tanh(arr / 32768.0 * self.volume) * 32768.0
+                chunk = boosted.astype(np.int16).tobytes()
+            else:
+                chunk = (arr * self.volume).astype(np.int16).tobytes()
 
         # Level metering for routing display
         try:

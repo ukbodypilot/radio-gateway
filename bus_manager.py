@@ -17,7 +17,7 @@ import time
 import numpy as np
 
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus, mix_audio_streams
-from audio_util import AudioProcessor, pcm_level
+from audio_util import AudioProcessor, pcm_level, apply_gain
 
 
 class BusManager:
@@ -649,12 +649,12 @@ class BusManager:
             if sink_id in _muted_sinks:
                 continue
 
-            # Apply per-sink gain (passive sinks like mumble, broadcastify, speaker)
+            # Apply per-sink gain (passive sinks like mumble, broadcastify, speaker).
+            # Tanh soft-clip for gain > 1 so pushing sliders past 100% rolls
+            # off cleanly instead of flat-topping into square-wave harmonics.
             _sg = _sink_gains.get(sink_id)
             if _sg is not None and _sg != 1.0:
-                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
-                _arr = np.clip(_arr * _sg, -32768, 32767).astype(np.int16)
-                audio = _arr.tobytes()
+                audio = apply_gain(audio, _sg)
 
             # Compute level once for level-tracking sinks
             if _audio_level is None:

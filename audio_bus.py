@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from audio_util import pcm_db
+from audio_util import pcm_db, apply_gain
 
 
 # ---------------------------------------------------------------------------
@@ -384,8 +384,7 @@ class ListenBus(AudioBus):
             # Apply per-source gain (routing page slider)
             _boost = getattr(slot.source, 'audio_boost', 1.0)
             if _boost != 1.0 and audio:
-                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
-                audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
+                audio = apply_gain(audio, _boost)
             active_sources.append(slot.source.name)
             if ptt and slot.source.ptt_control:
                 ptt_required = True
@@ -428,8 +427,7 @@ class ListenBus(AudioBus):
             # Apply per-source gain (routing page slider)
             _boost = getattr(slot.source, 'audio_boost', 1.0)
             if _boost != 1.0 and audio:
-                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
-                audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
+                audio = apply_gain(audio, _boost)
             if should_duck:
                 duckee_audio[slot] = None  # ducked — discard
                 if audio is not None:
@@ -729,8 +727,7 @@ class SoloBus(AudioBus):
             # Apply per-source gain
             _boost = getattr(slot.source, 'audio_boost', 1.0)
             if _boost != 1.0:
-                _arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
-                audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
+                audio = apply_gain(audio, _boost)
             active_sources.append(slot.source.name)
             if ptt and slot.source.ptt_control:
                 ptt_needed = True
@@ -771,8 +768,7 @@ class SoloBus(AudioBus):
                 # Apply per-source gain
                 _boost = getattr(self._radio, 'audio_boost', 1.0)
                 if _boost != 1.0:
-                    _arr = np.frombuffer(rx_audio, dtype=np.int16).astype(np.float32)
-                    rx_audio = np.clip(_arr * _boost, -32768, 32767).astype(np.int16).tobytes()
+                    rx_audio = apply_gain(rx_audio, _boost)
                 active_sources.append(self._radio.name)
 
         # ── Phase 5: Build output ──

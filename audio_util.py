@@ -144,6 +144,31 @@ def pcm_db(pcm_bytes):
     return 20.0 * _math.log10(rms / 32767.0)
 
 
+def apply_gain(audio, gain):
+    """Apply gain with tanh soft-clipping when gain > 1.
+
+    Below unity: pure linear multiply (no distortion, full dynamics).
+    Above unity: input normalised to [-1, 1], scaled by gain, passed through
+    tanh, then scaled back. Soft-saturating — peaks approach ±1 asymptotically
+    instead of flat-topping. Small-signal region stays near-linear so quiet
+    passages are still boosted; only the loudest samples round off.
+
+    Accepts `bytes` (int16 little-endian PCM) or a numpy int16 array; returns
+    the same type. No-op when gain == 1.0 (caller shouldn't need to check).
+    """
+    if gain == 1.0:
+        return audio
+    _from_bytes = isinstance(audio, (bytes, bytearray, memoryview))
+    arr_f32 = (np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+               if _from_bytes else audio.astype(np.float32))
+    if gain > 1.0:
+        out = np.tanh(arr_f32 / 32768.0 * gain) * 32768.0
+    else:
+        out = arr_f32 * gain
+    out_i16 = np.clip(out, -32768, 32767).astype(np.int16)
+    return out_i16.tobytes() if _from_bytes else out_i16
+
+
 # ── AudioProcessor ──────────────────────────────────────────────────────────
 
 class AudioProcessor:
