@@ -860,9 +860,93 @@ class RadioTranscriber:
                     print(f"  [Transcribe] Error: {e}")
 
     def _transcribe(self, audio_16k):
-        """Transcribe a numpy float32 audio array (16kHz, [-1, 1]) → text string."""
+        """Transcribe a numpy float32 audio array (16kHz, [-1, 1]) → text string.
+
+        Uses a custom greedy decoder with repetition suppression (no-repeat
+        3-gram logit masking + loop-detection early exit) to kill the
+        runaway repetition hallucinations Moonshine produces on ambiguous
+        audio. Upstream's model.generate() is pure argmax with no repeat
+        penalty, so marginal-confidence audio regularly triggers loops
+        like "Anno, Anno, Anno, Anno, …".
+        """
         if self._model is None or self._tokenizer is None:
             return None
-        tokens = self._model.generate(audio_16k.astype(np.float32)[None, :])
-        decoded = self._tokenizer.decode_batch(tokens)
+        tokens = self._moonshine_generate_no_repeat(
+            audio_16k.astype(np.float32)[None, :])
+        decoded = self._tokenizer.decode_batch([tokens])
         return decoded[0] if decoded else ''
+
+    def _moonshine_generate_no_repeat(self, audio, max_len=192,
+                                      no_repeat_ngram_size=3):
+        """Greedy decode with logit masking that forbids completing any
+        recent n-gram, plus low-diversity / repeating-bigram early-exit.
+
+        Mirrors MoonshineOnnxModel.generate() — same encoder pass, same
+        KV-cache plumbing, same EOS check — but adds repetition guards
+        between the decoder.run() and the argmax. Keeps ~0 extra CPU
+        (two small set ops per token).
+        """
+        m = self._model
+        encoder_inputs = dict(input_values=audio)
+        audio_attention_mask = np.ones_like(audio, dtype=np.int64)
+        if 'attention_mask' in m.encoder_input_names:
+            encoder_inputs = dict(attention_mask=audio_attention_mask, **encoder_inputs)
+        last_hidden_state = m.encoder.run(None, encoder_inputs)[0]
+
+        past_key_values = {
+            f'past_key_values.{i}.{a}.{b}': np.zeros(
+                (0, m.num_key_value_heads, 1, m.head_dim), dtype=np.float32)
+            for i in range(m.num_layers)
+            for a in ('decoder', 'encoder')
+            for b in ('key', 'value')
+        }
+        tokens = [m.decoder_start_token_id]
+        input_ids = [tokens]
+        for i in range(max_len):
+            use_cache_branch = i > 0
+            decoder_inputs = dict(
+                input_ids=input_ids,
+                encoder_hidden_states=last_hidden_state,
+                use_cache_branch=[use_cache_branch],
+                **past_key_values,
+            )
+            if 'encoder_attention_mask' in m.decoder_input_names:
+                decoder_inputs = dict(
+                    encoder_attention_mask=audio_attention_mask, **decoder_inputs)
+
+            logits, *present_key_values = m.decoder.run(None, decoder_inputs)
+            step_logits = logits[0, -1]
+
+            # 1) No-repeat n-gram masking. Forbid any token that would
+            #    complete an n-gram already present earlier in the output.
+            if no_repeat_ngram_size > 1 and len(tokens) >= no_repeat_ngram_size - 1:
+                prefix = tuple(tokens[-(no_repeat_ngram_size - 1):])
+                for j in range(len(tokens) - no_repeat_ngram_size + 1):
+                    if tuple(tokens[j:j + no_repeat_ngram_size - 1]) == prefix:
+                        banned = int(tokens[j + no_repeat_ngram_size - 1])
+                        step_logits[banned] = -np.inf
+
+            next_token = int(step_logits.argmax())
+            tokens.append(next_token)
+
+            if next_token == m.eos_token_id:
+                break
+
+            # 2) Loop-detection early exit. If we're stuck repeating a
+            #    bigram, abort rather than burning max_len tokens on it.
+            if len(tokens) >= 10:
+                tail = tokens[-10:]
+                # Same token >=6/10 times, or same bigram >=3/5 occurrences.
+                if len(set(tail)) <= 2:
+                    break
+                bg = (tokens[-2], tokens[-1])
+                if sum(1 for k in range(len(tail) - 1)
+                       if (tail[k], tail[k + 1]) == bg) >= 3:
+                    break
+
+            input_ids = [[next_token]]
+            for k, v in zip(past_key_values.keys(), present_key_values):
+                if not use_cache_branch or 'decoder' in k:
+                    past_key_values[k] = v
+
+        return tokens
