@@ -5,6 +5,15 @@ All notable changes to Radio Gateway.
 ## [Unreleased]
 
 ### Added
+- **DeepFilterNet 3 denoise engine** — second neural denoiser option alongside RNNoise, selectable per bus and on the ASR path.
+  - New `_DFN3Stream` in `audio_util.py`: streaming ONNX (16 MB, DFN3 stateful export), runs via existing onnxruntime, no new Python deps. ~40 dB cut on white noise, RTF ≈ 0.4 on Haswell i5 smoke test.
+  - Model lazy-downloaded on first enable into `~/.cache/radio-gateway/dfn3/`, SHA-256-pinned.
+  - Engine abstraction: `make_denoise_stream(engine)` factory, `DENOISE_ENGINE_IDS` tuple. `_RNNoiseStream` conforms to the same duck-type.
+  - Routing page: small `RNN` / `DFN` pill next to the per-bus mix slider, click to swap engine (live — next audio frame rebuilds the stream).
+  - Transcribe page: Engine `<select>` below the denoise checkbox; checkbox label updates to match.
+  - New HTTP cmd `set_dfn_engine`, MCP tool `bus_set_denoise_engine`, `transcription_config denoise_engine` key.
+  - Per-engine timing telemetry: `denoise_engine_mean_ms` + `denoise_engine_calls` in `feed` block of `transcription_status`. Shown on transcribe page feed-health row as `RNN=…ms×N  DFN=…ms×N`.
+  - Back-compat: existing `routing_config.json` / `.transcribe_settings.json` without `dfn_engine` key default to `rnnoise` → zero behaviour change for current users.
 - **Design pass** — phosphor/instrument-panel aesthetic applied across all pages via `common.css`:
   - Radial vignette + 3% fractal-noise grain overlay on body
   - Elevated level-meter strip in shell bar: 44px tall, inset recessed channels, 70%/95% zone ticks, per-channel coloured glow

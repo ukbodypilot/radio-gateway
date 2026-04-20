@@ -86,6 +86,9 @@ def handle_transcribe_config(handler, parent):
         elif key == 'denoise_mix':
             tx.set_denoise_mix(float(value))
             result = {'ok': True}
+        elif key == 'denoise_engine':
+            tx.set_denoise_engine(str(value))
+            result = {'ok': True, 'engine': tx._denoise_engine}
         elif key == 'clear':
             with tx._results_lock:
                 tx._results.clear()

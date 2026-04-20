@@ -1452,6 +1452,12 @@ def transcription_status() -> str:
         if _ps:
             lines.append("Per-bus mean proc time: " +
                          ', '.join(f"{k}={v:.1f}ms" for k, v in _ps.items()))
+        _de = _feed.get('denoise_engine_mean_ms') or {}
+        _dc = _feed.get('denoise_engine_calls') or {}
+        if _de:
+            lines.append("Denoise engines: " +
+                         ', '.join(f"{k}={v:.1f}ms over {_dc.get(k,0)} calls"
+                                   for k, v in _de.items()))
     if results:
         lines.append(f"\nRecent ({len(results)}):")
         for r in results[-10:]:
@@ -1479,6 +1485,7 @@ def transcription_config(
                'forward_mumble' — true/false
                'forward_telegram' — true/false
                'denoise'     — true/false (neural denoise on ASR path)
+               'denoise_engine' — 'rnnoise' or 'deepfilternet'
                'denoise_mix' — wet/dry mix 0.0–1.0 (default 0.5)
                'restart'     — restart transcriber with saved settings
                'clear'       — clear all results
@@ -1490,6 +1497,25 @@ def transcription_config(
     if result.get('ok'):
         note = result.get('note', '')
         return f"Transcription {key} set" + (f' ({note})' if note else '')
+    return f"Error: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def bus_set_denoise_engine(bus_id: str, engine: str) -> str:
+    """
+    Change the neural-denoise engine used by a bus's "D" filter.
+
+    Args:
+        bus_id: Bus id (e.g. 'main'). Run routing_status to list buses.
+        engine: 'rnnoise' (tiny, aggressive) or 'deepfilternet' (speech-preserving).
+
+    The swap is live — the next audio chunk rebuilds the denoise stream
+    with the chosen engine. Existing enable/mix state is preserved.
+    """
+    result = _post('/routing/cmd',
+                   {'cmd': 'set_dfn_engine', 'bus': bus_id, 'engine': engine})
+    if result.get('ok'):
+        return f"Bus {bus_id}: denoise engine → {result.get('engine')}"
     return f"Error: {result.get('error', 'unknown')}"
 
 

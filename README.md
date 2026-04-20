@@ -9,7 +9,10 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 ## v3.2 Highlights
 
 - **Moonshine ASR + Silero VAD** -- Replaced Whisper with [Moonshine](https://github.com/usefulsensors/moonshine) (ONNX, CPU-efficient, English). Replaced the dBFS envelope-follower VAD with [Silero v5](https://github.com/snakers4/silero-vad) ML speech classifier. False opens on squelch tails, carrier noise, DTMF, and pilot tones are now filtered at the VAD stage rather than sent to the ASR model.
-- **Neural denoise** -- [RNNoise](https://jmvalin.ca/demo/rnnoise/) per-bus toggle ("D" button in routing page) with wet/dry mix slider. Also available on the ASR path (Denoise toggle in transcribe controls). 30ms frame processing, <1ms latency, runs comfortably alongside Moonshine on a Haswell i5.
+- **Neural denoise (two engines)** -- per-bus toggle ("D" button in routing page) with wet/dry mix slider and a small engine pill next to it. Pick per bus:
+  - [**RNNoise**](https://jmvalin.ca/demo/rnnoise/) — tiny (~100 KB), aggressive on broadband hiss, <1 ms/frame. Default.
+  - [**DeepFilterNet 3**](https://github.com/Rikorose/DeepFilterNet) — 16 MB streaming ONNX, better speech preservation and narrowband noise removal (tones/chirps/intermod), ~3 ms/frame. Model auto-downloads on first enable.
+  Both available on the ASR path too (engine select in transcribe controls). Live per-engine timing shown in the transcribe feed-health readout.
 - **UI redesign** -- Phosphor/instrument-panel aesthetic across all 20 pages. JetBrains Mono throughout, cyan accent reserved for live signals, green/amber/red signal vocabulary enforced. Elevated level-meter strip in shell bar (inset channels, zone ticks, per-channel glow). Identity plate with callsign + beacon LED. Animated signal-flow on active routing connections. Scanning sweep on empty states.
 - **SDR single-tuner multi-channel mode** -- RSPduo runs one tuner at up to 10.66 MHz bandwidth with up to 2 demodulated channels. 57% CPU reduction vs dual-tuner mode at the same sample count.
 - **Packet radio auto-discovery** -- Gateway Link AIOC endpoint auto-discovers via mDNS; no hardcoded IPs. Internal AGWPE proxy eliminates per-endpoint IP configuration in Pat.
@@ -193,7 +196,7 @@ Each bus has its own audio processing chain, toggled independently via the G/H/L
 - **HPF (H)** -- high-pass filter (cuts low-frequency rumble)
 - **LPF (L)** -- low-pass filter (cuts high-frequency hiss)
 - **Notch Filter (N)** -- narrow-band rejection at configurable frequency
-- **Neural Denoise (D)** -- RNNoise ML noise suppressor with wet/dry mix slider (0–100%). Shared model instance; per-bus streaming state. Effective against in-band noise that classical filters can't touch.
+- **Neural Denoise (D)** -- ML noise suppressor with wet/dry mix slider (0–100%) and engine pill (RNN ↔ DFN). RNNoise is aggressive on broadband hiss; DeepFilterNet 3 preserves speech better and handles narrowband noise. Per-bus streaming state; engine swap is live (next audio frame rebuilds the stream). Effective against in-band noise that classical filters can't touch.
 
 ### Per-Bus Streaming
 
@@ -587,7 +590,7 @@ Live voice-to-text using [Moonshine](https://github.com/usefulsensors/moonshine)
 
 - **ASR engine:** Moonshine base/tiny -- CPU-efficient ONNX inference, real-time on a Haswell i5. Much faster and lighter than Whisper.
 - **VAD:** Silero v5 ML speech classifier with probability threshold (default 0.5) and hysteresis. Ignores squelch tails, carrier noise, DTMF, pilot tones, and dead air that trigger a dBFS envelope follower.
-- **Neural denoise (optional):** RNNoise wet/dry mix on the ASR audio path. Toggle in Controls panel.
+- **Neural denoise (optional):** RNNoise or DeepFilterNet 3 (user-selectable engine) wet/dry mix on the ASR audio path. Toggle + engine select in transcribe Controls panel.
 - **Anti-aliased resampling:** polyphase filter (scipy `resample_poly`) from 48 kHz to 16 kHz -- no aliasing artifacts from bare decimation.
 - **Hallucination filter:** drops common no-speech outputs ("thanks for watching", etc.) from Moonshine's output.
 - Frequency + source tagging: each entry shows radio name and frequency (e.g. `SDR1 · 446.760 MHz`).

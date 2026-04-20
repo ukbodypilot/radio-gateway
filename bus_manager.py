@@ -539,8 +539,15 @@ class BusManager:
                 proc.enable_notch = proc_cfg.get('notch', False)
                 proc.enable_dfn = proc_cfg.get('dfn', False)
                 proc.dfn_mix = max(0.0, min(1.0, float(proc_cfg.get('dfn_mix', 0.5))))
+                # Back-compat: missing 'dfn_engine' → 'rnnoise' (existing
+                # deployments' behaviour). Use set_dfn_engine so an invalid
+                # saved value is rejected without killing the bus.
+                proc.set_dfn_engine(str(proc_cfg.get('dfn_engine', 'rnnoise')))
                 self._bus_processors[bus_id] = proc
-                print(f"  [BusManager] {bus_name}: processing [{' '.join(k.upper() if k != 'dfn' else 'DFN' for k in ('gate','hpf','lpf','notch','dfn') if proc_cfg.get(k))}]")
+                _tags = [k.upper() if k != 'dfn' else f"DFN({proc.dfn_engine})"
+                         for k in ('gate', 'hpf', 'lpf', 'notch', 'dfn')
+                         if proc_cfg.get(k)]
+                print(f"  [BusManager] {bus_name}: processing [{' '.join(_tags)}]")
 
             print(f"  [BusManager] Created {bus_type} bus: {bus_name}")
 

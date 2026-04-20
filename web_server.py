@@ -1666,6 +1666,32 @@ class WebConfigServer:
                     return {'ok': True, 'mix': mix}
             return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
+        elif cmd == 'set_dfn_engine':
+            # Per-bus denoise engine selection — 'rnnoise' | 'deepfilternet'.
+            # Persists to routing_config.json and applies live via
+            # AudioProcessor.set_dfn_engine (drops the current stream so the
+            # next audio chunk rebuilds with the new engine).
+            from audio_util import DENOISE_ENGINE_IDS
+            bus_id = data.get('bus', '')
+            engine = str(data.get('engine', ''))
+            if engine not in DENOISE_ENGINE_IDS:
+                return {'ok': False,
+                        'error': f'invalid engine; must be one of {list(DENOISE_ENGINE_IDS)}'}
+            for b in busses:
+                if b['id'] == bus_id:
+                    proc = b.setdefault('processing', {})
+                    proc['dfn_engine'] = engine
+                    self._save_routing_config(busses, connections)
+                    bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
+                    if bm:
+                        if bus_id in bm._bus_config:
+                            bm._bus_config[bus_id]['dfn_engine'] = engine
+                        _bp = bm._bus_processors.get(bus_id)
+                        if _bp is not None:
+                            _bp.set_dfn_engine(engine)
+                    return {'ok': True, 'engine': engine}
+            return {'ok': False, 'error': f'bus not found: {bus_id}'}
+
         elif cmd == 'set_loop_hours':
             bus_id = data.get('bus', '')
             hours = data.get('hours', 24)

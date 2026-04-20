@@ -18,7 +18,7 @@ import numpy as np
 import threading
 import time
 
-from audio_util import pcm_db, _RNNoiseStream
+from audio_util import pcm_db, make_denoise_stream, DENOISE_ENGINE_IDS
 
 # Silence huggingface_hub's unauthenticated-download warning — it fires on
 # every cache hit and clutters the gateway log. We don't need HF auth for
@@ -241,7 +241,7 @@ class _StreamState:
     each other's audio or VAD timing.
     """
     __slots__ = (
-        'vad', 'denoise_stream',
+        'vad', 'denoise_stream', 'denoise_retry_after',
         'frame_acc', 'audio_buf_16k', 'audio_buf_samples', 'buf_start_time',
         'vad_open', 'vad_close_time',
         'vad_last_prob', 'vad_prob_env', 'vad_prob_peak', 'vad_envelope',
@@ -251,8 +251,11 @@ class _StreamState:
     def __init__(self):
         self.vad = _SileroVAD()
         # None = never attempted; False = attempted and failed (don't retry);
-        # _RNNoiseStream instance = active.
+        # _RNNoiseStream / _DFN3Stream instance = active.
         self.denoise_stream = None
+        # monotonic() time to wait past before re-attempting construction
+        # when the last attempt returned None (DFN download in progress, etc.)
+        self.denoise_retry_after = 0.0
         self.frame_acc = np.zeros(0, dtype=np.float32)
         self.audio_buf_16k = []
         self.audio_buf_samples = 0
@@ -338,6 +341,10 @@ class RadioTranscriber:
             'proc_max_ms': 0.0,       # worst single-call duration
             'proc_last_ms': 0.0,      # most recent call duration
             'per_stream_ms': {},      # {source_id: cumulative ms in _process_feed}
+            # Denoise-specific sub-timing. Keyed by engine ('rnnoise' /
+            # 'deepfilternet') so engine-vs-engine comparisons are easy.
+            'denoise_engine_ms': {},  # {engine: cumulative ms in .process()}
+            'denoise_engine_calls': {},  # {engine: call count}
         }
 
         _raw_model = str(_saved.get('model', getattr(config, 'TRANSCRIBE_MODEL', 'base')))
@@ -354,7 +361,13 @@ class RadioTranscriber:
         _raw_mix = float(_saved.get('denoise_mix',
                                     getattr(config, 'TRANSCRIBE_DENOISE_MIX', 0.5)))
         self._denoise_mix = max(0.0, min(1.0, _raw_mix))
-        # Guards denoise enable/mix across HTTP/MCP and tick threads.
+        # Denoise engine selector — 'rnnoise' (default) or 'deepfilternet'.
+        # Back-compat: missing key → 'rnnoise' (matches pre-engine behaviour).
+        _raw_engine = str(_saved.get('denoise_engine',
+                                     getattr(config, 'TRANSCRIBE_DENOISE_ENGINE',
+                                             'rnnoise')))
+        self._denoise_engine = _raw_engine if _raw_engine in DENOISE_ENGINE_IDS else 'rnnoise'
+        # Guards denoise enable/mix/engine across HTTP/MCP and tick threads.
         self._denoise_lock = threading.Lock()
 
         self._max_samples_16k = int(_MAX_UTTERANCE_SECS * _SILERO_SR)
@@ -387,27 +400,49 @@ class RadioTranscriber:
             'audio_boost': int(self._audio_boost * 100),
             'denoise': self._denoise_enabled,
             'denoise_mix': self._denoise_mix,
+            'denoise_engine': self._denoise_engine,
         })
 
     def set_denoise(self, enabled):
         """Toggle neural denoise on the ASR path. Tears down all per-bus
-        RNNoise streams when disabled so idle state doesn't linger."""
+        denoise streams when disabled so idle state doesn't linger."""
         enabled = bool(enabled)
         with self._denoise_lock:
             if enabled == self._denoise_enabled:
                 return
             self._denoise_enabled = enabled
         if not enabled:
-            with self._streams_lock:
-                streams = list(self._streams.values())
-            for s in streams:
-                if s.denoise_stream and s.denoise_stream is not False:
-                    try:
-                        s.denoise_stream.close()
-                    except Exception:
-                        pass
-                s.denoise_stream = None
+            self._drop_all_denoise_streams()
         self._save()
+
+    def set_denoise_engine(self, engine):
+        """Switch denoise engine ('rnnoise' | 'deepfilternet').
+
+        Drops every per-bus stream so the next feed() rebuilds with the new
+        engine. Preserves the enabled/mix state so the user doesn't have to
+        re-toggle after swapping.
+        """
+        engine = str(engine)
+        if engine not in DENOISE_ENGINE_IDS:
+            print(f"  [Transcribe] rejecting unknown denoise_engine '{engine}'")
+            return
+        with self._denoise_lock:
+            if engine == self._denoise_engine:
+                return
+            self._denoise_engine = engine
+        self._drop_all_denoise_streams()
+        self._save()
+
+    def _drop_all_denoise_streams(self):
+        with self._streams_lock:
+            streams = list(self._streams.values())
+        for s in streams:
+            if s.denoise_stream and s.denoise_stream is not False:
+                try:
+                    s.denoise_stream.close()
+                except Exception:
+                    pass
+            s.denoise_stream = None
 
     def set_denoise_mix(self, mix):
         """Set denoise wet/dry mix (0.0–1.0)."""
@@ -528,26 +563,38 @@ class RadioTranscriber:
         else:
             stream.vad_envelope += (db - stream.vad_envelope) * 0.05
 
-        # Optional neural denoise at 48 kHz (RNNoise's native rate) before
-        # resampling. Per-bus RNNoise state — instance initialised lazily on
-        # first enable. False sentinel = construction failed, don't retry.
+        # Optional neural denoise at 48 kHz (both engines are 48 kHz native)
+        # before resampling. Per-bus stream initialised lazily on first enable
+        # via make_denoise_stream(engine). If construction returns None (DFN
+        # downloading / pyrnnoise missing), back off for 2 s and retry — the
+        # audio path keeps running dry in the meantime so SDR audio never
+        # stalls waiting on a slow network.
         arr_48k_i16 = np.frombuffer(pcm_48k, dtype=np.int16)
         with self._denoise_lock:
             _den_enabled = self._denoise_enabled
             _den_mix = self._denoise_mix
-        if _den_enabled:
-            if stream.denoise_stream is None:
+            _den_engine = self._denoise_engine
+        _now = time.monotonic()
+        if _den_enabled and stream.denoise_stream is None and _now >= stream.denoise_retry_after:
+            built = make_denoise_stream(_den_engine)
+            if built is None:
+                stream.denoise_retry_after = _now + 2.0
+            else:
+                stream.denoise_stream = built
+        if _den_enabled and stream.denoise_stream is not None:
                 try:
-                    stream.denoise_stream = _RNNoiseStream()
-                except Exception as e:
-                    print(f"  [Transcribe] Denoise unavailable ({source_id}): {e}")
-                    stream.denoise_stream = False
-            if stream.denoise_stream and stream.denoise_stream is not False:
-                try:
+                    _t_den = time.monotonic()
                     denoised = stream.denoise_stream.process(arr_48k_i16)
+                    _den_ms = (time.monotonic() - _t_den) * 1000
+                    # Per-engine timing — lets users see at a glance which
+                    # engine is actually cheap/expensive on their hardware.
+                    _dms = self._feed_stats['denoise_engine_ms']
+                    _dcs = self._feed_stats['denoise_engine_calls']
+                    _dms[_den_engine] = _dms.get(_den_engine, 0.0) + _den_ms
+                    _dcs[_den_engine] = _dcs.get(_den_engine, 0) + 1
                     # Align lengths (startup residue → dry-fill the gap),
                     # then blend wet/dry per _denoise_mix so we don't wipe
-                    # out the signal when RNNoise mis-classifies the band.
+                    # out the signal when the engine mis-classifies the band.
                     if denoised.size > 0:
                         if denoised.size < arr_48k_i16.size:
                             denoised = np.concatenate([denoised, arr_48k_i16[denoised.size:]])
@@ -562,7 +609,7 @@ class RadioTranscriber:
                             arr_48k_i16 = np.clip(mixed, -32768, 32767).astype(np.int16)
                         # else w ≈ 0 → keep dry
                 except Exception as e:
-                    print(f"  [Transcribe] Denoise error ({source_id}): {e}")
+                    print(f"  [Transcribe] Denoise error ({source_id}, engine={_den_engine}): {e}")
         elif stream.denoise_stream and stream.denoise_stream is not False:
             # Denoise toggled off — release this stream's RNNoise state.
             try:
@@ -746,6 +793,8 @@ class RadioTranscriber:
             'audio_boost': int(self._audio_boost * 100),
             'denoise': self._denoise_enabled,
             'denoise_mix': round(self._denoise_mix, 2),
+            'denoise_engine': self._denoise_engine,
+            'denoise_engines': list(DENOISE_ENGINE_IDS),
             'pending': len(self._pending),
             'total_transcriptions': len(self._results),
             'streams': streams_payload,
@@ -777,6 +826,13 @@ class RadioTranscriber:
                 sid: round(ms / max(_processed, 1), 2)
                 for sid, ms in _s['per_stream_ms'].items()
             },
+            # Per-engine mean denoise time — lets you A/B RNNoise vs
+            # DeepFilterNet cost on your actual hardware.
+            'denoise_engine_mean_ms': {
+                eng: round(ms / max(_s['denoise_engine_calls'].get(eng, 1), 1), 2)
+                for eng, ms in _s['denoise_engine_ms'].items()
+            },
+            'denoise_engine_calls': dict(_s['denoise_engine_calls']),
         }
 
     def get_stats(self):

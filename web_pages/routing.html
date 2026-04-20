@@ -201,6 +201,22 @@
     text-align: right;
     flex-shrink: 0;
   }
+  /* Engine pill: tiny toggle badge next to the mix slider. RNN→DFN swap. */
+  .dfn-engine-pill {
+    font: inherit; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 1px 6px; border-radius: var(--r-sm);
+    background: var(--t-panel-hi);
+    border: 1px solid var(--t-border-hi);
+    color: var(--t-text);
+    cursor: pointer; flex-shrink: 0;
+    min-width: 36px; text-align: center;
+  }
+  .dfn-engine-pill[data-engine="deepfilternet"] {
+    color: var(--t-accent);
+    border-color: var(--t-accent);
+  }
+  .dfn-engine-pill:hover { background: var(--t-border-hi); }
 
   .gain-slider {
     width: 60px;
@@ -695,9 +711,15 @@ function rebuildEditor() {
       + (function() {
           var mix = (proc.dfn_mix !== undefined) ? proc.dfn_mix : 0.5;
           var pct = Math.round(mix * 100);
+          var eng = (proc.dfn_engine === 'deepfilternet') ? 'deepfilternet' : 'rnnoise';
+          var engLabel = (eng === 'deepfilternet') ? 'DFN' : 'RNN';
           var cls = 'dfn-mix-row' + (proc.dfn ? '' : ' dim-op');
           return '<div class="' + cls + '" id="dfn-mix-row-' + b.id + '">'
-            + '<span class="dfn-mix-label">DFN mix</span>'
+            + '<button class="dfn-engine-pill" id="dfn-engine-' + b.id + '" '
+            +   'data-engine="' + eng + '" '
+            +   'title="Click to swap denoise engine (RNNoise ↔ DeepFilterNet)" '
+            +   'onclick="toggleDfnEngine(\'' + b.id + '\')">' + engLabel + '</button>'
+            + '<span class="dfn-mix-label">mix</span>'
             + '<input type="range" class="dfn-mix-slider" min="0" max="1" step="0.05" value="' + mix + '" '
             +   'id="dfn-mix-' + b.id + '" '
             +   'oninput="setDfnMix(\'' + b.id + '\', this.value, true)" '
@@ -1077,6 +1099,28 @@ function setDfnMix(busId, value, isLive) {
     if (_dfnMixTimers[busId]) { clearTimeout(_dfnMixTimers[busId]); delete _dfnMixTimers[busId]; }
     send();
   }
+}
+
+// Cycle the denoise engine on a bus (RNNoise ↔ DeepFilterNet).
+function toggleDfnEngine(busId) {
+  var pill = document.getElementById('dfn-engine-' + busId);
+  if (!pill) return;
+  var cur = pill.getAttribute('data-engine') || 'rnnoise';
+  var next = (cur === 'rnnoise') ? 'deepfilternet' : 'rnnoise';
+  fetch('/routing/cmd', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd: 'set_dfn_engine', bus: busId, engine: next})
+  }).then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        pill.setAttribute('data-engine', d.engine);
+        pill.textContent = (d.engine === 'deepfilternet') ? 'DFN' : 'RNN';
+        setStatus(busId + ': engine → ' + (d.engine === 'deepfilternet' ? 'DeepFilterNet' : 'RNNoise'));
+      } else {
+        setStatus('engine swap failed: ' + (d.error || 'unknown'), true);
+      }
+    }).catch(function() { setStatus('engine swap network error', true); });
 }
 
 // Speaker mode selector

@@ -9,11 +9,22 @@ import math as _math
 import numpy as np
 
 
-# ── Neural denoise (RNNoise) ────────────────────────────────────────────────
+# ── Neural denoise — engine-abstracted ──────────────────────────────────────
 #
-# We bind to pyrnnoise's ctypes wrapper directly and skip its __init__.py,
-# which imports audiolab/matplotlib/tqdm — none of which we want in the
-# gateway's dependency tree. The C library ships inside the wheel.
+# Two engines are available:
+#   - 'rnnoise'       : tiny (~100 KB model), fast (<1 ms/frame), aggressive
+#                       broadband hiss cut. Default for existing deployments.
+#   - 'deepfilternet' : DFN3 (~9 MB ONNX), better speech preservation and
+#                       narrowband noise removal, ~2–4 ms/frame on Haswell.
+#
+# Both implement the DenoiseStream duck-type:
+#     native_rate: int                              (48000 for both)
+#     process(samples_i16: np.ndarray) -> np.ndarray
+#     close() -> None
+#
+# Use make_denoise_stream('rnnoise'|'deepfilternet') to construct.
+# The JSON/API surface still uses the legacy key 'dfn' — it's no longer a
+# literal acronym but kept for config compatibility.
 
 _RNN_MOD = None   # lazy-loaded module handle (shared across streams)
 
@@ -42,7 +53,12 @@ def _load_rnnoise():
 
 class _RNNoiseStream:
     """Per-source denoise state. Feed int16 PCM bytes in any length — the
-    stream buffers to the native 480-sample (10 ms @ 48 kHz) frame size."""
+    stream buffers to the native 480-sample (10 ms @ 48 kHz) frame size.
+
+    Conforms to the DenoiseStream duck-type used by make_denoise_stream().
+    """
+
+    native_rate = 48000
 
     def __init__(self):
         mod = _load_rnnoise()
@@ -89,6 +105,266 @@ class _RNNoiseStream:
         self._buf = buf[n_frames * frame_size :].copy()
         self.last_prob = last_prob
         return np.concatenate(out_chunks)
+
+
+# ── DeepFilterNet 3 (DFN3) streaming via onnxruntime ────────────────────────
+#
+# Uses the stateful single-file ONNX export from yuyun2000/SpeechDenoiser
+# (48k/denoiser_model.onnx, 16 MB). Model weights are MIT-licensed
+# DeepFilterNet3; the re-exported ONNX wraps all STFT/ERB/GRU recurrence into
+# one graph with a flat 45304-float state vector carried across calls.
+#
+# Signature:
+#   inputs:  input_frame[480]  states[45304]  atten_lim_db[]
+#   outputs: enhanced_audio_frame[480]  new_states[45304]  lsnr[1]
+#
+# Runs on existing onnxruntime — no new Python deps, no torch wheel bloat,
+# no numpy conflict. ~2–4 ms per 10 ms frame on Haswell i5.
+
+_DFN3_MODEL_URL = (
+    'https://github.com/yuyun2000/SpeechDenoiser/raw/main/48k/denoiser_model.onnx'
+)
+_DFN3_MODEL_SHA256 = (
+    'fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9'
+)
+_DFN3_MODEL_SIZE = 16_104_687       # bytes — paired with SHA for sanity
+_DFN3_STATE_SIZE = 45304            # fixed by the ONNX graph
+_DFN3_FRAME_SIZE = 480              # 10 ms @ 48 kHz (model hop_size)
+
+
+def _dfn3_bundled_path():
+    """Path to the model bundled in the repo (preferred — no network)."""
+    import os
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'tools', 'models', 'dfn3', 'denoiser_model.onnx')
+
+
+def _dfn3_model_path():
+    """Path to the cached ONNX; does NOT download (see _dfn3_ensure_model).
+
+    Returns the bundled copy if it exists, otherwise the user cache path
+    (which may or may not exist yet).
+    """
+    import os
+    bundled = _dfn3_bundled_path()
+    if os.path.exists(bundled) and os.path.getsize(bundled) == _DFN3_MODEL_SIZE:
+        return bundled
+    cache_dir = os.path.expanduser('~/.cache/radio-gateway/dfn3')
+    return os.path.join(cache_dir, 'denoiser_model.onnx')
+
+
+def _dfn3_ensure_model():
+    """Return a path to a usable DFN3 ONNX.
+
+    Preference order:
+      1. Bundled copy in repo (tools/models/dfn3/denoiser_model.onnx) —
+         always preferred, no network, no cache side-effects.
+      2. User cache (~/.cache/radio-gateway/dfn3/) if already downloaded.
+      3. Download from GitHub into the user cache as a last resort (for
+         install paths that didn't ship the bundled model).
+
+    Raises on network failure or SHA mismatch so construction propagates
+    an error the factory can catch."""
+    import os, hashlib, urllib.request
+    # 1. Bundled.
+    bundled = _dfn3_bundled_path()
+    if os.path.exists(bundled) and os.path.getsize(bundled) == _DFN3_MODEL_SIZE:
+        return bundled
+    # 2. Cache.
+    path = os.path.expanduser('~/.cache/radio-gateway/dfn3/denoiser_model.onnx')
+    if os.path.exists(path):
+        if os.path.getsize(path) == _DFN3_MODEL_SIZE:
+            return path
+        print(f"  [DFN3] Cached model size mismatch; redownloading")
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+    # 3. Download.
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.part'
+    print(f"  [DFN3] Downloading model ({_DFN3_MODEL_SIZE//1024//1024} MB) from {_DFN3_MODEL_URL}")
+    try:
+        urllib.request.urlretrieve(_DFN3_MODEL_URL, tmp)
+    except Exception as e:
+        try: os.remove(tmp)
+        except Exception: pass
+        raise RuntimeError(f"DFN3 download failed: {e}")
+    # Verify SHA256 — model artefacts may change upstream; failing loud is
+    # better than silently running on an unexpected graph.
+    h = hashlib.sha256()
+    with open(tmp, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    if h.hexdigest() != _DFN3_MODEL_SHA256:
+        try: os.remove(tmp)
+        except Exception: pass
+        raise RuntimeError(
+            f"DFN3 SHA mismatch: got {h.hexdigest()} expected {_DFN3_MODEL_SHA256}. "
+            f"The upstream model may have been replaced — update _DFN3_MODEL_SHA256."
+        )
+    os.rename(tmp, path)
+    print(f"  [DFN3] Model cached at {path}")
+    return path
+
+
+class _DFN3Stream:
+    """Per-source DeepFilterNet 3 denoise stream.
+
+    Feed int16 PCM arrays of any length; internally buffers to 480-sample
+    frames, runs each through the ONNX graph with a persistent state vector,
+    emits 480-sample enhanced frames back. ~10 ms intrinsic algorithmic delay.
+
+    The ONNX session is shared class-wide; each instance carries its own
+    state vector so multiple buses / the ASR path don't bleed into each other.
+    """
+
+    native_rate = 48000
+
+    _sess = None          # shared onnxruntime InferenceSession
+    _lock = None          # init lock — build session once across threads
+    _download_thread = None   # background download worker (one-shot)
+
+    @classmethod
+    def _kick_background_download(cls):
+        """Start the model download on a background thread if not already
+        running or cached. Non-blocking — safe to call from the feed worker.
+        Returns True if the model file is ready NOW, False if we're still
+        downloading (caller should treat DFN as unavailable for the moment).
+
+        Bundled copy in the repo short-circuits this entirely.
+        """
+        import os, threading
+        bundled = _dfn3_bundled_path()
+        if os.path.exists(bundled) and os.path.getsize(bundled) == _DFN3_MODEL_SIZE:
+            return True
+        cached = os.path.expanduser('~/.cache/radio-gateway/dfn3/denoiser_model.onnx')
+        if os.path.exists(cached) and os.path.getsize(cached) == _DFN3_MODEL_SIZE:
+            return True
+        if cls._lock is None:
+            cls._lock = threading.Lock()
+        with cls._lock:
+            if cls._download_thread is not None and cls._download_thread.is_alive():
+                return False
+            def _bg():
+                try:
+                    _dfn3_ensure_model()
+                except Exception as e:
+                    print(f"  [DFN3] Background download failed: {e}")
+            cls._download_thread = threading.Thread(
+                target=_bg, daemon=True, name='DFN3-download')
+            cls._download_thread.start()
+        return False
+
+    @classmethod
+    def _ensure_session(cls):
+        if cls._sess is not None:
+            return
+        # Refuse to block the caller on download — that's the bus tick's
+        # nightmare. Kick off a background fetch instead and fail fast so
+        # the denoise engine reports "unavailable yet" until the file lands.
+        if not cls._kick_background_download():
+            raise RuntimeError('DFN3 model downloading — try again shortly')
+        import threading
+        if cls._lock is None:
+            cls._lock = threading.Lock()
+        with cls._lock:
+            if cls._sess is not None:
+                return
+            path = _dfn3_ensure_model()
+            import onnxruntime as ort
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = 1
+            opts.inter_op_num_threads = 1
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+            opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            cls._sess = ort.InferenceSession(
+                path, sess_options=opts, providers=['CPUExecutionProvider'])
+            print(f"  [DFN3] ONNX session ready")
+
+    def __init__(self):
+        self._ensure_session()
+        self._state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
+        # atten_lim_db is a 0-d tensor — ORT requires an ndarray, not a
+        # bare numpy scalar. 0 = no attenuation cap.
+        self._atten_lim = np.array(0.0, dtype=np.float32)
+        self._buf = np.empty(0, dtype=np.int16)
+        self.last_lsnr = 0.0
+
+    def close(self):
+        # Nothing to release per-instance — the shared session stays alive.
+        # The state array and buffer are normal numpy objects, GC handles them.
+        self._state = None
+        self._buf = np.empty(0, dtype=np.int16)
+
+    def __del__(self):
+        self.close()
+
+    def process(self, samples_i16):
+        """Same contract as _RNNoiseStream.process — int16 in, int16 out,
+        residue <1 frame buffered internally for the next call."""
+        if samples_i16.size == 0 or self._state is None:
+            return np.empty(0, dtype=np.int16)
+        buf = np.concatenate([self._buf, samples_i16]) if self._buf.size else samples_i16
+        n_frames = buf.size // _DFN3_FRAME_SIZE
+        if n_frames == 0:
+            self._buf = buf.copy()
+            return np.empty(0, dtype=np.int16)
+
+        out_chunks = []
+        last_lsnr = self.last_lsnr
+        _sess = type(self)._sess
+        _run = _sess.run
+        _state = self._state
+        _atten = self._atten_lim
+        for i in range(n_frames):
+            frame_i16 = buf[i * _DFN3_FRAME_SIZE : (i + 1) * _DFN3_FRAME_SIZE]
+            frame_f32 = frame_i16.astype(np.float32) / 32768.0
+            enhanced, _state, lsnr = _run(
+                None,
+                {'input_frame': frame_f32, 'states': _state, 'atten_lim_db': _atten},
+            )
+            # Back to int16 with clip — the model output is float32 in roughly
+            # [-1, 1] but nothing stops occasional overshoot.
+            out_chunks.append(np.clip(enhanced * 32768.0, -32768, 32767).astype(np.int16))
+            last_lsnr = float(lsnr[0])
+
+        self._state = _state
+        self._buf = buf[n_frames * _DFN3_FRAME_SIZE :].copy()
+        self.last_lsnr = last_lsnr
+        return np.concatenate(out_chunks)
+
+
+# Engine registry. Missing entries fall back cleanly via
+# make_denoise_stream() returning None.
+_DENOISE_ENGINES = {
+    'rnnoise': _RNNoiseStream,
+    'deepfilternet': _DFN3Stream,
+}
+
+# Legal engine identifiers — consumers should validate user input against
+# this set before calling make_denoise_stream so typos become explicit errors
+# rather than silent "denoise turned off".
+DENOISE_ENGINE_IDS = ('rnnoise', 'deepfilternet')
+
+
+def make_denoise_stream(engine='rnnoise'):
+    """Construct a denoise stream for the requested engine.
+
+    Returns a DenoiseStream instance, or None if the engine is unknown or
+    the underlying library failed to load. Callers should handle None by
+    skipping denoise (pass-through) rather than erroring — the audio path
+    should never die because a denoise lib went missing.
+    """
+    cls = _DENOISE_ENGINES.get(engine)
+    if cls is None:
+        print(f"  [Denoise] unknown engine '{engine}' — skipping")
+        return None
+    try:
+        return cls()
+    except Exception as e:
+        print(f"  [Denoise] {engine} unavailable: {e}")
+        return None
 
 
 # ── Level metering ──────────────────────────────────────────────────────────
@@ -195,10 +471,12 @@ class AudioProcessor:
         self.gate_threshold = -40     # dB
         self.gate_attack = 0.01       # seconds
         self.gate_release = 0.1       # seconds
-        self.enable_dfn = False       # Neural denoise (RNNoise). Kept as
-                                      # "dfn" in the API surface so a future
-                                      # DeepFilterNet swap is a model swap
-                                      # rather than a rename.
+        self.enable_dfn = False       # Neural denoise toggle. "dfn" is kept
+                                      # as the config/API key for back-compat;
+                                      # actual engine is picked via dfn_engine.
+        self.dfn_engine = 'rnnoise'   # 'rnnoise' (default, aggressive) or
+                                      # 'deepfilternet' (speech-preserving).
+                                      # Swap via set_dfn_engine().
         self.dfn_mix = 0.5            # Wet/dry mix — 1.0 = fully denoised,
                                       # 0.0 = pass-through. RNNoise over-cuts
                                       # on radio audio, so default to 50%.
@@ -211,6 +489,22 @@ class AudioProcessor:
         self.notch_state = None
         self.gate_envelope = 0.0
         self.dfn_stream = None
+
+    def set_dfn_engine(self, engine):
+        """Switch denoise engine. Drops the existing stream so the next
+        process() call reinitialises with the new backend."""
+        if engine == self.dfn_engine:
+            return
+        if engine not in DENOISE_ENGINE_IDS:
+            print(f"  [AudioProcessor] rejecting unknown dfn_engine '{engine}'")
+            return
+        self.dfn_engine = engine
+        if self.dfn_stream is not None:
+            try:
+                self.dfn_stream.close()
+            except Exception:
+                pass
+            self.dfn_stream = None
 
     def reset_state(self):
         """Reset all filter states (e.g. when source restarts)."""
@@ -344,26 +638,21 @@ class AudioProcessor:
             return pcm_data
 
     def _apply_dfn(self, pcm_data):
-        """Neural denoise (RNNoise).
+        """Neural denoise — engine picked by self.dfn_engine.
 
         Assumes 48 kHz mono int16 input — the gateway-wide AUDIO_RATE. If
-        the library can't be loaded, silently pass-through so a missing dep
-        doesn't kill the audio path.
+        the chosen engine can't be loaded, silently pass-through so a missing
+        dep doesn't kill the audio path.
 
-        Output is a wet/dry mix — RNNoise is aggressive on radio audio (its
-        training data was consumer noise, not FM carrier hiss / squelch
-        tails), so a full-wet output kills too much signal. `dfn_mix` is the
-        wet fraction: 1.0 = fully denoised, 0.0 = pass-through. The default
-        of 0.5 leaves voice clearly audible while still knocking the noise
-        floor down by ~6 dB.
+        Output is a wet/dry mix via `dfn_mix` (1.0 = fully denoised, 0.0 =
+        pass-through). RNNoise over-cuts radio audio at full wet so 0.5 is
+        a safe default; DFN3 tolerates higher wet values.
         """
         try:
             if self.dfn_stream is None:
-                try:
-                    self.dfn_stream = _RNNoiseStream()
-                except Exception as e:
-                    # Downgrade to pass-through and stop trying.
-                    print(f"[DFN] {self.name}: disabling — {e}")
+                self.dfn_stream = make_denoise_stream(self.dfn_engine)
+                if self.dfn_stream is None:
+                    # Factory already logged why; downgrade and stop trying.
                     self.enable_dfn = False
                     return pcm_data
 
