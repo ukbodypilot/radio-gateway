@@ -155,7 +155,9 @@
   #shell-bars .sb-track::before { left: 70%; background: var(--t-warn); opacity: 0.35; }
   #shell-bars .sb-track::after  { left: 95%; background: var(--t-err);  opacity: 0.45; }
   #shell-bars .sb-bar {
-    display: block; height: 100%;
+    display: block;
+    height: calc(100% - 10px);
+    margin: 5px 0;
     transition: width 0.08s linear;
     box-shadow: 0 0 6px currentColor;
     position: relative; z-index: 1;
@@ -625,13 +627,17 @@ function _sbUpdate(key, label, raw, cls, ducked, muted) {
   // Exponential smoothing — fast attack for spikes, slower decay feels natural.
   var prev = _sbSmooth[key] || 0;
   var v = Math.min(Math.max(raw || 0, 0), 100);
-  var a = v > prev ? 1.0 : 0.15;
+  var rising = v > prev;
+  var a = rising ? 1.0 : 0.15;
   var s = prev + (v - prev) * a;
   _sbSmooth[key] = s;
   var w = Math.round(s);
   r.pct.textContent = w + '%';
   r.pct.className = ducked ? 'sb-pct ducked' : 'sb-pct';
   r.bar.className = 'sb-bar ' + (ducked ? 'sb-ducked-bar' : cls);
+  // Asymmetric CSS transition: snappy rise (80ms), smooth fall (250ms) so
+  // the bar slides continuously between polls rather than stepping.
+  r.bar.style.transition = 'width ' + (rising ? '0.08s' : '0.25s') + ' linear';
   r.bar.style.width = w + '%';
   r.mute.style.display = muted ? '' : 'none';
   _sbOrder.push(key);
