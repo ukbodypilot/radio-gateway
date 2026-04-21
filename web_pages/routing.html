@@ -436,6 +436,14 @@ editor = new Drawflow(container);
 editor.reroute = true;
 editor.start();
 
+// Mouse-wheel zoom — scroll up to zoom in, down to zoom out. preventDefault
+// so the page doesn't scroll behind the canvas.
+container.addEventListener('wheel', function(e) {
+  e.preventDefault();
+  if (e.deltaY < 0) editor.zoom_in();
+  else              editor.zoom_out();
+}, { passive: false });
+
 // Prevent Drawflow node drag from stealing slider/button/pill interactions.
 // Capture phase + list every interactive descendant class so drawflow never
 // starts a "move" gesture on them (that's the "cursor stuck in move mode"
@@ -1278,15 +1286,11 @@ function pollLevels() {
           var fill = el.querySelector('.level-fill');
           if (fill) _setLevel(fill, d[id], id);
         }
-        // Also update TX sink bars for radio plugins (e.g. kv4p level → kv4p_tx bar)
-        // Skip for sources that have independent TX sinks (remote_audio, mumble)
-        if (id !== 'remote_audio' && id !== 'mumble_rx') {
-          var txEl = document.getElementById('level-' + id + '_tx');
-          if (txEl) {
-            var txFill = txEl.querySelector('.level-fill');
-            if (txFill) _setLevel(txFill, d[id], id + '_tx');
-          }
-        }
+        // TX sink bars (kv4p_tx, aioc_tx, speaker, broadcastify, mumble, …)
+        // are their own keys in `d` — handled by the branch above. Do NOT
+        // mirror RX source level onto <source>_tx; that's only correct in
+        // hardwired loopback, and the v2 bus model breaks that assumption
+        // (a TX sink can be fed from any bus, independent of its RX source).
       }
       for (var txId in ptt) {
         var lvl = document.getElementById('level-' + txId);
