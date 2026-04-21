@@ -292,19 +292,41 @@
     margin-top: 2px;
   }
 
-  /* Level bars inside nodes */
+  /* Level bars inside nodes — compact VU-meter style matching shell bars.
+     Asymmetric fill (thin line inside track) + zone ticks at 70/95%. */
   .level-bar {
-    height: 3px;
-    background: var(--t-bg);
-    border-radius: 1px;
+    position: relative;
+    height: 8px;
+    background: #05080b;
+    border: 1px solid var(--t-border);
+    border-radius: 2px;
     margin-top: 3px;
     overflow: hidden;
+    box-shadow:
+      inset 0 1px 1px rgba(0,0,0,0.7),
+      inset 0 -1px 0 rgba(255,255,255,0.02);
   }
+  .level-bar::before,
+  .level-bar::after {
+    content: '';
+    position: absolute;
+    top: 1px; bottom: 1px;
+    width: 1px;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .level-bar::before { left: 70%; background: var(--t-warn); opacity: 0.35; }
+  .level-bar::after  { left: 95%; background: var(--t-err);  opacity: 0.45; }
   .level-fill {
-    height: 100%;
+    display: block;
+    height: calc(100% - 4px);
+    margin: 2px 0;
     width: 0%;
     background: var(--node-color, var(--t-accent));
-    transition: width 0.15s;
+    box-shadow: 0 0 4px currentColor;
+    color: var(--node-color, var(--t-accent));
+    position: relative; z-index: 1;
+    transition: width 0.08s linear;
   }
   .drawflow-node.node-muted .level-fill,
   .drawflow-node.ptt-active {
@@ -1230,6 +1252,20 @@ function setSpeakerMode(mode) {
 }
 
 // Poll audio levels and update bars
+// Exponential smoothing with asymmetric CSS transition: instant attack,
+// 0.15-per-sample decay, 80ms rise / 200ms fall so the bar glides between
+// polls instead of stepping. Matches the shell/dashboard meters.
+var _lvlSmooth = {};
+function _setLevel(fillEl, raw, key) {
+  var prev = _lvlSmooth[key] || 0;
+  var v = Math.min(Math.max(raw || 0, 0), 100);
+  var rising = v > prev;
+  var a = rising ? 1.0 : 0.15;
+  var s = prev + (v - prev) * a;
+  _lvlSmooth[key] = s;
+  fillEl.style.transition = 'width ' + (rising ? '0.08s' : '0.2s') + ' linear';
+  fillEl.style.width = s + '%';
+}
 function pollLevels() {
   fetch('/routing/levels')
     .then(function(r) { return r.json(); })
@@ -1240,7 +1276,7 @@ function pollLevels() {
         var el = document.getElementById('level-' + id);
         if (el) {
           var fill = el.querySelector('.level-fill');
-          if (fill) fill.style.width = Math.min(100, d[id]) + '%';
+          if (fill) _setLevel(fill, d[id], id);
         }
         // Also update TX sink bars for radio plugins (e.g. kv4p level → kv4p_tx bar)
         // Skip for sources that have independent TX sinks (remote_audio, mumble)
@@ -1248,7 +1284,7 @@ function pollLevels() {
           var txEl = document.getElementById('level-' + id + '_tx');
           if (txEl) {
             var txFill = txEl.querySelector('.level-fill');
-            if (txFill) txFill.style.width = Math.min(100, d[id]) + '%';
+            if (txFill) _setLevel(txFill, d[id], id + '_tx');
           }
         }
       }
