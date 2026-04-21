@@ -2542,15 +2542,23 @@ class StreamOutputSource:
                 self._reconnect_count += 1
                 count = self._reconnect_count
                 def _auto_reconnect():
-                    time.sleep(5)
-                    print(f"  [Broadcastify] Auto-reconnecting (attempt #{count})...")
-                    self.close()
-                    self._connect()
-                    if self.connected:
-                        print(f"  [Broadcastify] Reconnected successfully (attempt #{count})")
-                    else:
-                        print(f"  [Broadcastify] Reconnect failed (attempt #{count})")
-                    self._reconnecting = False
+                    try:
+                        time.sleep(5)
+                        print(f"  [Broadcastify] Auto-reconnecting (attempt #{count})...")
+                        try:
+                            self.close()
+                        except Exception as e:
+                            print(f"  [Broadcastify] close() raised during reconnect: {e}")
+                        try:
+                            self._connect()
+                        except Exception as e:
+                            print(f"  [Broadcastify] _connect() raised: {e}")
+                        if self.connected:
+                            print(f"  [Broadcastify] Reconnected successfully (attempt #{count})")
+                        else:
+                            print(f"  [Broadcastify] Reconnect failed (attempt #{count})")
+                    finally:
+                        self._reconnecting = False
                 threading.Thread(target=_auto_reconnect, daemon=True).start()
             return
         try:
