@@ -1075,6 +1075,11 @@ class LoopPlaybackSource(AudioSource):
         duration = end_epoch - start_epoch
         channels = getattr(self.config, 'AUDIO_CHANNELS', 1)
 
+        # ffmpeg decodes flat-out; the reader thread paces its pipe reads at
+        # real-time so the clock advances regardless of bus consumption.
+        # (-re on the input would interact badly with -ss, forcing the seek
+        # to happen at real time — 172 s of concat input = 172 s of wall-
+        # clock stall before the first byte emerges.)
         cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error',
                '-f', 'concat', '-safe', '0', '-i', cf.name,
                '-ss', str(offset), '-t', str(duration),
@@ -1144,9 +1149,21 @@ class LoopPlaybackSource(AudioSource):
     # -- reader thread ------------------------------------------------------
 
     def _reader_loop(self):
-        """Fill PCM queue from ffmpeg stdout."""
+        """Fill PCM queue from ffmpeg stdout, and drive clock + meter.
+
+        The reader owns position and audio_level: ffmpeg is run with -re so
+        it paces at real-time, and each successful pipe read advances the
+        play position by its sample count and updates audio_level. This lets
+        the source run standalone — clock ticks and meter animates — whether
+        or not a bus is consuming via get_audio(). If a bus IS consuming, it
+        pulls chunks from the queue and plays them. If no consumer exists,
+        the queue fills and we drop the oldest chunk on each new put so the
+        reader never stalls.
+        """
         channels = getattr(self.config, 'AUDIO_CHANNELS', 1)
         chunk_bytes = int(self.SAMPLE_RATE * 0.05) * channels * 2  # 50ms
+        tick_s = chunk_bytes / (self.SAMPLE_RATE * channels * 2)  # 0.05s
+        next_tick = time.monotonic()
         _st = self._stream_trace
         try:
             while self._playing and self._decoder:
@@ -1164,6 +1181,16 @@ class LoopPlaybackSource(AudioSource):
                 if len(data) < chunk_bytes:
                     self._diag_short_reads += 1
 
+                # Advance clock + meter from the reader, independent of
+                # whether get_audio() is being called.
+                samples = len(data) // (channels * 2)
+                if samples:
+                    self._play_position += samples / self.SAMPLE_RATE
+                try:
+                    self.audio_level = pcm_level(data, self.audio_level)
+                except Exception:
+                    pass
+
                 if _st and _st.active:
                     _extra = ''
                     if len(data) < chunk_bytes:
@@ -1172,23 +1199,45 @@ class LoopPlaybackSource(AudioSource):
                         _extra += f' slow_read:{_read_ms:.0f}ms'
                     _st.record('lp_read', 'pipe_read', data, _qd, _extra)
 
+                # Non-blocking put with drop-oldest on full — keeps the
+                # reader running even when no bus is draining the queue.
                 try:
-                    self._pcm_queue.put(data, timeout=1.0)
+                    self._pcm_queue.put_nowait(data)
                     if _st and _st.active:
                         _st.record('lp_read', 'queue_put', data,
                                    self._pcm_queue.qsize())
                 except _queue_mod.Full:
                     self._diag_put_full += 1
+                    try:
+                        self._pcm_queue.get_nowait()
+                    except _queue_mod.Empty:
+                        pass
+                    try:
+                        self._pcm_queue.put_nowait(data)
+                    except _queue_mod.Full:
+                        pass
                     if _st and _st.active:
                         _st.record('lp_read', 'queue_put', data, _qd,
-                                   'FULL')
-                    if not self._playing:
-                        break
+                                   'FULL_DROP_OLDEST')
+
+                # Pace this loop to real-time audio rate. ffmpeg decodes
+                # flat-out into the pipe; we throttle here so the clock +
+                # meter tick at the correct speed and ffmpeg blocks on
+                # pipe-full once the queue has caught up.
+                next_tick += tick_s
+                delay = next_tick - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                else:
+                    # Fell behind (e.g. after a disk stall) — resync so we
+                    # don't spin reading back-to-back trying to catch up.
+                    next_tick = time.monotonic()
         except Exception as e:
             print(f"  [LoopPlay] Reader error: {e}")
         finally:
             with self._lock:
                 self._playing = False
+            self.audio_level = 0
             if _st and _st.active:
                 _st.record('lp_read', 'exit', None,
                            self._pcm_queue.qsize(), 'reader_done')
@@ -1196,10 +1245,11 @@ class LoopPlaybackSource(AudioSource):
     # -- AudioSource interface ----------------------------------------------
 
     def get_audio(self, chunk_size):
+        """Pure drain for bus consumers — position + meter are owned by the
+        reader thread so playback runs regardless of routing."""
         _now = time.monotonic()
 
         if not self._playing:
-            self.audio_level = max(0, int(self.audio_level * 0.7))
             return None, False
 
         _qd = self._pcm_queue.qsize()
@@ -1241,16 +1291,6 @@ class LoopPlaybackSource(AudioSource):
 
         if _st and _st.active:
             _st.record('lp_out', 'get_audio', data, _qd, _extra)
-
-        # Advance position
-        samples = len(data) // (channels * 2)
-        self._play_position += samples / self.SAMPLE_RATE
-
-        # Level metering
-        try:
-            self.audio_level = pcm_level(data, self.audio_level)
-        except Exception:
-            pass
 
         # Volume
         if self.volume != 1.0:
