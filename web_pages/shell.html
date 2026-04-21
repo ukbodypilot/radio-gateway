@@ -85,10 +85,10 @@
     display: inline-flex; gap: var(--s-1); align-items: center;
     padding-left: var(--s-3);
     border-left: 1px solid var(--t-border);
-    margin-left: var(--s-1);
+    margin-left: auto;
   }
   /* Uses .rb-caps + .rb-sm from common.css — only the min-width is shell-local. */
-  .shell-pcm .rb { min-width: 62px; text-align: center; }
+  .shell-pcm .rb { min-width: 56px; text-align: center; }
   .shell-pcm .rb.connecting { color: var(--t-warn); border-color: var(--t-warn); }
   .shell-pcm .rb.live { color: var(--t-err); border-color: var(--t-err); }
   .shell-pcm input[type="range"] { width: 52px; height: 3px; }
@@ -156,7 +156,7 @@
   #shell-bars .sb-track::after  { left: 95%; background: var(--t-err);  opacity: 0.45; }
   #shell-bars .sb-bar {
     display: block; height: 100%;
-    transition: width 0.08s linear;
+    transition: width 0.25s linear;
     box-shadow: 0 0 6px currentColor;
     position: relative; z-index: 1;
   }
@@ -181,11 +181,10 @@
     #shell-frame { flex: none; height: calc(100vh - 78px); }
   }
 
-  /* Header identity cluster — pushed right, styled as a callsign plate.
-     Small beacon LED (pulses green when server healthy), callsign in
-     display font + phosphor, site name, UTC clock. */
+  /* Header identity cluster — sits directly after the nav groups (left-packed),
+     styled as a callsign plate. Small beacon LED (pulses green when server
+     healthy), callsign in display font + phosphor, site name, local clock. */
   .id-cluster.shell-id {
-    margin-left: auto;
     padding: 2px var(--s-3);
     display: inline-flex;
     align-items: center;
@@ -236,7 +235,7 @@
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
-    <a href="/dashboard" target="content" onclick="setActive(this)" title="Dashboard">&#8962;</a><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Audio</span><div class="nav-drop">
+    <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Audio</span><div class="nav-drop">
       <a href="/routing" target="content" onclick="setActive(this)">Routing</a>
       <a href="/controls" target="content" onclick="setActive(this)">Controls</a>
       <a href="/monitor" target="content" onclick="setActive(this)">Monitor</a>
@@ -260,6 +259,14 @@
       <a href="/config" target="content" onclick="setActive(this)">Config</a>
       <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     </div></div>
+    <div class="id-cluster shell-id" title="Gateway identity">
+      <span class="id-led" id="id-led" title="Gateway healthy"></span>
+      <span class="id-call" id="id-call" style="display:none"></span>
+      <span class="id-sep" id="id-call-sep" style="display:none">&middot;</span>
+      <span class="id-site" id="id-site">--</span>
+      <span class="id-sep">&middot;</span>
+      <span class="id-clock" id="id-clock">--:--</span>
+    </div>
     <span class="shell-pcm">
       <button id="play-btn" class="rb rb-caps rb-sm" onclick="toggleStream()"><span class="icon icon-play"></span> MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="50" oninput="setVolume(this.value)">
@@ -267,14 +274,6 @@
       <input id="ws-vol" type="range" min="0" max="100" value="50" oninput="setWSVol(this.value)">
       <button id="mic-btn" class="rb rb-caps rb-sm" onclick="toggleMic()"><span class="icon icon-mic"></span> MIC</button>
     </span>
-  </div>
-  <div class="id-cluster shell-id" title="Gateway identity">
-    <span class="id-led" id="id-led" title="Gateway healthy"></span>
-    <span class="id-call" id="id-call" style="display:none"></span>
-    <span class="id-sep" id="id-call-sep" style="display:none">&middot;</span>
-    <span class="id-site" id="id-site">--</span>
-    <span class="id-sep">&middot;</span>
-    <span class="id-clock" id="id-clock">--:--:--Z</span>
   </div>
 </div>
 <div id="shell-bars"></div>
@@ -302,15 +301,14 @@ document.addEventListener('click', function(e) {
   }
 });
 
-// Identity: site name from /sysinfo (poll slowly), UTC clock ticks locally.
+// Identity: site name from /sysinfo (poll slowly), local clock ticks locally.
 function tickClock() {
   var d = new Date();
-  var hh = String(d.getUTCHours()).padStart(2,'0');
-  var mm = String(d.getUTCMinutes()).padStart(2,'0');
-  var ss = String(d.getUTCSeconds()).padStart(2,'0');
-  document.getElementById('id-clock').textContent = hh+':'+mm+':'+ss+'Z';
+  var hh = String(d.getHours()).padStart(2,'0');
+  var mm = String(d.getMinutes()).padStart(2,'0');
+  document.getElementById('id-clock').textContent = hh+':'+mm;
 }
-setInterval(tickClock, 1000);
+setInterval(tickClock, 15000);
 tickClock();
 function loadIdentity() {
   fetch('/sysinfo').then(function(r){return r.json();}).then(function(s) {
@@ -606,26 +604,66 @@ function stopMic() {
 // --- Audio level bars (always visible) ---
 // Semantic bar classes: sb-in (receive), sb-out (transmit), sb-loc (local output).
 // Ducked overrides to amber — identity comes from the text label, not hue.
-function _sbBar(pct, cls, ducked) {
-  var w = Math.round(Math.min(Math.max(pct, 0), 100));
-  var pctCls = ducked ? 'sb-pct ducked' : 'sb-pct';
-  var barCls = ducked ? 'sb-ducked-bar' : cls;
-  return '<span class="'+pctCls+'">'+pct+'%</span><span class="sb-track"><span class="sb-bar '+barCls+'" style="width:'+w+'%"></span></span>';
+// In-place DOM updates (keyed by label) let the CSS width transition actually run.
+var _sbRows = {};   // key -> {row, pct, bar, mute}
+var _sbSmooth = {}; // key -> smoothed level (exponential)
+var _sbOrder = [];  // last-seen order of keys so re-orderings are reflected
+function _sbEnsure(key, label) {
+  var r = _sbRows[key];
+  if (r) return r;
+  var row = document.createElement('div'); row.className = 'sb';
+  row.innerHTML = '<span class="sb-label">'+label+'</span>'
+                + '<span class="sb-pct">0%</span>'
+                + '<span class="sb-track"><span class="sb-bar"></span></span>'
+                + '<span class="mute-ind" style="display:none">M</span>';
+  r = { row: row, pct: row.children[1], bar: row.children[2].firstChild, mute: row.children[3] };
+  _sbRows[key] = r;
+  return r;
 }
-createPoller('/status', 1000, function(s) {
-    var h = '';
-    h += '<div class="sb"><span class="sb-label">RX</span>'+_sbBar(s.radio_rx,'sb-in')+'</div>';
-    h += '<div class="sb"><span class="sb-label">TX</span>'+_sbBar(s.radio_tx,'sb-out')+'</div>';
-    if(s.kv4p_enabled) h += '<div class="sb"><span class="sb-label">KV4P</span>'+_sbBar(s.kv4p_level,'sb-in')+(s.kv4p_muted?' <span class="mute-ind">M</span>':'')+'</div>';
-    if(s.d75_enabled) h += '<div class="sb"><span class="sb-label">D75</span>'+_sbBar(s.d75_level,'sb-in')+(s.d75_muted?' <span class="mute-ind">M</span>':'')+'</div>';
-    if(s.sdr1_enabled) h += '<div class="sb"><span class="sb-label">SDR1</span>'+_sbBar(s.sdr1_level,'sb-in',s.sdr1_ducked)+'</div>';
-    if(s.sdr2_enabled) h += '<div class="sb"><span class="sb-label">SDR2</span>'+_sbBar(s.sdr2_level,'sb-in',s.sdr2_ducked)+'</div>';
-    if(s.remote_enabled) h += '<div class="sb"><span class="sb-label">'+s.remote_mode+'</span>'+_sbBar(s.remote_level,'sb-in', s.remote_mode==='CL'&&s.cl_ducked)+'</div>';
-    if(s.announce_enabled) h += '<div class="sb"><span class="sb-label">AN</span>'+_sbBar(s.an_level,'sb-out')+'</div>';
-    if(s.speaker_enabled) h += '<div class="sb"><span class="sb-label">SP</span>'+_sbBar(s.speaker_level,'sb-loc')+'</div>';
-    if(s.monitor_enabled) h += '<div class="sb"><span class="sb-label">MON</span>'+_sbBar(s.monitor_level,'sb-in')+'</div>';
-    if(s.link_enabled && s.link_endpoints) { for(var i=0; i<s.link_endpoints.length; i++) { var le = s.link_endpoints[i]; h += '<div class="sb"><span class="sb-label">'+le.name+'</span>'+_sbBar(le.level,'sb-in')+(le.rx_muted?' <span class="mute-ind">M</span>':'')+'</div>'; } }
-    document.getElementById('shell-bars').innerHTML = h;
+function _sbUpdate(key, label, raw, cls, ducked, muted) {
+  var r = _sbEnsure(key, label);
+  // Exponential smoothing — fast attack for spikes, slower decay feels natural.
+  var prev = _sbSmooth[key] || 0;
+  var v = Math.min(Math.max(raw || 0, 0), 100);
+  var a = v > prev ? 0.6 : 0.3;
+  var s = prev + (v - prev) * a;
+  _sbSmooth[key] = s;
+  var w = Math.round(s);
+  r.pct.textContent = w + '%';
+  r.pct.className = ducked ? 'sb-pct ducked' : 'sb-pct';
+  r.bar.className = 'sb-bar ' + (ducked ? 'sb-ducked-bar' : cls);
+  r.bar.style.width = w + '%';
+  r.mute.style.display = muted ? '' : 'none';
+  _sbOrder.push(key);
+}
+createPoller('/status', 250, function(s) {
+    _sbOrder = [];
+    _sbUpdate('rx', 'RX', s.radio_rx, 'sb-in', false, false);
+    _sbUpdate('tx', 'TX', s.radio_tx, 'sb-out', false, false);
+    if(s.kv4p_enabled) _sbUpdate('kv4p', 'KV4P', s.kv4p_level, 'sb-in', false, s.kv4p_muted);
+    if(s.d75_enabled)  _sbUpdate('d75',  'D75',  s.d75_level,  'sb-in', false, s.d75_muted);
+    if(s.sdr1_enabled) _sbUpdate('sdr1', 'SDR1', s.sdr1_level, 'sb-in', s.sdr1_ducked, false);
+    if(s.sdr2_enabled) _sbUpdate('sdr2', 'SDR2', s.sdr2_level, 'sb-in', s.sdr2_ducked, false);
+    if(s.remote_enabled) _sbUpdate('remote', s.remote_mode, s.remote_level, 'sb-in', s.remote_mode==='CL'&&s.cl_ducked, false);
+    if(s.announce_enabled) _sbUpdate('an', 'AN', s.an_level, 'sb-out', false, false);
+    if(s.speaker_enabled)  _sbUpdate('sp', 'SP', s.speaker_level, 'sb-loc', false, false);
+    if(s.monitor_enabled)  _sbUpdate('mon', 'MON', s.monitor_level, 'sb-in', false, false);
+    if(s.link_enabled && s.link_endpoints) {
+      for(var i=0; i<s.link_endpoints.length; i++) {
+        var le = s.link_endpoints[i];
+        _sbUpdate('link_'+le.name, le.name, le.level, 'sb-in', false, le.rx_muted);
+      }
+    }
+    // Reconcile: remove rows no longer present, append/reorder the rest.
+    var container = document.getElementById('shell-bars');
+    var want = {}; _sbOrder.forEach(function(k){ want[k] = true; });
+    Object.keys(_sbRows).forEach(function(k){
+      if (!want[k]) { _sbRows[k].row.remove(); delete _sbRows[k]; delete _sbSmooth[k]; }
+    });
+    for (var i=0; i<_sbOrder.length; i++) {
+      var row = _sbRows[_sbOrder[i]].row;
+      if (container.children[i] !== row) container.insertBefore(row, container.children[i] || null);
+    }
   });
 
 // Grey out nav links for disabled radios
