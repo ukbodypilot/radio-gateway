@@ -156,7 +156,7 @@
   #shell-bars .sb-track::after  { left: 95%; background: var(--t-err);  opacity: 0.45; }
   #shell-bars .sb-bar {
     display: block; height: 100%;
-    transition: width 0.25s linear;
+    transition: width 0.08s linear;
     box-shadow: 0 0 6px currentColor;
     position: relative; z-index: 1;
   }
@@ -625,7 +625,7 @@ function _sbUpdate(key, label, raw, cls, ducked, muted) {
   // Exponential smoothing — fast attack for spikes, slower decay feels natural.
   var prev = _sbSmooth[key] || 0;
   var v = Math.min(Math.max(raw || 0, 0), 100);
-  var a = v > prev ? 0.6 : 0.3;
+  var a = v > prev ? 1.0 : 0.15;
   var s = prev + (v - prev) * a;
   _sbSmooth[key] = s;
   var w = Math.round(s);
