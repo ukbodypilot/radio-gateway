@@ -806,7 +806,23 @@ class AudioProcessor:
         Contract preserved: block-in = block-out, same pcm_data type.
         Startup: no denoised output available yet → emit dry for the first
         1–2 ticks, then steady-state matches the tick rate.
+
+        Silence short-circuit: continuous-feed sources (e.g. AIOC radios
+        with zero-fill during squelch-closed) hammer the worker with pure
+        zero PCM every tick. RNNoise still pays the FFT + RNN cost per
+        frame, and DFN3 pays a full ONNX run. Skip the worker entirely
+        when the frame is below -60 dBFS and emit dry — a tiny bit of
+        stream-state drift on silence is inaudible when speech resumes.
         """
+        # Silence short-circuit. pcm_rms is cheap (a single numpy RMS).
+        # -60 dBFS on int16 ≈ RMS of 32.7. Anything under that is
+        # effectively "no energy" — feeding the denoiser is wasted CPU.
+        try:
+            if pcm_rms(pcm_data) < 33:
+                return pcm_data
+        except Exception:
+            pass
+
         self._dn_ensure_worker()
         # Snapshot params — mix, engine, atten can all change mid-flight
         # from the HTTP/MCP threads; capturing at enqueue time keeps the

@@ -340,6 +340,17 @@ class BusManager:
         # Unkey all auto-PTT endpoints before tearing down buses
         self._release_all_ptt()
         self.stop()
+        # Stop every per-bus denoise worker before dropping the processors.
+        # Without this the old AudioProcessor's _dn_thread stays alive as a
+        # daemon — wakes every 500 ms, finds an empty queue, goes back to
+        # sleep — so each reload leaks a thread. They don't burn CPU but
+        # accumulate across many reloads.
+        for _proc in self._bus_processors.values():
+            try:
+                _proc._dn_stop_worker()
+            except Exception:
+                pass
+        self._bus_processors.clear()
         self._busses.clear()
         self.start()
 
