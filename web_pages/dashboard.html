@@ -325,10 +325,8 @@ function updateStatus() {
     if(s.cat_enabled) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+flashCls('cat', s.cat)+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
     if(s.d75_enabled) { var _d75a = s.d75_mode==='bluetooth' ? (s.d75_audio_connected?' <span class="st-val green">BT Audio</span>':' <span class="st-val red">No BT Audio</span>') : s.d75_mode==='link_endpoint' ? ' <span class="st-val green">Link</span>' : ' <span class="st-val yellow">USB</span>'; h += '<div class="st-item"><span class="st-label">D75:</span><span class="st-val '+(s.d75_connected?'green':'red')+flashCls('d75_conn', !!s.d75_connected)+'">'+(s.d75_connected?'ON':'OFF')+'</span>'+_d75a+'</div>'; }
     if(s.relay_radio_enabled) h += '<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+flashCls('pwrb', !!s.relay_pressing)+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
-    h += '</div>';
-
-    // Timers row: uptime + smart announce countdowns
-    h += '<div class="st-row timer-row">';
+    // Uptime + timers flow into the same info-row as PWRB so short items
+    // pack into the grid instead of forcing a half-empty second row.
     h += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
     for(var i=0;i<s.smart_countdowns.length;i++) {
       var sc=s.smart_countdowns[i];
@@ -354,7 +352,7 @@ function updateStatus() {
       if(ds.uptime) { var u=ds.uptime; var uh=Math.floor(u/3600); var um=Math.floor((u%3600)/60); var us=Math.floor(u%60); bh += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+uh+'h '+('0'+um).slice(-2)+'m '+('0'+us).slice(-2)+'s</span></div>'; }
       if(ds.bytes_sent) { var kb=ds.bytes_sent/1024; var mb=kb/1024; bh += '<div class="st-item"><span class="st-label">Sent:</span><span class="st-val cyan">'+(mb>=1?mb.toFixed(1)+' MB':kb.toFixed(0)+' KB')+'</span></div>'; }
       if(ds.send_rate) bh += '<div class="st-item"><span class="st-label">Rate:</span><span class="st-val cyan">'+ds.send_rate+'</span></div>';
-      if(ds.server) bh += '<div class="st-item"><span class="st-label">Server:</span><span class="st-val white">'+ds.server+ds.mount+'</span></div>';
+      if(ds.server) bh += '<div class="st-item st-item-wide"><span class="st-label">Server:</span><span class="st-val white">'+ds.server+ds.mount+'</span></div>';
       document.getElementById('bc-stats').innerHTML = bh;
     } else {
       bcPanel.style.display = 'none';
@@ -529,8 +527,18 @@ function sysBar(pct, tone) {
 }
 createPoller('/sysinfo', 2000, function(s) {
   var h = '<div class="st-row">';
-  h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(s.cpu_pct)+'</div>';
-  h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val white">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
+  // CPU: colour driven by critical (real-time work); background (nice) shown dim — it yields and isn't pressure.
+  var crit = (s.cpu_critical_pct !== undefined) ? s.cpu_critical_pct : s.cpu_pct;
+  var bg = (s.cpu_background_pct !== undefined) ? s.cpu_background_pct : 0;
+  var tot = (s.cpu_pct !== undefined) ? s.cpu_pct : crit;
+  h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(crit)+'<span class="st-label" title="background (nice) — yields to real-time work">+'+bg+'% bg</span><span class="st-label">='+tot+'%</span></div>';
+  if (s.cpu_iowait_pct !== undefined && s.cpu_iowait_pct > 5) {
+    h += '<div class="st-item"><span class="st-label">IOwait:</span><span class="st-val '+(s.cpu_iowait_pct>15?'red':'yellow')+'">'+s.cpu_iowait_pct+'%</span></div>';
+  }
+  // Load-per-core: >1.0 = tasks queueing, genuinely taxed
+  var lpc = (s.load_per_core !== undefined) ? s.load_per_core : (s.load[0] / (s.cpu_cores || 1));
+  var lpcCls = lpc > 1.0 ? 'red' : lpc > 0.7 ? 'yellow' : 'green';
+  h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val '+lpcCls+'">'+lpc.toFixed(2)+'/core</span><span class="st-label">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
   h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, 'accent')+'<span class="st-label">'+s.mem_used_mb+'/'+s.mem_total_mb+'MB</span></div>';
   if (s.swap_total_mb > 0) {
     var swPct = Math.round(100*s.swap_used_mb/s.swap_total_mb);
@@ -549,17 +557,17 @@ createPoller('/sysinfo', 2000, function(s) {
       h += '<div class="st-item"><span class="st-label">'+t.label+':</span><span class="st-val '+tc+'">'+t.temp+'&deg;C</span></div>';
     }
   }
-  h += '</div>';
+  // Net/TCP/temps and the IP/host block share one row so short items
+  // pack into the grid instead of forcing a second half-empty row.
   if (s.ips && s.ips.length) {
-    h += '<div class="st-row">';
     if (s.gateway_name) h += '<div class="st-item"><span class="st-label">Name:</span><span class="st-val white">'+s.gateway_name+'</span></div>';
     if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';
     for (var i=0; i<s.ips.length; i++) {
       h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
     }
-    if (s.tunnel_url) h += '<div class="st-item"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
-    h += '</div>';
+    if (s.tunnel_url) h += '<div class="st-item st-item-wide"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
   }
+  h += '</div>';
   document.getElementById('sysinfo').innerHTML = h;
 });
 

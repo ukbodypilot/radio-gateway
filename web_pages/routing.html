@@ -101,6 +101,13 @@
     animation: rf-flow 1.2s linear infinite;
     filter: drop-shadow(0 0 3px rgba(93,196,122,0.55));
   }
+  /* Selected flowing connection: accent color wins (so selection is
+     visible on active lines too) while keeping the dashed animation
+     so activity is still indicated. */
+  .drawflow .connection.flowing .main-path.selected {
+    stroke: var(--t-accent);
+    filter: drop-shadow(0 0 3px rgba(81,184,255,0.65));
+  }
   .drawflow .drawflow-node .input,
   .drawflow .drawflow-node .output {
     background: var(--t-panel);
