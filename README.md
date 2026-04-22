@@ -6,68 +6,88 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 **Packet:** Winlink email via Direwolf TNC + Pat client. APRS decode with station mapping. BBS terminal. Gateway proximity map from Winlink CMS directory.
 **Audio:** Sub-millisecond jitter bus mixer with per-stream trace diagnostics. Fire-and-forget PTT. Direct ALSA capture bypassing PipeWire.
 
-## v3.4 Highlights
+## Features
 
-First release aimed squarely at fresh users. You should be able to go from a clean Arch or Debian box to a running gateway using only the repo, without a support session.
+Current-state summary. For how each subsystem works in detail, jump to the section of the same name below. For release-by-release history, see [CHANGELOG.md](CHANGELOG.md).
 
-- **New [`INSTALL.md`](INSTALL.md)** — full walkthrough: prereqs, AUR helper, credential acquisition (Mumble / Broadcastify / Telegram / GDrive), pre-flight checklist, troubleshooting, companion-repo map, manual uninstall.
-- **`requirements.txt`** — full Python dep set; `pip install -r requirements.txt` works for users who prefer to manage the Python layer manually alongside the system packages from `scripts/install.sh`.
-- **`scripts/install.sh` now does a post-install health check** — `snd-aloop` loaded, audio group membership, USB device detection, config credential placeholders still in place, runtime-binary availability, Python import smoke test. All the "why won't it start?" stuff surfaces immediately.
-- **AUR-helper fail-fast on Arch** — the installer detects `yay`/`paru` up front and tells you exactly which optional features (cloudflared, darkice, SDRplay, rtl_airband) will be skipped if one is missing.
-- **Annotated example config** — `examples/gateway_config.txt` opens with a "Fresh install minimum" block that lists REQUIRED / RECOMMENDED / HARDWARE fields and points at `INSTALL.md` for per-credential instructions.
-- **Portability cleanup** — `.mcp.json` uses repo-relative paths; `CLAUDE.md` no longer mandates `/home/user/Downloads/radio-gateway`; `tools/kv4p_raw_capture.py` no longer pins output paths. The repo now works at any clone location without hand-edits.
-- **Loop playback runs standalone** — clicking play without wiring `loop_playback` to a bus still ticks the clock and shows audio activity. Wiring it into a bus mid-play taps the ongoing stream. The whole lifecycle is owned by the gateway (ffmpeg + reader thread + queue), so closing the browser mid-play doesn't stop playback.
-- **Per-bus Export mode** on the recorder page — click Export, then click-drag on the waveform to select a time range; Download exports and auto-exits the mode. Separate ▶ / ■ buttons for Play / Stop alongside the Playback-mode toggle.
-- **Routing page polish** — mouse-wheel zoom on the canvas, VU-meter-style compact level bars on every node, asymmetric transitions (snappy rise, smooth glide on fall), and selected-flowing connections now recolor like selected inactive ones.
-- **Dashboard level bars redesigned** — 18 px track / 8 px centered fill, 70/95 % zone ticks, exponential smoothing with instant attack + gradual decay. Row layout tightened so PWRB / uptime / timers / IPs / temps all flow into one auto-fill grid.
-- **TX / RX mute independence** — radio plugins now keep a separate `tx_muted` flag so muting a TX sink no longer silences its RX source.
-- **Broadcastify auto-reconnect no longer latches off** after a DNS blip. `_connect()` exceptions can't kill the retry loop.
-- **Richer CPU telemetry** on `/dashboard` — split into real-time critical load, background (nice) load, iowait, and per-core load average.
-- **New MCP tools** — `tunnel_link_url` (Cloudflare tunnel + wss:// link URL) and `voice_view` (peek at the claude-voice tmux pane). Dead `recording_playback` stub removed.
+**Radio hardware**
+- TH-9800 via AIOC USB — full CAT control (dual VFO, memories, all front-panel buttons in the web UI), HID PTT, browser-mic PTT.
+- Kenwood TH-D75 over Bluetooth — band A/B, D-STAR, memory load with tone/mode/shift/offset, live battery and TNC mode.
+- KV4P HT — SA818/DRA818 over CP2102 USB serial, Opus audio, 38-tone CTCSS, S-meter.
+- RSPduo SDR — two modes selectable at runtime: single-tuner multi-channel (up to 10.66 MHz bandwidth, 2 demod channels) or dual-tuner master/slave. 57 % CPU reduction in single-tuner mode.
+- FTM-150 and any AIOC-equipped radio as a remote endpoint via Gateway Link.
 
-## v3.3 Highlights
+**Audio routing (v2.0)**
+- Bus-based: four bus types (Listen / Solo / Duplex Repeater / Simplex Repeater) with a visual drag-and-drop editor at `/routing`.
+- Drawflow canvas with mouse-wheel zoom, live VU-meter-style level bars on every node, animated signal-flow on active connections, NUL sink for recording-only paths.
+- All radios are plugins (`TH9800Plugin`, `D75Plugin`, `KV4PPlugin`, `SDRPlugin`) registering as sources and sinks; auto-discovery of additional plugins from `plugins/`.
+- Per-bus processing chain: noise gate, HPF, LPF, notch, plus neural denoise.
+- TX / RX muted independently on radio plugins (muting a TX sink does not silence its RX source).
 
-- **Two neural denoise engines, per-bus selectable** — RNNoise (tiny, aggressive) for broadband cleanup, or [DeepFilterNet 3](https://github.com/Rikorose/DeepFilterNet) (16 MB ONNX) for speech-preserving denoise with narrowband noise removal. The "D" button on a bus opens the engine pill (RNN ↔ DFN), mix slider, and (DFN only) an attenuation cap in dB to prevent neural-gate pumping. DFN3 model is vendored in the repo — no runtime download.
-- **Phase-aligned wet/dry mix** — engine-specific dry-path delay compensation (RNN 960 samples, DFN3 1440 samples) eliminates the chorus/reverb smear that naive wet+dry addition produced at any mix < 1.0. Delays measured empirically with impulse probes.
-- **Per-stream transcription feed workers** — each bus wired to the transcription sink gets its own worker thread. Combined with collapsing the duplicate ASR-path denoise, feed-worker mean processing time dropped ~13× (25.6 ms → 1.9 ms). Queue saturation and drops eliminated.
-- **DFN session warmup at startup** — 80 dummy frames through ORT synchronously during bus manager init so graph optimisation / thread pool / CPU cache is hot before the first real audio tick. Killed the 1+ minute cold-start stutter window.
-- **Moonshine repetition-suppressed decoder** — no-repeat-3-gram logit masking + low-diversity early exit replaces upstream's pure greedy argmax. Stops the runaway "Anno, Anno, Anno…" loops Moonshine produces on ambiguous audio.
-- **Multi-radio TX on one solo bus** — one source (e.g. Announcements) can now simulcast to multiple radio TX sinks. PTT + audio fan out to every wired radio simultaneously.
-- **Dominant-source attribution** — when multiple sources share a bus, each transcript is tagged with the actual upstream tuner's frequency rather than the bus id. Tracks per-frame RMS at mix time and picks the winner across the VAD window.
-- **Peak-normalised file playback + tanh soft-clip on gain** — quiet announcement files get brought up to −1 dBFS on decode; gain sliders above 100% saturate smoothly instead of square-wave clipping. Covers all five routing-path gain stages.
+**Neural denoise (two engines, per-bus)**
+- **RNNoise** — tiny (~100 KB), aggressive on broadband hiss, < 1 ms/frame.
+- **DeepFilterNet 3** — 16 MB streaming ONNX, preserves speech better, handles narrowband noise (tones, intermod), ~3 ms/frame. Model vendored in-repo; no runtime download. Per-bus attenuation cap to prevent neural-gate pumping.
+- Phase-aligned wet/dry mix with engine-specific dry-path delay (no chorus/reverb smear).
+- Inference runs off the bus tick so a slow chunk doesn't stall audio.
 
-## v3.2 Highlights
+**Streaming**
+- Direct Icecast/Broadcastify — internal ffmpeg pipe, no DarkIce, no ALSA loopback. Appears as a sink in the routing page.
+- Auto-reconnect on drop (with try/finally so it never latches off after a DNS blip).
+- Per-bus PCM WebSocket + MP3 streams for browser playback (MP3 encoder starts lazily on first subscriber).
+- Cloudflare quick-tunnel for free public HTTPS with URL publishing to Google Drive so remote endpoints can discover the gateway.
 
-- **Moonshine ASR + Silero VAD** -- Replaced Whisper with [Moonshine](https://github.com/usefulsensors/moonshine) (ONNX, CPU-efficient, English). Replaced the dBFS envelope-follower VAD with [Silero v5](https://github.com/snakers4/silero-vad) ML speech classifier. False opens on squelch tails, carrier noise, DTMF, and pilot tones are now filtered at the VAD stage rather than sent to the ASR model.
-- **Neural denoise (two engines)** -- per-bus toggle ("D" button in routing page) with wet/dry mix slider and a small engine pill next to it. Pick per bus:
-  - [**RNNoise**](https://jmvalin.ca/demo/rnnoise/) — tiny (~100 KB), aggressive on broadband hiss, <1 ms/frame. Default.
-  - [**DeepFilterNet 3**](https://github.com/Rikorose/DeepFilterNet) — 16 MB streaming ONNX, better speech preservation and narrowband noise removal (tones/chirps/intermod), ~3 ms/frame. Model auto-downloads on first enable.
-  Both available on the ASR path too (engine select in transcribe controls). Live per-engine timing shown in the transcribe feed-health readout.
-- **UI redesign** -- Phosphor/instrument-panel aesthetic across all 20 pages. JetBrains Mono throughout, cyan accent reserved for live signals, green/amber/red signal vocabulary enforced. Elevated level-meter strip in shell bar (inset channels, zone ticks, per-channel glow). Identity plate with callsign + beacon LED. Animated signal-flow on active routing connections. Scanning sweep on empty states.
-- **SDR single-tuner multi-channel mode** -- RSPduo runs one tuner at up to 10.66 MHz bandwidth with up to 2 demodulated channels. 57% CPU reduction vs dual-tuner mode at the same sample count.
-- **Packet radio auto-discovery** -- Gateway Link AIOC endpoint auto-discovers via mDNS; no hardcoded IPs. Internal AGWPE proxy eliminates per-endpoint IP configuration in Pat.
-- **Google Drive integration** -- Cloudflare tunnel URL published to Drive for internet-accessible link endpoints.
+**Loop Recorder**
+- Per-bus continuous recording (enable the "R" button on a bus). Canvas waveform viewer with zoom/pan, click-to-play, drag-select, MP3/WAV export. Configurable retention (1 h to 7 days).
+- Server-owned playback source (`loop_playback`) — decoding, clock and meter run even without bus routing, so you can scrub audibly once you wire it to a speaker / radio / Mumble sink. Survives browser close.
+- Per-bus Export mode (click-drag to select a time range, Download exports and exits the mode) with separate Play / Stop buttons alongside the Playback toggle.
 
-## v3.0 Highlights
+**Transcription**
+- Moonshine ONNX base/tiny (local, English, CPU-efficient; real-time on a Haswell i5).
+- Silero v5 ML VAD with probability threshold — ignores squelch tails, carrier noise, DTMF, pilot tones.
+- Repetition-suppressed greedy decoder (no-repeat-3-gram logit masking + low-diversity early exit) to stop Moonshine's "Anno, Anno, Anno…" loops.
+- Per-stream feed workers (one thread per bus wired to the transcription sink); dominant-source attribution so transcripts are tagged with the actual upstream frequency.
+- Forward to Mumble chat and/or Telegram.
 
-- **Unified audio engine** -- all buses (listen, solo, duplex, simplex) now run in a single BusManager thread. The main loop is a thin consumer that drains queues for SDR rebroadcast and WebSocket push. One code path for all audio.
-- **Loop Recorder** -- per-bus continuous recording with visual waveform review. Enable the "R" button on any bus to record. Canvas-based waveform viewer with zoom/pan, click-to-play, drag-select, and MP3/WAV export. Configurable retention (1h to 7 days). Dashboard panel with live stats. See [docs/loop-recorder.md](docs/loop-recorder.md).
-- **Plugin auto-discovery** -- drop a `.py` file in `plugins/`, add a config flag, restart. No gateway code changes needed. Template at `plugins/example_radio.py`. Full developer guide at [docs/plugin-development.md](docs/plugin-development.md).
+**Packet radio / Winlink**
+- Direwolf TNC on an FTM-150 link endpoint; gateway switches the endpoint between audio and data modes automatically.
+- APRS decode (uncompressed, compressed, MIC-E, timestamped, weather, status, objects, telemetry, digipeater paths) with a Leaflet map.
+- Winlink email via Pat (B2F), compose / inbox / connect-and-sync, live connection log.
+- Gateway proximity map from the Winlink CMS directory.
 
-| Loop Recorder |
-|:-:|
-| ![Loop Recorder](docs/screenshots/recorder.png) |
+**Control surfaces**
+- 20-page web UI served from one Python process (no Flask): Dashboard, Routing, Controls, TH-9800, TH-D75, KV4P, SDR, GPS, Repeaters, ADS-B, Telegram, Monitor, Recordings, Loop Recorder, Transcribe, Packet, Logs, Voice, GDrive, Config.
+- MCP server (`gateway_mcp.py`) exposing 95+ tools for AI control — status, radios, SDR, routing, loop recorder, packet, repeaters, automation, Gateway Link, Google Drive, Cloudflare tunnel, voice view, system.
+- Telegram bot — text messages route through a tmux Claude Code session with MCP tools; voice notes stream directly to radio TX via ffmpeg.
+- Mumble chat commands — `!speak`, `!cw`, status, help, PTT, mute/unmute.
+- Web mic + Room Monitor — stream from browser or Android APK to any bus.
+- Windows full-duplex audio client (TCP 9600 / 9602).
 
-## v2.0 Highlights
+**Telemetry, AI, and automation**
+- Smart Announcements — Claude CLI generates short spoken reports on a schedule (weather, band conditions, etc.), broadcast via Edge TTS; up to 19 slots.
+- Scheduled automation tasks with configurable triggers.
+- Live transcription forwarded to Telegram / Mumble.
+- Dashboard CPU telemetry split into real-time critical load, background (nice) load, iowait, per-core load average.
 
-- **Bus-based routing** replaces the monolithic mixer. Four bus types (Listen, Solo, Duplex Repeater, Simplex Repeater) handle all audio flow. Sources and sinks are wired through busses -- audio only flows where you connect it.
-- **Visual routing UI** built on Drawflow. Drag sources, busses, and sinks onto a canvas and wire them with click-and-drag connections. Live audio level bars on every node.
-- **Plugin architecture** for all radios. TH-9800, TH-D75, KV4P, and SDR are self-contained plugins (`TH9800Plugin`, `D75Plugin`, `KV4PPlugin`, `SDRPlugin`) that register as sources and sinks in the routing system.
-- **Per-bus audio processing** -- noise gate, HPF, LPF, and notch filter configurable per bus.
-- **Full duplex Remote Audio** -- Windows client sends and receives simultaneously on two TCP ports.
-- **Direct Icecast streaming** -- internal ffmpeg pipes directly to Icecast. No DarkIce, no ALSA loopback, no external processes.
-- **Mumble as routable source/sink** -- Mumble RX and Mumble TX appear as nodes in the routing page.
-- **MCP routing tools** -- AI can create busses, wire connections, mute sinks, and read levels programmatically.
+**Other**
+- TTS (Google) and CW via Mumble chat, 9 voice accents.
+- 10 announcement slots with auto-resampling (WAV/MP3/FLAC).
+- EchoLink via named pipes.
+- Optional embedded Mumble server (1 or 2 instances) managed by the gateway.
+- GPS receiver (USB serial + NMEA) with simulation mode.
+- ARD repeater directory with map, proximity search, MASTER/SLAVE SDR tuning.
+- ADS-B aircraft tracking via embedded SkyAware (RTL-SDR dongle + dump1090-fa).
+- Dynamic DNS (No-IP compatible), Gmail notifications.
+- Per-stream audio trace + watchdog trace diagnostics with HTML dumps.
+
+## What's new
+
+See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Latest releases:
+
+- **v3.4** (2026-04-22) — deployability release: INSTALL.md, `requirements.txt`, AUR fail-fast, post-install health check, annotated example config, path de-mandate, loop playback owned by gateway, routing UI polish, TX/RX mute independence, Broadcastify reconnect fix.
+- **v3.3** (2026-04-19) — DeepFilterNet 3 denoise, phase-aligned wet/dry, per-stream transcription workers, design pass.
+- **v3.2** (2026-04-19) — Moonshine ASR, Silero VAD, RNNoise denoise, UI redesign.
+- **v3.0** (2026-04-08) — Unified audio engine, Loop Recorder, plugin auto-discovery.
+- **v2.0** (2026-04-01) — Bus-based routing, visual UI, plugin architecture.
 
 ## Screenshots
 
