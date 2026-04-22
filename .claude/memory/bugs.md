@@ -1,5 +1,24 @@
 # Bug History — Radio Gateway
 
+## Broadcastify reconnect latched off forever after _connect() exception (2026-04-21)
+**Symptom:** Broadcastify dropped at 02:54 (Errno 104, server closed 5.5h-old connection) with a concurrent DNS blip (Errno -3). Single "Auto-reconnecting (attempt #1)" log at 03:40, then no further retries for 3+ hours. `darkice_pid=null`, `stream_restarts=1`, stream stayed dead.
+**Root cause:** `_auto_reconnect` thread in `audio_sources.py:2544` had no `try/finally`. If `_connect()` raised (DNS lookup failure during the blip), `self._reconnecting = True` was never cleared. Subsequent `send_audio()` calls saw the latch True and skipped scheduling any more reconnect threads.
+**Fix:** Wrap body in try/finally; log+swallow exceptions from close() and _connect() so the finally clears the flag and future audio triggers keep trying (commit ce52fc0).
+**Files:** `audio_sources.py` (BroadcastifyStreamOutputSource._auto_reconnect)
+**Mirrored:** also in repo `.claude/memory/bugs.md`.
+
+## TH9800_CAT headless stop took 10s SIGKILL instead of cleanly exiting (2026-04-20)
+**Symptom:** Every `systemctl restart radio-gateway` logged `th9800-cat.service: State 'stop-sigterm' timed out. Killing.` The service printed "SIGTERM received — shutting down..." on stop but then hung for 10s until systemd sent SIGKILL. Restart worked fine after the kill.
+**Root cause:** Two event loops. `TH9800_CAT.py` runs a module-level `loop` on a background thread from import (line 72). Headless `main()` was launched via `asyncio.run(main())`, which created a **second** loop. The shutdown Event was `await`ed on asyncio.run's loop, but the SIGTERM handler called `loop.call_soon_threadsafe(_shutdown_event.set)` targeting the **module loop** — so the event was set on the wrong loop and the wait never returned.
+**Fix:** Single-loop headless. `__main__` now routes `-s` to the module loop via `run_coroutine_threadsafe(main(), loop)`; POSIX signal handler is installed in `__main__` on the main thread (add_signal_handler can't be used — main() runs on the loop's worker thread); shutdown Event lives on the module loop so .set() and .wait() agree.
+**Files:** `/home/user/Downloads/TH9800_CAT/TH9800_CAT.py` (commit 216aa57 in the TH9800_CAT repo, **not** radio-gateway). Measured stop time: **10107ms → 23ms**.
+
+## sdrplay_apiService SEGV cascade on rapid SDR mode switches (2026-04-19, mitigated 2026-04-20)
+**Symptom:** 10 SEGVs in `sdrplay_apiService` between 20:01–21:12 on 2026-04-19 while switching RSPduo between dual and single tuner modes. Each crash had a core dump, stack bottoms in `libusb_handle_events_timeout_completed`. Every stop cycle logged `libusb: device 2.1/2.3 still referenced — application left some devices open`.
+**Root cause:** The 1s `time.sleep()` between `killall -9 sdrplay_apiService` and `systemctl start sdrplay.service` wasn't long enough for libusb to release the RSPduo's USB interface handles. Next start re-claimed them while the old handles were still pending teardown, dereferenced freed memory, SEGV.
+**Fix:** Bumped the grace period 1s → 2s in both `_restart_rtl_airband()` and `_restart_rtl_airband_single()` in `sdr_plugin.py` (commit 068fd6a). Not a full fix — SDRplay's daemon has a genuine USB-handle leak — but 2s has been empirically sufficient.
+**Watch for:** If a future session hits this again during mode-switch iteration, increase to 3s or avoid restarting sdrplay.service per channel edit (only needed on full mode change).
+
 ## Multi-bus PCM/MP3 routing interleaved instead of mixed (2026-04-18)
 **Symptom:** Routing two buses (e.g. main + th9800) to the PCM/MP3 sink sounded like the streams were chopped together — chunks from each bus played sequentially, not mixed.
 **Root cause:** `_deliver_audio()` called `self._pcm_queue.append(mixed)` and `push_ws_audio(mixed)` independently for each bus during its own tick. WS client received `busA_chunk, busB_chunk, busA_chunk, busB_chunk…` at 25ms intervals — playback was temporal interleave.
