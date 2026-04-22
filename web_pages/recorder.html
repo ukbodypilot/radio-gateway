@@ -48,6 +48,14 @@
     padding:2px var(--s-1); font:inherit; font-size:var(--f-sm);
   }
   .export-status { color:var(--t-text-dim); font-size:var(--f-xs); }
+  .rb:disabled { opacity: 0.4; cursor: not-allowed; }
+  .rb:disabled:hover { background: inherit; border-color: var(--t-border); }
+  /* Export-mode toggle: highlighted when the bus's canvas is in
+     click-drag-to-select mode instead of the normal pan/click-to-play. */
+  .ex-btn.active {
+    background: var(--t-warn); color: #0a0a0a; border-color: var(--t-warn);
+  }
+  canvas.export-mode { cursor: crosshair; }
 
   .no-data {
     color:var(--t-text-mute); text-align:center;
@@ -70,7 +78,9 @@
   <button class="rb rb-sm" onclick="zoomIn()">+</button>
   <button class="rb rb-sm" onclick="zoomOut()">&minus;</button>
   <button class="rb rb-sm" onclick="fitAll()">Fit All</button>
-  <button id="pb-btn" class="rb rb-sm" onclick="togglePlaybackMode()">Playback</button>
+  <button id="pb-btn" class="rb rb-sm" onclick="togglePlaybackMode()" title="Click-a-waveform playback mode">Playback</button>
+  <button id="pb-play" class="rb rb-sm" onclick="pbPlay()" title="Play / resume from last position">&#9654;</button>
+  <button id="pb-stop" class="rb rb-sm" onclick="pbStop()" title="Stop server playback">&#9632;</button>
   <span id="pb-time" class="pb-time"></span>
   <span class="sep"></span>
   <button class="rb rb-sm" onclick="mgmtDownloadAll()">Download ZIP</button>
@@ -156,7 +166,7 @@ function buildUI() {
       + '<input type="range" min="0" max="100" value="50" id="vol-'+b.id+'" oninput="busVol(\''+b.id+'\',this.value)">'
       + '</div>'
       + '<div class="export-row">'
-      + '<label>Export:</label>'
+      + '<button class="rb rb-sm ex-btn" id="exbtn-'+b.id+'" onclick="toggleExportMode(\''+b.id+'\')">Export</button>'
       + '<input type="text" id="es-'+b.id+'" size="8" placeholder="HH:MM:SS">'
       + '<label>to</label>'
       + '<input type="text" id="ee-'+b.id+'" size="8" placeholder="HH:MM:SS">'
@@ -168,7 +178,8 @@ function buildUI() {
     // Init per-bus state
     busState[b.id] = {
       wfmData:null, player:new Audio(), playStart:0, playEnd:0,
-      selStart:null, selEnd:null, lastClickTime:null, canvas:null, ctx:null
+      selStart:null, selEnd:null, lastClickTime:null, canvas:null, ctx:null,
+      exportMode: false
     };
     busState[b.id].player.preload = 'none';
   }
@@ -214,7 +225,10 @@ function wireCanvas(cv, busId) {
   });
   cv.addEventListener('mousedown', function(e) {
     activeDragBus = busId;
-    if (e.button === 2) {
+    // Right-click always selects, OR left-click if this bus is in export
+    // mode. Otherwise left-click is pan/click-to-play.
+    var exMode = busState[busId].exportMode;
+    if (e.button === 2 || (exMode && e.button === 0)) {
       isSelecting = true;
       busState[busId].selStart = pxToTime(canvasX(cv,e), cv.width);
       busState[busId].selEnd = busState[busId].selStart;
@@ -258,12 +272,17 @@ function wireCanvas(cv, busId) {
       isSelecting = false;
       var st = busState[busId];
       if (Math.abs(st.selEnd - st.selStart) < 1) {
+        // Tiny / zero-width drag — treat as a click.
         st.selStart = null; st.selEnd = null;
-        var clickTime = pxToTime(canvasX(cv,e), cv.width);
-        if (playbackMode) {
-          serverPlayStart(busId, clickTime);
-        } else {
-          busPlayFrom(busId, clickTime);
+        // In export mode, a bare click just clears the selection; do NOT
+        // fall through to playback (user is picking ranges, not auditioning).
+        if (!st.exportMode) {
+          var clickTime = pxToTime(canvasX(cv,e), cv.width);
+          if (playbackMode) {
+            serverPlayStart(busId, clickTime);
+          } else {
+            busPlayFrom(busId, clickTime);
+          }
         }
       } else {
         updateExportFields(busId);
@@ -501,6 +520,21 @@ function animatePlayback(busId) {
 }
 
 // ── Export ────────────────────────────────────────────────────
+function toggleExportMode(busId) {
+  var st = busState[busId];
+  if (!st) return;
+  st.exportMode = !st.exportMode;
+  _updateExportModeUI(busId);
+}
+
+function _updateExportModeUI(busId) {
+  var st = busState[busId];
+  var btn = document.getElementById('exbtn-'+busId);
+  var cv = st && st.canvas;
+  if (btn) btn.classList.toggle('active', !!(st && st.exportMode));
+  if (cv)  cv.classList.toggle('export-mode', !!(st && st.exportMode));
+}
+
 function updateExportFields(busId) {
   var st = busState[busId];
   if (st.selStart !== null && st.selEnd !== null) {
@@ -530,6 +564,11 @@ function busExport(busId) {
     a.href=url; a.download='loop_'+busId+'_'+s.replace(/:/g,'')+'-'+e.replace(/:/g,'')+'.'+fmt;
     a.click(); URL.revokeObjectURL(url);
     status.textContent = 'Done';
+    // Download succeeded — exit export mode so normal navigation resumes.
+    if (busState[busId]) {
+      busState[busId].exportMode = false;
+      _updateExportModeUI(busId);
+    }
   }).catch(function(err) { status.textContent = 'Error: '+err.message; });
 }
 
@@ -673,48 +712,56 @@ function mgmtArchiveAll() {
 }
 
 // ── Server playback mode ─────────────────────────────────────
+// Playback button: just toggles "click-to-play" mode. It no longer stops
+// an active playback — that's what the Stop button is for.
 function togglePlaybackMode() {
-  if (playbackMode) {
-    // Turning off: stop server playback
-    playbackMode = false;
-    _updatePbBtn();
-    fetch('/loop/playback', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'stop'})
-    }).then(function(){
-      serverPlayback.playing = false;
-      _stopPbPoll();
-      _updatePbTime();
-      renderAll();
-    });
-  } else if (serverPlayback.playing) {
-    // Server is playing from a previous session — stop it
-    playbackMode = false;
-    _updatePbBtn();
-    fetch('/loop/playback', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'stop'})
-    }).then(function(){
-      serverPlayback.playing = false;
-      _stopPbPoll();
-      _updatePbTime();
-      renderAll();
-    });
-  } else {
-    // Enter playback mode
-    playbackMode = true;
-    _updatePbBtn();
+  playbackMode = !playbackMode;
+  _updatePbBtn();
+}
+
+// Explicit Play: resume from the last known server position (if paused)
+// or start from the last clicked waveform position on any bus.
+function pbPlay() {
+  if (serverPlayback.playing) return;  // already playing — no-op
+  var bus = serverPlayback.bus;
+  var start = serverPlayback.start;
+  // If nothing remembered server-side, fall back to the most recent
+  // user click on any bus.
+  if (!bus || !start) {
+    var best = null;
+    for (var id in busState) {
+      var t = busState[id].lastClickTime;
+      if (t && (!best || t > best.t)) best = {id: id, t: t};
+    }
+    if (best) { bus = best.id; start = best.t; }
   }
+  if (!bus || !start) return;
+  serverPlayStart(bus, start);
+}
+
+// Explicit Stop: stop whatever is playing. Mode stays as-is.
+function pbStop() {
+  fetch('/loop/playback', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'stop'})
+  }).then(function(){
+    serverPlayback.playing = false;
+    _stopPbPoll();
+    _updatePbTime();
+    _updatePbBtn();
+    renderAll();
+  });
 }
 
 function _updatePbBtn() {
   var btn = document.getElementById('pb-btn');
-  if (!btn) return;
-  if (playbackMode || serverPlayback.playing) {
-    btn.classList.add('pb-active');
-  } else {
-    btn.classList.remove('pb-active');
-  }
+  if (btn) btn.classList.toggle('pb-active', !!playbackMode);
+  // Play: disabled while already playing; Stop: disabled unless playing.
+  var play = document.getElementById('pb-play');
+  var stop = document.getElementById('pb-stop');
+  if (play) play.disabled = !!serverPlayback.playing;
+  if (stop) stop.disabled = !serverPlayback.playing;
+  if (stop) stop.classList.toggle('pb-active', !!serverPlayback.playing);
 }
 
 function serverPlayStart(busId, epoch) {
