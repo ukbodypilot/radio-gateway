@@ -93,6 +93,7 @@ class TH9800Plugin(RadioPlugin):
         self.volume = 1.0
         self.duck = False  # not duckable — it's the primary radio
         self.muted = False
+        self.tx_muted = False
         self.audio_level = 0
         self.tx_audio_level = 0
         self.audio_boost = 1.0
@@ -235,7 +236,7 @@ class TH9800Plugin(RadioPlugin):
 
     def put_audio(self, pcm):
         """Queue TX audio for non-blocking write to AIOC output stream."""
-        if not self._output_stream or self.muted or self._tx_queue is None:
+        if not self._output_stream or self.tx_muted or self._tx_queue is None:
             return
         try:
             # Apply TX boost from routing page slider

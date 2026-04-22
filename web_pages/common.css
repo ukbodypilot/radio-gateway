@@ -173,7 +173,12 @@ a:hover { text-decoration: underline; }
 /* Status grid rows (key/value readouts) */
 .st-row  { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s-2) var(--s-4); margin: var(--s-2) 0; }
 .st-item { display: flex; gap: var(--s-2); align-items: center; white-space: nowrap; font-size: var(--f-sm); }
-.st-label{ color: var(--t-text-dim); display: inline-block; width: 5.5em; text-align: right; margin-right: var(--s-4); flex-shrink: 0; }
+/* Full-width row for long values (URLs, server addresses) that shouldn't share a row. */
+.st-item-wide { grid-column: 1 / -1; white-space: normal; word-break: break-all; }
+.st-label{ color: var(--t-text-dim); display: inline-block; min-width: 5.5em; text-align: right; margin-right: var(--s-4); flex-shrink: 0; }
+/* Suffix labels: any .st-label after the first one in an .st-item is an inline hint,
+   not a leading key — no min-width, no right-align, no trailing margin. */
+.st-item .st-label ~ .st-label { min-width: 0; text-align: left; margin-right: 0; }
 .st-val  { font-weight: 500; }
 
 /* Level bars */

@@ -946,7 +946,6 @@ class WebConfigServer:
                                             name='WebConfig', daemon=True)
             self._thread.start()
             print(f"  [WebConfig] Listening on {scheme}://0.0.0.0:{port}/")
-            self._start_encoder()
         except Exception as e:
             print(f"  [WebConfig] Failed to start: {e}")
 
@@ -1004,7 +1003,7 @@ class WebConfigServer:
         if self._encoder_proc:
             return
         try:
-            self._encoder_proc = sp.Popen([
+            proc = sp.Popen([
                 'ffmpeg', '-hide_banner', '-loglevel', 'error',
                 '-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0',
                 '-c:a', 'libmp3lame', '-b:a', '96k',
@@ -1012,11 +1011,12 @@ class WebConfigServer:
                 '-fflags', '+nobuffer',
                 '-f', 'mp3', 'pipe:1'
             ], stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.DEVNULL)
-            self._encoder_stdin = self._encoder_proc.stdin
+            self._encoder_proc = proc
+            self._encoder_stdin = proc.stdin
             # Reader thread: reads MP3 from FFmpeg, pushes to ring buffer
             def _reader():
-                while self._encoder_proc and self._encoder_proc.poll() is None:
-                    data = self._encoder_proc.stdout.read(4096)
+                while proc.poll() is None:
+                    data = proc.stdout.read(4096)
                     if not data:
                         break
                     with self._stream_lock:
@@ -1033,17 +1033,16 @@ class WebConfigServer:
             # Feed silence when no real audio is arriving — keeps encoder producing output
             def _silence_feed():
                 _silence = b'\x00' * 4800  # 50ms
-                while self._encoder_proc and self._encoder_proc.poll() is None:
+                while proc.poll() is None:
                     time.sleep(0.05)
-                    if (self._encoder_stdin
-                            and time.monotonic() - self._last_audio_push > 0.2):
+                    if time.monotonic() - self._last_audio_push > 0.2:
                         try:
-                            self._encoder_stdin.write(_silence)
+                            proc.stdin.write(_silence)
                         except (BrokenPipeError, OSError, ValueError):
                             break
             t2 = _thr.Thread(target=_silence_feed, daemon=True, name='mp3-silence')
             t2.start()
-            print(f"  [Stream] MP3 encoder started (PID {self._encoder_proc.pid})")
+            print(f"  [Stream] MP3 encoder started (PID {proc.pid})")
         except FileNotFoundError:
             print(f"  [Stream] FFmpeg not found")
         except Exception as e:
@@ -1068,16 +1067,22 @@ class WebConfigServer:
             self._encoder_proc = None
 
     def _subscribe_stream(self):
-        """Register a new stream listener. Returns (event, seq)."""
+        """Register a new stream listener. Returns (event, seq).
+
+        Starts the shared MP3 encoder on the first subscriber.
+        """
         ev = _thr.Event()
         with self._stream_lock:
+            first = len(self._stream_subscribers) == 0
+            if first:
+                self._start_encoder()
             seq = self._mp3_seq  # Start from current sequence number
             self._stream_events.append(ev)
             self._stream_subscribers.append(ev)
         return ev, seq
 
     def _unsubscribe_stream(self, ev):
-        """Remove a stream listener."""
+        """Remove a stream listener. Stops the encoder when none remain."""
         with self._stream_lock:
             try:
                 self._stream_events.remove(ev)
@@ -1087,6 +1092,9 @@ class WebConfigServer:
                 self._stream_subscribers.remove(ev)
             except ValueError:
                 pass
+            last = len(self._stream_subscribers) == 0
+        if last:
+            self._stop_encoder()
 
     def _get_cert(self, mode):
         """Get SSL cert/key paths. Returns (cert_path, key_path) or (None, None)."""
@@ -1388,6 +1396,14 @@ class WebConfigServer:
                 'gain': int(getattr(obj, 'audio_boost', 1.0) * 100),
             }
 
+        def _tx_sink_info(obj):
+            """TX sinks share the plugin object with their RX source but have
+            independent mute/gain (tx_muted, tx_audio_boost)."""
+            return {
+                'muted': getattr(obj, 'tx_muted', False),
+                'gain': int(getattr(obj, 'tx_audio_boost', 1.0) * 100),
+            }
+
         if gw:
             if gw.sdr_plugin:
                 _sdr = gw.sdr_plugin
@@ -1463,9 +1479,9 @@ class WebConfigServer:
         # TX-capable radios as destinations
         if gw:
             if gw.kv4p_plugin:
-                sinks.append({**{'id': 'kv4p_tx', 'name': 'KV4P [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.kv4p_plugin)})
+                sinks.append({**{'id': 'kv4p_tx', 'name': 'KV4P [TX]', 'type': 'Radio TX', 'enabled': True}, **_tx_sink_info(gw.kv4p_plugin)})
             if getattr(gw, 'th9800_plugin', None):
-                sinks.append({**{'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True}, **_src_info(gw.th9800_plugin)})
+                sinks.append({**{'id': 'aioc_tx', 'name': 'TH-9800 [TX]', 'type': 'Radio TX', 'enabled': True}, **_tx_sink_info(gw.th9800_plugin)})
             # Link endpoint TX sinks — all dynamic, using pre-computed sink_id
             for _ep_name, _ep_src in gw.link_endpoints.items():
                 _sink_id = getattr(_ep_src, 'sink_id', None)
@@ -1777,6 +1793,12 @@ class WebConfigServer:
                 return {'ok': True, 'muted': muted}
             plugin = self._get_plugin_by_id(target_id)
             if plugin:
+                # TX and RX share one plugin object but have independent
+                # signal paths — toggle a separate flag for *_tx sinks so
+                # muting TX doesn't silence RX (and vice versa).
+                if target_id.endswith('_tx'):
+                    plugin.tx_muted = not getattr(plugin, 'tx_muted', False)
+                    return {'ok': True, 'muted': plugin.tx_muted}
                 plugin.muted = not getattr(plugin, 'muted', False)
                 return {'ok': True, 'muted': plugin.muted}
             return {'ok': False, 'error': f'unknown source/sink: {target_id}'}
@@ -1925,37 +1947,52 @@ class WebConfigServer:
         try:
             # CPU usage — average across cores from /proc/stat delta
             # Cache result for 1s minimum to prevent near-zero deltas from rapid polls
+            # Split: critical = us+sy+hi+si (real-time work, pressures audio),
+            #        background = nice (yields automatically, spare capacity),
+            #        iowait = disk-starved (invisible in old total).
             if not hasattr(self, '_prev_cpu'):
                 self._prev_cpu = None
                 self._prev_cpu_time = 0
-                self._cached_cpu_pct = 0.0
+                self._cached_cpu = {'cpu_pct': 0.0, 'cpu_critical_pct': 0.0,
+                                    'cpu_background_pct': 0.0, 'cpu_iowait_pct': 0.0}
             now = time.monotonic()
             if now - self._prev_cpu_time < 1.0:
-                info['cpu_pct'] = self._cached_cpu_pct
+                info.update(self._cached_cpu)
             else:
                 with open('/proc/stat', 'r') as f:
                     line = f.readline()
                 parts = line.split()
-                cur = [int(x) for x in parts[1:8]]
+                cur = [int(x) for x in parts[1:8]]  # user nice sys idle iowait irq softirq
                 if self._prev_cpu:
                     d = [c - p for c, p in zip(cur, self._prev_cpu)]
                     total = sum(d) or 1
-                    idle = d[3] + d[4]  # idle + iowait
-                    self._cached_cpu_pct = round(100.0 * (total - idle) / total, 1)
-                info['cpu_pct'] = self._cached_cpu_pct
+                    us, ni, sy, idle, io, hi, si = d
+                    critical = us + sy + hi + si
+                    self._cached_cpu = {
+                        'cpu_critical_pct': round(100.0 * critical / total, 1),
+                        'cpu_background_pct': round(100.0 * ni / total, 1),
+                        'cpu_iowait_pct': round(100.0 * io / total, 1),
+                        'cpu_pct': round(100.0 * (total - idle) / total, 1),
+                    }
+                info.update(self._cached_cpu)
                 self._prev_cpu = cur
                 self._prev_cpu_time = now
 
             # Per-core CPU count
             info['cpu_cores'] = os.cpu_count() or 1
 
-            # Load average
+            # Load average + per-core (load/cores > 1.0 = genuinely queueing)
             load1, load5, load15 = os.getloadavg()
             info['load'] = [round(load1, 2), round(load5, 2), round(load15, 2)]
+            info['load_per_core'] = round(load1 / (info['cpu_cores'] or 1), 2)
         except Exception:
             info['cpu_pct'] = 0.0
+            info['cpu_critical_pct'] = 0.0
+            info['cpu_background_pct'] = 0.0
+            info['cpu_iowait_pct'] = 0.0
             info['cpu_cores'] = 1
             info['load'] = [0, 0, 0]
+            info['load_per_core'] = 0.0
 
         try:
             # Memory from /proc/meminfo

@@ -126,6 +126,7 @@ class KV4PPlugin(RadioPlugin):
         self.duck = True
         self.sdr_priority = 2
         self.muted = False
+        self.tx_muted = False
 
         # Trace instrumentation
         self._trace_rx_frames = 0
@@ -313,7 +314,7 @@ class KV4PPlugin(RadioPlugin):
 
     def put_audio(self, pcm_48k):
         """Encode 48kHz PCM to Opus and send to radio for TX."""
-        if not self._encoder or not self._radio:
+        if not self._encoder or not self._radio or self.tx_muted:
             return
         _st = self._stream_trace
         if _st:
