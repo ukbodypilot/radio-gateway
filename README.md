@@ -6,6 +6,25 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 **Packet:** Winlink email via Direwolf TNC + Pat client. APRS decode with station mapping. BBS terminal. Gateway proximity map from Winlink CMS directory.
 **Audio:** Sub-millisecond jitter bus mixer with per-stream trace diagnostics. Fire-and-forget PTT. Direct ALSA capture bypassing PipeWire.
 
+## v3.4 Highlights
+
+First release aimed squarely at fresh users. You should be able to go from a clean Arch or Debian box to a running gateway using only the repo, without a support session.
+
+- **New [`INSTALL.md`](INSTALL.md)** — full walkthrough: prereqs, AUR helper, credential acquisition (Mumble / Broadcastify / Telegram / GDrive), pre-flight checklist, troubleshooting, companion-repo map, manual uninstall.
+- **`requirements.txt`** — full Python dep set; `pip install -r requirements.txt` works for users who prefer to manage the Python layer manually alongside the system packages from `scripts/install.sh`.
+- **`scripts/install.sh` now does a post-install health check** — `snd-aloop` loaded, audio group membership, USB device detection, config credential placeholders still in place, runtime-binary availability, Python import smoke test. All the "why won't it start?" stuff surfaces immediately.
+- **AUR-helper fail-fast on Arch** — the installer detects `yay`/`paru` up front and tells you exactly which optional features (cloudflared, darkice, SDRplay, rtl_airband) will be skipped if one is missing.
+- **Annotated example config** — `examples/gateway_config.txt` opens with a "Fresh install minimum" block that lists REQUIRED / RECOMMENDED / HARDWARE fields and points at `INSTALL.md` for per-credential instructions.
+- **Portability cleanup** — `.mcp.json` uses repo-relative paths; `CLAUDE.md` no longer mandates `/home/user/Downloads/radio-gateway`; `tools/kv4p_raw_capture.py` no longer pins output paths. The repo now works at any clone location without hand-edits.
+- **Loop playback runs standalone** — clicking play without wiring `loop_playback` to a bus still ticks the clock and shows audio activity. Wiring it into a bus mid-play taps the ongoing stream. The whole lifecycle is owned by the gateway (ffmpeg + reader thread + queue), so closing the browser mid-play doesn't stop playback.
+- **Per-bus Export mode** on the recorder page — click Export, then click-drag on the waveform to select a time range; Download exports and auto-exits the mode. Separate ▶ / ■ buttons for Play / Stop alongside the Playback-mode toggle.
+- **Routing page polish** — mouse-wheel zoom on the canvas, VU-meter-style compact level bars on every node, asymmetric transitions (snappy rise, smooth glide on fall), and selected-flowing connections now recolor like selected inactive ones.
+- **Dashboard level bars redesigned** — 18 px track / 8 px centered fill, 70/95 % zone ticks, exponential smoothing with instant attack + gradual decay. Row layout tightened so PWRB / uptime / timers / IPs / temps all flow into one auto-fill grid.
+- **TX / RX mute independence** — radio plugins now keep a separate `tx_muted` flag so muting a TX sink no longer silences its RX source.
+- **Broadcastify auto-reconnect no longer latches off** after a DNS blip. `_connect()` exceptions can't kill the retry loop.
+- **Richer CPU telemetry** on `/dashboard` — split into real-time critical load, background (nice) load, iowait, and per-core load average.
+- **New MCP tools** — `tunnel_link_url` (Cloudflare tunnel + wss:// link URL) and `voice_view` (peek at the claude-voice tmux pane). Dead `recording_playback` stub removed.
+
 ## v3.3 Highlights
 
 - **Two neural denoise engines, per-bus selectable** — RNNoise (tiny, aggressive) for broadband cleanup, or [DeepFilterNet 3](https://github.com/Rikorose/DeepFilterNet) (16 MB ONNX) for speech-preserving denoise with narrowband noise removal. The "D" button on a bus opens the engine pill (RNN ↔ DFN), mix slider, and (DFN only) an attenuation cap in dB to prevent neural-gate pumping. DFN3 model is vendored in the repo — no runtime download.
@@ -82,49 +101,39 @@ A full-stack Linux radio gateway that bridges analog and digital two-way radios 
 
 ## Quick Start
 
+> **Fresh install?** See **[INSTALL.md](INSTALL.md)** for the full walkthrough: prereqs, AUR helper setup, credential acquisition, per-feature checklist, and troubleshooting. The summary below covers the happy path.
+
 ### Requirements
 
-- Linux system (Raspberry Pi 4, Debian, Ubuntu, Arch)
-- Python 3.7+
-- PipeWire (recommended) or ALSA
-- FFmpeg
+- Linux — Arch, Debian 12, Ubuntu 22.04+, Raspberry Pi OS (any model).
+- Python 3.8+ (`install.sh` handles 3.12+ SSL patching for `pymumble`).
+- PipeWire (recommended) or ALSA.
+- FFmpeg, Opus.
+- On Arch: an AUR helper (`yay` or `paru`) for optional components — cloudflared, darkice, SDRplay drivers. Installer prompts if missing.
 
 ### Installation
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/ukbodypilot/radio-gateway.git
 cd radio-gateway
 bash scripts/install.sh
 ```
 
-The installer handles system packages (Python, PortAudio, FFmpeg, HIDAPI, scipy), PipeWire configuration, Python packages, UDEV rules, audio group membership, Mumble server, example config, and a desktop shortcut.
+The installer walks 15 phases: distro detection, AUR-helper check, system packages, ALSA loopback module, Python packages, KV4P driver, UDEV rules, audio-group membership + realtime limits, optional Darkice/WirePlumber, optional SDR stack, optional Mumble server, OpenSSL TLS 1.0 patch, `gateway_config.txt` seed from the example, systemd unit install, desktop shortcuts. It finishes with a post-install health check flagging anything off.
 
-> **Supported:** Raspberry Pi (any model), Debian 12, Ubuntu 22.04+, Arch Linux.
+After the installer finishes:
 
-> **Python 3.12+:** The installer patches the `pymumble` SSL layer automatically.
-
-### First Run
-
-1. Copy and edit the config:
-   ```bash
-   cp examples/gateway_config.txt gateway_config.txt
-   ```
-
-2. Set your Mumble server details:
-   ```ini
-   MUMBLE_SERVER = your.mumble.server
-   MUMBLE_PORT = 64738
-   MUMBLE_USERNAME = RadioGateway
-   MUMBLE_PASSWORD = yourpassword
-   ```
-
+1. **Log out and log back in** (or `newgrp audio`) so new group memberships take effect.
+2. Edit `gateway_config.txt` — at minimum set `[mumble] MUMBLE_SERVER`, `MUMBLE_PORT`, `MUMBLE_USERNAME`, `MUMBLE_PASSWORD`. The example config opens with a "Fresh install minimum" block listing REQUIRED / RECOMMENDED / HARDWARE fields.
 3. Start the gateway:
    ```bash
-   python3 radio_gateway.py
+   sudo systemctl enable --now radio-gateway
+   sudo journalctl -u radio-gateway -f
    ```
-   Or use the startup script: `bash start.sh` (handles Mumble, CAT server, tmux sessions, CPU governor, USB resets, and the gateway itself).
+   Or run it in the foreground: `python3 radio_gateway.py`.
+4. Open the web UI at `http://<host>:8080/dashboard`.
 
-4. Open the web UI at `http://<host>:8080/dashboard`
+For per-credential instructions (Mumble server options, Broadcastify signup, Telegram bot creation, Google Drive OAuth), see [INSTALL.md §3](INSTALL.md#3-obtain-credentials).
 
 ## Web Interface
 

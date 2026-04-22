@@ -4,6 +4,47 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [3.4.0] -- 2026-04-22
+
+Deployability release. First version where a fresh clone on a clean Arch / Debian box can be driven to a working install without hand-holding.
+
+### Added
+- **`INSTALL.md`** — full fresh-install walkthrough: prereqs, AUR helper setup, credential acquisition (Mumble / Broadcastify / Telegram / GDrive), pre-flight checklist, expected first-start output, runtime-state map, troubleshooting, manual uninstall, companion-repo pointers (TH9800_CAT, kv4p-ht-python, D75-CAT-Control).
+- **`requirements.txt`** covering the full Python dep set so `pip install -r requirements.txt` works alongside (or instead of) `scripts/install.sh`.
+- **`scripts/install.sh` post-install health check** — surfaces the usual "why won't it start?" problems immediately: snd-aloop loaded, audio group membership, USB device detection (`/dev/kv4p`, `/dev/relay_*`, `/dev/gps`), config placeholders still in place, runtime-binary availability, Python import smoke test.
+- **`scripts/install.sh` AUR-helper fail-fast** — detects `yay`/`paru` up front on Arch; prompts before continuing so users know which optional features will be skipped.
+- **Annotated `examples/gateway_config.txt`** — "Fresh install minimum" block at the top lists REQUIRED / RECOMMENDED / HARDWARE fields and points at INSTALL.md for per-credential instructions.
+- **Loop playback: source-owned clock + meter**, independent of routing. `LoopPlaybackSource` advances position and updates the meter in its reader thread now, so clicking play without wiring `loop_playback` to a bus still ticks the clock and shows activity. Wiring mid-play taps the ongoing stream. Reader paces itself at real-time via `time.sleep`; queue drops oldest on full instead of stalling ffmpeg.
+- **Per-bus Export mode on the recorder page** — new Export button replaces the old "Export:" label. Click-drag selects a time range (populates start/end fields) and the cursor becomes a crosshair. Right-click drag still selects anywhere. Bare click in export mode clears rather than plays.
+- **Explicit Play / Stop buttons** for loop playback, separate from the Playback mode toggle. Stop no longer exits mode; Play resumes from the last server position.
+- **`tunnel_link_url` + `voice_view` MCP tools** — expose the cloudflared tunnel URL (with derived wss:// link target) and the live `claude-voice` tmux pane.
+- **Routing page mouse-wheel zoom** on the drawflow canvas; respects Drawflow's `zoom_min`/`zoom_max`.
+- **NUL sink** — drop-only bus destination; lets a bus exist (recording, routing anchor) without forwarding audio anywhere.
+
+### Changed
+- **CLAUDE.md no longer mandates `/home/user/Downloads/radio-gateway` as the clone path.** Memory sync snippet now derives the auto-memory path from `$(pwd)` so any clone location works.
+- **`.mcp.json` uses repo-relative paths** (`cwd: "."`, `args: ["./gateway_mcp.py"]`). No hand-edit required on a new machine.
+- **Audio level bars redesigned** across shell / dashboard / routing pages: 18 px track with inset shadow + 70/95 % zone ticks, 8 px centered fill with glow, asymmetric CSS transition (80 ms rise / 250 ms fall) driven by JS exponential smoothing (instant attack / 0.15 decay) for a VU-meter feel.
+- **Dashboard layout** — PWRB and the Net/TCP/temps blocks no longer force row breaks; short items flow into the same auto-fill grid.
+- **Routing page level-meter bars** ported the shell/dashboard VU-meter aesthetic in miniature (8 px track / 4 px fill).
+- **Routing page: selected flowing connections** recolor to the accent stroke like selected inactive ones while keeping the dashed animation, so selection is visible on active lines.
+- **TX / RX mute independence** — `kv4p_plugin` / `th9800_plugin` gain a separate `tx_muted` flag. Muting a radio's TX sink no longer silences its RX source.
+- **Lazy MP3 encoder** — WS streaming encoder starts on first subscriber and stops when the last leaves, rather than running flat-out from gateway startup.
+- **Richer CPU metrics** in `/sysinfo` — split into `cpu_critical_pct` (us+sy+hi+si, real-time pressure), `cpu_background_pct` (nice), `cpu_iowait_pct`, and `load_per_core`.
+- **Denoise inference moved off the bus tick** — per-bus neural inference (RNNoise / DFN3) now runs on its own thread so a slow tick doesn't stall audio.
+- **SDR: 2 s libusb grace period** between `killall -9 sdrplay_apiService` and `systemctl start sdrplay.service` so the next start doesn't re-claim still-pending USB handles and SEGV.
+
+### Fixed
+- **Broadcastify auto-reconnect latched off** after `_connect()` raised — `_reconnecting` stayed True forever. Now wrapped in `try/finally`; a DNS blip or Icecast refusal no longer kills reconnection indefinitely.
+- **Routing page TX sink level leak** — client mirrored source RX level onto `<source>_tx` sink bars, poisoning the smoothed history with RX audio. TH9800 TX on a different bus than TH9800 RX now shows only what's actually flowing to the TX, not what RX is hearing.
+- **Transcribe bus-id tag** on source → solo → sink routings now correctly identifies the upstream source.
+- **`.gitignore`** covers `tools/*_trace.txt` so runtime diagnostic outputs don't keep reappearing as untracked.
+- **`tools/kv4p_raw_capture.py`** output paths are now `__file__`-derived instead of hardcoded to `/home/user/Downloads/...`.
+
+### Removed
+- **`recording_playback` MCP tool** — was a "not yet implemented" stub with no route behind it.
+- **Client-side RX → TX bar mirror** on the routing page (replaced by the server's explicit TX sink levels).
+
 ## [3.3.0] -- 2026-04-19
 
 ### Added
