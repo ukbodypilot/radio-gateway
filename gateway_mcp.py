@@ -9,12 +9,13 @@ server and control the gateway without API keys.
 Usage (stdio, local):
     python3 gateway_mcp.py
 
-Claude Code configuration (.claude/settings.json):
+Claude Code configuration (.mcp.json at the repo root):
     {
       "mcpServers": {
         "radio-gateway": {
           "command": "python3",
-          "args": ["/home/user/Downloads/radio-gateway/gateway_mcp.py"]
+          "args": ["./gateway_mcp.py"],
+          "cwd": "."
         }
       }
     }
@@ -911,8 +912,12 @@ def mixer_control(
     state: bool | None = None,
 ) -> str:
     """
-    Control the audio mixer — mute/unmute sources, adjust volume/boost,
-    toggle duck, and control processing flags.
+    Control the legacy per-source audio mixer — mute/unmute sources, adjust
+    volume/boost, toggle duck, and control per-source processing flags
+    (gate/HPF/LPF/notch). Operates on sources themselves (sdr1, d75, kv4p, …).
+
+    For bus-level routing and mute in the v2 mixer, use bus_mute / sink_mute /
+    routing_connect / routing_disconnect instead.
 
     Args:
         action: One of:
@@ -1024,43 +1029,6 @@ def mixer_control(
 
     return ("Error: action must be one of: status, mute, unmute, toggle, "
             "volume, duck, boost, flag, processing")
-
-
-# ---------------------------------------------------------------------------
-# Tools — Recording Playback
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-def recording_playback(filename: str, target: str = 'radio') -> str:
-    """
-    Play a recording file over the air or to Mumble.  The gateway keys the
-    radio (if target is 'radio'), plays the audio, then unkeys.
-
-    Args:
-        filename: Recording filename from recordings_list (e.g. "SDR_118.100MHz_...wav").
-        target:   Where to play — 'radio' (over the air via TX) or 'mumble'
-                  (to Mumble channel).  Default 'radio'.
-    """
-    if not filename or '/' in filename or '..' in filename:
-        return 'Error: invalid filename'
-    target = target.lower().strip()
-    if target not in ('radio', 'mumble'):
-        return "Error: target must be 'radio' or 'mumble'"
-
-    # Check file exists via recordings list
-    files = _get('/recordingslist')
-    if isinstance(files, list):
-        names = [f.get('name', '') for f in files]
-        if filename not in names:
-            return f'Error: recording not found. Available: {", ".join(names[:5])}...'
-
-    # Use TTS endpoint with file path — or use the automation trigger
-    # Actually, there's no direct playback endpoint yet. Use the key command
-    # to play soundboard slots or suggest alternative
-    return (f'Recording playback via MCP not yet implemented — '
-            f'the gateway needs a /playrecording endpoint. '
-            f'For now, download via /recordingsdownload?file={filename} '
-            f'and use radio_tts for spoken content.')
 
 
 # ---------------------------------------------------------------------------
@@ -2043,6 +2011,37 @@ def cloudflare_status() -> str:
 
 
 @mcp.tool()
+def tunnel_link_url() -> str:
+    """
+    Get the Cloudflare tunnel URL plus the derived WebSocket link URL used by
+    remote endpoints (ws(s)://host/ws/link). Useful for provisioning a new
+    endpoint with the correct link target.
+    """
+    data = _get('/api/tunnel/link-url')
+    if data.get('ok') is False:
+        return f"Error: {data.get('error', 'unknown')}"
+    url = data.get('url')
+    ws = data.get('ws_link')
+    if not url:
+        return "No Cloudflare tunnel active"
+    return f"Tunnel: {url}\nWS link: {ws}"
+
+
+@mcp.tool()
+def voice_view() -> str:
+    """
+    Return the current contents of the 'claude-voice' tmux pane — the live
+    voice-relay session. Returns 503-style error if the tmux session is not
+    running.
+    """
+    data = _get('/voice/view')
+    if data.get('ok') is False or 'error' in data:
+        return f"Error: {data.get('error', 'voice session unavailable')}"
+    content = data.get('content', '')
+    return content or '(pane is empty)'
+
+
+@mcp.tool()
 def gdrive_status() -> str:
     """
     Get Google Drive integration status: authentication, folder access,
@@ -2772,7 +2771,7 @@ def endpoint_version() -> str:
     Show code version for the gateway and all connected endpoints.
     Highlights version mismatches.
     """
-    gw = _get('/endpoint/version')
+    gw = _get('/api/endpoint/version')
     gw_ver = gw.get('version', '?')
     lines = [f"Gateway: v={gw_ver}"]
     result = _get('/status')
