@@ -1618,6 +1618,9 @@ echo "============================================================"
 echo
 echo "NEXT STEPS:"
 echo
+echo "  (Full walkthrough: see INSTALL.md in the repo root —"
+echo "   covers credential acquisition, troubleshooting, and per-feature setup.)"
+echo
 echo "  1. Edit gateway_config.txt:"
 echo "       MUMBLE_SERVER   = your.mumble.server"
 echo "       MUMBLE_PORT     = 64738"

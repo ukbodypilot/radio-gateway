@@ -60,6 +60,23 @@ use before running the installer so UDEV rules can detect it:
 | CH340-based USB relay     | Automated radio power on/off                         |
 | u-blox GNSS / USB GPS     | Location stamping, repeater proximity, APRS         |
 
+### Companion repos
+
+A few features live in sibling repos with their own installers:
+
+- **TH9800_CAT** (https://github.com/ukbodypilot/TH9800_CAT) —
+  standalone CAT control daemon for the Yaesu TH-9800. Required if you
+  set `START_TH9800_CAT = true` in `gateway_config.txt`. Clone and run
+  its own install script; it will install its own systemd unit
+  (`th9800-cat.service`) that the gateway depends on at startup.
+- **kv4p-ht-python** (https://github.com/ukbodypilot/kv4p-ht-python) —
+  KV4P HT driver. Cloned automatically by this repo's installer into
+  `~/kv4p-ht-python`.
+- **D75-CAT-Control** (https://github.com/ukbodypilot/D75-CAT-Control)
+  — Kenwood D75 Bluetooth CAT. Standalone; the gateway's D75 plugin
+  talks to the radio directly over RFCOMM so you only need this repo
+  if you want the GUI tool.
+
 ---
 
 ## 2. Clone and run the installer
