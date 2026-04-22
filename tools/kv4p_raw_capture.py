@@ -17,8 +17,9 @@ import opuslib
 
 PORT = sys.argv[1] if len(sys.argv) > 1 else '/dev/ttyUSB1'
 DURATION = int(sys.argv[2]) if len(sys.argv) > 2 else 15
-OUT_RAW = '/home/user/Downloads/radio-gateway/tools/kv4p_raw.wav'
-OUT_INFO = '/home/user/Downloads/radio-gateway/tools/kv4p_raw_info.txt'
+_HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_RAW = os.path.join(_HERE, 'kv4p_raw.wav')
+OUT_INFO = os.path.join(_HERE, 'kv4p_raw_info.txt')
 
 radio = KV4PRadio(PORT)
 dec = opuslib.Decoder(48000, 1)

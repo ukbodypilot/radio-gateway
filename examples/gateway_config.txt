@@ -4,6 +4,30 @@
 #
 # Bidirectional audio gateway between Mumble VoIP and radio via AIOC
 #
+# ─── Fresh install? Minimum to get running ─────────────────────────────────
+#
+# REQUIRED (gateway won't connect without these):
+#   [mumble] MUMBLE_SERVER         — hostname/IP of your Mumble server
+#   [mumble] MUMBLE_PORT           — default 64738
+#   [mumble] MUMBLE_USERNAME       — display name on Mumble
+#   [mumble] MUMBLE_PASSWORD       — leave blank if server has no password
+#
+# RECOMMENDED (enables key optional features):
+#   [stream_output] STREAM_*       — Broadcastify feed key (sign up at
+#                                    broadcastify.com)
+#   [telegram] TELEGRAM_BOT_TOKEN  — create a bot via @BotFather on Telegram
+#   [telegram] TELEGRAM_CHAT_ID    — get via the "getUpdates" curl once
+#                                    you've messaged your bot
+#   [gdrive] GDRIVE_*              — OAuth in the web UI at /gdrive
+#
+# RADIO HARDWARE (enable only what you own):
+#   [radio] / [th9800_cat]         — TH-9800 via AIOC USB
+#   [kv4p] / [d75]                 — KV4P HT or Kenwood D75
+#   [sdr_plugin]                   — RSPduo or RTL-SDR via rtl_airband
+#
+# See INSTALL.md for a full walk-through, per-credential instructions, and
+# troubleshooting.
+#
 # Quick Start:
 #   1. Set MUMBLE_SERVER to your server IP/hostname
 #   2. Most other settings have sensible defaults

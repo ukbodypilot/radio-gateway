@@ -63,6 +63,9 @@ chrome-remote-desktop-existing-session/
 
 # Runtime output files
 tools/audio_trace.txt
+tools/*_trace.txt
+tools/stream_trace.txt
+tools/watchdog_trace.txt
 
 # Downloads/temp
 node-*.tar.xz

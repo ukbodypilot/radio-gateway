@@ -1,0 +1,61 @@
+# Python dependencies for radio-gateway.
+#
+# For most users, use scripts/install.sh — it handles system packages
+# (PortAudio, HIDAPI, FFmpeg, ALSA loopback, UDEV rules, etc.) and the
+# Python set below. This file is kept for users who want to manage the
+# Python layer separately or verify the import list against their env.
+#
+#     pip install -r requirements.txt
+#
+# Notes on a few packages:
+#   * pymumble — the PyPI name varies. Try pymumble-py3 first; if that
+#     fails, plain `pymumble` works too. The gateway imports via a
+#     fallback chain (see gateway_core.py).
+#   * silero-vad and pyrnnoise — install.sh uses `pip install --no-deps`
+#     to skip torch and matplotlib respectively. If you're installing
+#     directly from this file, expect the full dep tree to pull in.
+#   * kv4p-ht-python — external git repo, not on PyPI. install.sh clones
+#     it to ~/kv4p-ht-python and pip installs editable. You can do the
+#     same manually:
+#         git clone https://github.com/ukbodypilot/kv4p-ht-python.git ~/kv4p-ht-python
+#         pip install -e ~/kv4p-ht-python
+
+# ── Audio I/O ────────────────────────────────────────────────
+numpy
+scipy
+pyaudio
+soundfile
+resampy
+sounddevice
+
+# ── Serial / HID ─────────────────────────────────────────────
+pyserial
+hid
+
+# ── Codecs ───────────────────────────────────────────────────
+opuslib
+
+# ── Mumble client (PyPI name varies) ─────────────────────────
+pymumble-py3>=1.0.0 ; python_version >= "3.8"
+
+# ── Text-to-speech ───────────────────────────────────────────
+gtts
+edge-tts
+
+# ── System metrics ───────────────────────────────────────────
+psutil
+
+# ── MCP server (Claude AI control) ───────────────────────────
+mcp
+
+# ── Speech transcription (Moonshine + Silero VAD) ────────────
+# Moonshine runs on onnxruntime (no torch); Silero VAD ships a bundled
+# ONNX model and uses onnxruntime directly.
+useful-moonshine-onnx
+silero-vad
+onnxruntime
+
+# ── Neural denoise (DFN / RNNoise) ───────────────────────────
+# pyrnnoise bundles librnnoise.so; we bind via ctypes and skip the
+# package __init__ so audiolab/matplotlib are not required.
+pyrnnoise

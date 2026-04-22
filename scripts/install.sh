@@ -40,6 +40,45 @@ else
     exit 1
 fi
 echo "Package manager: $DISTRO"
+
+# ── Detect AUR helper (Arch only) ───────────────────────────
+# Several optional components (cloudflared, darkice, SDRplay drivers,
+# rtl_airband) live in the AUR. Without a helper the installer will skip
+# them mid-run, which is confusing. Warn up front so the user can bail
+# out and install one before proceeding.
+AUR_HELPER=""
+if [ "$DISTRO" = "arch" ]; then
+    # AUR helpers refuse to run as root; check under the target user.
+    AUR_USER=${SUDO_USER:-$USER}
+    for helper in yay paru; do
+        if sudo -u "$AUR_USER" bash -c "command -v $helper" &>/dev/null; then
+            AUR_HELPER="$helper"
+            break
+        fi
+    done
+    if [ -n "$AUR_HELPER" ]; then
+        echo "AUR helper: $AUR_HELPER"
+    else
+        echo
+        echo "⚠ No AUR helper found (yay/paru). The following optional features"
+        echo "  will be SKIPPED because their packages live in the AUR:"
+        echo "    - cloudflared     (Cloudflare tunnel for HTTPS access)"
+        echo "    - darkice         (Broadcastify streaming encoder)"
+        echo "    - SDRplay drivers (required only if using RSPduo SDR)"
+        echo "    - rtl_airband     (required only for SDR channels)"
+        echo
+        echo "  To install them, exit now, install an AUR helper, and re-run."
+        echo "  Install yay:  sudo pacman -S --needed base-devel git && \\"
+        echo "                git clone https://aur.archlinux.org/yay.git /tmp/yay && \\"
+        echo "                (cd /tmp/yay && makepkg -si)"
+        echo
+        read -rp "  Continue without an AUR helper? [y/N] " _yn
+        case "$_yn" in
+            [yY]*) echo "  Proceeding — AUR packages will be skipped." ;;
+            *)     echo "  Exiting. Install an AUR helper and re-run this script."; exit 0 ;;
+        esac
+    fi
+fi
 echo
 
 # ── 1. System packages ───────────────────────────────────────
@@ -1494,6 +1533,82 @@ if sudo systemctl start radio-gateway.service 2>/dev/null; then
 else
     echo "  ⚠ Could not start radio-gateway — check: journalctl -u radio-gateway -n 50"
 fi
+echo
+
+# ── Post-install health check ────────────────────────────────
+# Surface the most common "why won't it start?" problems before the user
+# sees a mile of NEXT STEPS. Each check is a one-liner with a clear
+# pass/fail/warn indicator. No hard exits — this is informational.
+echo "============================================================"
+echo "Post-install health check"
+echo "============================================================"
+_hc_pass() { echo "  ✓ $*"; }
+_hc_warn() { echo "  ⚠ $*"; }
+_hc_fail() { echo "  ✗ $*"; }
+
+# ALSA loopback module
+if lsmod 2>/dev/null | grep -q '^snd_aloop'; then
+    _hc_pass "snd-aloop kernel module loaded"
+else
+    _hc_warn "snd-aloop NOT currently loaded — reboot or run: sudo modprobe snd-aloop"
+fi
+
+# Audio group membership — takes effect on next login
+_TARGET_USER=${SUDO_USER:-$USER}
+if id -nG "$_TARGET_USER" 2>/dev/null | grep -qw audio; then
+    _hc_pass "$_TARGET_USER is in the 'audio' group"
+else
+    _hc_warn "$_TARGET_USER NOT in 'audio' group — log out and back in before starting"
+fi
+
+# USB devices (symlinks + autodetected)
+echo "  USB / serial devices detected:"
+for _dev in /dev/kv4p /dev/gps /dev/relay_radio /dev/relay_charger /dev/relay_ptt /dev/ttyACM0 /dev/ttyACM1; do
+    [ -e "$_dev" ] && echo "      $_dev  ->  $(readlink -f "$_dev" 2>/dev/null || echo "(direct)")"
+done
+
+# gateway_config.txt exists and has non-empty required fields
+if [ -f "$GATEWAY_DIR/gateway_config.txt" ]; then
+    _hc_pass "gateway_config.txt exists at $GATEWAY_DIR/gateway_config.txt"
+    _mumble_srv=$(grep -E '^\s*MUMBLE_SERVER\s*=' "$GATEWAY_DIR/gateway_config.txt" | head -1 | cut -d= -f2- | sed 's/^\s*//;s/\s*$//')
+    _mumble_pw=$(grep -E '^\s*MUMBLE_PASSWORD\s*=' "$GATEWAY_DIR/gateway_config.txt" | head -1 | cut -d= -f2- | sed 's/^\s*//;s/\s*$//')
+    if [ -z "$_mumble_srv" ] || [ "$_mumble_srv" = "your.mumble.server" ]; then
+        _hc_warn "MUMBLE_SERVER is unset or still a placeholder — edit gateway_config.txt"
+    fi
+    if [ -z "$_mumble_pw" ]; then
+        _hc_warn "MUMBLE_PASSWORD is empty — set it if your server requires one"
+    fi
+    if ! grep -qE '^\s*TELEGRAM_BOT_TOKEN\s*=\s*[A-Za-z0-9:_-]+' "$GATEWAY_DIR/gateway_config.txt"; then
+        _hc_warn "TELEGRAM_BOT_TOKEN not set (optional — skip if not using Telegram)"
+    fi
+else
+    _hc_fail "gateway_config.txt is missing — copy from examples/gateway_config.txt"
+fi
+
+# Claim the core binaries a running gateway will reach for
+echo "  Runtime binaries:"
+for _bin in ffmpeg lame pactl parec direwolf pat rclone cloudflared tmux; do
+    if command -v "$_bin" &>/dev/null; then
+        printf "      ✓ %s\n" "$_bin"
+    else
+        printf "      ⚠ %s  (missing — install only if you use the related feature)\n" "$_bin"
+    fi
+done
+
+# Python imports — quick smoke test so missing pip packages surface here
+echo "  Python imports:"
+for _mod in numpy scipy pyaudio soundfile serial opuslib psutil mcp; do
+    if python3 -c "import $_mod" 2>/dev/null; then
+        printf "      ✓ %s\n" "$_mod"
+    else
+        printf "      ✗ %s  (install: pip install %s)\n" "$_mod" "$_mod"
+    fi
+done
+if ! python3 -c "import pymumble_py3" 2>/dev/null && ! python3 -c "import pymumble" 2>/dev/null; then
+    _hc_fail "pymumble not importable — gateway cannot connect to Mumble"
+fi
+
+echo "============================================================"
 echo
 
 # ── Summary ──────────────────────────────────────────────────
