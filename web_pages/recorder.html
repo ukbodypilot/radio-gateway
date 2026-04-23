@@ -19,6 +19,7 @@
   }
   .bus-header { display:flex; align-items:center; gap:var(--s-2); margin-bottom:var(--s-2); }
   .bus-name { font-size:var(--f-md); color:var(--t-text); font-weight:700; letter-spacing:0.02em; }
+  .bus-freq { font-size:var(--f-sm); color:var(--t-accent); font-variant-numeric:tabular-nums; margin-left:var(--s-2); }
   .bus-dot { display:inline-block; width:8px; height:8px; border-radius:50%; }
   .bus-dot.rec { background:var(--t-err); animation: heartbeat 1.4s ease-in-out infinite; }
   .bus-dot.off { background:var(--t-text-mute); }
@@ -153,6 +154,7 @@ function buildUI() {
       + '<div class="bus-header">'
       + '<span class="bus-dot '+dot+'"></span>'
       + '<span class="bus-name">'+(b.name || b.id)+'</span>'
+      + (b.freq ? '<span class="bus-freq">'+b.freq+' MHz</span>' : '')
       + '<span class="bus-meta">'+b.segments+' segs &middot; '+diskStr+' &middot; ret '+(b.retention_hours||24)+'h</span>'
       + '</div>'
       + '<div class="bus-canvas"><canvas id="cv-'+b.id+'" height="120" data-bus="'+b.id+'"></canvas></div>'

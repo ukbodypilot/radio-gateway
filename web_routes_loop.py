@@ -27,17 +27,38 @@ def handle_loop_api(handler, parent):
         buses = lr.get_buses(enabled_bus_ids=_enabled)
         # Only return buses that are enabled or actively recording
         buses = [b for b in buses if b.get('active') or b['id'] in _enabled]
-        # Add display names from routing config
+        # Add display names and upstream-source freqs from the routing
+        # config. Reuse the transcriber's _resolve_freq_tag helper — it
+        # already handles sdr1/sdr2, th9800 via CAT client, kv4p, and
+        # link endpoints. The routing config lists sources by id
+        # (e.g. ['aioc'] or ['sdr1','sdr2']), which is exactly what the
+        # resolver wants.
         _bus_names = {}
+        _bus_sources = {}
         try:
             import json as _json
             with open(_bm._config_path) as _f:
                 for _b in _json.load(_f).get('busses', []):
                     _bus_names[_b['id']] = _b.get('name', _b['id'])
+                    _bus_sources[_b['id']] = _b.get('sources', []) or []
         except Exception:
             pass
+        try:
+            from transcriber import _resolve_freq_tag
+        except Exception:
+            _resolve_freq_tag = None
         for b in buses:
             b['name'] = _bus_names.get(b['id'], b['id'])
+            b['freq'] = ''
+            if not _resolve_freq_tag:
+                continue
+            _freqs = []
+            for _sid in _bus_sources.get(b['id'], []):
+                _f = _resolve_freq_tag(gw, _sid)
+                if _f and _f not in _freqs:
+                    _freqs.append(_f)
+            if _freqs:
+                b['freq'] = '/'.join(_freqs)
         _loop_json(handler, buses)
 
     elif path == '/loop/waveform':
