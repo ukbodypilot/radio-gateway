@@ -9,10 +9,18 @@
 <body>
 
 
+<div id="sysinfo" class="panel">Loading...</div>
+
 <div id="status" class="hero">Loading...</div>
 <div id="toast-container" class="toast-stack"></div>
 
-<div id="sysinfo" class="panel">Loading...</div>
+<div id="link-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">Gateway Link</h2>
+    <span id="link-status-badge" class="panel-meta"></span>
+  </div>
+  <div id="link-info"></div>
+</div>
 
 <div id="bc-panel" class="panel" style="display:none;">
   <div class="panel-head">
@@ -89,14 +97,6 @@
     <div class="st-item"><span class="st-label">Last out:</span><span id="tg-last-out" class="st-val green">--</span></div>
   </div>
   <div id="tg-last-text" class="trunc"></div>
-</div>
-
-<div id="link-panel" class="panel" style="display:none;">
-  <div class="panel-head">
-    <h2 class="panel-title">Gateway Link</h2>
-    <span id="link-status-badge" class="panel-meta"></span>
-  </div>
-  <div id="link-info"></div>
 </div>
 
 <div id="gps-panel" class="panel" style="display:none;">
@@ -298,24 +298,6 @@ function updateStatus() {
     h += '<div class="st-row info-row">';
     h += '<div class="st-item"><span class="st-label">Mumble:</span><span class="st-val '+(s.mumble?'green':'red')+flashCls('mumble', !!s.mumble)+'">'+(s.mumble?'OK':'DOWN')+'</span></div>';
     h += '<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(s.ptt_active?'red':'green')+flashCls('ptt', !!s.ptt_active)+'">'+(s.ptt_active?'ON':'off')+'</span> <span class="st-label">('+s.ptt_method+')</span></div>';
-    h += '<div class="st-item"><span class="st-label">VAD:</span><span class="st-val '+(s.vad_enabled?'green':'red')+flashCls('vad', !!s.vad_enabled)+'">'+(s.vad_enabled?'ON':'off')+'</span> <span class="st-val yellow">'+s.vad_db+'dB</span></div>';
-    h += '<div class="st-item"><span class="st-label">Vol:</span><span class="st-val yellow">'+s.volume+'x</span></div>';
-    if(s.radio_proc && s.radio_proc.length) h += '<div class="st-item"><span class="st-label">Radio:</span><span class="st-val yellow">['+s.radio_proc.join(',')+']</span></div>';
-    if(s.sdr_proc && s.sdr_proc.length) h += '<div class="st-item"><span class="st-label">SDR:</span><span class="st-val cyan">['+s.sdr_proc.join(',')+']</span></div>';
-    if(s.d75_proc && s.d75_proc.length) h += '<div class="st-item"><span class="st-label">D75:</span><span class="st-val yellow">['+s.d75_proc.join(',')+']</span></div>';
-    if(s.kv4p_proc && s.kv4p_proc.length) h += '<div class="st-item"><span class="st-label">KV4P:</span><span class="st-val yellow">['+s.kv4p_proc.join(',')+']</span></div>';
-    var mutes = [];
-    if(s.tx_muted) mutes.push('TX');
-    if(s.rx_muted) mutes.push('RX');
-    if(s.sdr1_muted) mutes.push('SDR1');
-    if(s.sdr2_muted) mutes.push('SDR2');
-    if(s.remote_muted) mutes.push('Remote');
-    if(s.announce_muted) mutes.push('Announce');
-    if(s.speaker_muted && s.speaker_enabled) mutes.push('Speaker');
-    if(s.d75_muted) mutes.push('D75');
-    if(s.kv4p_muted) mutes.push('KV4P');
-    var muteKey = mutes.join(',');
-    h += '<div class="st-item"><span class="st-label">Muted:</span><span class="st-val '+(mutes.length?'red':'green')+flashCls('mutes', muteKey)+'">'+(mutes.length?muteKey.replace(/,/g, ', '):'None')+'</span></div>';
     if(s.sdr1_enabled && s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
     if(s.sdr1_enabled && s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
     h += '<div class="st-item"><span class="st-label">Manual PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+flashCls('manual_ptt', !!s.manual_ptt)+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
@@ -325,15 +307,11 @@ function updateStatus() {
     if(s.cat_enabled) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+flashCls('cat', s.cat)+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
     if(s.d75_enabled) { var _d75a = s.d75_mode==='bluetooth' ? (s.d75_audio_connected?' <span class="st-val green">BT Audio</span>':' <span class="st-val red">No BT Audio</span>') : s.d75_mode==='link_endpoint' ? ' <span class="st-val green">Link</span>' : ' <span class="st-val yellow">USB</span>'; h += '<div class="st-item"><span class="st-label">D75:</span><span class="st-val '+(s.d75_connected?'green':'red')+flashCls('d75_conn', !!s.d75_connected)+'">'+(s.d75_connected?'ON':'OFF')+'</span>'+_d75a+'</div>'; }
     if(s.relay_radio_enabled) h += '<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+flashCls('pwrb', !!s.relay_pressing)+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
-    // Uptime + timers flow into the same info-row as PWRB so short items
-    // pack into the grid instead of forcing a half-empty second row.
-    h += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
     for(var i=0;i<s.smart_countdowns.length;i++) {
       var sc=s.smart_countdowns[i];
       var scClr=sc.mode==='manual'?'cyan':'yellow';
       h += '<div class="st-item"><span class="st-label">Smart#'+sc.id+':</span><span class="st-val '+scClr+'">'+sc.remaining+'</span></div>';
     }
-    if(s.ddns) h += '<div class="st-item"><span class="st-label">DDNS:</span><span class="st-val green">'+s.ddns+'</span></div>';
     if(s.charger) { var _chState = s.charger.startsWith("CHARGING"); h += '<div class="st-item"><span class="st-label">Charger:</span><span class="st-val '+(_chState?'green':'red')+flashCls('charger', _chState)+'">'+s.charger+'</span></div>'; }
     if(s.cat_reliability && s.cat_reliability.sent) { var r=s.cat_reliability; var missClr=r.missed>0?'red':'green'; h += '<div class="st-item"><span class="st-label">CMD:</span><span class="st-val green">'+r.sent+'</span>/<span class="st-val '+missClr+'">'+r.missed+' miss</span></div>'; }
     if(s.cat_reliability && s.cat_reliability.last_miss) { h += '<div class="st-item"><span class="st-val red">'+s.cat_reliability.last_miss+'</span></div>'; }
@@ -535,24 +513,25 @@ createPoller('/sysinfo', 2000, function(s) {
   if (s.cpu_iowait_pct !== undefined && s.cpu_iowait_pct > 5) {
     h += '<div class="st-item"><span class="st-label">IOwait:</span><span class="st-val '+(s.cpu_iowait_pct>15?'red':'yellow')+'">'+s.cpu_iowait_pct+'%</span></div>';
   }
-  // Load-per-core: >1.0 = tasks queueing, genuinely taxed
-  var lpc = (s.load_per_core !== undefined) ? s.load_per_core : (s.load[0] / (s.cpu_cores || 1));
-  var lpcCls = lpc > 1.0 ? 'red' : lpc > 0.7 ? 'yellow' : 'green';
-  h += '<div class="st-item"><span class="st-label">Load:</span><span class="st-val '+lpcCls+'">'+lpc.toFixed(2)+'/core</span><span class="st-label">'+s.load[0]+' '+s.load[1]+' '+s.load[2]+'</span></div>';
-  h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, 'accent')+'<span class="st-label">'+s.mem_used_mb+'/'+s.mem_total_mb+'MB</span></div>';
+  h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, 'accent')+'</div>';
   if (s.swap_total_mb > 0) {
     var swPct = Math.round(100*s.swap_used_mb/s.swap_total_mb);
-    h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, 'warn')+'<span class="st-label">'+s.swap_used_mb+'/'+s.swap_total_mb+'MB</span></div>';
+    h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, 'warn')+'</div>';
   }
-  h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, 'warn')+'<span class="st-label">'+s.disk_used_gb+'/'+s.disk_total_gb+'GB</span></div>';
-  h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green">R:'+fmtBytes(s.disk_read_bps)+'</span> <span class="st-val yellow">W:'+fmtBytes(s.disk_write_bps)+'</span></div>';
-  h += '</div>';
-  h += '<div class="st-row">';
-  h += '<div class="st-item"><span class="st-label">Net:</span><span class="st-val green">RX:'+fmtBytes(s.net_rx_bps)+'</span> <span class="st-val cyan">TX:'+fmtBytes(s.net_tx_bps)+'</span></div>';
-  h += '<div class="st-item"><span class="st-label">TCP:</span><span class="st-val white">'+s.tcp_connections+'</span></div>';
+  h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, 'warn')+'</div>';
+  h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green">R:'+fmtBytes(s.disk_read_bps).replace('/s','')+'</span> <span class="st-val yellow">W:'+fmtBytes(s.disk_write_bps).replace('/s','')+'</span></div>';
+  h += '<div class="st-item"><span class="st-label">Net:</span><span class="st-val green">RX:'+fmtBytes(s.net_rx_bps).replace('/s','')+'</span> <span class="st-val cyan">TX:'+fmtBytes(s.net_tx_bps).replace('/s','')+'</span></div>';
   if (s.temps && s.temps.length) {
+    var shownCore = false, shownAcpi = false;
     for (var i=0; i<s.temps.length; i++) {
       var t = s.temps[i];
+      var isCore = /core/i.test(t.label);
+      var isAcpi = /acpitz/i.test(t.label);
+      if (isCore && shownCore) continue;
+      if (isAcpi && shownAcpi) continue;
+      if (!isCore && !isAcpi) continue;
+      if (isCore) shownCore = true;
+      if (isAcpi) shownAcpi = true;
       var tc = t.temp > 80 ? 'red' : t.temp > 60 ? 'yellow' : 'green';
       h += '<div class="st-item"><span class="st-label">'+t.label+':</span><span class="st-val '+tc+'">'+t.temp+'&deg;C</span></div>';
     }
@@ -560,13 +539,14 @@ createPoller('/sysinfo', 2000, function(s) {
   // Net/TCP/temps and the IP/host block share one row so short items
   // pack into the grid instead of forcing a second half-empty row.
   if (s.ips && s.ips.length) {
-    if (s.gateway_name) h += '<div class="st-item"><span class="st-label">Name:</span><span class="st-val white">'+s.gateway_name+'</span></div>';
-    if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';
+if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';
     for (var i=0; i<s.ips.length; i++) {
       h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
     }
+    if (s.ddns) h += '<div class="st-item"><span class="st-label">DDNS:</span><span class="st-val green">'+s.ddns+'</span></div>';
     if (s.tunnel_url) h += '<div class="st-item st-item-wide"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
   }
+  if (s.uptime) h += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
   h += '</div>';
   document.getElementById('sysinfo').innerHTML = h;
 });

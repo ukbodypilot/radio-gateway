@@ -16,8 +16,6 @@ is found, update the memory files:
 Also mirror the updated files into `.claude/memory/` inside this
 project directory so they travel with the repo.
 
-Read `MEMORY.md` at the start of each session to restore context.
-
 ### Moving to a new machine
 Clone wherever you like (this repo is path-agnostic; the installer
 substitutes paths at install time). After cloning, seed the auto-memory
@@ -28,19 +26,12 @@ mkdir -p "$MEM_DIR"
 cp .claude/memory/* "$MEM_DIR/"
 ```
 
-### Syncing gateway_config.txt between machines (Claude's responsibility)
-`gateway_config.txt` is NOT in the repo. At the start of every session,
-check whether it exists:
-```bash
-ls gateway_config.txt
-```
-If it is missing, ask the user for the source machine's IP/hostname and
-username, then fetch it:
+### Syncing gateway_config.txt between machines
+`gateway_config.txt` is NOT in the repo. If missing, ask the user for the source machine's
+IP/hostname and username, then fetch it:
 ```bash
 scp user@source-ip:$(pwd)/gateway_config.txt .
 ```
-Do NOT proceed with gateway work until the config file is present — the
-gateway will not run without it.
 
 ## Project Rules
 - `gateway_config.txt` is in `.gitignore` -- NEVER commit it (repo is public; it contains stream keys and passwords)
