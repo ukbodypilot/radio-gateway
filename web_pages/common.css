@@ -80,7 +80,7 @@ body {
   line-height: 1.45;
   color: var(--t-text);
   margin: 0;
-  padding: var(--s-4);
+  padding: var(--s-3) var(--s-4) var(--s-4);
   -webkit-font-smoothing: antialiased;
   /* Atmosphere — subtle vignette from phosphor-lit panel centre to dim edges.
      Fixed attachment so scrolling doesn't drag the highlight. */

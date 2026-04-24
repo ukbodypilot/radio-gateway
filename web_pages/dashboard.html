@@ -9,9 +9,9 @@
 <body>
 
 
-<div id="sysinfo" class="panel">Loading...</div>
+<div id="sysinfo" class="hero">Loading...</div>
 
-<div id="status" class="hero">Loading...</div>
+<div id="status" class="panel">Loading...</div>
 <div id="toast-container" class="toast-stack"></div>
 
 <div id="link-panel" class="panel" style="display:none;">
@@ -237,6 +237,7 @@
   }
   .dash-tbl td { padding: var(--s-1) var(--s-3); }
   .dash-tbl tr.active td { background: var(--t-panel-hi); }
+  .st-fixed { display: inline-block; min-width: 7ch; font-variant-numeric: tabular-nums; }
 </style>
 
 <script src="/pages/common.js"></script>
@@ -300,7 +301,7 @@ function updateStatus() {
     h += '<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(s.ptt_active?'red':'green')+flashCls('ptt', !!s.ptt_active)+'">'+(s.ptt_active?'ON':'off')+'</span> <span class="st-label">('+s.ptt_method+')</span></div>';
     if(s.sdr1_enabled && s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
     if(s.sdr1_enabled && s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
-    h += '<div class="st-item"><span class="st-label">Manual PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+flashCls('manual_ptt', !!s.manual_ptt)+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
+    h += '<div class="st-item"><span class="st-label">Man PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+flashCls('manual_ptt', !!s.manual_ptt)+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
     if(s.tx_talkback) h += '<div class="st-item"><span class="st-label">TX Talkback:</span><span class="st-val yellow">ON</span></div>';
     if(s.ms1_state) h += '<div class="st-item"><span class="st-label">MS1:</span><span class="st-val '+(s.ms1_state==='running'?'green':s.ms1_state==='error'?'red':'white')+flashCls('ms1', s.ms1_state)+'">'+(s.ms1_state==='running'?'ON':'OFF')+'</span></div>';
     if(s.ms2_state) h += '<div class="st-item"><span class="st-label">MS2:</span><span class="st-val '+(s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+flashCls('ms2', s.ms2_state)+'">'+(s.ms2_state==='running'?'ON':'OFF')+'</span></div>';
@@ -505,11 +506,10 @@ function sysBar(pct, tone) {
 }
 createPoller('/sysinfo', 2000, function(s) {
   var h = '<div class="st-row">';
-  // CPU: colour driven by critical (real-time work); background (nice) shown dim — it yields and isn't pressure.
   var crit = (s.cpu_critical_pct !== undefined) ? s.cpu_critical_pct : s.cpu_pct;
   var bg = (s.cpu_background_pct !== undefined) ? s.cpu_background_pct : 0;
-  var tot = (s.cpu_pct !== undefined) ? s.cpu_pct : crit;
-  h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(crit)+'<span class="st-label" title="background (nice) — yields to real-time work">+'+bg+'% bg</span><span class="st-label">='+tot+'%</span></div>';
+  h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(crit)+'</div>';
+  h += '<div class="st-item"><span class="st-label">CPUBG:</span>'+sysBar(bg, 'accent')+'</div>';
   if (s.cpu_iowait_pct !== undefined && s.cpu_iowait_pct > 5) {
     h += '<div class="st-item"><span class="st-label">IOwait:</span><span class="st-val '+(s.cpu_iowait_pct>15?'red':'yellow')+'">'+s.cpu_iowait_pct+'%</span></div>';
   }
@@ -519,8 +519,8 @@ createPoller('/sysinfo', 2000, function(s) {
     h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, 'warn')+'</div>';
   }
   h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, 'warn')+'</div>';
-  h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green">R:'+fmtBytes(s.disk_read_bps).replace('/s','')+'</span> <span class="st-val yellow">W:'+fmtBytes(s.disk_write_bps).replace('/s','')+'</span></div>';
-  h += '<div class="st-item"><span class="st-label">Net:</span><span class="st-val green">RX:'+fmtBytes(s.net_rx_bps).replace('/s','')+'</span> <span class="st-val cyan">TX:'+fmtBytes(s.net_tx_bps).replace('/s','')+'</span></div>';
+  h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green st-fixed" style="min-width:8ch">R:'+fmtBytes(s.disk_read_bps).replace('/s','')+'</span> <span class="st-val yellow st-fixed" style="min-width:8ch">W:'+fmtBytes(s.disk_write_bps).replace('/s','')+'</span></div>';
+  h += '<div class="st-item"><span class="st-label">Net:</span><span class="st-val green st-fixed">R:'+fmtBytes(s.net_rx_bps).replace('/s','')+'</span> <span class="st-val cyan st-fixed">T:'+fmtBytes(s.net_tx_bps).replace('/s','')+'</span></div>';
   if (s.temps && s.temps.length) {
     var shownCore = false, shownAcpi = false;
     for (var i=0; i<s.temps.length; i++) {
@@ -541,7 +541,8 @@ createPoller('/sysinfo', 2000, function(s) {
   if (s.ips && s.ips.length) {
 if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';
     for (var i=0; i<s.ips.length; i++) {
-      h += '<div class="st-item"><span class="st-label">'+s.ips[i].iface+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
+      var ifaceLabel = s.ips[i].iface === 'tailscale0' ? 'TailScl' : s.ips[i].iface;
+      h += '<div class="st-item"><span class="st-label">'+ifaceLabel+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
     }
     if (s.ddns) h += '<div class="st-item"><span class="st-label">DDNS:</span><span class="st-val green">'+s.ddns+'</span></div>';
     if (s.tunnel_url) h += '<div class="st-item st-item-wide"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';

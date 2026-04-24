@@ -443,12 +443,21 @@ editor = new Drawflow(container);
 editor.reroute = true;
 editor.start();
 
-// Mouse-wheel zoom — scroll up to zoom in, down to zoom out. preventDefault
-// so the page doesn't scroll behind the canvas.
+// Mouse-wheel: adjust gain on selected node, or zoom when nothing is selected.
 container.addEventListener('wheel', function(e) {
   e.preventDefault();
-  if (e.deltaY < 0) editor.zoom_in();
-  else              editor.zoom_out();
+  var selNode = document.querySelector('.drawflow-node.selected');
+  var slider = selNode && (selNode.querySelector('.gain-slider') || selNode.querySelector('.dfn-mix-slider'));
+  if (slider) {
+    var isMix = slider.classList.contains('dfn-mix-slider');
+    var step = (e.deltaY < 0 ? 1 : -1) * (isMix ? 0.05 : 5);
+    var newVal = Math.max(Number(slider.min), Math.min(Number(slider.max), Number(slider.value) + step));
+    slider.value = newVal;
+    slider.dispatchEvent(new Event('input'));
+  } else {
+    if (e.deltaY < 0) editor.zoom_in();
+    else              editor.zoom_out();
+  }
 }, { passive: false });
 
 // Prevent Drawflow node drag from stealing slider/button/pill interactions.
@@ -808,7 +817,8 @@ function rebuildEditor() {
             + '<input type="range" class="dfn-mix-slider" min="0" max="1" step="0.05" value="' + mix + '" '
             +   'id="dfn-mix-' + b.id + '" '
             +   'oninput="setDfnMix(\'' + b.id + '\', this.value, true)" '
-            +   'onchange="setDfnMix(\'' + b.id + '\', this.value, false)">'
+            +   'onchange="setDfnMix(\'' + b.id + '\', this.value, false)" '
+            +   'ondblclick="this.value=0.5;setDfnMix(\'' + b.id + '\', 0.5, false)">'
             + '<span class="dfn-mix-val" id="dfn-mix-val-' + b.id + '">' + pct + '%</span>'
             + '<span class="dfn-atten-wrap" id="dfn-atten-wrap-' + b.id + '"' + attenHidden + '>'
             +   '<span class="dfn-mix-label" title="Attenuation cap (dB). 0=unlimited, 15–25 typical. Stops pumping.">cap</span>'
