@@ -24,7 +24,7 @@
   .nav-group > .nav-label {
     color: var(--t-text-dim);
     text-decoration: none;
-    font-size: var(--f-xs);
+    font-size: var(--f-md);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     font-weight: 500;
@@ -37,12 +37,7 @@
   .nav-group > .nav-label:hover,
   .nav-group.open > .nav-label,
   .nav-group.has-active > .nav-label { color: var(--t-accent); text-decoration: none; }
-  #shell-bar a.active { color: var(--t-accent); position: relative; }
-  #shell-bar a.active::after {
-    content: ''; position: absolute;
-    left: var(--s-3); right: var(--s-3); bottom: -1px;
-    height: 2px; background: var(--t-accent);
-  }
+  #shell-bar a.active { color: var(--t-accent); }
   #shell-bar a.nav-disabled {
     color: var(--t-text-mute); cursor: default; pointer-events: none;
   }
@@ -100,6 +95,7 @@
   #shell-bars {
     background:
       linear-gradient(180deg, var(--t-panel) 0%, color-mix(in srgb, var(--t-panel) 92%, #000) 100%);
+    border-top: 1px solid var(--t-border);
     border-bottom: 1px solid var(--t-border);
     padding: var(--s-2) var(--s-3);
     display: flex; flex-wrap: wrap;
@@ -213,22 +209,21 @@
   }
   .id-cluster.shell-id .id-call {
     font-family: var(--font-display);
-    color: var(--t-accent);
+    color: var(--t-text);
     font-weight: 700;
-    font-size: var(--f-sm);
+    font-size: var(--f-md);
     letter-spacing: 0.08em;
-    text-shadow: 0 0 10px rgba(79, 214, 230, 0.35);
   }
   .id-cluster.shell-id .id-site {
     color: var(--t-text);
-    font-size: var(--f-xs);
+    font-size: var(--f-base);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .id-cluster.shell-id .id-clock {
     font-family: var(--font-display);
     color: var(--t-text);
-    font-size: var(--f-sm);
+    font-size: var(--f-md);
     letter-spacing: 0.06em;
     margin-left: 0;
   }
@@ -237,6 +232,14 @@
 </head><body>
 <div id="shell-bar">
   <div class="shell-nav">
+    <div class="id-cluster shell-id" title="Gateway identity">
+      <span class="id-led" id="id-led" title="Gateway healthy"></span>
+      <span class="id-call" id="id-call" style="display:none"></span>
+      <span class="id-sep" id="id-call-sep" style="display:none">&middot;</span>
+      <span class="id-site" id="id-site">--</span>
+      <span class="id-sep">&middot;</span>
+      <span class="id-clock" id="id-clock">--:--</span>
+    </div>
     <a href="/dashboard" target="content" onclick="setActive(this)">Dashboard</a><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Audio</span><div class="nav-drop">
       <a href="/routing" target="content" onclick="setActive(this)">Routing</a>
       <a href="/controls" target="content" onclick="setActive(this)">Controls</a>
@@ -261,14 +264,6 @@
       <a href="/config" target="content" onclick="setActive(this)">Config</a>
       <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     </div></div>
-    <div class="id-cluster shell-id" title="Gateway identity">
-      <span class="id-led" id="id-led" title="Gateway healthy"></span>
-      <span class="id-call" id="id-call" style="display:none"></span>
-      <span class="id-sep" id="id-call-sep" style="display:none">&middot;</span>
-      <span class="id-site" id="id-site">--</span>
-      <span class="id-sep">&middot;</span>
-      <span class="id-clock" id="id-clock">--:--</span>
-    </div>
     <span class="shell-pcm">
       <button id="play-btn" class="rb rb-caps rb-sm" onclick="toggleStream()"><span class="icon icon-play"></span> MP3</button>
       <input id="vol-slider" type="range" min="0" max="100" value="50" oninput="setVolume(this.value)">

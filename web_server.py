@@ -318,7 +318,7 @@ class WebConfigServer:
         ('adsb', 'ADS-B Aircraft Tracking', [
             'ENABLE_ADSB', 'ADSB_PORT',
         ]),
-        ('announce', 'Announcement Input', [
+        ('announce', 'Remote Audio [PTT]', [
             'ENABLE_ANNOUNCE_INPUT', 'ANNOUNCE_INPUT_PORT', 'ANNOUNCE_INPUT_HOST',
             'ANNOUNCE_INPUT_THRESHOLD', 'ANNOUNCE_INPUT_VOLUME',
         ]),
@@ -364,7 +364,7 @@ class WebConfigServer:
             'ENABLE_EMAIL', 'EMAIL_ADDRESS', 'EMAIL_APP_PASSWORD',
             'EMAIL_RECIPIENT', 'EMAIL_ON_STARTUP',
         ]),
-        ('playback', 'File Playback', [
+        ('playback', 'System Sounds', [
             'ENABLE_PLAYBACK', 'PLAYBACK_DIRECTORY',
             'PLAYBACK_ANNOUNCEMENT_FILE', 'PLAYBACK_ANNOUNCEMENT_INTERVAL',
             'PLAYBACK_VOLUME', 'ENABLE_SOUNDBOARD',
@@ -1424,7 +1424,7 @@ class WebConfigServer:
                 sources.append({**{'id': 'aioc', 'name': 'TH-9800 [RX]', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.th9800_plugin)})
             if getattr(gw, 'playback_source', None):
-                sources.append({**{'id': 'playback', 'name': 'File Playback', 'enabled': True,
+                sources.append({**{'id': 'playback', 'name': 'System Sounds', 'enabled': True,
                                 'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.playback_source)})
             if getattr(gw, 'loop_playback_source', None):
                 sources.append({**{'id': 'loop_playback', 'name': 'Loop Playback', 'enabled': True,
@@ -1433,8 +1433,10 @@ class WebConfigServer:
                 sources.append({**{'id': 'webmic', 'name': 'Web Mic', 'enabled': True,
                                 'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.web_mic_source)})
             if getattr(gw, 'announce_input_source', None):
-                sources.append({**{'id': 'announce', 'name': 'Announcements', 'enabled': True,
-                                'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.announce_input_source)})
+                sources.append({**{'id': 'announce', 'name': 'Remote Audio [PTT]', 'enabled': True,
+                                'can_rx': False, 'can_tx': True, 'can_ptt': True,
+                                'port': getattr(gw.announce_input_source, '_port', None) or int(getattr(gw.config, 'ANNOUNCE_INPUT_PORT', 9601))},
+                                **_src_info(gw.announce_input_source)})
             if getattr(gw, 'web_monitor_source', None):
                 sources.append({**{'id': 'monitor', 'name': 'Room Monitor', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.web_monitor_source)})
@@ -1444,7 +1446,9 @@ class WebConfigServer:
                                 'muted': False, 'gain': 100})
             if getattr(gw, 'remote_audio_source', None):
                 sources.append({**{'id': 'remote_audio', 'name': 'Remote Audio [RX]', 'enabled': True,
-                                'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.remote_audio_source)})
+                                'can_rx': True, 'can_tx': False, 'can_ptt': False,
+                                'port': getattr(gw.remote_audio_source, 'port', None) or int(getattr(gw.config, 'REMOTE_AUDIO_PORT', 9602))},
+                                **_src_info(gw.remote_audio_source)})
             # Link endpoints — all dynamic, using pre-computed source_id
             for _ep_name, _ep_src in gw.link_endpoints.items():
                 _ep_id = getattr(_ep_src, 'source_id', None)

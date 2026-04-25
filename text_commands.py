@@ -235,6 +235,18 @@ def speak_text(gw, text, voice=None):
                 print(f"[TTS] ✗ Failed to queue file")
                 gw.playback_source.volume = original_volume  # Restore on failure
                 return False
+
+            # Pre-key PTT before audio starts so the relay has time to settle.
+            # Only needed when nothing else is playing — if PTT is already held
+            # from a previous TTS the relay is already closed and no delay is needed.
+            _ps = gw.playback_source
+            if not _ps.current_file and len(_ps.playlist) == 1:
+                import time as _time
+                _settle = float(getattr(gw.config, 'TTS_PTT_SETTLE_MS', 750)) / 1000.0
+                gw._announcement_ptt_delay_until = _time.time() + _settle
+                gw.announcement_delay_active = True
+                if gw.config.VERBOSE_LOGGING:
+                    print(f"[TTS] PTT pre-key delay: {int(_settle*1000)}ms")
         else:
             print(f"[TTS] ✗ No playback source available!")
             return False

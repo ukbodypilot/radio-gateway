@@ -44,7 +44,8 @@
      level bar) — pad them out ~10 px so the three node types share a
      similar visual footprint on the canvas. */
   .drawflow .drawflow-node.source,
-  .drawflow .drawflow-node.sink { min-height: 56px; }
+  .drawflow .drawflow-node.sink { min-height: 56px; min-width: 210px; }
+  .node-port { font-size: 0.78em; opacity: 0.55; margin-left: 4px; font-weight: 400; }
   .drawflow .drawflow-node.source .box,
   .drawflow .drawflow-node.sink   .box { padding: 8px var(--s-2); }
   .drawflow .drawflow-node.selected {
@@ -772,7 +773,8 @@ function rebuildEditor() {
       + '</div>';
     var pos = savedPositions['src-' + s.id] || {x: xSource, y: ySource};
     var srcCls = 'source' + (s.muted ? ' node-muted' : '');
-    var nodeId = editor.addNode(s.id, 0, 1, pos.x, pos.y, srcCls, {id: s.id}, s.name + '\n' + html);
+    var nodeLabel = s.name + (s.port ? '<span class="node-port">:' + s.port + '</span>' : '');
+    var nodeId = editor.addNode(s.id, 0, 1, pos.x, pos.y, srcCls, {id: s.id}, nodeLabel + '\n' + html);
     _nodeMap['src-' + s.id] = nodeId;
     ySource += spacing;
   }
