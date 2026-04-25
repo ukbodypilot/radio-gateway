@@ -169,7 +169,7 @@
   .pb-key  { font-weight:700; font-size:var(--f-xs); line-height:1; }
   .pb-name { font-size:9px; color:var(--t-text-dim); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1; }
   .smart-row { display:flex; gap:3px; margin-top:var(--s-2); }
-  .smart-row .ctrl-btn { flex:1; margin:0; }
+  .smart-row .ctrl-btn { flex:1; margin:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; height:42px; overflow:hidden; }
 
   /* AI options collapsible */
   details.tx-opts { margin-top:var(--s-1); }
@@ -335,7 +335,6 @@
 <div id="playback-panel" class="panel" style="display:none;">
   <div class="panel-head">
     <h2 class="panel-title">Playback</h2>
-    <span id="smart-status" class="panel-meta"></span>
   </div>
   <div class="pb-grid">
     <button class="ctrl-btn" onclick="sendKey('1')" id="btn-f1"><span class="pb-key">1</span><span class="pb-name" id="pb-name-1"></span></button>
@@ -349,15 +348,14 @@
     <button class="ctrl-btn" onclick="sendKey('9')" id="btn-f9"><span class="pb-key">9</span><span class="pb-name" id="pb-name-9"></span></button>
     <button class="ctrl-btn" onclick="sendKey('0')" id="btn-f0"><span class="pb-key">ID</span><span class="pb-name" id="pb-name-0"></span></button>
     <button class="ctrl-btn" onclick="sendKey('-')">Stop</button>
-    <button class="ctrl-btn" onclick="refreshSounds()" title="Refresh random sounds">&#x21bb;</button>
+    <button class="ctrl-btn" onclick="refreshSounds()" title="Refresh random sounds" style="grid-column:1">&#x21bb;</button>
     <button class="ctrl-btn" onclick="toggleTestLoop(this)" id="btn-test-loop">Loop</button>
   </div>
   <div class="smart-row" id="smart-announce-group">
-    <button class="ctrl-btn" onclick="sendKey('[')">Smart #1</button>
-    <button class="ctrl-btn" onclick="sendKey(']')">Smart #2</button>
-    <button class="ctrl-btn" onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
+    <button class="ctrl-btn" onclick="sendKey('[')"><span class="pb-key">Smart #1</span><span class="pb-name" id="smart-st-1"></span></button>
+    <button class="ctrl-btn" onclick="sendKey(']')"><span class="pb-key">Smart #2</span><span class="pb-name" id="smart-st-2"></span></button>
+    <button class="ctrl-btn" onclick="sendKey(String.fromCharCode(92))"><span class="pb-key">Smart #3</span><span class="pb-name" id="smart-st-3"></span></button>
   </div>
-  <div id="smart-countdowns" class="st-line"></div>
 </div>
 
 <!-- ═══ PANEL 6: Transmit ═══ -->
@@ -635,12 +633,24 @@ function updateStatus() {
     showIf('playback-panel', s.playback_enabled);
     showIf('smart-announce-group', s.smart_announce_enabled);
     showIf('transmit-panel', s.tts_enabled);
+    // Clear smart status spans, then repopulate from activity + countdowns
+    for(var _si=1;_si<=3;_si++){var _sp=document.getElementById('smart-st-'+_si);if(_sp){_sp.textContent='';_sp.style.color='';}}
     if(s.smart_activity){
-      var parts=[]; for(var sk in s.smart_activity){if(sk==='0')continue; var sv=s.smart_activity[sk]; var sClr=sv==='Done'?'green':(sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped'))?'red':'yellow'; parts.push('<span class="'+sClr+'">#'+sk+': '+sv+'</span>');}
-      var smSt=document.getElementById('smart-status'); if(smSt){smSt.className='panel-meta'; smSt.innerHTML=parts.join(' ');}
+      for(var sk in s.smart_activity){
+        if(sk==='0') continue;
+        var sv=s.smart_activity[sk]; if(!sv) continue;
+        var sCol=sv==='Done'?'var(--t-ok)':(sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped'))?'var(--t-err)':'var(--t-warn)';
+        var span=document.getElementById('smart-st-'+sk);
+        if(span){span.textContent=sv; span.className='pb-name'; span.style.color=sCol;}
+      }
     }
+    // Show countdown in button if no activity text set
     if(s.smart_countdowns){
-      var cdDiv=document.getElementById('smart-countdowns'); if(cdDiv){var cdh=''; for(var i=0;i<s.smart_countdowns.length;i++){var sc=s.smart_countdowns[i];cdh+='<span class="'+(sc.mode==='manual'?'cyan':'yellow')+'">#'+sc.id+': '+sc.remaining+'</span> ';} cdDiv.innerHTML=cdh||'';}
+      for(var i=0;i<s.smart_countdowns.length;i++){
+        var sc=s.smart_countdowns[i];
+        var span=document.getElementById('smart-st-'+sc.id);
+        if(span&&!span.textContent){span.textContent=sc.remaining; span.className='pb-name'; span.style.color='var(--t-text-dim)';}
+      }
     }
     if(s.files){
       for(var fk in s.files){

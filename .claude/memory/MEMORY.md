@@ -36,9 +36,11 @@ Radio-to-Mumble gateway with SDR, multiple radios, web UI, and AI features. Pyth
 - Pages: `/dashboard` `/routing` `/controls` `/radio` `/d75` `/kv4p` `/sdr` `/gps` `/repeaters` `/aircraft` `/telegram` `/monitor` `/recordings` `/recorder` `/transcribe` `/packet` `/config` `/logs` `/voice` `/gdrive`
 - `common.js` (124 lines) — postJson, getJson, createPoller, sendKey, openTmux, fmtSecs, fmtTimestamp, fmtDuration, fmtBytes
 - `common.css` (68 lines) — theme variables, status colors, layout grid, level bars, buttons
-- Shell nav: home icon for dashboard, fixed-width MP3/PCM/MIC buttons, group labels 0.78em
-- Routing page: bus rename (double-click), gain slider reset (double-click), alphabetical auto-arrange
+- Shell nav: home icon for dashboard, fixed-width MP3/PCM/MIC buttons, group labels 0.78em; Controls removed from Audio group
+- Routing page: bus rename (double-click), gain slider reset (double-click), alphabetical auto-arrange; scroll wheel moves gain/mix slider on selected node
 - Loop recorder: red local-time clock during playback, bus display names
+- **Dashboard (2026-04-25):** Tabbed panels — System|Status in one panel; Stream/Loop/ADS-B/GPS/USB-IP/Telegram in services panel; Gateway Link has Status|Controls tabs (PTT+gain); Playback and Transmit panels at bottom; Controls nav entry removed (content on dashboard)
+- **controls.html:** TTS/CW/AI merged into tabbed Transmit card; Smart Announce in Playback card; playback buttons show truncated filename; drag-to-reorder removed
 
 ## Key Subsystems
 
