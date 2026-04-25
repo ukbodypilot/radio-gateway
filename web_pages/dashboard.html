@@ -5,31 +5,316 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dashboard</title>
 <link rel="stylesheet" href="/pages/common.css">
+<style>
+  /* ── Panel-level tabs (shared by all tabbed panels) ── */
+  .panel-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--t-border);
+    margin-bottom: var(--s-3);
+  }
+  .panel-tab {
+    padding: var(--s-1) var(--s-3);
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
+    background: transparent;
+    color: var(--t-text-dim);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--f-xs);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    margin-bottom: -1px;
+  }
+  .panel-tab:hover  { color: var(--t-text); background: var(--t-btn); border-color: var(--t-border); }
+  .panel-tab.active { background: var(--t-panel); border-color: var(--t-border); border-bottom-color: var(--t-panel); color: var(--t-accent); }
+  .panel-tab.tab-dim { opacity: 0.35; }
+  .panel-pane { display: none; }
+  .panel-pane.active { display: block; }
+
+  /* ── Status pane ── */
+  @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.3} }
+  .rec-indicator { animation: blink 1s infinite; }
+  .dot { line-height:1; color:var(--t-text-mute); }
+  .dot.ok  { color:var(--t-ok); }
+  .dot.err { color:var(--t-err); }
+
+  .trunc { font-size:var(--f-xs); color:var(--t-text-dim); margin-top:var(--s-1);
+           overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .panel-foot { margin-top:var(--s-2); color:var(--t-text-dim); font-size:var(--f-xs); }
+
+  .dash-disclose > summary { padding:var(--s-1) 0; color:var(--t-accent);
+                             font-size:var(--f-sm); cursor:pointer; list-style:none; }
+  .dash-disclose > summary::-webkit-details-marker { display:none; }
+  .dash-disclose > summary::before { content:'\25B8 '; font-size:0.8em; opacity:0.7; }
+  .dash-disclose[open] > summary::before { content:'\25BE '; }
+  .history-scroll { max-height:300px; overflow-y:auto; font-size:var(--f-xs); margin-top:var(--s-1); }
+
+  .auto-current { margin-bottom:var(--s-2); padding:var(--s-2);
+                  background:var(--t-panel-hi); border-radius:var(--r-sm); }
+  .auto-current .panel-title { margin-bottom:var(--s-1); color:var(--t-accent); }
+  #auto-tasks { margin-bottom:var(--s-2); }
+
+  .ep-head { display:flex; justify-content:space-between; margin-bottom:var(--s-1); }
+  .ep-tool { display:flex; align-items:center; gap:var(--s-2); }
+  .ep-sep  { border-top:1px solid var(--t-border); margin-top:var(--s-2); padding-top:var(--s-2); }
+
+  .loop-list { display:flex; flex-direction:column; gap:var(--s-1); }
+  .loop-bus  { display:flex; gap:var(--s-3); align-items:center; padding:2px 0; font-size:var(--f-sm); }
+  .loop-bus .lb-name { color:var(--t-text); min-width:80px; }
+  .loop-bus .lb-meta { color:var(--t-text-dim); min-width:60px; }
+  .loop-bus .lb-disk { color:var(--t-ok); min-width:55px; }
+  .loop-bus .lb-rate { color:var(--t-text-mute); font-size:var(--f-xs); }
+  .loop-bus .lb-ret  { color:var(--t-text-mute); font-size:var(--f-xs); margin-left:auto; }
+
+  .sat-row   { display:flex; align-items:center; gap:var(--s-2); margin:2px 0; }
+  .sat-prn   { min-width:42px; text-align:right; color:var(--t-text-dim); font-size:var(--f-xs); }
+  .sat-track { flex:1; background:var(--t-bg); border:1px solid var(--t-border);
+               border-radius:var(--r-sm); height:14px; overflow:hidden; }
+  .sat-fill  { height:100%; background:var(--t-ok); transition:width 0.3s; }
+  .sat-fill.mid  { background:var(--t-warn); }
+  .sat-fill.low  { background:var(--t-err); }
+  .sat-fill.none { background:var(--t-text-mute); }
+  .sat-snr   { min-width:28px; font-size:var(--f-xs); color:var(--t-text); }
+
+  .bar.warn   { background:var(--t-warn); }
+  .bar.err    { background:var(--t-err); }
+  .bar.accent { background:var(--t-accent); }
+
+  .metric-strip { display:flex; gap:var(--s-5); flex-wrap:wrap;
+    padding:var(--s-1) 0 var(--s-3); border-bottom:1px solid var(--t-border); margin-bottom:var(--s-3); }
+
+  .usbip-list { margin-top:var(--s-2); font-size:var(--f-sm); color:var(--t-text); }
+  .usbip-list .usbip-dev-status { color:var(--t-text-dim); font-size:var(--f-xs); }
+  #gps-panel .st-row { margin:0 0 var(--s-2); }
+
+  .dash-tbl { width:100%; border-collapse:collapse; font-size:var(--f-sm); }
+  .dash-tbl th { text-align:left; padding:var(--s-1) var(--s-3); color:var(--t-text-dim); font-weight:500; border-bottom:1px solid var(--t-border); }
+  .dash-tbl td { padding:var(--s-1) var(--s-3); }
+  .dash-tbl tr.active td { background:var(--t-panel-hi); }
+  .st-fixed { display:inline-block; min-width:7ch; font-variant-numeric:tabular-nums; }
+
+  @media (min-width:1400px) {
+    body { column-count:2; column-gap:var(--s-4); column-fill:balance; }
+    #top-panel, #toast-container { column-span:all; }
+    .panel { break-inside:avoid; display:block; }
+  }
+
+  /* ── Link endpoint level bars ── */
+  .link-body { display:flex; gap:var(--s-3); align-items:flex-start; }
+  .link-ptt  { width:80px; height:50px; font-size:var(--f-sm); border:1px solid var(--t-border);
+               border-radius:var(--r-sm); background:var(--t-btn); color:var(--t-text); cursor:pointer; }
+  .link-ptt.on { background:var(--t-btn-active); border-color:var(--t-accent); color:var(--t-accent); }
+  .link-col  { flex:1; display:flex; flex-direction:column; gap:var(--s-1); }
+  .link-row  { display:flex; align-items:center; gap:var(--s-2); }
+  .link-label{ color:var(--t-text-dim); width:2em; text-align:right; font-size:var(--f-xs); }
+  .link-bar  { flex:1; height:12px; background:var(--t-bg); border:1px solid var(--t-border);
+               border-radius:var(--r-sm); overflow:hidden; }
+  .link-fill { height:100%; }
+  .link-fill.rx { background:var(--t-ok); }
+  .link-fill.tx { background:var(--t-err); }
+  .link-ctrl-sep { border-top:1px solid var(--t-border); margin-top:var(--s-2); padding-top:var(--s-2); }
+  .link-mute { width:3em; padding:var(--s-1); font-size:var(--f-xs); border:1px solid var(--t-border);
+               border-radius:var(--r-sm); background:var(--t-btn); color:var(--t-text); cursor:pointer; }
+  .link-mute.on { background:color-mix(in srgb,var(--t-err) 20%,var(--t-panel)); border-color:var(--t-err); color:var(--t-err); }
+  .link-gain-val { color:var(--t-text-dim); font-size:var(--f-xs); width:3.5em; font-variant-numeric:tabular-nums; }
+  .link-slider   { flex:1; }
+  .link-row.mt-1 { margin-top:var(--s-1); }
+  .link-meta { font-size:var(--f-xs); color:var(--t-text-dim); margin-bottom:var(--s-2); }
+  #link-controls-inner { display:flex; flex-wrap:wrap; gap:var(--s-3); }
+
+  /* ── Control panels (Playback + Transmit) ── */
+  .ctrl-btn {
+    padding:var(--s-1) var(--s-3); margin:2px;
+    border:1px solid var(--t-border); border-radius:var(--r-sm);
+    background:var(--t-btn); color:var(--t-text);
+    cursor:pointer; font-family:inherit; font-size:var(--f-xs);
+  }
+  .ctrl-btn:hover  { background:var(--t-btn-hover); border-color:var(--t-border-hi); }
+  .ctrl-btn:active { background:var(--t-btn-active); }
+  .ctrl-btn.active { background:var(--t-btn-active); border-color:var(--t-accent); color:var(--t-accent); }
+  .ctrl-btn.muted  { background:color-mix(in srgb,var(--t-err) 20%,var(--t-panel)); border-color:var(--t-err); color:var(--t-err); }
+  .ctrl-btn.dim    { opacity:0.4; }
+
+  .ctrl-input {
+    background:var(--t-btn); color:var(--t-text);
+    border:1px solid var(--t-border); border-radius:var(--r-sm);
+    padding:var(--s-1) var(--s-2); font-family:inherit; font-size:var(--f-sm);
+  }
+  textarea.ctrl-input { width:100%; box-sizing:border-box; padding:var(--s-2); resize:vertical; }
+  .ctrl-field { display:flex; gap:var(--s-1); align-items:center; }
+  .ctrl-field label { color:var(--t-text-dim); font-size:var(--f-xs); white-space:nowrap; }
+  .ctrl-field label.w4 { width:4em; }
+  .ctrl-field label.w3 { width:3em; }
+  .ctrl-field.wrap { flex-wrap:wrap; }
+  .ctrl-stack { display:flex; flex-direction:column; gap:var(--s-1); }
+  .ctrl-input.flex-grow { flex:1; min-width:0; }
+  .ctrl-input.w-voice   { flex:1; min-width:90px; }
+  .ctrl-input.w-55      { width:55px; }
+  .btn-full { width:100%; }
+  .btn-flex { flex:1; }
+
+  .st-line { font-size:var(--f-sm); color:var(--t-text-dim); margin-top:var(--s-2); font-variant-numeric:tabular-nums; }
+  .st-line.working { color:var(--t-warn); }
+  .st-line.ok      { color:var(--t-ok); }
+  .st-line.err     { color:var(--t-err); }
+
+  /* Playback grid */
+  .pb-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
+  .pb-grid .ctrl-btn {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:2px; height:42px; padding:2px var(--s-1); overflow:hidden; margin:0;
+  }
+  .pb-key  { font-weight:700; font-size:var(--f-xs); line-height:1; }
+  .pb-name { font-size:9px; color:var(--t-text-dim); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1; }
+  .smart-row { display:flex; gap:3px; margin-top:var(--s-2); }
+  .smart-row .ctrl-btn { flex:1; margin:0; }
+
+  /* AI options collapsible */
+  details.tx-opts { margin-top:var(--s-1); }
+  details.tx-opts summary { color:var(--t-text-dim); font-size:var(--f-xs); cursor:pointer; user-select:none; padding:var(--s-1) 0; list-style:none; }
+  details.tx-opts summary::before { content:'▶ '; }
+  details[open].tx-opts summary::before { content:'▼ '; }
+  details.tx-opts summary:hover { color:var(--t-text); }
+  details.tx-opts .tx-opts-body { display:flex; flex-direction:column; gap:var(--s-1); margin-top:var(--s-1); }
+</style>
 </head>
 <body>
 
-
-<div id="sysinfo" class="hero">Loading...</div>
-
-<div id="status" class="panel">Loading...</div>
 <div id="toast-container" class="toast-stack"></div>
 
+<!-- ═══ PANEL 1: System | Status ═══ -->
+<div class="panel" id="top-panel">
+  <div class="panel-tabs">
+    <button class="panel-tab active" onclick="switchPanelTab('p1','system',this)">System</button>
+    <button class="panel-tab" onclick="switchPanelTab('p1','status',this)">Status</button>
+  </div>
+  <div id="p1-system" class="panel-pane active">
+    <div id="sysinfo">Loading...</div>
+  </div>
+  <div id="p1-status" class="panel-pane">
+    <div id="status">Loading...</div>
+  </div>
+</div>
+
+<!-- ═══ PANEL 2: Gateway Link ═══ -->
 <div id="link-panel" class="panel" style="display:none;">
   <div class="panel-head">
     <h2 class="panel-title">Gateway Link</h2>
     <span id="link-status-badge" class="panel-meta"></span>
   </div>
-  <div id="link-info"></div>
-</div>
-
-<div id="bc-panel" class="panel" style="display:none;">
-  <div class="panel-head">
-    <h2 class="panel-title">Broadcastify Stream</h2>
-    <span id="bc-status-badge" class="panel-meta"></span>
+  <div class="panel-tabs">
+    <button class="panel-tab active" onclick="switchPanelTab('link','status',this)">Status</button>
+    <button class="panel-tab" onclick="switchPanelTab('link','controls',this)">Controls</button>
   </div>
-  <div class="st-row" id="bc-stats"></div>
+  <div id="link-status" class="panel-pane active">
+    <div id="link-info"></div>
+  </div>
+  <div id="link-controls" class="panel-pane">
+    <div id="link-controls-inner"></div>
+  </div>
 </div>
 
+<!-- ═══ PANEL 3: Services ═══ -->
+<div class="panel" id="services-panel">
+  <div class="panel-tabs">
+    <button class="panel-tab active" id="tab-stream" onclick="switchPanelTab('svc','stream',this)">Stream</button>
+    <button class="panel-tab tab-dim"  id="tab-loop"   onclick="switchPanelTab('svc','loop',this)">Loop</button>
+    <button class="panel-tab tab-dim"  id="tab-adsb"   onclick="switchPanelTab('svc','adsb',this)">ADS-B</button>
+    <button class="panel-tab tab-dim"  id="tab-gps"    onclick="switchPanelTab('svc','gps',this)">GPS</button>
+    <button class="panel-tab tab-dim"  id="tab-usbip"  onclick="switchPanelTab('svc','usbip',this)">USB/IP</button>
+    <button class="panel-tab tab-dim"  id="tab-tg"     onclick="switchPanelTab('svc','tg',this)">Telegram</button>
+  </div>
+
+  <div id="svc-stream" class="panel-pane active">
+    <div class="panel-head" style="margin-bottom:var(--s-2)">
+      <span class="panel-title" style="font-size:var(--f-sm)">Broadcastify</span>
+      <span id="bc-status-badge" class="panel-meta"></span>
+    </div>
+    <div class="st-row" id="bc-stats"><span class="dim">Not enabled</span></div>
+  </div>
+
+  <div id="svc-loop" class="panel-pane">
+    <div class="panel-head" style="margin-bottom:var(--s-2)">
+      <span class="panel-title" style="font-size:var(--f-sm)">Loop Recorder</span>
+      <a href="/recorder" target="content" class="panel-meta">&rarr; Open Recorder</a>
+    </div>
+    <div id="loop-buses" class="loop-list"></div>
+    <div id="loop-summary" class="panel-foot"></div>
+  </div>
+
+  <div id="svc-adsb" class="panel-pane">
+    <div class="metric-strip">
+      <div class="metric metric-lg"><span class="metric-label">Aircraft</span><span id="adsb-aircraft" class="metric-value">--</span></div>
+      <div class="metric metric-lg"><span class="metric-label">Msg/s</span><span id="adsb-rate" class="metric-value">--</span></div>
+      <div class="metric metric-lg"><span class="metric-label">Total</span><span id="adsb-messages" class="metric-value">--</span></div>
+    </div>
+    <div class="st-row">
+      <div class="st-item"><span class="st-label">dump1090-fa:</span><span id="adsb-svc-d1090" class="st-val dot">&#x25cf;</span></div>
+      <div class="st-item"><span class="st-label">Web:</span><span id="adsb-svc-web" class="st-val dot">&#x25cf;</span></div>
+      <div class="st-item"><span class="st-label">fr24feed:</span><span id="adsb-svc-fr24" class="st-val dot">&#x25cf;</span></div>
+    </div>
+  </div>
+
+  <div id="svc-gps" class="panel-pane">
+    <div class="panel-head" style="margin-bottom:var(--s-2)">
+      <span class="panel-title" style="font-size:var(--f-sm)">GPS Receiver</span>
+      <span id="gps-fix-badge" class="panel-meta"></span>
+    </div>
+    <div class="st-row">
+      <div class="st-item"><span class="st-label">Lat:</span><span id="gps-lat" class="st-val cyan">--</span></div>
+      <div class="st-item"><span class="st-label">Lon:</span><span id="gps-lon" class="st-val cyan">--</span></div>
+      <div class="st-item"><span class="st-label">Alt:</span><span id="gps-alt" class="st-val white">--</span><span class="st-label"> m</span></div>
+    </div>
+    <div class="st-row">
+      <div class="st-item"><span class="st-label">Speed:</span><span id="gps-speed" class="st-val white">--</span><span class="st-label"> km/h</span></div>
+      <div class="st-item"><span class="st-label">Heading:</span><span id="gps-heading" class="st-val white">--</span><span class="st-label">&deg;</span></div>
+      <div class="st-item"><span class="st-label">HDOP:</span><span id="gps-hdop" class="st-val white">--</span></div>
+    </div>
+    <div class="st-row">
+      <div class="st-item"><span class="st-label">Sats:</span><span id="gps-sats-used" class="st-val green">--</span></div>
+      <div class="st-item"><span class="st-label">Fix time:</span><span id="gps-fix-time" class="st-val white">--</span></div>
+      <div class="st-item"><span class="st-label">Port:</span><span id="gps-port" class="st-val white">--</span></div>
+      <div class="st-item"><a id="gps-map-link" href="#" target="_blank" class="panel-meta">View on Map &rarr;</a></div>
+    </div>
+    <details class="dash-disclose">
+      <summary>Satellites in View</summary>
+      <div id="gps-sat-chart"></div>
+    </details>
+  </div>
+
+  <div id="svc-usbip" class="panel-pane">
+    <div class="panel-head" style="margin-bottom:var(--s-2)">
+      <span class="panel-title" style="font-size:var(--f-sm)">USB/IP Remote Devices</span>
+      <span id="usbip-server-label" class="panel-meta"></span>
+    </div>
+    <div class="st-row">
+      <div class="st-item"><span class="st-label">Server:</span><span id="usbip-server-dot" class="st-val dot">&#x25cf;</span></div>
+    </div>
+    <div id="usbip-devices-list" class="usbip-list">No devices</div>
+  </div>
+
+  <div id="svc-tg" class="panel-pane">
+    <div class="panel-head" style="margin-bottom:var(--s-2)">
+      <span class="panel-title" style="font-size:var(--f-sm)">Telegram Bot</span>
+      <span id="tg-bot-name" class="panel-meta"></span>
+    </div>
+    <div class="st-row">
+      <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val dot">&#x25cf;</span></div>
+      <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val dot">&#x25cf;</span> <button onclick="openTmux()" class="rb rb-sm">Open</button></div>
+      <div class="st-item"><span class="st-label">Session:</span><span id="tg-session" class="st-val white">--</span></div>
+    </div>
+    <div class="st-row">
+      <div class="st-item"><span class="st-label">Today:</span><span id="tg-msgs-today" class="st-val cyan">--</span><span class="st-label"> msgs</span></div>
+      <div class="st-item"><span class="st-label">Last in:</span><span id="tg-last-in" class="st-val white">--</span></div>
+      <div class="st-item"><span class="st-label">Last out:</span><span id="tg-last-out" class="st-val green">--</span></div>
+    </div>
+    <div id="tg-last-text" class="trunc"></div>
+  </div>
+</div><!-- #services-panel -->
+
+<!-- ═══ PANEL 4: Automation ═══ -->
 <div id="automation-panel" class="panel" style="display:none;">
   <div class="panel-head">
     <h2 class="panel-title">Automation Engine</h2>
@@ -46,718 +331,486 @@
   </details>
 </div>
 
-<div id="loop-panel" class="panel" style="display:none;">
+<!-- ═══ PANEL 5: Playback ═══ -->
+<div id="playback-panel" class="panel" style="display:none;">
   <div class="panel-head">
-    <h2 class="panel-title">Loop Recorder</h2>
-    <a href="/recorder" target="content" class="panel-meta">&rarr; Open Recorder</a>
+    <h2 class="panel-title">Playback</h2>
+    <span id="smart-status" class="panel-meta"></span>
   </div>
-  <div id="loop-buses" class="loop-list"></div>
-  <div id="loop-summary" class="panel-foot"></div>
+  <div class="pb-grid">
+    <button class="ctrl-btn" onclick="sendKey('1')" id="btn-f1"><span class="pb-key">1</span><span class="pb-name" id="pb-name-1"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('2')" id="btn-f2"><span class="pb-key">2</span><span class="pb-name" id="pb-name-2"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('3')" id="btn-f3"><span class="pb-key">3</span><span class="pb-name" id="pb-name-3"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('4')" id="btn-f4"><span class="pb-key">4</span><span class="pb-name" id="pb-name-4"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('5')" id="btn-f5"><span class="pb-key">5</span><span class="pb-name" id="pb-name-5"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('6')" id="btn-f6"><span class="pb-key">6</span><span class="pb-name" id="pb-name-6"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('7')" id="btn-f7"><span class="pb-key">7</span><span class="pb-name" id="pb-name-7"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('8')" id="btn-f8"><span class="pb-key">8</span><span class="pb-name" id="pb-name-8"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('9')" id="btn-f9"><span class="pb-key">9</span><span class="pb-name" id="pb-name-9"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('0')" id="btn-f0"><span class="pb-key">ID</span><span class="pb-name" id="pb-name-0"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('-')">Stop</button>
+    <button class="ctrl-btn" onclick="refreshSounds()" title="Refresh random sounds">&#x21bb;</button>
+    <button class="ctrl-btn" onclick="toggleTestLoop(this)" id="btn-test-loop">Loop</button>
+  </div>
+  <div class="smart-row" id="smart-announce-group">
+    <button class="ctrl-btn" onclick="sendKey('[')">Smart #1</button>
+    <button class="ctrl-btn" onclick="sendKey(']')">Smart #2</button>
+    <button class="ctrl-btn" onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
+  </div>
+  <div id="smart-countdowns" class="st-line"></div>
 </div>
 
-<div id="adsb-panel" class="panel" style="display:none;">
-  <div class="panel-head">
-    <h2 class="panel-title">ADS-B Aircraft Tracking</h2>
-    <a href="/aircraft" target="content" onclick="setActive(document.querySelector('.shell-nav a[href=\\'/aircraft\\']'))" class="panel-meta">&rarr; Open Map</a>
+<!-- ═══ PANEL 6: Transmit ═══ -->
+<div id="transmit-panel" class="panel" style="display:none;">
+  <div class="panel-head"><h2 class="panel-title">Transmit</h2></div>
+  <div class="panel-tabs">
+    <button class="panel-tab active" onclick="switchPanelTab('tx','tts',this)">TTS</button>
+    <button class="panel-tab" onclick="switchPanelTab('tx','cw',this)">CW</button>
+    <button class="panel-tab" onclick="switchPanelTab('tx','ai',this)">AI</button>
   </div>
-  <div class="metric-strip">
-    <div class="metric metric-lg">
-      <span class="metric-label">Aircraft</span>
-      <span id="adsb-aircraft" class="metric-value">--</span>
+
+  <div id="tx-tts" class="panel-pane active">
+    <div class="ctrl-stack">
+      <textarea id="tts-text" class="ctrl-input" rows="3" placeholder="Enter text to speak..."></textarea>
+      <div class="ctrl-field">
+        <select id="tts-voice" class="ctrl-input btn-flex">
+          <option value="1">US English</option><option value="2">British</option>
+          <option value="3">Australian</option><option value="4">Indian</option>
+          <option value="5">South African</option><option value="6">Canadian</option>
+          <option value="7">Irish</option><option value="8">French</option><option value="9">German</option>
+        </select>
+        <button class="ctrl-btn btn-flex" onclick="sendTTS()" id="btn-tts-send">Send</button>
+      </div>
     </div>
-    <div class="metric metric-lg">
-      <span class="metric-label">Msg/s</span>
-      <span id="adsb-rate" class="metric-value">--</span>
+  </div>
+
+  <div id="tx-cw" class="panel-pane">
+    <div class="ctrl-stack">
+      <textarea id="cw-text" class="ctrl-input" rows="3" placeholder="Enter text for CW..."></textarea>
+      <div class="ctrl-field"><label class="w3">WPM</label><input id="cw-wpm" class="ctrl-input w-55" type="number" min="5" max="60" value="20"></div>
+      <div class="ctrl-field"><label class="w3">Freq</label><input id="cw-freq" class="ctrl-input w-55" type="number" min="200" max="1200" value="600"><label>Hz</label></div>
+      <div class="ctrl-field"><label class="w3">Vol</label><input id="cw-vol" class="ctrl-input w-55" type="number" min="0.1" max="2.0" step="0.1" value="1.0"></div>
+      <button class="ctrl-btn btn-full" onclick="sendCW()" id="btn-cw-send">Send CW</button>
     </div>
-    <div class="metric metric-lg">
-      <span class="metric-label">Total</span>
-      <span id="adsb-messages" class="metric-value">--</span>
+  </div>
+
+  <div id="tx-ai" class="panel-pane">
+    <div class="ctrl-stack">
+      <textarea id="ai-text" class="ctrl-input" rows="3" placeholder="Enter prompt for AI to research and speak..."></textarea>
+      <details class="tx-opts">
+        <summary>Options</summary>
+        <div class="tx-opts-body">
+          <div class="ctrl-field"><label class="w4">Top text</label><input id="ai-top" class="ctrl-input flex-grow" type="text" value="QST"></div>
+          <div class="ctrl-field"><label class="w4">Tail</label><input id="ai-tail" class="ctrl-input flex-grow" type="text" value="Callsign"></div>
+          <div class="ctrl-field wrap">
+            <label>Secs</label><input id="ai-secs" class="ctrl-input w-55" type="number" value="30" min="5" max="120">
+            <label>Voice</label>
+            <select id="ai-voice" class="ctrl-input w-voice">
+              <option value="1">US English</option><option value="2">British</option>
+              <option value="3">Australian</option><option value="4">Indian</option>
+              <option value="5">South African</option><option value="6">Canadian</option>
+              <option value="7">Irish</option><option value="8">French</option><option value="9">German</option>
+            </select>
+          </div>
+        </div>
+      </details>
+      <button class="ctrl-btn btn-full" onclick="sendAIText()" id="btn-ai-send">Send to AI</button>
     </div>
   </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">dump1090-fa:</span><span id="adsb-svc-d1090" class="st-val dot">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">Web:</span><span id="adsb-svc-web" class="st-val dot">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">fr24feed:</span><span id="adsb-svc-fr24" class="st-val dot">&#x25cf;</span></div>
-  </div>
+
+  <div id="tx-status" class="st-line">Ready</div>
 </div>
-
-<div id="tg-panel" class="panel" style="display:none;">
-  <div class="panel-head">
-    <h2 class="panel-title">Telegram Bot</h2>
-    <span id="tg-bot-name" class="panel-meta"></span>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val dot">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val dot">&#x25cf;</span> <button onclick="openTmux()" class="rb rb-sm" title="Open terminal attached to Claude tmux session">Open</button></div>
-    <div class="st-item"><span class="st-label">Session:</span><span id="tg-session" class="st-val white">--</span></div>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Today:</span><span id="tg-msgs-today" class="st-val cyan">--</span><span class="st-label"> msgs</span></div>
-    <div class="st-item"><span class="st-label">Last in:</span><span id="tg-last-in" class="st-val white">--</span></div>
-    <div class="st-item"><span class="st-label">Last out:</span><span id="tg-last-out" class="st-val green">--</span></div>
-  </div>
-  <div id="tg-last-text" class="trunc"></div>
-</div>
-
-<div id="gps-panel" class="panel" style="display:none;">
-  <div class="panel-head">
-    <h2 class="panel-title">GPS Receiver</h2>
-    <span id="gps-fix-badge" class="panel-meta"></span>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Lat:</span><span id="gps-lat" class="st-val cyan">--</span></div>
-    <div class="st-item"><span class="st-label">Lon:</span><span id="gps-lon" class="st-val cyan">--</span></div>
-    <div class="st-item"><span class="st-label">Alt:</span><span id="gps-alt" class="st-val white">--</span><span class="st-label"> m</span></div>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Speed:</span><span id="gps-speed" class="st-val white">--</span><span class="st-label"> km/h</span></div>
-    <div class="st-item"><span class="st-label">Heading:</span><span id="gps-heading" class="st-val white">--</span><span class="st-label">&deg;</span></div>
-    <div class="st-item"><span class="st-label">HDOP:</span><span id="gps-hdop" class="st-val white">--</span></div>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Sats:</span><span id="gps-sats-used" class="st-val green">--</span></div>
-    <div class="st-item"><span class="st-label">Fix time:</span><span id="gps-fix-time" class="st-val white">--</span></div>
-    <div class="st-item"><span class="st-label">Port:</span><span id="gps-port" class="st-val white">--</span></div>
-    <div class="st-item"><a id="gps-map-link" href="#" target="_blank" class="panel-meta">View on Map &rarr;</a></div>
-  </div>
-  <details class="dash-disclose">
-    <summary>Satellites in View</summary>
-    <div id="gps-sat-chart" class="sat-chart"></div>
-  </details>
-</div>
-
-<div id="usbip-panel" class="panel" style="display:none;">
-  <div class="panel-head">
-    <h2 class="panel-title">USB/IP Remote Devices</h2>
-    <span id="usbip-server-label" class="panel-meta"></span>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Server:</span><span id="usbip-server-dot" class="st-val dot">&#x25cf;</span></div>
-  </div>
-  <div id="usbip-devices-list" class="usbip-list">No devices</div>
-</div>
-
-<style>
-  @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-  .rec-indicator { animation: blink 1s infinite; }
-  .dot { line-height: 1; color: var(--t-text-mute); }
-  .dot.ok { color: var(--t-ok); }
-  .dot.err { color: var(--t-err); }
-
-  /* Dashboard-local utility classes */
-  .trunc { font-size: var(--f-xs); color: var(--t-text-dim); margin-top: var(--s-1);
-           overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .panel-foot { margin-top: var(--s-2); color: var(--t-text-dim); font-size: var(--f-xs); }
-
-  /* details>summary shared style */
-  .dash-disclose > summary { padding: var(--s-1) 0; color: var(--t-accent);
-                             font-size: var(--f-sm); cursor: pointer; list-style: none; }
-  .dash-disclose > summary::-webkit-details-marker { display: none; }
-  .dash-disclose > summary::before { content: '\25B8 '; font-size: 0.8em; opacity: 0.7; }
-  .dash-disclose[open] > summary::before { content: '\25BE '; }
-  .history-scroll { max-height: 300px; overflow-y: auto;
-                    font-size: var(--f-xs); margin-top: var(--s-1); }
-  .sat-chart { margin-top: var(--s-2); }
-
-  /* Automation "Now Running" card */
-  .auto-current { margin-bottom: var(--s-2); padding: var(--s-2);
-                  background: var(--t-panel-hi); border-radius: var(--r-sm); }
-  .auto-current .panel-title { margin-bottom: var(--s-1); color: var(--t-accent); }
-  #auto-tasks { margin-bottom: var(--s-2); }
-
-  /* Endpoint (gateway link) blocks */
-  .ep-head { display: flex; justify-content: space-between; margin-bottom: var(--s-1); }
-  .ep-tool { display: flex; align-items: center; gap: var(--s-2); }
-  .ep-sep  { border-top: 1px solid var(--t-border);
-             margin-top: var(--s-2); padding-top: var(--s-2); }
-
-  /* Loop recorder rows */
-  .loop-list { display: flex; flex-direction: column; gap: var(--s-1); }
-  .loop-bus  { display: flex; gap: var(--s-3); align-items: center;
-               padding: 2px 0; font-size: var(--f-sm); }
-  .loop-bus .lb-name { color: var(--t-text); min-width: 80px; }
-  .loop-bus .lb-meta { color: var(--t-text-dim); min-width: 60px; }
-  .loop-bus .lb-disk { color: var(--t-ok); min-width: 55px; }
-  .loop-bus .lb-rate { color: var(--t-text-mute); font-size: var(--f-xs); }
-  .loop-bus .lb-ret  { color: var(--t-text-mute); font-size: var(--f-xs); margin-left: auto; }
-
-  /* Satellite signal chart */
-  .sat-row   { display: flex; align-items: center; gap: var(--s-2); margin: 2px 0; }
-  .sat-prn   { min-width: 42px; text-align: right;
-               color: var(--t-text-dim); font-size: var(--f-xs); }
-  .sat-track { flex: 1; background: var(--t-bg); border: 1px solid var(--t-border);
-               border-radius: var(--r-sm); height: 14px; overflow: hidden; }
-  .sat-fill  { height: 100%; background: var(--t-ok); transition: width 0.3s; }
-  .sat-fill.mid  { background: var(--t-warn); }
-  .sat-fill.low  { background: var(--t-err); }
-  .sat-fill.none { background: var(--t-text-mute); }
-  .sat-snr   { min-width: 28px; font-size: var(--f-xs); color: var(--t-text); }
-
-  /* sysBar threshold colors — opt-in via class instead of inline style */
-  .bar.warn   { background: var(--t-warn); }
-  .bar.err    { background: var(--t-err); }
-  .bar.accent { background: var(--t-accent); }
-
-  /* Hero metric cluster — shared pattern for any panel with 2-3 headline numbers.
-     Sits above the dense .st-row readouts to give vertical hierarchy. */
-  .metric-strip {
-    display: flex; gap: var(--s-5); flex-wrap: wrap;
-    padding: var(--s-1) 0 var(--s-3);
-    border-bottom: 1px solid var(--t-border);
-    margin-bottom: var(--s-3);
-  }
-
-  /* USBIP device list row */
-  .usbip-list { margin-top: var(--s-2); font-size: var(--f-sm); color: var(--t-text); }
-  .usbip-list .usbip-dev-status { color: var(--t-text-dim); font-size: var(--f-xs); }
-
-  /* GPS rows have tighter vertical rhythm than default .st-row */
-  #gps-panel .st-row { margin: 0 0 var(--s-2); }
-
-  .dash-tbl { width: 100%; border-collapse: collapse; font-size: var(--f-sm); }
-  .dash-tbl th { text-align: left; padding: var(--s-1) var(--s-3); color: var(--t-text-dim); font-weight: 500; border-bottom: 1px solid var(--t-border); }
-
-  /* Wide-screen 2-column layout — the hero/status and sysinfo blocks span
-     the full width, all other panels flow into two balanced columns so
-     critical info isn't pushed below the fold. */
-  @media (min-width: 1400px) {
-    body {
-      column-count: 2;
-      column-gap: var(--s-4);
-      column-fill: balance;
-    }
-    #status, #sysinfo, #toast-container {
-      column-span: all;
-      break-after: auto;
-    }
-    .hero, .panel {
-      break-inside: avoid;
-      display: block;
-    }
-  }
-  .dash-tbl td { padding: var(--s-1) var(--s-3); }
-  .dash-tbl tr.active td { background: var(--t-panel-hi); }
-  .st-fixed { display: inline-block; min-width: 7ch; font-variant-numeric: tabular-nums; }
-</style>
 
 <script src="/pages/common.js"></script>
 <script>
-var _lastNotifSeq = 0;
+// ── Panel tab switching ──
+function switchPanelTab(group, name, btn) {
+  document.querySelectorAll('#' + _groupContainerId(group) + ' .panel-pane').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('#' + _groupContainerId(group) + ' .panel-tab').forEach(function(b){ b.classList.remove('active'); });
+  var pane = document.getElementById(_groupPaneId(group, name));
+  if (pane) pane.classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+function _groupContainerId(g) {
+  return {p1:'top-panel', link:'link-panel', svc:'services-panel', tx:'transmit-panel'}[g] || g;
+}
+function _groupPaneId(g, name) {
+  return {p1:'p1-', link:'link-', svc:'svc-', tx:'tx-'}[g] + name;
+}
+function setTabDim(id, dim) { var t=document.getElementById(id); if(t) t.classList.toggle('tab-dim', dim); }
 
-// Track previous values across polls so we can add a one-shot .flash class
-// on categorical state transitions (PTT on/off, services up/down, fix gained)
-// — NOT on continuous metrics (CPU%, network rates, uptime).
+// ── Transmit helpers ──
+function setTxStatus(text, cls) {
+  var el = document.getElementById('tx-status');
+  if (!el) return;
+  el.className = 'st-line' + (cls ? ' ' + cls : '');
+  el.textContent = text;
+}
+function sendTTS() {
+  var text = document.getElementById('tts-text').value.trim(); if (!text) return;
+  var btn = document.getElementById('btn-tts-send'); btn.disabled = true;
+  setTxStatus('Generating...', 'working');
+  postJson('/tts', {text:text, voice:parseInt(document.getElementById('tts-voice').value)})
+    .then(function(d){ setTxStatus(d.ok?'Sent — playing':'Error: '+(d.error||'failed'), d.ok?'ok':'err'); btn.disabled=false; setTimeout(function(){setTxStatus('Ready');},5000); })
+    .catch(function(){ setTxStatus('Network error','err'); btn.disabled=false; });
+  if(document.activeElement) document.activeElement.blur();
+}
+function sendCW() {
+  var text = document.getElementById('cw-text').value.trim(); if (!text) return;
+  var btn = document.getElementById('btn-cw-send'); btn.disabled = true;
+  setTxStatus('Sending...', 'working');
+  postJson('/cw', {text:text, wpm:parseFloat(document.getElementById('cw-wpm').value)||20, freq:parseFloat(document.getElementById('cw-freq').value)||600, vol:parseFloat(document.getElementById('cw-vol').value)||1.0})
+    .then(function(d){ setTxStatus(d.ok?'Sent — playing':'Error: '+(d.error||'failed'), d.ok?'ok':'err'); btn.disabled=false; setTimeout(function(){setTxStatus('Ready');},5000); })
+    .catch(function(){ setTxStatus('Network error','err'); btn.disabled=false; });
+  if(document.activeElement) document.activeElement.blur();
+}
+function sendAIText() {
+  var text = document.getElementById('ai-text').value.trim(); if (!text) return;
+  var btn = document.getElementById('btn-ai-send'); btn.disabled = true;
+  setTxStatus('Submitted — processing...', 'working');
+  postJson('/aitext', {text:text, target_secs:parseInt(document.getElementById('ai-secs').value)||30, voice:parseInt(document.getElementById('ai-voice').value)||1, top_text:document.getElementById('ai-top').value.trim(), tail_text:document.getElementById('ai-tail').value.trim()})
+    .then(function(d){ setTxStatus(d.ok?'Running — check Smart Announce status':'Error: '+(d.error||'failed'), d.ok?'ok':'err'); btn.disabled=false; setTimeout(function(){setTxStatus('Ready');},15000); })
+    .catch(function(){ setTxStatus('Network error','err'); btn.disabled=false; });
+  if(document.activeElement) document.activeElement.blur();
+}
+function refreshSounds() {
+  postJson('/refreshsounds',{}).then(function(d){ if(d.ok){var n=d.count; alert('Refreshed '+n+' sound'+(n!=1?'s':'')); } });
+}
+function toggleTestLoop(btn) {
+  postJson('/testloop',{}).then(function(d){ btn.classList.toggle('muted',!!d.looping); btn.textContent=d.looping?'Stop Loop':'Loop'; if(d.error)alert(d.error); });
+}
+
+// ── Link endpoint PTT controls ──
+window._lastLinkEndpoints = [];
+function linkCmd(ep, cmd){ cmd.endpoint=ep; return postJson('/linkcmd',cmd).catch(function(){return{};}); }
+window._linkPttState = {};
+function linkPttToggle(ep) {
+  if(window._linkPttState[ep]===undefined){ for(var i=0;i<window._lastLinkEndpoints.length;i++){if(window._lastLinkEndpoints[i].name===ep){window._linkPttState[ep]=window._lastLinkEndpoints[i].ptt_active;break;}} }
+  var next=!window._linkPttState[ep]; window._linkPttState[ep]=next; linkCmd(ep,{cmd:'ptt',state:next});
+}
+function linkGain(ep,cmd,db){ linkCmd(ep,{cmd:cmd,db:parseInt(db)}); }
+function linkMuteToggle(ep,dir){ postJson('/mixer',{action:'toggle',source:'link_'+dir+':'+ep}).catch(function(){}); }
+
+// ══════════════════════════════════════════════
+// Main status poller
+// ══════════════════════════════════════════════
+var _lastNotifSeq = 0;
 var _prevStates = {};
-function flashCls(key, val) {
-  var prev = _prevStates[key];
-  _prevStates[key] = val;
-  return (prev !== undefined && prev !== val) ? ' flash' : '';
-}
-function flashDotOnChange(el, val) {
-  var key = '_dot_' + el.id;
-  if (_prevStates[key] !== undefined && _prevStates[key] !== val) flashValue(el);
-  _prevStates[key] = val;
-}
+function flashCls(key, val) { var prev=_prevStates[key]; _prevStates[key]=val; return (prev!==undefined&&prev!==val)?' flash':''; }
+function flashDotOnChange(el, val) { var key='_dot_'+el.id; if(_prevStates[key]!==undefined&&_prevStates[key]!==val)flashValue(el); _prevStates[key]=val; }
 
 function restartEndpoint(name) {
-  if (!confirm('Restart endpoint "' + name + '"?')) return;
-  postJson('/linkcmd', {endpoint: name, cmd: 'restart'}).then(function(d) {
-    showToast(name + ' restarting...', 'info');
-  }).catch(function(e) { showToast('Restart failed: ' + e, 'error'); });
+  if(!confirm('Restart endpoint "'+name+'"?')) return;
+  postJson('/linkcmd',{endpoint:name,cmd:'restart'}).then(function(){ showToast(name+' restarting...','info'); }).catch(function(e){ showToast('Restart failed: '+e,'error'); });
 }
-
 function showToast(msg, level) {
-  var c = document.getElementById('toast-container');
-  if (!c) return;
-  var d = document.createElement('div');
-  d.className = 'toast ' + (level === 'warning' ? 'warning' : level === 'error' ? 'error' : 'info');
-  d.textContent = msg;
-  var dismiss = function(){ d.classList.add('fading'); setTimeout(function(){ d.remove(); }, 400); };
-  d.onclick = dismiss;
-  c.appendChild(d);
-  setTimeout(dismiss, 8000);
+  var c=document.getElementById('toast-container'); if(!c) return;
+  var d=document.createElement('div');
+  d.className='toast '+(level==='warning'?'warning':level==='error'?'error':'info');
+  d.textContent=msg;
+  var dismiss=function(){ d.classList.add('fading'); setTimeout(function(){d.remove();},400); };
+  d.onclick=dismiss; c.appendChild(d); setTimeout(dismiss,8000);
 }
 
-var _statusBusy = false;
-var _statusPollCount = 9;
+var _statusBusy=false, _statusPollCount=9;
 function updateStatus() {
-  if (_statusBusy) return;
-  _statusBusy = true;
-  _statusPollCount++;
-  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 10000);
-  fetch('/status', {signal:_ac.signal}).then(r=>r.json()).then(function(s) {
-    // Poll endpoint status every 10s
-    if(s.link_enabled && s.link_endpoints && _statusPollCount % 10 === 0) {
-      for(var _ei=0; _ei<s.link_endpoints.length; _ei++) {
-        postJson('/linkcmd', {endpoint:s.link_endpoints[_ei].name, cmd:'status'}).catch(function(){});
-      }
+  if(_statusBusy) return;
+  _statusBusy=true; _statusPollCount++;
+  var _ac=new AbortController(); setTimeout(function(){_ac.abort();},10000);
+  fetch('/status',{signal:_ac.signal}).then(r=>r.json()).then(function(s) {
+    if(s.link_enabled&&s.link_endpoints&&_statusPollCount%10===0) {
+      for(var _ei=0;_ei<s.link_endpoints.length;_ei++) postJson('/linkcmd',{endpoint:s.link_endpoints[_ei].name,cmd:'status'}).catch(function(){});
     }
-    _lostCount = 0;
-    // Audio levels now in shell bars (always visible above iframe)
-    var h = '';
+    _lostCount=0;
 
-    h += '<div class="st-row info-row">';
-    h += '<div class="st-item"><span class="st-label">Mumble:</span><span class="st-val '+(s.mumble?'green':'red')+flashCls('mumble', !!s.mumble)+'">'+(s.mumble?'OK':'DOWN')+'</span></div>';
-    h += '<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(s.ptt_active?'red':'green')+flashCls('ptt', !!s.ptt_active)+'">'+(s.ptt_active?'ON':'off')+'</span> <span class="st-label">('+s.ptt_method+')</span></div>';
-    if(s.sdr1_enabled && s.sdr1_duck) h += '<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
-    if(s.sdr1_enabled && s.sdr_rebroadcast) h += '<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
-    h += '<div class="st-item"><span class="st-label">Man PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+flashCls('manual_ptt', !!s.manual_ptt)+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
-    if(s.tx_talkback) h += '<div class="st-item"><span class="st-label">TX Talkback:</span><span class="st-val yellow">ON</span></div>';
-    if(s.ms1_state) h += '<div class="st-item"><span class="st-label">MS1:</span><span class="st-val '+(s.ms1_state==='running'?'green':s.ms1_state==='error'?'red':'white')+flashCls('ms1', s.ms1_state)+'">'+(s.ms1_state==='running'?'ON':'OFF')+'</span></div>';
-    if(s.ms2_state) h += '<div class="st-item"><span class="st-label">MS2:</span><span class="st-val '+(s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+flashCls('ms2', s.ms2_state)+'">'+(s.ms2_state==='running'?'ON':'OFF')+'</span></div>';
-    if(s.cat_enabled) h += '<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+flashCls('cat', s.cat)+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
-    if(s.d75_enabled) { var _d75a = s.d75_mode==='bluetooth' ? (s.d75_audio_connected?' <span class="st-val green">BT Audio</span>':' <span class="st-val red">No BT Audio</span>') : s.d75_mode==='link_endpoint' ? ' <span class="st-val green">Link</span>' : ' <span class="st-val yellow">USB</span>'; h += '<div class="st-item"><span class="st-label">D75:</span><span class="st-val '+(s.d75_connected?'green':'red')+flashCls('d75_conn', !!s.d75_connected)+'">'+(s.d75_connected?'ON':'OFF')+'</span>'+_d75a+'</div>'; }
-    if(s.relay_radio_enabled) h += '<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+flashCls('pwrb', !!s.relay_pressing)+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
-    for(var i=0;i<s.smart_countdowns.length;i++) {
-      var sc=s.smart_countdowns[i];
-      var scClr=sc.mode==='manual'?'cyan':'yellow';
-      h += '<div class="st-item"><span class="st-label">Smart#'+sc.id+':</span><span class="st-val '+scClr+'">'+sc.remaining+'</span></div>';
-    }
-    if(s.charger) { var _chState = s.charger.startsWith("CHARGING"); h += '<div class="st-item"><span class="st-label">Charger:</span><span class="st-val '+(_chState?'green':'red')+flashCls('charger', _chState)+'">'+s.charger+'</span></div>'; }
-    if(s.cat_reliability && s.cat_reliability.sent) { var r=s.cat_reliability; var missClr=r.missed>0?'red':'green'; h += '<div class="st-item"><span class="st-label">CMD:</span><span class="st-val green">'+r.sent+'</span>/<span class="st-val '+missClr+'">'+r.missed+' miss</span></div>'; }
-    if(s.cat_reliability && s.cat_reliability.last_miss) { h += '<div class="st-item"><span class="st-val red">'+s.cat_reliability.last_miss+'</span></div>'; }
-    // Broadcastify panel (separate div)
-    var bcPanel = document.getElementById('bc-panel');
-    if(s.streaming_enabled) {
-      bcPanel.style.display = '';
-      var ds = s.darkice_stats || {};
-      var conn = ds.connected || s.stream_connected;
-      var stClr = conn?'green':'red';
-      var stTxt = conn?'LIVE':'OFF';
-      var stPulse = conn ? ' pulse' : '';
-      document.getElementById('bc-status-badge').innerHTML = '<span class="'+stClr+stPulse+flashCls('bc_conn', !!conn)+'">'+stTxt+'</span>';
-      var bh = '';
-      if(ds.bitrate) bh += '<div class="st-item"><span class="st-label">Bitrate:</span><span class="st-val cyan">'+ds.bitrate+' kbps MP3</span></div>';
-      if(ds.uptime) { var u=ds.uptime; var uh=Math.floor(u/3600); var um=Math.floor((u%3600)/60); var us=Math.floor(u%60); bh += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+uh+'h '+('0'+um).slice(-2)+'m '+('0'+us).slice(-2)+'s</span></div>'; }
-      if(ds.bytes_sent) { var kb=ds.bytes_sent/1024; var mb=kb/1024; bh += '<div class="st-item"><span class="st-label">Sent:</span><span class="st-val cyan">'+(mb>=1?mb.toFixed(1)+' MB':kb.toFixed(0)+' KB')+'</span></div>'; }
-      if(ds.send_rate) bh += '<div class="st-item"><span class="st-label">Rate:</span><span class="st-val cyan">'+ds.send_rate+'</span></div>';
-      if(ds.server) bh += '<div class="st-item st-item-wide"><span class="st-label">Server:</span><span class="st-val white">'+ds.server+ds.mount+'</span></div>';
-      document.getElementById('bc-stats').innerHTML = bh;
+    // ── Status pane ──
+    var h='<div class="st-row info-row">';
+    h+='<div class="st-item"><span class="st-label">Mumble:</span><span class="st-val '+(s.mumble?'green':'red')+flashCls('mumble',!!s.mumble)+'">'+(s.mumble?'OK':'DOWN')+'</span></div>';
+    h+='<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(s.ptt_active?'red':'green')+flashCls('ptt',!!s.ptt_active)+'">'+(s.ptt_active?'ON':'off')+'</span> <span class="st-label">('+s.ptt_method+')</span></div>';
+    if(s.sdr1_enabled&&s.sdr1_duck) h+='<div class="st-item"><span class="st-label">Duck:</span><span class="st-val green">ON</span></div>';
+    if(s.sdr1_enabled&&s.sdr_rebroadcast) h+='<div class="st-item"><span class="st-label">Rebroadcast:</span><span class="st-val yellow">ON</span></div>';
+    h+='<div class="st-item"><span class="st-label">Man PTT:</span><span class="st-val '+(s.manual_ptt?'red':'green')+flashCls('manual_ptt',!!s.manual_ptt)+'">'+(s.manual_ptt?'ON':'off')+'</span></div>';
+    if(s.tx_talkback) h+='<div class="st-item"><span class="st-label">TX Talkback:</span><span class="st-val yellow">ON</span></div>';
+    if(s.ms1_state) h+='<div class="st-item"><span class="st-label">MS1:</span><span class="st-val '+(s.ms1_state==='running'?'green':s.ms1_state==='error'?'red':'white')+flashCls('ms1',s.ms1_state)+'">'+(s.ms1_state==='running'?'ON':'OFF')+'</span></div>';
+    if(s.ms2_state) h+='<div class="st-item"><span class="st-label">MS2:</span><span class="st-val '+(s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+flashCls('ms2',s.ms2_state)+'">'+(s.ms2_state==='running'?'ON':'OFF')+'</span></div>';
+    if(s.cat_enabled) h+='<div class="st-item"><span class="st-label">CAT:</span><span class="st-val '+(s.cat==='active'?'red':s.cat==='idle'?'green':'white')+flashCls('cat',s.cat)+'">'+(s.cat==='active'||s.cat==='idle'?'ON':'OFF')+'</span></div>';
+    if(s.d75_enabled){var _d75a=s.d75_mode==='bluetooth'?(s.d75_audio_connected?' <span class="st-val green">BT Audio</span>':' <span class="st-val red">No BT Audio</span>'):s.d75_mode==='link_endpoint'?' <span class="st-val green">Link</span>':' <span class="st-val yellow">USB</span>';h+='<div class="st-item"><span class="st-label">D75:</span><span class="st-val '+(s.d75_connected?'green':'red')+flashCls('d75_conn',!!s.d75_connected)+'">'+(s.d75_connected?'ON':'OFF')+'</span>'+_d75a+'</div>';}
+    if(s.relay_radio_enabled) h+='<div class="st-item"><span class="st-label">PWRB:</span><span class="st-val '+(s.relay_pressing?'red':'green')+flashCls('pwrb',!!s.relay_pressing)+'">'+(s.relay_pressing?'ON':'off')+'</span></div>';
+    for(var i=0;i<s.smart_countdowns.length;i++){var sc=s.smart_countdowns[i];h+='<div class="st-item"><span class="st-label">Smart#'+sc.id+':</span><span class="st-val '+(sc.mode==='manual'?'cyan':'yellow')+'">'+sc.remaining+'</span></div>';}
+    if(s.charger){var _chState=s.charger.startsWith("CHARGING");h+='<div class="st-item"><span class="st-label">Charger:</span><span class="st-val '+(_chState?'green':'red')+flashCls('charger',_chState)+'">'+s.charger+'</span></div>';}
+    if(s.cat_reliability&&s.cat_reliability.sent){var r=s.cat_reliability;h+='<div class="st-item"><span class="st-label">CMD:</span><span class="st-val green">'+r.sent+'</span>/<span class="st-val '+(r.missed>0?'red':'green')+'">'+r.missed+' miss</span></div>';}
+    h+='</div>';
+    document.getElementById('status').innerHTML=h;
+
+    // ── Broadcastify ──
+    setTabDim('tab-stream', !s.streaming_enabled);
+    if(s.streaming_enabled){
+      var ds=s.darkice_stats||{};
+      var conn=ds.connected||s.stream_connected;
+      document.getElementById('bc-status-badge').innerHTML='<span class="'+(conn?'green':'red')+(conn?' pulse':'')+flashCls('bc_conn',!!conn)+'">'+(conn?'LIVE':'OFF')+'</span>';
+      var bh='';
+      if(ds.bitrate) bh+='<div class="st-item"><span class="st-label">Bitrate:</span><span class="st-val cyan">'+ds.bitrate+' kbps MP3</span></div>';
+      if(ds.uptime){var u=ds.uptime;bh+='<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+Math.floor(u/3600)+'h '+('0'+Math.floor((u%3600)/60)).slice(-2)+'m '+('0'+Math.floor(u%60)).slice(-2)+'s</span></div>';}
+      if(ds.bytes_sent){var kb=ds.bytes_sent/1024;var mb=kb/1024;bh+='<div class="st-item"><span class="st-label">Sent:</span><span class="st-val cyan">'+(mb>=1?mb.toFixed(1)+' MB':kb.toFixed(0)+' KB')+'</span></div>';}
+      if(ds.send_rate) bh+='<div class="st-item"><span class="st-label">Rate:</span><span class="st-val cyan">'+ds.send_rate+'</span></div>';
+      if(ds.server) bh+='<div class="st-item st-item-wide"><span class="st-label">Server:</span><span class="st-val white">'+ds.server+ds.mount+'</span></div>';
+      document.getElementById('bc-stats').innerHTML=bh||'<span class="dim">Stopped</span>';
     } else {
-      bcPanel.style.display = 'none';
+      document.getElementById('bc-stats').innerHTML='<span class="dim">Not enabled</span>';
     }
-    h += '</div>';
 
-    // Gateway Link panel
-    var linkPanel = document.getElementById('link-panel');
-    if(s.link_enabled) {
-      var eps = s.link_endpoints || [];
-      if(eps.length > 0) {
-        linkPanel.style.display = '';
-        var lh = '';
-        for(var i=0; i<eps.length; i++) {
-          var le = eps[i];
-          if(i > 0) lh += '<div class="ep-sep"></div>';
-          var est = le.endpoint_status || {};
-          // Header: name + connection badge + model + plugin
-          var _model = est.model || le.plugin || '';
-          lh += '<div class="ep-head">';
-          lh += '<span class="st-val white">'+le.name+'</span>';
-          lh += '<span class="ep-tool"><span class="st-val cyan">'+_model+'</span><button class="rb rb-sm" onclick="restartEndpoint(\''+le.name+'\')" title="Restart endpoint"><span class="icon icon-refresh"></span></button></span>';
-          lh += '</div>';
-          // Curated status row
-          var eh = '';
-          eh += '<div class="st-item"><span class="st-label">Link:</span><span class="st-val '+(le.via_tunnel?'yellow':'green')+'">'+(le.via_tunnel?'CF':'LAN')+'</span></div>';
-          if(le.addr) { var _ip = le.addr.split(':')[0]; eh += '<div class="st-item"><span class="st-label">IP:</span><span class="st-val white">'+_ip+'</span></div>'; }
-          if(le.ping_ms >= 0) eh += '<div class="st-item"><span class="st-label">Ping:</span><span class="st-val white">'+le.ping_ms+'ms</span></div>';
-          if(est.net_iface) eh += '<div class="st-item"><span class="st-label">NIC:</span><span class="st-val white">'+est.net_iface+'</span></div>';
-          var _ver = (est.code_version || '').substring(0,8);
-          if(_ver) eh += '<div class="st-item"><span class="st-label">Ver:</span><span class="st-val white">'+_ver+'</span></div>';
-          if(est.serial_connected !== undefined) eh += '<div class="st-item"><span class="st-label">Serial:</span><span class="st-val '+(est.serial_connected?'green':'red')+'">'+(est.serial_connected?'Yes':'No')+'</span></div>';
-          if(est.bluetooth !== undefined) eh += '<div class="st-item"><span class="st-label">BT:</span><span class="st-val '+(est.bluetooth?'green':'red')+'">'+(est.bluetooth?'Yes':'No')+'</span></div>';
-          if(est.audio_connected !== undefined) eh += '<div class="st-item"><span class="st-label">Audio:</span><span class="st-val '+(est.audio_connected?'green':'red')+'">'+(est.audio_connected?'Yes':'No')+'</span></div>';
-          if(est.transmitting !== undefined) eh += '<div class="st-item"><span class="st-label">TX:</span><span class="st-val '+(est.transmitting?'red':'green')+'">'+(est.transmitting?'ON':'off')+'</span></div>';
-          if(est.battery_level !== undefined) eh += '<div class="st-item"><span class="st-label">Batt:</span><span class="st-val '+(est.battery_level>1?'green':'red')+'">'+est.battery_level+'</span></div>';
-          if(est.firmware) eh += '<div class="st-item"><span class="st-label">FW:</span><span class="st-val white">'+est.firmware+'</span></div>';
-          // AIOC-specific: mode, PTT, HID, gate, audio I/O
-          if(est.mode !== undefined) eh += '<div class="st-item"><span class="st-label">Mode:</span><span class="st-val '+(est.mode==='audio'?'green':'yellow')+'">'+(est.mode==='audio'?'Audio':'Data')+'</span></div>';
-          if(est.hid_connected !== undefined) eh += '<div class="st-item"><span class="st-label">HID:</span><span class="st-val '+(est.hid_connected?'green':est.mode==='data'?'yellow':'red')+'">'+(est.hid_connected?'Yes':'No')+'</span></div>';
-          if(est.ptt_active !== undefined) eh += '<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(est.ptt_active?'red':'green')+'">'+(est.ptt_active?'ON':'off')+'</span></div>';
-          if(est.input_active !== undefined && est.audio_connected === undefined) eh += '<div class="st-item"><span class="st-label">Audio:</span><span class="st-val '+(est.input_active && est.output_active?'green':'red')+'">'+(est.input_active?'In':'—')+'/'+(est.output_active?'Out':'—')+'</span></div>';
-          if(est.gate_enabled !== undefined) eh += '<div class="st-item"><span class="st-label">Gate:</span><span class="st-val '+(est.gate_open?'green':'yellow')+'">'+(est.gate_open?'Open':'Closed')+'</span></div>';
-          if(est.rx_gain_db !== undefined) eh += '<div class="st-item"><span class="st-label">RX:</span><span class="st-val white">'+(est.rx_gain_db>=0?'+':'')+est.rx_gain_db.toFixed(1)+' dB</span></div>';
-          if(est.tx_gain_db !== undefined) eh += '<div class="st-item"><span class="st-label">TX:</span><span class="st-val white">'+(est.tx_gain_db>=0?'+':'')+est.tx_gain_db.toFixed(1)+' dB</span></div>';
-          // Band frequencies
-          if(est.band && Array.isArray(est.band)) {
-            for(var b=0; b<est.band.length; b++) {
-              var bd = est.band[b];
-              if(bd.frequency) eh += '<div class="st-item"><span class="st-label">Band '+(b===0?'A':'B')+':</span><span class="st-val cyan">'+bd.frequency+' MHz</span></div>';
-            }
-          }
-          if(eh) lh += '<div class="st-row">'+eh+'</div>';
-          // System stats row (CPU, RAM, disk, temp)
-          var sh = '';
-          if(est.cpu_pct !== undefined) sh += '<div class="st-item"><span class="st-label">CPU:</span><span class="st-val '+(est.cpu_pct>80?'red':est.cpu_pct>50?'yellow':'green')+'">'+est.cpu_pct+'%</span></div>';
-          if(est.cpu_temp_c !== undefined) sh += '<div class="st-item"><span class="st-label">Temp:</span><span class="st-val '+(est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')+'">'+est.cpu_temp_c+'°</span></div>';
-          if(est.ram_pct !== undefined) sh += '<div class="st-item"><span class="st-label">RAM:</span><span class="st-val '+(est.ram_pct>85?'red':est.ram_pct>70?'yellow':'green')+'">'+est.ram_pct+'%</span></div>';
-          if(est.disk_pct !== undefined) sh += '<div class="st-item"><span class="st-label">Disk:</span><span class="st-val '+(est.disk_pct>90?'red':est.disk_pct>75?'yellow':'green')+'">'+est.disk_pct+'%</span></div>';
-          if(est.uptime !== undefined) { var _ut = est.uptime; var _uh = Math.floor(_ut/3600); var _um = Math.floor((_ut%3600)/60); sh += '<div class="st-item"><span class="st-label">Up:</span><span class="st-val white">'+_uh+'h'+_um+'m</span></div>'; }
-          if(sh) lh += '<div class="st-row">'+sh+'</div>';
+    // ── Gateway Link status ──
+    var linkPanel=document.getElementById('link-panel');
+    if(s.link_enabled){
+      var eps=s.link_endpoints||[];
+      window._lastLinkEndpoints=eps;
+      if(eps.length>0){
+        linkPanel.style.display='';
+        var lh='';
+        for(var i=0;i<eps.length;i++){
+          var le=eps[i]; if(i>0) lh+='<div class="ep-sep"></div>';
+          var est=le.endpoint_status||{};
+          var _model=est.model||le.plugin||'';
+          lh+='<div class="ep-head"><span class="st-val white">'+le.name+'</span><span class="ep-tool"><span class="st-val cyan">'+_model+'</span><button class="rb rb-sm" onclick="restartEndpoint(\''+le.name+'\')"><span class="icon icon-refresh"></span></button></span></div>';
+          var eh='';
+          eh+='<div class="st-item"><span class="st-label">Link:</span><span class="st-val '+(le.via_tunnel?'yellow':'green')+'">'+(le.via_tunnel?'CF':'LAN')+'</span></div>';
+          if(le.addr){var _ip=le.addr.split(':')[0];eh+='<div class="st-item"><span class="st-label">IP:</span><span class="st-val white">'+_ip+'</span></div>';}
+          if(le.ping_ms>=0) eh+='<div class="st-item"><span class="st-label">Ping:</span><span class="st-val white">'+le.ping_ms+'ms</span></div>';
+          if(est.net_iface) eh+='<div class="st-item"><span class="st-label">NIC:</span><span class="st-val white">'+est.net_iface+'</span></div>';
+          var _ver=(est.code_version||'').substring(0,8); if(_ver) eh+='<div class="st-item"><span class="st-label">Ver:</span><span class="st-val white">'+_ver+'</span></div>';
+          if(est.serial_connected!==undefined) eh+='<div class="st-item"><span class="st-label">Serial:</span><span class="st-val '+(est.serial_connected?'green':'red')+'">'+(est.serial_connected?'Yes':'No')+'</span></div>';
+          if(est.bluetooth!==undefined) eh+='<div class="st-item"><span class="st-label">BT:</span><span class="st-val '+(est.bluetooth?'green':'red')+'">'+(est.bluetooth?'Yes':'No')+'</span></div>';
+          if(est.audio_connected!==undefined) eh+='<div class="st-item"><span class="st-label">Audio:</span><span class="st-val '+(est.audio_connected?'green':'red')+'">'+(est.audio_connected?'Yes':'No')+'</span></div>';
+          if(est.transmitting!==undefined) eh+='<div class="st-item"><span class="st-label">TX:</span><span class="st-val '+(est.transmitting?'red':'green')+'">'+(est.transmitting?'ON':'off')+'</span></div>';
+          if(est.battery_level!==undefined) eh+='<div class="st-item"><span class="st-label">Batt:</span><span class="st-val '+(est.battery_level>1?'green':'red')+'">'+est.battery_level+'</span></div>';
+          if(est.mode!==undefined) eh+='<div class="st-item"><span class="st-label">Mode:</span><span class="st-val '+(est.mode==='audio'?'green':'yellow')+'">'+(est.mode==='audio'?'Audio':'Data')+'</span></div>';
+          if(est.hid_connected!==undefined) eh+='<div class="st-item"><span class="st-label">HID:</span><span class="st-val '+(est.hid_connected?'green':est.mode==='data'?'yellow':'red')+'">'+(est.hid_connected?'Yes':'No')+'</span></div>';
+          if(est.ptt_active!==undefined) eh+='<div class="st-item"><span class="st-label">PTT:</span><span class="st-val '+(est.ptt_active?'red':'green')+'">'+(est.ptt_active?'ON':'off')+'</span></div>';
+          if(est.input_active!==undefined&&est.audio_connected===undefined) eh+='<div class="st-item"><span class="st-label">Audio:</span><span class="st-val '+(est.input_active&&est.output_active?'green':'red')+'">'+(est.input_active?'In':'—')+'/'+(est.output_active?'Out':'—')+'</span></div>';
+          if(est.gate_enabled!==undefined) eh+='<div class="st-item"><span class="st-label">Gate:</span><span class="st-val '+(est.gate_open?'green':'yellow')+'">'+(est.gate_open?'Open':'Closed')+'</span></div>';
+          if(est.rx_gain_db!==undefined) eh+='<div class="st-item"><span class="st-label">RX:</span><span class="st-val white">'+(est.rx_gain_db>=0?'+':'')+est.rx_gain_db.toFixed(1)+' dB</span></div>';
+          if(est.tx_gain_db!==undefined) eh+='<div class="st-item"><span class="st-label">TX:</span><span class="st-val white">'+(est.tx_gain_db>=0?'+':'')+est.tx_gain_db.toFixed(1)+' dB</span></div>';
+          if(est.band&&Array.isArray(est.band)){for(var b=0;b<est.band.length;b++){var bd=est.band[b];if(bd.frequency)eh+='<div class="st-item"><span class="st-label">Band '+(b===0?'A':'B')+':</span><span class="st-val cyan">'+bd.frequency+' MHz</span></div>';}}
+          if(eh) lh+='<div class="st-row">'+eh+'</div>';
+          var sh='';
+          if(est.cpu_pct!==undefined) sh+='<div class="st-item"><span class="st-label">CPU:</span><span class="st-val '+(est.cpu_pct>80?'red':est.cpu_pct>50?'yellow':'green')+'">'+est.cpu_pct+'%</span></div>';
+          if(est.cpu_temp_c!==undefined) sh+='<div class="st-item"><span class="st-label">Temp:</span><span class="st-val '+(est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')+'">'+est.cpu_temp_c+'°</span></div>';
+          if(est.ram_pct!==undefined) sh+='<div class="st-item"><span class="st-label">RAM:</span><span class="st-val '+(est.ram_pct>85?'red':est.ram_pct>70?'yellow':'green')+'">'+est.ram_pct+'%</span></div>';
+          if(est.disk_pct!==undefined) sh+='<div class="st-item"><span class="st-label">Disk:</span><span class="st-val '+(est.disk_pct>90?'red':est.disk_pct>75?'yellow':'green')+'">'+est.disk_pct+'%</span></div>';
+          if(est.uptime!==undefined){var _ut=est.uptime;sh+='<div class="st-item"><span class="st-label">Up:</span><span class="st-val white">'+Math.floor(_ut/3600)+'h'+Math.floor((_ut%3600)/60)+'m</span></div>';}
+          if(sh) lh+='<div class="st-row">'+sh+'</div>';
         }
-        document.getElementById('link-info').innerHTML = lh;
-        document.getElementById('link-status-badge').innerHTML = '<span class="green">'+eps.length+' connected</span>';
+        document.getElementById('link-info').innerHTML=lh;
+        document.getElementById('link-status-badge').innerHTML='<span class="green">'+eps.length+' connected</span>';
+
+        // ── Link controls tab ──
+        var lci=document.getElementById('link-controls-inner'); lci.innerHTML='';
+        for(var ei=0;ei<eps.length;ei++){
+          var le=eps[ei]; var ename=le.name;
+          var connCls=le.connected?'green':'red'; var connTxt=le.connected?'connected':'offline';
+          var rxGain=(le.endpoint_status&&le.endpoint_status.rx_gain_db!==undefined)?le.endpoint_status.rx_gain_db:0;
+          var txGain=(le.endpoint_status&&le.endpoint_status.tx_gain_db!==undefined)?le.endpoint_status.tx_gain_db:0;
+          var wrap=document.createElement('div'); wrap.style.minWidth='240px';
+          var lh2='<div class="link-meta"><strong>'+ename+'</strong> '+le.plugin+' <span class="'+connCls+'">'+connTxt+'</span></div>';
+          lh2+='<div class="link-body">';
+          if(le.capabilities&&le.capabilities.ptt) lh2+='<button onclick="linkPttToggle(&quot;'+ename+'&quot;)" class="'+(le.ptt_active?'link-ptt on':'link-ptt')+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
+          lh2+='<div class="link-col">';
+          lh2+='<div class="link-row"><span class="link-label">RX</span><div class="link-bar"><div class="link-fill rx" style="width:'+(le.level||0)+'%"></div></div></div>';
+          lh2+='<div class="link-row"><span class="link-label">TX</span><div class="link-bar"><div class="link-fill tx" style="width:'+(le.tx_level||0)+'%"></div></div></div>';
+          lh2+='<div class="link-row mt-1"><button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;rx&quot;)" class="'+(le.rx_muted?'link-mute on':'link-mute')+'">Mute</button><input type="range" min="-10" max="10" step="1" value="'+rxGain+'" class="link-slider" oninput="linkGain(&quot;'+ename+'&quot;,&quot;rx_gain&quot;,this.value)"><span class="link-gain-val">'+rxGain+' dB</span></div>';
+          lh2+='<div class="link-row"><button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;tx&quot;)" class="'+(le.tx_muted?'link-mute on':'link-mute')+'">Mute</button><input type="range" min="-10" max="10" step="1" value="'+txGain+'" class="link-slider" oninput="linkGain(&quot;'+ename+'&quot;,&quot;tx_gain&quot;,this.value)"><span class="link-gain-val">'+txGain+' dB</span></div>';
+          lh2+='</div></div>';
+          wrap.innerHTML=lh2; lci.appendChild(wrap);
+        }
       } else {
-        linkPanel.style.display = '';
-        document.getElementById('link-info').innerHTML = '<div class="empty"><span class="empty-glyph">&#9675;</span>No endpoints connected<span class="empty-hint">Waiting for remote radio to come online</span></div>';
-        document.getElementById('link-status-badge').innerHTML = '<span class="dim">No endpoints</span>';
+        linkPanel.style.display='';
+        document.getElementById('link-info').innerHTML='<div class="empty"><span class="empty-glyph">&#9675;</span>No endpoints connected<span class="empty-hint">Waiting for remote radio to come online</span></div>';
+        document.getElementById('link-controls-inner').innerHTML='<span class="dim">No endpoints connected</span>';
+        document.getElementById('link-status-badge').innerHTML='<span class="dim">No endpoints</span>';
       }
-    } else {
-      linkPanel.style.display = 'none';
-    }
+    } else { linkPanel.style.display='none'; }
 
-    document.getElementById('status').innerHTML = h;
-
-    // Sync radio volume sliders with actual values from CAT
-    if(s.cat_vol) {
-      var lv=document.getElementById('l-vol'), rv=document.getElementById('r-vol');
-      var lvt=document.getElementById('l-vol-val'), rvt=document.getElementById('r-vol-val');
-      if(lv && !lv.matches(':active')) { lv.value=s.cat_vol.left; if(lvt) lvt.textContent=s.cat_vol.left; }
-      if(rv && !rv.matches(':active')) { rv.value=s.cat_vol.right; if(rvt) rvt.textContent=s.cat_vol.right; }
+    // ── Playback + smart ──
+    function showIf(id,cond){var e=document.getElementById(id);if(e)e.style.display=cond?'':'none';}
+    showIf('playback-panel', s.playback_enabled);
+    showIf('smart-announce-group', s.smart_announce_enabled);
+    showIf('transmit-panel', s.tts_enabled);
+    if(s.smart_activity){
+      var parts=[]; for(var sk in s.smart_activity){if(sk==='0')continue; var sv=s.smart_activity[sk]; var sClr=sv==='Done'?'green':(sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped'))?'red':'yellow'; parts.push('<span class="'+sClr+'">#'+sk+': '+sv+'</span>');}
+      var smSt=document.getElementById('smart-status'); if(smSt){smSt.className='panel-meta'; smSt.innerHTML=parts.join(' ');}
     }
-    // Show new notifications as toasts
-    if (s.notifications && s.notifications.length) {
-      for (var i=0; i<s.notifications.length; i++) {
-        var n = s.notifications[i];
-        if (n.seq > _lastNotifSeq) {
-          _lastNotifSeq = n.seq;
-          showToast(n.msg, n.level);
-        }
+    if(s.smart_countdowns){
+      var cdDiv=document.getElementById('smart-countdowns'); if(cdDiv){var cdh=''; for(var i=0;i<s.smart_countdowns.length;i++){var sc=s.smart_countdowns[i];cdh+='<span class="'+(sc.mode==='manual'?'cyan':'yellow')+'">#'+sc.id+': '+sc.remaining+'</span> ';} cdDiv.innerHTML=cdh||'';}
+    }
+    if(s.files){
+      for(var fk in s.files){
+        var fb=document.getElementById('btn-f'+fk); var fn=document.getElementById('pb-name-'+fk); var fi=s.files[fk];
+        if(fb){fb.classList.toggle('muted',!!fi.playing); fb.classList.toggle('dim',!fi.loaded); if(fi.name)fb.title=fi.name;}
+        if(fn) fn.textContent=fi.loaded&&fi.name?fi.name.replace(/\.[^.]+$/,'').substring(0,11):'';
       }
     }
-  }).catch(function(){ _lostCount++; if(_lostCount>=5){_lost=true; document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>';} }).finally(function(){ _statusBusy=false; });
+    if(s.notifications&&s.notifications.length){
+      for(var i=0;i<s.notifications.length;i++){var n=s.notifications[i];if(n.seq>_lastNotifSeq){_lastNotifSeq=n.seq;showToast(n.msg,n.level);}}
+    }
+    if(s.cat_vol){
+      var lv=document.getElementById('l-vol'),rv=document.getElementById('r-vol');
+      var lvt=document.getElementById('l-vol-val'),rvt=document.getElementById('r-vol-val');
+      if(lv&&!lv.matches(':active')){lv.value=s.cat_vol.left;if(lvt)lvt.textContent=s.cat_vol.left;}
+      if(rv&&!rv.matches(':active')){rv.value=s.cat_vol.right;if(rvt)rvt.textContent=s.cat_vol.right;}
+    }
+  }).catch(function(){_lostCount++;if(_lostCount>=5){_lost=true;document.getElementById('status').innerHTML='<span class="red">Gateway offline — waiting for restart...</span>';}}).finally(function(){_statusBusy=false;});
 }
-
-var _lost = false;
-var _lostCount = 0;
-setInterval(function() {
-  if(_lost) {
-    fetch('/status').then(function(r){ if(r.ok){ _lost=false; _lostCount=0; window.location.reload(); } }).catch(function(){});
-  } else {
-    updateStatus();
-  }
-}, 1000);
+var _lost=false, _lostCount=0;
+setInterval(function(){if(_lost){fetch('/status').then(function(r){if(r.ok){_lost=false;_lostCount=0;window.location.reload();}}).catch(function(){});}else{updateStatus();}},1000);
 updateStatus();
 
-// --- GPS panel polling ---
-function updateGps() {
-  fetch('/gpsstatus').then(function(r){return r.json()}).then(function(d) {
-    var panel = document.getElementById('gps-panel');
-    if (!d.enabled) { panel.style.display='none'; return; }
-    panel.style.display = '';
+// ── Sysinfo ──
+function sysBar(pct,tone){var cls=pct>80?'err':pct>60?'warn':(tone||'');var w=Math.round(Math.min(Math.max(pct,0),100));var p=pct<10?'  '+pct:pct<100?' '+pct:''+pct;return '<span class="bar-pct">'+p+'%</span><span class="bar bar-rx '+cls+'" style="width:'+w+'px"></span>';}
+createPoller('/sysinfo',2000,function(s){
+  var h='<div class="st-row">';
+  var crit=(s.cpu_critical_pct!==undefined)?s.cpu_critical_pct:s.cpu_pct;
+  var bg=(s.cpu_background_pct!==undefined)?s.cpu_background_pct:0;
+  h+='<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(crit)+'</div>';
+  h+='<div class="st-item"><span class="st-label">CPUBG:</span>'+sysBar(bg,'accent')+'</div>';
+  if(s.cpu_iowait_pct!==undefined&&s.cpu_iowait_pct>5) h+='<div class="st-item"><span class="st-label">IOwait:</span><span class="st-val '+(s.cpu_iowait_pct>15?'red':'yellow')+'">'+s.cpu_iowait_pct+'%</span></div>';
+  h+='<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct,'accent')+'</div>';
+  if(s.swap_total_mb>0){var swPct=Math.round(100*s.swap_used_mb/s.swap_total_mb);h+='<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct,'warn')+'</div>';}
+  h+='<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct,'warn')+'</div>';
+  h+='<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green st-fixed" style="min-width:8ch">R:'+fmtBytes(s.disk_read_bps).replace('/s','')+'</span> <span class="st-val yellow st-fixed" style="min-width:8ch">W:'+fmtBytes(s.disk_write_bps).replace('/s','')+'</span></div>';
+  h+='<div class="st-item"><span class="st-label">Net:</span><span class="st-val green st-fixed">R:'+fmtBytes(s.net_rx_bps).replace('/s','')+'</span> <span class="st-val cyan st-fixed">T:'+fmtBytes(s.net_tx_bps).replace('/s','')+'</span></div>';
+  if(s.temps&&s.temps.length){var shownCore=false,shownAcpi=false;for(var i=0;i<s.temps.length;i++){var t=s.temps[i];var isCore=/core/i.test(t.label),isAcpi=/acpitz/i.test(t.label);if(isCore&&shownCore)continue;if(isAcpi&&shownAcpi)continue;if(!isCore&&!isAcpi)continue;if(isCore)shownCore=true;if(isAcpi)shownAcpi=true;var tc=t.temp>80?'red':t.temp>60?'yellow':'green';h+='<div class="st-item"><span class="st-label">'+t.label+':</span><span class="st-val '+tc+'">'+t.temp+'&deg;C</span></div>';}}
+  if(s.ips&&s.ips.length){if(s.hostname)h+='<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';for(var i=0;i<s.ips.length;i++){var ifaceLabel=s.ips[i].iface==='tailscale0'?'TailScl':s.ips[i].iface;h+='<div class="st-item"><span class="st-label">'+ifaceLabel+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';}if(s.ddns)h+='<div class="st-item"><span class="st-label">DDNS:</span><span class="st-val green">'+s.ddns+'</span></div>';if(s.tunnel_url)h+='<div class="st-item st-item-wide"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';}
+  if(s.uptime)h+='<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
+  h+='</div>';
+  document.getElementById('sysinfo').innerHTML=h;
+});
 
-    var fixBadge = document.getElementById('gps-fix-badge');
-    var fixKey = !d.connected ? 'disc' : ('fix'+d.fix);
-    var fixFlash = flashCls('gps_fix', fixKey);
-    if (!d.connected) {
-      fixBadge.innerHTML = '<span class="red'+fixFlash+'">Disconnected</span>';
-    } else if (d.fix === 0) {
-      fixBadge.innerHTML = '<span class="yellow'+fixFlash+'">No Fix</span>';
-    } else if (d.fix === 1) {
-      fixBadge.innerHTML = '<span class="green'+fixFlash+'">GPS Fix</span>';
-    } else {
-      fixBadge.innerHTML = '<span class="green'+fixFlash+'">DGPS Fix</span>';
-    }
+// ── Automation ──
+var _autoBusy=false,_autoHistBusy=false;
+function updateAutomation(){
+  if(_autoBusy)return; _autoBusy=true;
+  var _ac=new AbortController();setTimeout(function(){_ac.abort();},5000);
+  fetch('/automationstatus',{signal:_ac.signal}).then(r=>r.json()).then(function(a){
+    var panel=document.getElementById('automation-panel');
+    if(!a.enabled){panel.style.display='none';return;} panel.style.display='';
+    var hdr='<span class="'+(a.running?'green':'red')+flashCls('auto_running',!!a.running)+'">'+(a.running?'Running':'Stopped')+'</span>';
+    hdr+=' &mdash; '+a.tasks.length+' tasks, '+a.repeater_count+' repeaters';
+    if(a.radios.length)hdr+=', radios: '+a.radios.join(', ');else hdr+=', <span class="red">no radios</span>';
+    if(a.recording)hdr+=' &mdash; <span class="red rec-indicator">REC</span>';
+    document.getElementById('auto-header-status').innerHTML=hdr;
+    var curDiv=document.getElementById('auto-current');
+    if(a.current_task){curDiv.style.display='';var ct=null;for(var i=0;i<a.tasks.length;i++){if(a.tasks[i].name===a.current_task){ct=a.tasks[i];break;}}var d='<span class="white'+flashCls('auto_current',a.current_task)+'">'+a.current_task+'</span>';if(ct)d+=' &mdash; <span class="yellow">'+ct.action+'</span> on <span class="cyan">'+ct.radio+'</span>';if(a.recording)d+=' <span class="red">[RECORDING]</span>';document.getElementById('auto-current-detail').innerHTML=d;}else{curDiv.style.display='none';}
+    var t='<table class="dash-tbl"><tr><th>Task</th><th>Action</th><th>Radio</th><th>Next</th><th>Last</th></tr>';
+    for(var i=0;i<a.tasks.length;i++){var tk=a.tasks[i];var active=(tk.name===a.current_task);var next=tk.schedule_type==='interval'?fmtSecs(tk.next_run_secs):('at '+tk.at+(tk.last_run_date?' (done)':''));var last=tk.last_run_ago!==null?fmtSecs(tk.last_run_ago)+' ago':'--';t+='<tr'+(active?' class="active"':'')+'><td class="white">'+(active?'&#9654; ':'')+tk.name+'</td><td class="yellow">'+tk.action+'</td><td class="cyan">'+tk.radio+'</td><td>'+next+'</td><td class="dim">'+last+'</td></tr>';}
+    t+='</table>'; document.getElementById('auto-tasks').innerHTML=t;
+  }).catch(function(){}).finally(function(){_autoBusy=false;});
+}
+function updateAutoHistory(){
+  if(_autoHistBusy)return; _autoHistBusy=true;
+  var _ac=new AbortController();setTimeout(function(){_ac.abort();},5000);
+  fetch('/automationhistory',{signal:_ac.signal}).then(r=>r.json()).then(function(hist){
+    if(!hist.length){document.getElementById('auto-history').innerHTML='<div class="empty"><span class="empty-glyph">&#9675;</span>No completed tasks yet</div>';return;}
+    var h='<table class="dash-tbl"><tr><th>Time</th><th>Task</th><th>Radio</th><th>Duration</th><th>Result</th></tr>';
+    for(var i=0;i<Math.min(hist.length,20);i++){var e=hist[i];var res='';if(e.result){if(e.result.error)res='<span class="red">ERR: '+e.result.error+'</span>';else if(e.result.frequency){res=e.result.frequency+' MHz';if(e.result.recording)res+=' <span class="green">recorded</span>';if(e.result.signal&&e.result.signal.has_signal)res+=' <span class="green">signal</span>';}else if(e.result.scanned)res=e.result.scanned+' scanned, '+e.result.active+' active';else if(e.result.text)res='TTS: '+e.result.text.substring(0,30)+'...';}h+='<tr><td class="dim">'+e.time+'</td><td class="white">'+e.task+'</td><td class="cyan">'+e.radio+'</td><td>'+e.elapsed+'s</td><td>'+res+'</td></tr>';}
+    h+='</table>'; document.getElementById('auto-history').innerHTML=h;
+  }).catch(function(){}).finally(function(){_autoHistBusy=false;});
+}
+setInterval(updateAutomation,2000); setInterval(updateAutoHistory,5000);
+updateAutomation(); updateAutoHistory();
 
-    document.getElementById('gps-lat').textContent = d.fix > 0 ? d.lat.toFixed(6) : '--';
-    document.getElementById('gps-lon').textContent = d.fix > 0 ? d.lon.toFixed(6) : '--';
-    document.getElementById('gps-alt').textContent = d.fix > 0 ? d.alt.toFixed(1) : '--';
-    document.getElementById('gps-speed').textContent = d.fix > 0 ? d.speed.toFixed(1) : '--';
-    document.getElementById('gps-heading').textContent = d.fix > 0 ? d.heading.toFixed(0) : '--';
-    document.getElementById('gps-hdop').textContent = d.fix > 0 ? d.hdop.toFixed(1) : '--';
-    setFlash(document.getElementById('gps-sats-used'), d.satellites_used || 0);
-    document.getElementById('gps-fix-time').textContent = d.last_fix_time || '--';
-    document.getElementById('gps-port').textContent = d.port || '--';
+// ── ADS-B ──
+createPoller('/adsbstatus',3000,function(d){
+  setTabDim('tab-adsb',!d.enabled);
+  if(!d.enabled)return;
+  function svcDot(el,ok){flashDotOnChange(el,!!ok);el.textContent='●';el.classList.toggle('ok',!!ok);el.classList.toggle('err',!ok);el.title=ok?'running':'stopped';}
+  svcDot(document.getElementById('adsb-svc-d1090'),d.dump1090);
+  svcDot(document.getElementById('adsb-svc-web'),d.web);
+  svcDot(document.getElementById('adsb-svc-fr24'),d.fr24feed);
+  setFlash(document.getElementById('adsb-aircraft'),d.aircraft);
+  setFlash(document.getElementById('adsb-messages'),d.messages.toLocaleString());
+  document.getElementById('adsb-rate').textContent=d.messages_rate>0?d.messages_rate.toFixed(1):'0.0';
+});
 
-    var mapLink = document.getElementById('gps-map-link');
-    if (d.fix > 0) {
-      mapLink.href = 'https://www.openstreetmap.org/?mlat='+d.lat+'&mlon='+d.lon+'#map=15/'+d.lat+'/'+d.lon;
-      mapLink.style.display = '';
-    } else {
-      mapLink.style.display = 'none';
-    }
+// ── USB/IP ──
+createPoller('/usbipstatus',10000,function(d){
+  setTabDim('tab-usbip',!d.enabled);
+  if(!d.enabled)return;
+  document.getElementById('usbip-server-label').textContent=d.server||'';
+  var dot=document.getElementById('usbip-server-dot');
+  flashDotOnChange(dot,!!d.server_reachable); dot.textContent='●';
+  dot.classList.toggle('ok',!!d.server_reachable); dot.classList.toggle('err',!d.server_reachable);
+  dot.title=d.server_reachable?'reachable':(d.last_error||'unreachable');
+  var list=document.getElementById('usbip-devices-list');
+  if(!d.devices||d.devices.length===0){list.innerHTML=d.server_reachable?'<div class="empty"><span class="empty-glyph">&#9675;</span>No exported devices</div>':'<div class="empty err"><span class="empty-glyph">&#9888;</span>Server unreachable</div>';}
+  else{list.innerHTML=d.devices.map(function(dev){return'<span class="dot '+(dev.attached?'ok':'err')+'">&#x25cf;</span> <b>'+dev.bus_id+'</b> &nbsp;'+dev.description+' <span class="usbip-dev-status">'+(dev.attached?'attached':'not attached')+'</span>';}).join('<br>');}
+});
 
-    // Satellite signal strength bars
-    var sats = d.satellites || [];
-    var ch = '';
-    for (var i=0; i<sats.length; i++) {
-      var s = sats[i];
-      var pct = Math.min(100, Math.round(s.snr * 100 / 50));
-      var fillCls = s.snr === 0 ? 'none' : s.snr >= 35 ? '' : s.snr >= 20 ? 'mid' : 'low';
-      ch += '<div class="sat-row">';
-      ch += '<span class="sat-prn">PRN '+s.prn+'</span>';
-      ch += '<div class="sat-track"><div class="sat-fill '+fillCls+'" style="width:'+pct+'%"></div></div>';
-      ch += '<span class="sat-snr">'+s.snr+'</span>';
-      ch += '</div>';
-    }
-    if (!ch) ch = '<div class="empty"><span class="empty-glyph">&#9675;</span>No satellites in view</div>';
-    document.getElementById('gps-sat-chart').innerHTML = ch;
+// ── Telegram ──
+createPoller('/telegramstatus',5000,function(d){
+  setTabDim('tab-tg',!d.enabled);
+  if(!d.enabled)return;
+  function dot(id,ok,title){var el=document.getElementById(id);flashDotOnChange(el,!!ok);el.textContent='●';el.classList.toggle('ok',!!ok);el.classList.toggle('err',!ok);el.title=title||(ok?'ok':'offline');}
+  dot('tg-dot-bot',d.bot_running,d.bot_running?'bot running':'bot not running');
+  dot('tg-dot-tmux',d.tmux_active,d.tmux_active?'session active':'session not found');
+  document.getElementById('tg-bot-name').textContent=d.bot_username||'';
+  document.getElementById('tg-session').textContent=d.tmux_session||'--';
+  setFlash(document.getElementById('tg-msgs-today'),d.messages_today!=null?d.messages_today:'--');
+  setFlash(document.getElementById('tg-last-in'),fmtTimestamp(d.last_message_time));
+  document.getElementById('tg-last-out').textContent=fmtTimestamp(d.last_reply_time);
+  document.getElementById('tg-last-text').textContent=d.last_message_text?'» '+d.last_message_text:'';
+});
+
+// ── GPS ──
+function updateGps(){
+  fetch('/gpsstatus').then(function(r){return r.json()}).then(function(d){
+    setTabDim('tab-gps',!d.enabled);
+    if(!d.enabled)return;
+    var fixBadge=document.getElementById('gps-fix-badge');
+    var fixKey=!d.connected?'disc':('fix'+d.fix); var fixFlash=flashCls('gps_fix',fixKey);
+    if(!d.connected)fixBadge.innerHTML='<span class="red'+fixFlash+'">Disconnected</span>';
+    else if(d.fix===0)fixBadge.innerHTML='<span class="yellow'+fixFlash+'">No Fix</span>';
+    else if(d.fix===1)fixBadge.innerHTML='<span class="green'+fixFlash+'">GPS Fix</span>';
+    else fixBadge.innerHTML='<span class="green'+fixFlash+'">DGPS Fix</span>';
+    document.getElementById('gps-lat').textContent=d.fix>0?d.lat.toFixed(6):'--';
+    document.getElementById('gps-lon').textContent=d.fix>0?d.lon.toFixed(6):'--';
+    document.getElementById('gps-alt').textContent=d.fix>0?d.alt.toFixed(1):'--';
+    document.getElementById('gps-speed').textContent=d.fix>0?d.speed.toFixed(1):'--';
+    document.getElementById('gps-heading').textContent=d.fix>0?d.heading.toFixed(0):'--';
+    document.getElementById('gps-hdop').textContent=d.fix>0?d.hdop.toFixed(1):'--';
+    setFlash(document.getElementById('gps-sats-used'),d.satellites_used||0);
+    document.getElementById('gps-fix-time').textContent=d.last_fix_time||'--';
+    document.getElementById('gps-port').textContent=d.port||'--';
+    var mapLink=document.getElementById('gps-map-link');
+    if(d.fix>0){mapLink.href='https://www.openstreetmap.org/?mlat='+d.lat+'&mlon='+d.lon+'#map=15/'+d.lat+'/'+d.lon;mapLink.style.display='';}else{mapLink.style.display='none';}
+    var sats=d.satellites||[]; var ch='';
+    for(var i=0;i<sats.length;i++){var s=sats[i];var pct=Math.min(100,Math.round(s.snr*100/50));var fillCls=s.snr===0?'none':s.snr>=35?'':s.snr>=20?'mid':'low';ch+='<div class="sat-row"><span class="sat-prn">PRN '+s.prn+'</span><div class="sat-track"><div class="sat-fill '+fillCls+'" style="width:'+pct+'%"></div></div><span class="sat-snr">'+s.snr+'</span></div>';}
+    if(!ch)ch='<div class="empty"><span class="empty-glyph">&#9675;</span>No satellites in view</div>';
+    document.getElementById('gps-sat-chart').innerHTML=ch;
   }).catch(function(){});
 }
-setInterval(updateGps, 3000);
-updateGps();
+setInterval(updateGps,3000); updateGps();
 
-// --- System Status ---
-function sysBar(pct, tone) {
-  // tone: undefined = green default | 'accent' | 'warn' — threshold overrides above 80/60
-  var cls = pct > 80 ? 'err' : pct > 60 ? 'warn' : (tone || '');
-  var w = Math.round(Math.min(Math.max(pct, 0), 100));
-  var p = pct < 10 ? '  '+pct : pct < 100 ? ' '+pct : ''+pct;
-  return '<span class="bar-pct">'+p+'%</span><span class="bar bar-rx '+cls+'" style="width:'+w+'px"></span>';
-}
-createPoller('/sysinfo', 2000, function(s) {
-  var h = '<div class="st-row">';
-  var crit = (s.cpu_critical_pct !== undefined) ? s.cpu_critical_pct : s.cpu_pct;
-  var bg = (s.cpu_background_pct !== undefined) ? s.cpu_background_pct : 0;
-  h += '<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(crit)+'</div>';
-  h += '<div class="st-item"><span class="st-label">CPUBG:</span>'+sysBar(bg, 'accent')+'</div>';
-  if (s.cpu_iowait_pct !== undefined && s.cpu_iowait_pct > 5) {
-    h += '<div class="st-item"><span class="st-label">IOwait:</span><span class="st-val '+(s.cpu_iowait_pct>15?'red':'yellow')+'">'+s.cpu_iowait_pct+'%</span></div>';
-  }
-  h += '<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct, 'accent')+'</div>';
-  if (s.swap_total_mb > 0) {
-    var swPct = Math.round(100*s.swap_used_mb/s.swap_total_mb);
-    h += '<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct, 'warn')+'</div>';
-  }
-  h += '<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct, 'warn')+'</div>';
-  h += '<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green st-fixed" style="min-width:8ch">R:'+fmtBytes(s.disk_read_bps).replace('/s','')+'</span> <span class="st-val yellow st-fixed" style="min-width:8ch">W:'+fmtBytes(s.disk_write_bps).replace('/s','')+'</span></div>';
-  h += '<div class="st-item"><span class="st-label">Net:</span><span class="st-val green st-fixed">R:'+fmtBytes(s.net_rx_bps).replace('/s','')+'</span> <span class="st-val cyan st-fixed">T:'+fmtBytes(s.net_tx_bps).replace('/s','')+'</span></div>';
-  if (s.temps && s.temps.length) {
-    var shownCore = false, shownAcpi = false;
-    for (var i=0; i<s.temps.length; i++) {
-      var t = s.temps[i];
-      var isCore = /core/i.test(t.label);
-      var isAcpi = /acpitz/i.test(t.label);
-      if (isCore && shownCore) continue;
-      if (isAcpi && shownAcpi) continue;
-      if (!isCore && !isAcpi) continue;
-      if (isCore) shownCore = true;
-      if (isAcpi) shownAcpi = true;
-      var tc = t.temp > 80 ? 'red' : t.temp > 60 ? 'yellow' : 'green';
-      h += '<div class="st-item"><span class="st-label">'+t.label+':</span><span class="st-val '+tc+'">'+t.temp+'&deg;C</span></div>';
+// ── Loop Recorder ──
+function updateLoopRecorder(){
+  fetch('/loop/buses').then(function(r){return r.json();}).then(function(buses){
+    setTabDim('tab-loop',!buses||buses.length===0);
+    if(!buses||buses.length===0)return;
+    var html='',totalSegs=0,totalMB=0;
+    for(var i=0;i<buses.length;i++){
+      var b=buses[i]; totalSegs+=b.segments; totalMB+=(b.disk_mb||0);
+      var dot='<span class="dot '+(b.active?'err pulse':'')+'">●</span>';
+      var durStr='--';
+      if(b.segments>0){var durSec=b.latest-b.earliest;durStr=Math.floor(durSec/3600)+'h '+Math.floor((durSec%3600)/60)+'m';}
+      var diskStr=(b.disk_mb||0)>=1024?(b.disk_mb/1024).toFixed(1)+' GB':(b.disk_mb||0).toFixed(0)+' MB';
+      var rateStr=(b.segments>0&&b.latest>b.earliest)?((b.disk_mb||0)/((b.latest-b.earliest)/3600)).toFixed(0)+' MB/h':'';
+      html+='<div class="loop-bus">'+dot+' <span class="lb-name">'+(b.name||b.id)+'</span><span class="lb-meta">'+b.segments+' segs</span><span class="lb-meta">'+durStr+'</span><span class="lb-disk">'+diskStr+'</span>'+(rateStr?'<span class="lb-rate">'+rateStr+'</span>':'')+'<span class="lb-ret">ret '+(b.retention_hours||24)+'h</span></div>';
     }
-  }
-  // Net/TCP/temps and the IP/host block share one row so short items
-  // pack into the grid instead of forcing a second half-empty row.
-  if (s.ips && s.ips.length) {
-if (s.hostname) h += '<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';
-    for (var i=0; i<s.ips.length; i++) {
-      var ifaceLabel = s.ips[i].iface === 'tailscale0' ? 'TailScl' : s.ips[i].iface;
-      h += '<div class="st-item"><span class="st-label">'+ifaceLabel+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';
-    }
-    if (s.ddns) h += '<div class="st-item"><span class="st-label">DDNS:</span><span class="st-val green">'+s.ddns+'</span></div>';
-    if (s.tunnel_url) h += '<div class="st-item st-item-wide"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';
-  }
-  if (s.uptime) h += '<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
-  h += '</div>';
-  document.getElementById('sysinfo').innerHTML = h;
-});
-
-// --- Automation Engine ---
-var _autoBusy = false, _autoHistBusy = false;
-function updateAutomation() {
-  if (_autoBusy) return;
-  _autoBusy = true;
-  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
-  fetch('/automationstatus', {signal:_ac.signal}).then(r=>r.json()).then(function(a) {
-    var panel = document.getElementById('automation-panel');
-    if (!a.enabled) { panel.style.display='none'; return; }
-    panel.style.display='';
-
-    // Header status
-    var hdr = '<span class="'+(a.running?'green':'red')+flashCls('auto_running', !!a.running)+'">'+(a.running?'Running':'Stopped')+'</span>';
-    hdr += ' &mdash; '+a.tasks.length+' tasks, '+a.repeater_count+' repeaters';
-    if (a.radios.length) hdr += ', radios: '+a.radios.join(', ');
-    else hdr += ', <span class="red">no radios</span>';
-    if (a.recording) hdr += ' &mdash; <span class="red rec-indicator">REC</span>';
-    document.getElementById('auto-header-status').innerHTML = hdr;
-
-    // Current task
-    var curDiv = document.getElementById('auto-current');
-    var curDetail = document.getElementById('auto-current-detail');
-    if (a.current_task) {
-      curDiv.style.display = '';
-      var ct = null;
-      for (var i=0; i<a.tasks.length; i++) { if (a.tasks[i].name===a.current_task) { ct=a.tasks[i]; break; } }
-      var d = '<span class="white'+flashCls('auto_current', a.current_task)+'">'+a.current_task+'</span>';
-      if (ct) d += ' &mdash; <span class="yellow">'+ct.action+'</span> on <span class="cyan">'+ct.radio+'</span>';
-      if (a.recording) d += ' <span class="red">[RECORDING]</span>';
-      curDetail.innerHTML = d;
-    } else {
-      curDiv.style.display = 'none';
-    }
-
-    // Task queue
-    var t = '<table class="dash-tbl">';
-    t += '<tr><th>Task</th><th>Action</th><th>Radio</th><th>Next</th><th>Last</th></tr>';
-    for (var i=0; i<a.tasks.length; i++) {
-      var tk = a.tasks[i];
-      var active = (tk.name === a.current_task);
-      var next = tk.schedule_type==='interval' ? fmtSecs(tk.next_run_secs) : ('at '+tk.at+(tk.last_run_date?' (done)':''));
-      var last = tk.last_run_ago !== null ? fmtSecs(tk.last_run_ago)+' ago' : '--';
-      t += '<tr'+(active?' class="active"':'')+'>';
-      t += '<td class="white">'+(active?'&#9654; ':'')+tk.name+'</td>';
-      t += '<td class="yellow">'+tk.action+'</td>';
-      t += '<td class="cyan">'+tk.radio+'</td>';
-      t += '<td>'+next+'</td>';
-      t += '<td class="dim">'+last+'</td>';
-      t += '</tr>';
-    }
-    t += '</table>';
-    document.getElementById('auto-tasks').innerHTML = t;
-  }).catch(function(){}).finally(function(){ _autoBusy=false; });
-}
-function updateAutoHistory() {
-  if (_autoHistBusy) return;
-  _autoHistBusy = true;
-  var _ac = new AbortController(); setTimeout(function(){_ac.abort();}, 5000);
-  fetch('/automationhistory', {signal:_ac.signal}).then(r=>r.json()).then(function(hist) {
-    if (!hist.length) { document.getElementById('auto-history').innerHTML='<div class="empty"><span class="empty-glyph">&#9675;</span>No completed tasks yet<span class="empty-hint">Scheduled tasks will appear here after they run</span></div>'; return; }
-    var h = '<table class="dash-tbl">';
-    h += '<tr><th>Time</th><th>Task</th><th>Radio</th><th>Duration</th><th>Result</th></tr>';
-    for (var i=0; i<Math.min(hist.length,20); i++) {
-      var e = hist[i];
-      var res = '';
-      if (e.result) {
-        if (e.result.error) res = '<span class="red">ERR: '+e.result.error+'</span>';
-        else if (e.result.frequency) {
-          res = e.result.frequency+' MHz';
-          if (e.result.recording) res += ' <span class="green">recorded</span>';
-          if (e.result.signal && e.result.signal.has_signal) res += ' <span class="green">signal</span>';
-        }
-        else if (e.result.scanned) res = e.result.scanned+' scanned, '+e.result.active+' active';
-        else if (e.result.text) res = 'TTS: '+e.result.text.substring(0,30)+'...';
-      }
-      h += '<tr><td class="dim">'+e.time+'</td>';
-      h += '<td class="white">'+e.task+'</td>';
-      h += '<td class="cyan">'+e.radio+'</td>';
-      h += '<td>'+e.elapsed+'s</td>';
-      h += '<td>'+res+'</td></tr>';
-    }
-    h += '</table>';
-    document.getElementById('auto-history').innerHTML = h;
-  }).catch(function(){}).finally(function(){ _autoHistBusy=false; });
-}
-setInterval(updateAutomation, 2000);
-setInterval(updateAutoHistory, 5000);
-updateAutomation();
-updateAutoHistory();
-
-// --- ADS-B Status ---
-createPoller('/adsbstatus', 3000, function(d) {
-  var panel = document.getElementById('adsb-panel');
-  if (!d.enabled) { panel.style.display='none'; return; }
-  panel.style.display='';
-  function svcDot(el, ok) {
-    flashDotOnChange(el, !!ok);
-    el.textContent = '\u25cf';
-    el.classList.toggle('ok', !!ok);
-    el.classList.toggle('err', !ok);
-    el.title = ok ? 'running' : 'stopped';
-  }
-  svcDot(document.getElementById('adsb-svc-d1090'), d.dump1090);
-  svcDot(document.getElementById('adsb-svc-web'), d.web);
-  svcDot(document.getElementById('adsb-svc-fr24'), d.fr24feed);
-  setFlash(document.getElementById('adsb-aircraft'), d.aircraft);
-  setFlash(document.getElementById('adsb-messages'), d.messages.toLocaleString());
-  document.getElementById('adsb-rate').textContent = d.messages_rate > 0 ? d.messages_rate.toFixed(1) : '0.0';
-});
-
-// --- USB/IP Status ---
-createPoller('/usbipstatus', 10000, function(d) {
-  var panel = document.getElementById('usbip-panel');
-  if (!d.enabled) { panel.style.display='none'; return; }
-  panel.style.display='';
-  document.getElementById('usbip-server-label').textContent = d.server || '';
-  var dot = document.getElementById('usbip-server-dot');
-  flashDotOnChange(dot, !!d.server_reachable);
-  dot.textContent = '\u25cf';
-  dot.classList.toggle('ok', !!d.server_reachable);
-  dot.classList.toggle('err', !d.server_reachable);
-  dot.title = d.server_reachable ? 'reachable' : (d.last_error || 'unreachable');
-  var list = document.getElementById('usbip-devices-list');
-  if (!d.devices || d.devices.length === 0) {
-    if (d.server_reachable) {
-      list.innerHTML = '<div class="empty"><span class="empty-glyph">&#9675;</span>No exported devices</div>';
-    } else {
-      list.innerHTML = '<div class="empty err"><span class="empty-glyph">&#9888;</span>Server unreachable<span class="empty-hint">Check usbipd service on the host</span></div>';
-    }
-  } else {
-    list.innerHTML = d.devices.map(function(dev) {
-      var dot = '<span class="dot ' + (dev.attached ? 'ok' : 'err') + '">&#x25cf;</span>';
-      var status = dev.attached ? 'attached' : 'not attached';
-      return dot + ' <b>' + dev.bus_id + '</b> &nbsp;' + dev.description + ' <span class="usbip-dev-status">(' + status + ')</span>';
-    }).join('<br>');
-  }
-});
-
-// --- Telegram Bot Status ---
-createPoller('/telegramstatus', 5000, function(d) {
-  var panel = document.getElementById('tg-panel');
-  if (!d.enabled) { panel.style.display='none'; return; }
-  panel.style.display='';
-  function dot(id, ok, title) {
-    var el = document.getElementById(id);
-    flashDotOnChange(el, !!ok);
-    el.textContent = '\u25cf';
-    el.classList.toggle('ok', !!ok);
-    el.classList.toggle('err', !ok);
-    el.title = title || (ok ? 'ok' : 'offline');
-  }
-  dot('tg-dot-bot', d.bot_running, d.bot_running ? 'bot running' : 'bot not running');
-  dot('tg-dot-tmux', d.tmux_active, d.tmux_active ? 'session active' : 'session not found');
-  document.getElementById('tg-bot-name').textContent = d.bot_username || '';
-  document.getElementById('tg-session').textContent = d.tmux_session || '--';
-  setFlash(document.getElementById('tg-msgs-today'), d.messages_today != null ? d.messages_today : '--');
-  setFlash(document.getElementById('tg-last-in'), fmtTimestamp(d.last_message_time));
-  document.getElementById('tg-last-out').textContent = fmtTimestamp(d.last_reply_time);
-  document.getElementById('tg-last-text').textContent = d.last_message_text ? '\u00bb ' + d.last_message_text : '';
-});
-
-// --- Loop Recorder Status ---
-function updateLoopRecorder() {
-  fetch('/loop/buses').then(function(r){return r.json();}).then(function(buses) {
-    var panel = document.getElementById('loop-panel');
-    if (!buses || buses.length === 0) { panel.style.display='none'; return; }
-    panel.style.display='';
-    var html = '';
-    var totalSegs = 0, totalMB = 0;
-    for (var i = 0; i < buses.length; i++) {
-      var b = buses[i];
-      totalSegs += b.segments;
-      totalMB += (b.disk_mb || 0);
-      var dot = '<span class="dot ' + (b.active ? 'err pulse' : '') + '">&#x25cf;</span>';
-      var durStr = '--';
-      if (b.segments > 0) {
-        var durSec = b.latest - b.earliest;
-        var durH = Math.floor(durSec / 3600);
-        var durM = Math.floor((durSec % 3600) / 60);
-        durStr = durH + 'h ' + durM + 'm';
-      }
-      var diskStr = (b.disk_mb || 0) >= 1024 ? (b.disk_mb / 1024).toFixed(1) + ' GB' : (b.disk_mb || 0).toFixed(0) + ' MB';
-      var rateStr = '';
-      if (b.segments > 0 && b.latest > b.earliest) {
-        var rateMBh = (b.disk_mb || 0) / ((b.latest - b.earliest) / 3600);
-        rateStr = rateMBh.toFixed(0) + ' MB/h';
-      }
-      html += '<div class="loop-bus">'
-        + dot + ' <span class="lb-name">' + (b.name || b.id) + '</span>'
-        + '<span class="lb-meta">' + b.segments + ' segs</span>'
-        + '<span class="lb-meta">' + durStr + '</span>'
-        + '<span class="lb-disk">' + diskStr + '</span>'
-        + (rateStr ? '<span class="lb-rate">' + rateStr + '</span>' : '')
-        + '<span class="lb-ret">ret ' + (b.retention_hours || 24) + 'h</span>'
-        + '</div>';
-    }
-    document.getElementById('loop-buses').innerHTML = html;
-    var totalStr = totalMB >= 1024 ? (totalMB / 1024).toFixed(1) + ' GB' : totalMB.toFixed(0) + ' MB';
-    document.getElementById('loop-summary').textContent =
-      buses.length + ' bus' + (buses.length > 1 ? 'es' : '') + ' recording, '
-      + totalSegs + ' segments, ' + totalStr + ' total';
+    document.getElementById('loop-buses').innerHTML=html;
+    var totalStr=totalMB>=1024?(totalMB/1024).toFixed(1)+' GB':totalMB.toFixed(0)+' MB';
+    document.getElementById('loop-summary').textContent=buses.length+' bus'+(buses.length>1?'es':'')+' recording, '+totalSegs+' segments, '+totalStr+' total';
   }).catch(function(){});
 }
-setInterval(updateLoopRecorder, 5000);
-updateLoopRecorder();
-
+setInterval(updateLoopRecorder,5000); updateLoopRecorder();
 </script>
 
 </body>

@@ -6,9 +6,7 @@
 <title>Controls</title>
 <link rel="stylesheet" href="/pages/common.css">
 <style>
-  /* Controls page — draggable panel grid on top of shared palette. */
-
-  #playback-section {
+  #top-section {
     margin-top: var(--s-3);
     display: flex;
     flex-wrap: wrap;
@@ -34,7 +32,6 @@
     text-transform: uppercase;
   }
 
-  /* Generic panel button (overridden by .rb where used directly) */
   .ctrl-group button {
     padding: var(--s-1) var(--s-3);
     margin: 2px;
@@ -60,7 +57,6 @@
   }
   .ctrl-group button.dim { opacity: 0.4; }
 
-  /* Shared form controls */
   .ctrl-input {
     background: var(--t-btn);
     color: var(--t-text);
@@ -77,7 +73,6 @@
     resize: vertical;
   }
 
-  /* Row helpers inside a control panel */
   .ctrl-field { display: flex; gap: var(--s-1); align-items: center; }
   .ctrl-field label {
     color: var(--t-text-dim);
@@ -89,7 +84,6 @@
 
   .ctrl-stack { display: flex; flex-direction: column; gap: var(--s-1); }
 
-  /* Status line — color comes from .st-* class, not inline hex. */
   .st-line {
     font-size: var(--f-sm);
     color: var(--t-text-dim);
@@ -100,21 +94,88 @@
   .st-line.ok      { color: var(--t-ok); }
   .st-line.err     { color: var(--t-err); }
 
-  /* Playback slot layout */
-  .pb-slot { display: block; margin: 1px 0; white-space: nowrap; }
-  .pb-key  { font-weight: 700; display: inline-block; width: 1.5em; }
-
-  /* Playback keypad grid */
+  /* Playback */
   .pb-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 3px;
   }
+  .pb-grid button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    height: 42px;
+    padding: 2px var(--s-1);
+    overflow: hidden;
+  }
+  .pb-key  { font-weight: 700; font-size: var(--f-xs); line-height: 1; }
+  .pb-name { font-size: 9px; color: var(--t-text-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; }
+  .smart-row {
+    display: flex;
+    gap: 3px;
+    margin-top: var(--s-2);
+  }
+  .smart-row button { flex: 1; margin: 0; }
 
-  .bottom-btns { min-width: 140px; flex: 0 1 160px; }
-  .bottom-btns button { width: 100%; box-sizing: border-box; }
+  /* Transmit tabs */
+  .tx-tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: var(--s-2);
+    border-bottom: 1px solid var(--t-border);
+    padding-bottom: var(--s-1);
+  }
+  .tx-tab {
+    padding: var(--s-1) var(--s-3);
+    border: 1px solid transparent;
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
+    background: transparent;
+    color: var(--t-text-dim);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--f-xs);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    margin: 0;
+  }
+  .tx-tab:hover { color: var(--t-text); background: var(--t-btn); border-color: var(--t-border); }
+  .tx-tab.active {
+    background: var(--t-btn-active);
+    border-color: var(--t-accent);
+    color: var(--t-accent);
+  }
+  .tx-pane { display: none; }
+  .tx-pane.active { display: block; }
 
-  /* Gateway Link panel (dynamically rendered) */
+  /* AI options collapsible */
+  details.tx-opts { margin-top: var(--s-1); }
+  details.tx-opts summary {
+    color: var(--t-text-dim);
+    font-size: var(--f-xs);
+    cursor: pointer;
+    user-select: none;
+    padding: var(--s-1) 0;
+    list-style: none;
+  }
+  details.tx-opts summary::before { content: '▶ '; }
+  details[open].tx-opts summary::before { content: '▼ '; }
+  details.tx-opts summary:hover { color: var(--t-text); }
+  details.tx-opts .tx-opts-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    margin-top: var(--s-1);
+  }
+
+  /* Link endpoints section */
+  #link-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    margin-top: var(--s-3);
+  }
   .link-meta { font-size: var(--f-xs); color: var(--t-text-dim); margin-bottom: var(--s-2); }
   .link-body { display: flex; gap: var(--s-3); align-items: flex-start; }
   .link-ptt {
@@ -159,13 +220,12 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Utility helpers */
-  .ctrl-rowset     { display: flex; gap: var(--s-4); flex-wrap: nowrap; }
-  .ctrl-stack.mb-2 { margin-bottom: var(--s-2); }
+  /* Shared helpers */
   .ctrl-field.wrap { flex-wrap: wrap; }
   .ctrl-input.flex-grow { flex: 1; min-width: 0; }
   .ctrl-input.w-voice   { flex: 1; min-width: 90px; }
   .ctrl-input.w-55      { width: 55px; }
+  .ctrl-rowset          { display: flex; gap: var(--s-4); flex-wrap: nowrap; }
   .btn-full             { width: 100%; }
   .btn-flex             { flex: 1; }
   .link-row.mt-1        { margin-top: var(--s-1); }
@@ -174,129 +234,138 @@
 </head>
 <body>
 
-<!-- Mute, processing, audio, SDR, and Broadcastify controls removed —
-     all handled by routing page (mute buttons, G/H/L/N per bus, gain sliders, P/M toggles) -->
-
-<div id="playback-section">
+<div id="top-section">
 
   <div class="ctrl-group ctrl-inline" id="playback-group">
     <h3>Playback</h3>
-    <div class="ctrl-rowset">
-      <div>
-        <div class="pb-grid">
-          <button onclick="sendKey('1')" id="btn-f1">1</button>
-          <button onclick="sendKey('2')" id="btn-f2">2</button>
-          <button onclick="sendKey('3')" id="btn-f3">3</button>
-          <button onclick="sendKey('4')" id="btn-f4">4</button>
-          <button onclick="sendKey('5')" id="btn-f5">5</button>
-          <button onclick="sendKey('6')" id="btn-f6">6</button>
-          <button onclick="sendKey('7')" id="btn-f7">7</button>
-          <button onclick="sendKey('8')" id="btn-f8">8</button>
-          <button onclick="sendKey('9')" id="btn-f9">9</button>
-          <button onclick="sendKey('0')" id="btn-f0">ID</button>
-          <button onclick="sendKey('-')">Stop</button>
-          <button onclick="refreshSounds()" title="Refresh random sounds">&#x21bb;</button>
-          <button onclick="toggleTestLoop(this)" id="btn-test-loop" title="Loop audio/loop.mp3">Loop</button>
-        </div>
-      </div>
-      <div>
-        <div id="playback-status" class="st-line">Loading...</div>
-      </div>
+    <div class="pb-grid">
+      <button onclick="sendKey('1')" id="btn-f1"><span class="pb-key">1</span><span class="pb-name" id="pb-name-1"></span></button>
+      <button onclick="sendKey('2')" id="btn-f2"><span class="pb-key">2</span><span class="pb-name" id="pb-name-2"></span></button>
+      <button onclick="sendKey('3')" id="btn-f3"><span class="pb-key">3</span><span class="pb-name" id="pb-name-3"></span></button>
+      <button onclick="sendKey('4')" id="btn-f4"><span class="pb-key">4</span><span class="pb-name" id="pb-name-4"></span></button>
+      <button onclick="sendKey('5')" id="btn-f5"><span class="pb-key">5</span><span class="pb-name" id="pb-name-5"></span></button>
+      <button onclick="sendKey('6')" id="btn-f6"><span class="pb-key">6</span><span class="pb-name" id="pb-name-6"></span></button>
+      <button onclick="sendKey('7')" id="btn-f7"><span class="pb-key">7</span><span class="pb-name" id="pb-name-7"></span></button>
+      <button onclick="sendKey('8')" id="btn-f8"><span class="pb-key">8</span><span class="pb-name" id="pb-name-8"></span></button>
+      <button onclick="sendKey('9')" id="btn-f9"><span class="pb-key">9</span><span class="pb-name" id="pb-name-9"></span></button>
+      <button onclick="sendKey('0')" id="btn-f0"><span class="pb-key">ID</span><span class="pb-name" id="pb-name-0"></span></button>
+      <button onclick="sendKey('-')">Stop</button>
+      <button onclick="refreshSounds()" title="Refresh random sounds">&#x21bb;</button>
+      <button onclick="toggleTestLoop(this)" id="btn-test-loop" title="Loop audio/loop.mp3">Loop</button>
     </div>
-  </div>
-
-  <div class="ctrl-group bottom-btns" id="smart-announce-group">
-    <h3>Smart Announce</h3>
-    <div class="ctrl-stack mb-2">
+    <div class="smart-row" id="smart-announce-group">
       <button onclick="sendKey('[')">Smart #1</button>
       <button onclick="sendKey(']')">Smart #2</button>
       <button onclick="sendKey(String.fromCharCode(92))">Smart #3</button>
     </div>
-    <div id="smart-status" class="st-line">Idle</div>
+    <div id="smart-status" class="st-line" style="margin-top:var(--s-2)"></div>
+    <div id="smart-countdowns" class="st-line"></div>
   </div>
 
-  <div class="ctrl-group ctrl-wide" id="aitext-group">
-    <h3>Text to AI</h3>
-    <div class="ctrl-stack">
-      <textarea id="ai-text" class="ctrl-input" rows="3" placeholder="Enter prompt for AI to research and speak..."></textarea>
-      <div class="ctrl-field">
-        <label class="w4">Top text</label>
-        <input id="ai-top" class="ctrl-input flex-grow" type="text" value="QST">
-      </div>
-      <div class="ctrl-field">
-        <label class="w4">Tail</label>
-        <input id="ai-tail" class="ctrl-input flex-grow" type="text" value="Callsign">
-      </div>
-      <div class="ctrl-field wrap">
-        <label>Secs</label>
-        <input id="ai-secs" class="ctrl-input w-55" type="number" value="30" min="5" max="120">
-        <label>Voice</label>
-        <select id="ai-voice" class="ctrl-input w-voice">
-          <option value="1">US English</option>
-          <option value="2">British</option>
-          <option value="3">Australian</option>
-          <option value="4">Indian</option>
-          <option value="5">South African</option>
-          <option value="6">Canadian</option>
-          <option value="7">Irish</option>
-          <option value="8">French</option>
-          <option value="9">German</option>
-        </select>
-      </div>
-      <button onclick="sendAIText()" id="btn-ai-send" class="btn-full">Send to AI</button>
+  <div class="ctrl-group ctrl-wide" id="transmit-group">
+    <div class="tx-tabs">
+      <button class="tx-tab active" onclick="switchTab('tts',this)">TTS</button>
+      <button class="tx-tab" onclick="switchTab('cw',this)">CW</button>
+      <button class="tx-tab" onclick="switchTab('ai',this)">AI</button>
     </div>
-    <div id="ai-status" class="st-line">Ready</div>
-  </div>
 
-  <div class="ctrl-group ctrl-wide" id="cw-group">
-    <h3>Text to CW</h3>
-    <div class="ctrl-stack">
-      <textarea id="cw-text" class="ctrl-input" rows="3" placeholder="Enter text for CW..."></textarea>
-      <div class="ctrl-field">
-        <label class="w3">WPM</label>
-        <input id="cw-wpm" class="ctrl-input w-55" type="number" min="5" max="60" value="20">
+    <div id="tx-tts" class="tx-pane active">
+      <div class="ctrl-stack">
+        <textarea id="tts-text" class="ctrl-input" rows="3" placeholder="Enter text to speak..."></textarea>
+        <div class="ctrl-field">
+          <select id="tts-voice" class="ctrl-input btn-flex">
+            <option value="1">US English</option>
+            <option value="2">British</option>
+            <option value="3">Australian</option>
+            <option value="4">Indian</option>
+            <option value="5">South African</option>
+            <option value="6">Canadian</option>
+            <option value="7">Irish</option>
+            <option value="8">French</option>
+            <option value="9">German</option>
+          </select>
+          <button onclick="sendTTS()" id="btn-tts-send" class="btn-flex">Send</button>
+        </div>
       </div>
-      <div class="ctrl-field">
-        <label class="w3">Freq</label>
-        <input id="cw-freq" class="ctrl-input w-55" type="number" min="200" max="1200" value="600">
-        <label>Hz</label>
-      </div>
-      <div class="ctrl-field">
-        <label class="w3">Vol</label>
-        <input id="cw-vol" class="ctrl-input w-55" type="number" min="0.1" max="2.0" step="0.1" value="1.0">
-      </div>
-      <button onclick="sendCW()" id="btn-cw-send" class="btn-full">Send CW</button>
     </div>
-    <div id="cw-status" class="st-line">Ready</div>
-  </div>
 
-  <div class="ctrl-group ctrl-wide" id="tts-group">
-    <h3>Text to Speech</h3>
-    <div class="ctrl-stack">
-      <textarea id="tts-text" class="ctrl-input" rows="3" placeholder="Enter text to speak..."></textarea>
-      <div class="ctrl-field">
-        <select id="tts-voice" class="ctrl-input btn-flex">
-          <option value="1">US English</option>
-          <option value="2">British</option>
-          <option value="3">Australian</option>
-          <option value="4">Indian</option>
-          <option value="5">South African</option>
-          <option value="6">Canadian</option>
-          <option value="7">Irish</option>
-          <option value="8">French</option>
-          <option value="9">German</option>
-        </select>
-        <button onclick="sendTTS()" id="btn-tts-send" class="btn-flex">Send</button>
+    <div id="tx-cw" class="tx-pane">
+      <div class="ctrl-stack">
+        <textarea id="cw-text" class="ctrl-input" rows="3" placeholder="Enter text for CW..."></textarea>
+        <div class="ctrl-field">
+          <label class="w3">WPM</label>
+          <input id="cw-wpm" class="ctrl-input w-55" type="number" min="5" max="60" value="20">
+        </div>
+        <div class="ctrl-field">
+          <label class="w3">Freq</label>
+          <input id="cw-freq" class="ctrl-input w-55" type="number" min="200" max="1200" value="600">
+          <label>Hz</label>
+        </div>
+        <div class="ctrl-field">
+          <label class="w3">Vol</label>
+          <input id="cw-vol" class="ctrl-input w-55" type="number" min="0.1" max="2.0" step="0.1" value="1.0">
+        </div>
+        <button onclick="sendCW()" id="btn-cw-send" class="btn-full">Send CW</button>
       </div>
     </div>
-    <div id="tts-status" class="st-line">Ready</div>
+
+    <div id="tx-ai" class="tx-pane">
+      <div class="ctrl-stack">
+        <textarea id="ai-text" class="ctrl-input" rows="3" placeholder="Enter prompt for AI to research and speak..."></textarea>
+        <details class="tx-opts">
+          <summary>Options</summary>
+          <div class="tx-opts-body">
+            <div class="ctrl-field">
+              <label class="w4">Top text</label>
+              <input id="ai-top" class="ctrl-input flex-grow" type="text" value="QST">
+            </div>
+            <div class="ctrl-field">
+              <label class="w4">Tail</label>
+              <input id="ai-tail" class="ctrl-input flex-grow" type="text" value="Callsign">
+            </div>
+            <div class="ctrl-field wrap">
+              <label>Secs</label>
+              <input id="ai-secs" class="ctrl-input w-55" type="number" value="30" min="5" max="120">
+              <label>Voice</label>
+              <select id="ai-voice" class="ctrl-input w-voice">
+                <option value="1">US English</option>
+                <option value="2">British</option>
+                <option value="3">Australian</option>
+                <option value="4">Indian</option>
+                <option value="5">South African</option>
+                <option value="6">Canadian</option>
+                <option value="7">Irish</option>
+                <option value="8">French</option>
+                <option value="9">German</option>
+              </select>
+            </div>
+          </div>
+        </details>
+        <button onclick="sendAIText()" id="btn-ai-send" class="btn-full">Send to AI</button>
+      </div>
+    </div>
+
+    <div id="tx-status" class="st-line">Ready</div>
   </div>
 
 </div>
 
+<div id="link-section"></div>
+
 <script src="/pages/common.js"></script>
 <script>
-// ── Status line helper — swap class, don't mutate inline style ──
+// ── Tab switching ──
+var _activeTab = 'tts';
+function switchTab(name, btn) {
+  _activeTab = name;
+  document.querySelectorAll('.tx-pane').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.tx-tab').forEach(function(b) { b.classList.remove('active'); });
+  var pane = document.getElementById('tx-' + name);
+  if (pane) pane.classList.add('active');
+  if (btn) btn.classList.add('active');
+  setStatus('tx-status', 'Ready');
+}
+
 function setStatus(id, text, cls) {
   var el = document.getElementById(id);
   if (!el) return;
@@ -317,6 +386,7 @@ function toggleTestLoop(btn) {
   });
 }
 
+// ── Link endpoint helpers ──
 window._lastLinkEndpoints = [];
 function linkCmd(endpoint, cmd) {
   cmd.endpoint = endpoint;
@@ -326,26 +396,29 @@ window._linkPttState = {};
 function linkPttToggle(endpoint) {
   if (window._linkPttState[endpoint] === undefined) {
     var eps = window._lastLinkEndpoints || [];
-    for(var i=0; i<eps.length; i++) { if(eps[i].name === endpoint) { window._linkPttState[endpoint] = eps[i].ptt_active; break; } }
+    for (var i = 0; i < eps.length; i++) {
+      if (eps[i].name === endpoint) { window._linkPttState[endpoint] = eps[i].ptt_active; break; }
+    }
   }
   var current = window._linkPttState[endpoint] || false;
   var next = !current;
   window._linkPttState[endpoint] = next;
-  linkCmd(endpoint, {cmd:'ptt', state:next});
+  linkCmd(endpoint, {cmd: 'ptt', state: next});
 }
 function linkGain(endpoint, cmd, db) {
   linkCmd(endpoint, {cmd: cmd, db: parseInt(db)});
 }
 function linkMuteToggle(endpoint, dir) {
-  postJson('/mixer', {action:'toggle', source:'link_'+dir+':'+endpoint}).catch(function(){});
+  postJson('/mixer', {action: 'toggle', source: 'link_' + dir + ':' + endpoint}).catch(function(){});
 }
 
+// ── Transmit send functions ──
 function sendAIText() {
   var text = document.getElementById('ai-text').value.trim();
   if (!text) return;
   var btn = document.getElementById('btn-ai-send');
   btn.disabled = true;
-  setStatus('ai-status', 'Submitted \u2014 processing...', 'working');
+  setStatus('tx-status', 'Submitted — processing...', 'working');
   var payload = {
     text: text,
     target_secs: parseInt(document.getElementById('ai-secs').value) || 30,
@@ -354,271 +427,159 @@ function sendAIText() {
     tail_text: document.getElementById('ai-tail').value.trim(),
   };
   postJson('/aitext', payload)
-    .then(function(d){
-      if(d.ok) setStatus('ai-status', 'Running \u2014 check Smart Announce status', 'ok');
-      else     setStatus('ai-status', 'Error: ' + (d.error||'failed'), 'err');
+    .then(function(d) {
+      if (d.ok) setStatus('tx-status', 'Running — check Smart Announce status', 'ok');
+      else      setStatus('tx-status', 'Error: ' + (d.error || 'failed'), 'err');
       btn.disabled = false;
-      setTimeout(function(){ setStatus('ai-status', 'Ready'); }, 15000);
+      setTimeout(function(){ setStatus('tx-status', 'Ready'); }, 15000);
     })
-    .catch(function(){ setStatus('ai-status', 'Network error', 'err'); btn.disabled = false; });
-  if(document.activeElement) document.activeElement.blur();
+    .catch(function(){ setStatus('tx-status', 'Network error', 'err'); btn.disabled = false; });
+  if (document.activeElement) document.activeElement.blur();
 }
 
 function sendCW() {
   var text = document.getElementById('cw-text').value.trim();
   if (!text) return;
-  var btn = document.getElementById('btn-cw-send');
+  var btn  = document.getElementById('btn-cw-send');
   var wpm  = parseFloat(document.getElementById('cw-wpm').value)  || 20;
   var freq = parseFloat(document.getElementById('cw-freq').value) || 600;
   var vol  = parseFloat(document.getElementById('cw-vol').value)  || 1.0;
   btn.disabled = true;
-  setStatus('cw-status', 'Sending...', 'working');
-  postJson('/cw', {text:text, wpm:wpm, freq:freq, vol:vol})
-    .then(function(d){
-      if(d.ok) setStatus('cw-status', 'Sent \u2014 playing', 'ok');
-      else     setStatus('cw-status', 'Error: ' + (d.error||'failed'), 'err');
+  setStatus('tx-status', 'Sending...', 'working');
+  postJson('/cw', {text: text, wpm: wpm, freq: freq, vol: vol})
+    .then(function(d) {
+      if (d.ok) setStatus('tx-status', 'Sent — playing', 'ok');
+      else      setStatus('tx-status', 'Error: ' + (d.error || 'failed'), 'err');
       btn.disabled = false;
-      setTimeout(function(){ setStatus('cw-status', 'Ready'); }, 5000);
+      setTimeout(function(){ setStatus('tx-status', 'Ready'); }, 5000);
     })
-    .catch(function(){ setStatus('cw-status', 'Network error', 'err'); btn.disabled = false; });
-  if(document.activeElement) document.activeElement.blur();
+    .catch(function(){ setStatus('tx-status', 'Network error', 'err'); btn.disabled = false; });
+  if (document.activeElement) document.activeElement.blur();
 }
 
 function sendTTS() {
-  var text = document.getElementById('tts-text').value.trim();
+  var text  = document.getElementById('tts-text').value.trim();
   if (!text) return;
   var voice = document.getElementById('tts-voice').value;
-  var btn = document.getElementById('btn-tts-send');
+  var btn   = document.getElementById('btn-tts-send');
   btn.disabled = true;
-  setStatus('tts-status', 'Generating...', 'working');
-  postJson('/tts', {text:text, voice:parseInt(voice)})
-    .then(function(d){
-      if(d.ok) setStatus('tts-status', 'Sent \u2014 playing', 'ok');
-      else     setStatus('tts-status', 'Error: ' + (d.error||'failed'), 'err');
+  setStatus('tx-status', 'Generating...', 'working');
+  postJson('/tts', {text: text, voice: parseInt(voice)})
+    .then(function(d) {
+      if (d.ok) setStatus('tx-status', 'Sent — playing', 'ok');
+      else      setStatus('tx-status', 'Error: ' + (d.error || 'failed'), 'err');
       btn.disabled = false;
-      setTimeout(function(){ setStatus('tts-status', 'Ready'); }, 5000);
+      setTimeout(function(){ setStatus('tx-status', 'Ready'); }, 5000);
     })
-    .catch(function(){ setStatus('tts-status', 'Network error', 'err'); btn.disabled = false; });
-  if(document.activeElement) document.activeElement.blur();
+    .catch(function(){ setStatus('tx-status', 'Network error', 'err'); btn.disabled = false; });
+  if (document.activeElement) document.activeElement.blur();
 }
 
 function refreshSounds() {
-  postJson('/refreshsounds', {}).then(function(d){
-    if(d.ok) { var n=d.count; alert('Refreshed ' + n + ' sound' + (n!=1?'s':'')); }
+  postJson('/refreshsounds', {}).then(function(d) {
+    if (d.ok) { var n = d.count; alert('Refreshed ' + n + ' sound' + (n != 1 ? 's' : '')); }
   });
 }
 
-// --- Status polling for button states ---
+// ── Status polling ──
 createPoller('/status', 1000, function(s) {
-    // Smart announce activity status
-    var smSt = document.getElementById('smart-status');
-    if(smSt && s.smart_activity) {
-      var parts = [];
-      for(var sk in s.smart_activity) {
-        if(sk === '0') continue;
-        var sv = s.smart_activity[sk];
-        var sClr = sv==='Done'?'green':sv.startsWith('Error')||sv.startsWith('No ')||sv.startsWith('Dropped')?'red':'yellow';
-        parts.push('<span class="'+sClr+'">#'+sk+': '+sv+'</span>');
-      }
-      smSt.className = 'st-line';
-      smSt.innerHTML = parts.length ? parts.join(' ') : 'Idle';
+  // Smart announce activity
+  var smSt = document.getElementById('smart-status');
+  if (smSt && s.smart_activity) {
+    var parts = [];
+    for (var sk in s.smart_activity) {
+      if (sk === '0') continue;
+      var sv = s.smart_activity[sk];
+      var sClr = sv === 'Done' ? 'green' : (sv.startsWith('Error') || sv.startsWith('No ') || sv.startsWith('Dropped')) ? 'red' : 'yellow';
+      parts.push('<span class="' + sClr + '">#' + sk + ': ' + sv + '</span>');
     }
-    // Smart announce countdowns
-    if(s.smart_countdowns) {
-      var cdDiv = document.getElementById('smart-countdowns');
-      if(cdDiv) {
-        var cdh = '';
-        for(var i=0;i<s.smart_countdowns.length;i++) {
-          var sc=s.smart_countdowns[i];
-          var scClr=sc.mode==='manual'?'cyan':'yellow';
-          cdh += '<span class="'+scClr+'">#'+sc.id+': '+sc.remaining+'</span> ';
-        }
-        cdDiv.innerHTML = cdh || '';
-      }
-    }
-    // Playback file slots
-    var pbDiv = document.getElementById('playback-status');
-    if(pbDiv && s.files) {
-      var ph = '';
-      var order = ['1','2','3','4','5','6','7','8','9','0'];
-      for(var fi=0;fi<order.length;fi++) {
-        var fk = order[fi];
-        var f = s.files[fk];
-        if(!f || !f.loaded) continue;
-        var fClr = f.playing?'red':'green';
-        var fName = f.name.length > 28 ? f.name.substring(0,28)+'...' : f.name;
-        ph += '<div class="pb-slot"><span class="pb-key '+(f.playing?'red':'cyan')+'">'+(fk==='0'?'ID':fk)+'</span> <span class="'+fClr+'">'+fName+'</span>'+(f.playing?' <span class="red">&#9654; Playing</span>':'')+'</div>';
-      }
-      pbDiv.innerHTML = ph || '<span class="white">No files loaded</span>';
-    }
-    // Playback button states — class toggle, never opacity mutation
-    if(s.files) {
-      for(var fk in s.files) {
-        var fb = document.getElementById('btn-f'+fk);
-        if(fb) {
-          var fi = s.files[fk];
-          fb.classList.toggle('muted', !!fi.playing);
-          fb.classList.toggle('dim', !fi.loaded);
-          if(fi.name) fb.title=fi.name;
-        }
-      }
-    }
-    // Hide/show sections based on enabled state
-    function showIf(id, cond) { var e=document.getElementById(id); if(e) e.style.display=cond?'':'none'; }
-    var hasSDR = s.sdr1_enabled || s.sdr2_enabled;
-    showIf('sdr-proc-group', hasSDR);
-    showIf('sdr-ctrl-group', hasSDR);
-    showIf('playback-group', s.playback_enabled);
-    showIf('smart-announce-group', s.smart_announce_enabled);
-    showIf('tts-group', s.tts_enabled);
-    showIf('btn-s', s.sdr1_enabled);
-    showIf('btn-x', s.sdr2_enabled);
-    showIf('btn-c', s.remote_enabled);
-    showIf('btn-a', s.announce_enabled);
-    showIf('btn-o', s.speaker_enabled);
-    showIf('btn-j', s.relay_radio_enabled);
-    showIf('btn-h', s.relay_charger_enabled);
-    // Broadcastify buttons & status text (group is removed but kept in case of future re-add)
-    var bcGrp = document.getElementById('broadcastify-group');
-    if(bcGrp) {
-      if(!s.streaming_enabled) { bcGrp.style.display='none'; } else { bcGrp.style.display=''; }
-      var bcSt = document.getElementById('bc-status');
-      if(bcSt) {
-        var ds = s.darkice_stats || {};
-        if(s.darkice_running && ds.connected) {
-          var extra = '';
-          if(ds.send_rate) extra += ' '+ds.send_rate;
-          if(ds.rtt) extra += ' RTT:'+ds.rtt.toFixed(0)+'ms';
-          bcSt.innerHTML='<span class="green">&#9679; LIVE'+extra+'</span>';
-        } else if(s.darkice_running) {
-          bcSt.innerHTML='<span class="yellow">&#9679; Running (no connection)</span>';
-        } else {
-          bcSt.innerHTML='<span class="red">&#9679; Stopped</span>';
-        }
-      }
-      setBtn('btn-bc-start', s.darkice_running, 'active');
-      setBtn('btn-bc-stop', !s.darkice_running && s.streaming_enabled, 'muted');
-    }
-    // Gateway Link controls — render link endpoint panels into #playback-section
-    var pbSection = document.getElementById('playback-section');
-    if(pbSection && s.link_enabled) {
-      var eps = s.link_endpoints || [];
-      window._lastLinkEndpoints = eps;
-      for(var ei=0; ei<eps.length; ei++) {
-        var le = eps[ei];
-        var eid = 'link-' + le.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-        var existing = document.getElementById(eid);
-        if(!existing) {
-          var div = document.createElement('div');
-          div.className = 'ctrl-group';
-          div.id = eid;
-          div.style.minWidth = '280px';
-          div.setAttribute('draggable', 'true');
-          div.style.cursor = 'grab';
-          pbSection.appendChild(div);
-        }
-        var panel = document.getElementById(eid);
-        if(!panel) continue;
-        var ename = le.name;
-        var connCls = le.connected ? 'green' : 'red';
-        var connTxt = le.connected ? 'connected' : 'offline';
-        var rxGain = (le.endpoint_status && le.endpoint_status.rx_gain_db !== undefined) ? le.endpoint_status.rx_gain_db : 0;
-        var txGain = (le.endpoint_status && le.endpoint_status.tx_gain_db !== undefined) ? le.endpoint_status.tx_gain_db : 0;
-        var pttCls = le.ptt_active ? 'link-ptt on' : 'link-ptt';
-        var rxmCls = le.rx_muted ? 'link-mute on' : 'link-mute';
-        var txmCls = le.tx_muted ? 'link-mute on' : 'link-mute';
-        var h = '<h3>Link: '+ename+'</h3>';
-        h += '<div class="link-meta">'+le.plugin+' <span class="'+connCls+'">'+connTxt+'</span></div>';
-        h += '<div class="link-body">';
-        if(le.capabilities && le.capabilities.ptt) {
-          h += '<button onclick="linkPttToggle(&quot;'+ename+'&quot;)" class="'+pttCls+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
-        }
-        h += '<div class="link-col">';
-        h += '<div class="link-row"><span class="link-label">RX</span><div class="link-bar"><div class="link-fill rx" style="width:'+(le.level||0)+'%"></div></div></div>';
-        h += '<div class="link-row"><span class="link-label">TX</span><div class="link-bar"><div class="link-fill tx" style="width:'+(le.tx_level||0)+'%"></div></div></div>';
-        h += '<div class="link-row mt-1">';
-        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;rx&quot;)" class="'+rxmCls+'">Mute</button>';
-        h += '<input type="range" min="-10" max="10" step="1" value="'+rxGain+'" class="link-slider" oninput="linkGain(&quot;'+ename+'&quot;,&quot;rx_gain&quot;,this.value)">';
-        h += '<span class="link-gain-val">'+rxGain+' dB</span>';
-        h += '</div>';
-        h += '<div class="link-row">';
-        h += '<button onclick="linkMuteToggle(&quot;'+ename+'&quot;,&quot;tx&quot;)" class="'+txmCls+'">Mute</button>';
-        h += '<input type="range" min="-10" max="10" step="1" value="'+txGain+'" class="link-slider" oninput="linkGain(&quot;'+ename+'&quot;,&quot;tx_gain&quot;,this.value)">';
-        h += '<span class="link-gain-val">'+txGain+' dB</span>';
-        h += '</div>';
-        h += '</div></div>';
-        panel.innerHTML = h;
-      }
-    }
-  });
-
-// ── Drag-to-reorder panels with localStorage persistence ──
-(function() {
-  var container = document.getElementById('playback-section');
-  if (!container) return;
-  var STORAGE_KEY = 'controls_panel_order';
-
-  function initDrag() {
-    var panels = container.querySelectorAll('.ctrl-group[id]');
-    panels.forEach(function(p) {
-      p.setAttribute('draggable', 'true');
-      p.style.cursor = 'grab';
-    });
+    smSt.className = 'st-line';
+    smSt.innerHTML = parts.length ? parts.join(' ') : '';
   }
-
-  var dragSrc = null;
-
-  container.addEventListener('dragstart', function(e) {
-    var panel = e.target.closest('.ctrl-group[id]');
-    if (!panel) return;
-    dragSrc = panel;
-    panel.style.opacity = '0.4';
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', panel.id);
-  });
-
-  container.addEventListener('dragover', function(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    var target = e.target.closest('.ctrl-group[id]');
-    if (!target || target === dragSrc) return;
-    var panels = Array.from(container.querySelectorAll('.ctrl-group[id]'));
-    var dragIdx = panels.indexOf(dragSrc);
-    var targetIdx = panels.indexOf(target);
-    if (dragIdx < targetIdx) {
-      container.insertBefore(dragSrc, target.nextSibling);
-    } else {
-      container.insertBefore(dragSrc, target);
-    }
-  });
-
-  container.addEventListener('dragend', function() {
-    if (dragSrc) dragSrc.style.opacity = '';
-    dragSrc = null;
-    saveOrder();
-  });
-
-  function saveOrder() {
-    var panels = container.querySelectorAll('.ctrl-group[id]');
-    var order = [];
-    panels.forEach(function(p) { order.push(p.id); });
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(order)); } catch(e) {}
-  }
-
-  function restoreOrder() {
-    try {
-      var order = JSON.parse(localStorage.getItem(STORAGE_KEY));
-      if (!order || !Array.isArray(order)) return;
-      for (var i = 0; i < order.length; i++) {
-        var el = document.getElementById(order[i]);
-        if (el && el.parentNode === container) container.appendChild(el);
+  // Smart announce countdowns
+  if (s.smart_countdowns) {
+    var cdDiv = document.getElementById('smart-countdowns');
+    if (cdDiv) {
+      var cdh = '';
+      for (var i = 0; i < s.smart_countdowns.length; i++) {
+        var sc = s.smart_countdowns[i];
+        var scClr = sc.mode === 'manual' ? 'cyan' : 'yellow';
+        cdh += '<span class="' + scClr + '">#' + sc.id + ': ' + sc.remaining + '</span> ';
       }
-    } catch(e) {}
+      cdDiv.innerHTML = cdh || '';
+    }
   }
+  // Playback button states + name fragments
+  if (s.files) {
+    for (var fk in s.files) {
+      var fb = document.getElementById('btn-f' + fk);
+      var fn = document.getElementById('pb-name-' + fk);
+      var fi = s.files[fk];
+      if (fb) {
+        fb.classList.toggle('muted', !!fi.playing);
+        fb.classList.toggle('dim', !fi.loaded);
+        if (fi.name) fb.title = fi.name;
+      }
+      if (fn) {
+        fn.textContent = fi.loaded && fi.name ? fi.name.replace(/\.[^.]+$/, '').substring(0, 11) : '';
+      }
+    }
+  }
+  // Show/hide sections
+  function showIf(id, cond) { var e = document.getElementById(id); if (e) e.style.display = cond ? '' : 'none'; }
+  showIf('playback-group', s.playback_enabled);
+  showIf('smart-announce-group', s.smart_announce_enabled);
+  showIf('transmit-group', s.tts_enabled);
 
-  restoreOrder();
-  initDrag();
-})();
+  // Gateway Link panels — rendered into #link-section
+  var linkSection = document.getElementById('link-section');
+  if (linkSection && s.link_enabled) {
+    var eps = s.link_endpoints || [];
+    window._lastLinkEndpoints = eps;
+    for (var ei = 0; ei < eps.length; ei++) {
+      var le  = eps[ei];
+      var eid = 'link-' + le.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (!document.getElementById(eid)) {
+        var div = document.createElement('div');
+        div.className = 'ctrl-group';
+        div.id = eid;
+        div.style.minWidth = '280px';
+        linkSection.appendChild(div);
+      }
+      var panel = document.getElementById(eid);
+      if (!panel) continue;
+      var ename   = le.name;
+      var connCls = le.connected ? 'green' : 'red';
+      var connTxt = le.connected ? 'connected' : 'offline';
+      var rxGain  = (le.endpoint_status && le.endpoint_status.rx_gain_db !== undefined) ? le.endpoint_status.rx_gain_db : 0;
+      var txGain  = (le.endpoint_status && le.endpoint_status.tx_gain_db !== undefined) ? le.endpoint_status.tx_gain_db : 0;
+      var pttCls  = le.ptt_active ? 'link-ptt on' : 'link-ptt';
+      var rxmCls  = le.rx_muted  ? 'link-mute on' : 'link-mute';
+      var txmCls  = le.tx_muted  ? 'link-mute on' : 'link-mute';
+      var h = '<h3>Link: ' + ename + '</h3>';
+      h += '<div class="link-meta">' + le.plugin + ' <span class="' + connCls + '">' + connTxt + '</span></div>';
+      h += '<div class="link-body">';
+      if (le.capabilities && le.capabilities.ptt) {
+        h += '<button onclick="linkPttToggle(&quot;' + ename + '&quot;)" class="' + pttCls + '">' + (le.ptt_active ? 'PTT ON' : 'PTT') + '</button>';
+      }
+      h += '<div class="link-col">';
+      h += '<div class="link-row"><span class="link-label">RX</span><div class="link-bar"><div class="link-fill rx" style="width:' + (le.level || 0) + '%"></div></div></div>';
+      h += '<div class="link-row"><span class="link-label">TX</span><div class="link-bar"><div class="link-fill tx" style="width:' + (le.tx_level || 0) + '%"></div></div></div>';
+      h += '<div class="link-row mt-1">';
+      h += '<button onclick="linkMuteToggle(&quot;' + ename + '&quot;,&quot;rx&quot;)" class="' + rxmCls + '">Mute</button>';
+      h += '<input type="range" min="-10" max="10" step="1" value="' + rxGain + '" class="link-slider" oninput="linkGain(&quot;' + ename + '&quot;,&quot;rx_gain&quot;,this.value)">';
+      h += '<span class="link-gain-val">' + rxGain + ' dB</span>';
+      h += '</div>';
+      h += '<div class="link-row">';
+      h += '<button onclick="linkMuteToggle(&quot;' + ename + '&quot;,&quot;tx&quot;)" class="' + txmCls + '">Mute</button>';
+      h += '<input type="range" min="-10" max="10" step="1" value="' + txGain + '" class="link-slider" oninput="linkGain(&quot;' + ename + '&quot;,&quot;tx_gain&quot;,this.value)">';
+      h += '<span class="link-gain-val">' + txGain + ' dB</span>';
+      h += '</div>';
+      h += '</div></div>';
+      panel.innerHTML = h;
+    }
+  }
+});
 </script>
 
 </body>
