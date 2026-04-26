@@ -2,6 +2,8 @@
 
 import json as json_mod
 import os
+import subprocess
+import tempfile
 
 
 def handle_loop_api(handler, parent):
@@ -117,68 +119,51 @@ def handle_loop_api(handler, parent):
         if not segments:
             handler.send_error(404, 'No segments found')
             return
-        temp_path = None
+        # Stream ffmpeg output directly so the browser starts playing
+        # immediately rather than waiting for the full export to finish.
+        concat_path = None
         try:
-            # Always use export_range to trim audio to exact start point
-            serve_path = lr.export_range(bus, start_f, end_f, fmt='mp3')
-            if not serve_path:
-                handler.send_error(500, 'Export failed')
-                return
-            temp_path = serve_path
-            file_size = os.path.getsize(serve_path)
-            # Support Range requests for seeking
-            range_hdr = handler.headers.get('Range')
-            if range_hdr and range_hdr.startswith('bytes='):
-                range_spec = range_hdr[6:]
-                start_byte = 0
-                end_byte = file_size - 1
-                if '-' in range_spec:
-                    parts = range_spec.split('-', 1)
-                    if parts[0]:
-                        start_byte = int(parts[0])
-                    if parts[1]:
-                        end_byte = int(parts[1])
-                end_byte = min(end_byte, file_size - 1)
-                content_len = end_byte - start_byte + 1
-                handler.send_response(206)
-                handler.send_header('Content-Type', 'audio/mpeg')
-                handler.send_header('Content-Range', f'bytes {start_byte}-{end_byte}/{file_size}')
-                handler.send_header('Content-Length', str(content_len))
-                handler.send_header('Accept-Ranges', 'bytes')
-                handler.end_headers()
-                try:
-                    with open(serve_path, 'rb') as f:
-                        f.seek(start_byte)
-                        remaining = content_len
-                        while remaining > 0:
-                            chunk = f.read(min(65536, remaining))
-                            if not chunk:
-                                break
-                            handler.wfile.write(chunk)
-                            remaining -= len(chunk)
-                except (ConnectionResetError, BrokenPipeError):
-                    pass
+            if len(segments) == 1:
+                seg = segments[0]
+                offset = max(0.0, start_f - seg['start'])
+                duration = min(end_f, seg['end']) - max(start_f, seg['start'])
+                # -ss before -i for fast input seek; re-encode for accurate trim
+                cmd = ['ffmpeg', '-ss', str(offset), '-i', seg['path'],
+                       '-t', str(duration),
+                       '-acodec', 'libmp3lame', '-b:a', '128k',
+                       '-f', 'mp3', 'pipe:1']
             else:
-                handler.send_response(200)
-                handler.send_header('Content-Type', 'audio/mpeg')
-                handler.send_header('Content-Length', str(file_size))
-                handler.send_header('Accept-Ranges', 'bytes')
-                handler.end_headers()
-                try:
-                    with open(serve_path, 'rb') as f:
-                        while True:
-                            chunk = f.read(65536)
-                            if not chunk:
-                                break
-                            handler.wfile.write(chunk)
-                except (ConnectionResetError, BrokenPipeError):
-                    pass
-        except BrokenPipeError:
-            pass
+                cf = tempfile.NamedTemporaryFile(
+                    mode='w', suffix='.txt', prefix='concat_', delete=False)
+                for seg in segments:
+                    cf.write(f"file '{seg['path']}'\n")
+                cf.close()
+                concat_path = cf.name
+                offset = max(0.0, start_f - segments[0]['start'])
+                duration = end_f - start_f
+                cmd = ['ffmpeg', '-f', 'concat', '-safe', '0',
+                       '-i', concat_path,
+                       '-ss', str(offset), '-t', str(duration),
+                       '-c', 'copy', '-f', 'mp3', 'pipe:1']
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            handler.send_response(200)
+            handler.send_header('Content-Type', 'audio/mpeg')
+            handler.end_headers()
+            try:
+                while True:
+                    chunk = proc.stdout.read(8192)
+                    if not chunk:
+                        break
+                    handler.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                proc.kill()
+            finally:
+                proc.wait()
         finally:
-            if temp_path and os.path.exists(temp_path):
+            if concat_path:
                 try:
-                    os.unlink(temp_path)
+                    os.unlink(concat_path)
                 except OSError:
                     pass
 
