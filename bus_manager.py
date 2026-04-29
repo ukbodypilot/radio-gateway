@@ -1145,6 +1145,19 @@ class BusManager:
                         self._sink_ptt_hold[_ptt_ep] = 0
                         self._sink_ptt_start[_ptt_ep] = 0
 
+            # ── Periodic TX level decay (every 4 ticks ≈ 200ms) ──────────
+            # Ensures link/radio TX bars clear after playback even when
+            # the routing page is not open (routing/levels is not polled).
+            if _tick_num % 4 == 0:
+                for _ln in list(gw._link_tx_levels):
+                    gw._link_tx_levels[_ln] = max(0, int(gw._link_tx_levels[_ln] * 0.8))
+                if gw.kv4p_plugin:
+                    gw.kv4p_plugin.tx_audio_level = max(
+                        0, int(getattr(gw.kv4p_plugin, 'tx_audio_level', 0) * 0.8))
+                if getattr(gw, 'th9800_plugin', None):
+                    gw.th9800_plugin.tx_audio_level = max(
+                        0, int(getattr(gw.th9800_plugin, 'tx_audio_level', 0) * 0.8))
+
             _tick_total = (time.monotonic() - _tick_start) * 1000
 
             # ── Record trace row ───────────────────────────────────────────
