@@ -2621,6 +2621,10 @@ class StreamOutputSource:
         while True:
             time.sleep(self.SILENCE_INTERVAL)
             if not self.connected or not self._encoder:
+                # Keepalive also drives reconnection — send_audio() only fires
+                # when the listen bus has audio, so quiet radios never retry.
+                if self._was_connected and not getattr(self, '_reconnecting', False):
+                    self.send_audio(b'')
                 continue
             # Only send silence if no real audio in the last 100ms
             if time.monotonic() - self._last_audio_time < 0.1:
