@@ -780,6 +780,15 @@ class RadioTranscriber:
     def _run(self):
         """Background thread: load models, process pending transcriptions."""
         try:
+            # Deprioritise inference so BusManager tick thread isn't starved.
+            # On Linux setpriority(PRIO_PROCESS, 0, n) applies to the calling
+            # thread when called from a multithreaded process.
+            import ctypes, ctypes.util as _cu
+            _libc = ctypes.CDLL(_cu.find_library('c'), use_errno=True)
+            _libc.setpriority(0, 0, 10)
+        except Exception:
+            pass
+        try:
             # Prime the shared Silero ONNX session so per-bus streams don't
             # each pay the load cost on first feed().
             _SileroVAD._ensure_session()
