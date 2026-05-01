@@ -354,6 +354,8 @@ class RadioTranscriber:
         self._forward_mumble = _saved.get('forward_mumble', bool(getattr(config, 'TRANSCRIBE_FORWARD_MUMBLE', True)))
         self._forward_telegram = _saved.get('forward_telegram', bool(getattr(config, 'TRANSCRIBE_FORWARD_TELEGRAM', False)))
         self._audio_boost = float(_saved.get('audio_boost', 100)) / 100.0
+        self._log_results = _saved.get('log_results', bool(getattr(config, 'TRANSCRIBE_LOG_RESULTS', False)))
+        self._alert_keywords = _saved.get('alert_keywords', str(getattr(config, 'TRANSCRIPTION_ALERT_KEYWORDS', '') or ''))
         # NOTE: denoise moved entirely to the per-bus "D" filter on the
         # routing page. The transcription sink receives whatever audio the
         # bus produces (denoised by the bus's AudioProcessor if D is on),
@@ -387,6 +389,8 @@ class RadioTranscriber:
             'forward_mumble': self._forward_mumble,
             'forward_telegram': self._forward_telegram,
             'audio_boost': int(self._audio_boost * 100),
+            'log_results': self._log_results,
+            'alert_keywords': self._alert_keywords,
         })
 
     def stop(self):
@@ -698,6 +702,8 @@ class RadioTranscriber:
             'forward_mumble': self._forward_mumble,
             'forward_telegram': self._forward_telegram,
             'audio_boost': int(self._audio_boost * 100),
+            'log_results': self._log_results,
+            'alert_keywords': self._alert_keywords,
             'pending': len(self._pending),
             'total_transcriptions': len(self._results),
             'streams': streams_payload,
@@ -845,12 +851,13 @@ class RadioTranscriber:
                             except Exception:
                                 pass
                             try:
-                                _tl.check_keywords(result)
+                                _tl.check_keywords(result, self._alert_keywords)
                             except Exception:
                                 pass
                         _freq_prefix = f'[{freq_tag}] ' if freq_tag else ''
-                        print(f"  [Transcribe] [{result['time_str']}] "
-                              f"{_freq_prefix}({result['duration']}s) {result['text']}")
+                        if self._log_results:
+                            print(f"  [Transcribe] [{result['time_str']}] "
+                                  f"{_freq_prefix}({result['duration']}s) {result['text']}")
 
                         if self._forward_mumble and self._gateway and self._gateway.mumble:
                             try:

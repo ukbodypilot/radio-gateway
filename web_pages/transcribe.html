@@ -6,150 +6,131 @@
 <title>Live Transcription</title>
 <link rel="stylesheet" href="/pages/common.css">
 <style>
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; padding: var(--s-3); box-sizing: border-box; gap: var(--s-3); }
+
   .status-bar {
     display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap;
-    padding: var(--s-1) var(--s-3); background: var(--t-panel);
+    padding: var(--s-2) var(--s-3); background: var(--t-panel);
     border: 1px solid var(--t-border); border-radius: var(--r-md);
-    margin-bottom: var(--s-2); font-size: var(--f-sm);
+    flex-shrink: 0; font-size: var(--f-sm);
   }
   .status-bar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .status-bar .dot.on  { background: var(--t-ok); }
   .status-bar .dot.off { background: var(--t-err); }
   .st-label { color: var(--t-text-dim); }
+  .tx-state.warn { color: var(--t-warn); }
+  .tx-state.ok   { color: var(--t-ok); }
+  .tx-state.dim  { color: var(--t-text-dim); }
 
-  .vad-bar {
-    width: 120px; height: 12px; background: var(--t-bg);
-    border: 1px solid var(--t-border); border-radius: var(--r-sm);
-    overflow: hidden; position: relative;
-    flex-shrink: 0;
-  }
-  .vad-fill { display: block; height: 100%; background: var(--t-warn); transition: width 0.2s, background 0.2s; }
-  .vad-fill.speech  { background: var(--t-ok); }
-  .vad-fill.edge    { background: var(--t-warn); }
-  .vad-fill.gated   { background: var(--t-err); }
-  .vad-mark {
-    position: absolute; top: 0; bottom: 0; width: 2px;
-    background: var(--t-text); opacity: 0.7;
-  }
-  .vad-db { color: var(--t-text-dim); font-size: var(--f-xs); font-variant-numeric: tabular-nums; width: 42px; display: inline-block; text-align: right; flex-shrink: 0; }
-  .meter-label { color: var(--t-text-dim); font-size: var(--f-xs); text-transform: uppercase; letter-spacing: 0.05em; width: 60px; flex-shrink: 0; }
-  /* Fixed-width meter cluster: label + bar + numeric readout never shift.
-     Isolated from the status-bar's flex so siblings don't push them around. */
   .meter-cluster { display: inline-flex; align-items: center; gap: var(--s-1); flex: 0 0 auto; }
-  .lvl-bar {
-    width: 100px; height: 12px; background: var(--t-bg);
-    border: 1px solid var(--t-border); border-radius: var(--r-sm);
-    overflow: hidden; position: relative;
-    flex-shrink: 0;
-  }
+  .meter-label { color: var(--t-text-dim); font-size: var(--f-xs); text-transform: uppercase; letter-spacing: 0.05em; width: 55px; flex-shrink: 0; }
+  .vad-bar { width: 120px; height: 12px; background: var(--t-bg); border: 1px solid var(--t-border); border-radius: var(--r-sm); overflow: hidden; position: relative; flex-shrink: 0; }
+  .vad-fill { display: block; height: 100%; background: var(--t-warn); transition: width 0.2s, background 0.2s; }
+  .vad-fill.speech { background: var(--t-ok); }
+  .vad-fill.edge   { background: var(--t-warn); }
+  .vad-fill.gated  { background: var(--t-err); }
+  .vad-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--t-text); opacity: 0.7; }
+  .vad-db { color: var(--t-text-dim); font-size: var(--f-xs); font-variant-numeric: tabular-nums; width: 42px; display: inline-block; text-align: right; flex-shrink: 0; }
+  .lvl-bar { width: 100px; height: 12px; background: var(--t-bg); border: 1px solid var(--t-border); border-radius: var(--r-sm); overflow: hidden; flex-shrink: 0; }
   .lvl-fill { display: block; height: 100%; background: var(--t-accent); transition: width 0.1s; }
 
-  #transcript-list {
-    display: flex; flex-direction: column; gap: var(--s-1);
-    max-height: calc(100vh - 100px); overflow-y: auto;
+  /* Latest result card */
+  .latest-card {
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-left: 3px solid var(--t-accent); border-radius: var(--r-md);
+    padding: var(--s-3); flex-shrink: 0;
+    min-height: 72px; display: flex; flex-direction: column; gap: var(--s-1);
   }
-  .tx-entry {
-    padding: var(--s-1) var(--s-3); background: var(--t-panel);
-    border: 1px solid var(--t-border);
-    border-radius: var(--r-md);
-    border-left: 3px solid var(--t-accent);
+  .latest-meta { display: flex; gap: var(--s-2); align-items: center; font-size: var(--f-sm); }
+  .latest-time   { color: var(--t-accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .latest-source { color: var(--t-text-dim); text-transform: uppercase; font-size: var(--f-xs); letter-spacing: 0.5px; }
+  .latest-freq   { color: var(--t-text-dim); font-size: var(--f-xs); font-variant-numeric: tabular-nums; }
+  .latest-dur    { color: var(--t-text-mute); font-size: var(--f-xs); margin-left: auto; }
+  .latest-text   { color: var(--t-text); font-size: 1.1em; line-height: 1.5; }
+  .latest-empty  { color: var(--t-text-mute); font-style: italic; font-size: var(--f-sm); align-self: center; margin: auto; }
+
+  /* Feed health */
+  .feed-health {
+    display: flex; flex-wrap: wrap; gap: var(--s-3);
+    padding: var(--s-1) var(--s-2); background: var(--t-panel);
+    border: 1px solid var(--t-border); border-radius: var(--r-md);
+    flex-shrink: 0; font-size: var(--f-xs); color: var(--t-text-dim);
+    font-variant-numeric: tabular-nums;
   }
-  .tx-time     { color: var(--t-accent); font-weight: 600; font-size: var(--f-sm); font-variant-numeric: tabular-nums; }
-  .tx-source   { color: var(--t-text-dim); font-size: var(--f-xs); margin-left: var(--s-2); text-transform: uppercase; letter-spacing: 0.5px; }
-  .tx-freq     { color: var(--t-text-dim); font-size: var(--f-xs); margin-left: var(--s-1); font-variant-numeric: tabular-nums; }
-  .tx-duration { color: var(--t-text-dim); font-size: var(--f-xs); margin-left: var(--s-2); }
-  .tx-text     { color: var(--t-text); margin-top: 2px; font-size: var(--f-md); line-height: 1.4; }
-  .tx-pending  { color: var(--t-warn); font-style: italic; }
+  .fh-label { text-transform: uppercase; letter-spacing: 0.06em; }
+  .fh-val { color: var(--t-text); }
+  .fh-val.warn { color: var(--t-warn); }
+  .fh-val.err  { color: var(--t-err); }
+  .fh-group { display: inline-flex; gap: 4px; align-items: center; }
 
-  .empty-msg { color: var(--t-text-mute); text-align: center; padding: var(--s-6); }
-
+  /* Settings panel */
+  .settings-panel {
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-md); flex: 1 1 auto; overflow-y: auto; min-height: 0;
+  }
+  .settings-head {
+    display: flex; align-items: center; gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    border-bottom: 1px solid var(--t-border);
+  }
+  .settings-head-label {
+    color: var(--t-text-dim); font-size: var(--f-xs);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .settings-body {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--s-4); padding: var(--s-3);
+  }
+  .ctrl-field { display: flex; flex-direction: column; gap: var(--s-1); }
+  .ctrl-field label { color: var(--t-text-dim); font-size: var(--f-xs); text-transform: uppercase; letter-spacing: 0.05em; }
+  .ctrl-val { color: var(--t-text-mute); font-size: var(--f-xs); }
+  .ctrl-hint { color: var(--t-text-mute); font-size: var(--f-xs); margin-top: 2px; line-height: 1.4; }
   .ctrl-sel {
     background: var(--t-btn); color: var(--t-text);
     border: 1px solid var(--t-border); border-radius: var(--r-sm);
     padding: 2px var(--s-1); font: inherit; font-size: var(--f-sm);
   }
-  details summary::-webkit-details-marker { color: var(--t-accent); }
+  .ctrl-input {
+    background: var(--t-btn); color: var(--t-text);
+    border: 1px solid var(--t-border); border-radius: var(--r-sm);
+    padding: var(--s-1) var(--s-2); font: inherit; font-size: var(--f-sm);
+  }
+  .ctrl-input:focus { border-color: var(--t-accent); outline: none; }
+  .ctrl-group { display: flex; flex-direction: column; gap: var(--s-1); }
+  .ctrl-group > label { color: var(--t-text-dim); font-size: var(--f-xs); text-transform: uppercase; letter-spacing: 0.05em; }
+  .ctrl-actions { display: flex; flex-direction: column; gap: var(--s-1); align-items: flex-start; justify-content: flex-end; }
 
-  .ctrl-panel {
-    display: flex; flex-wrap: wrap; gap: var(--s-3);
-    padding: var(--s-2); background: var(--t-panel);
-    border: 1px solid var(--t-border); border-radius: var(--r-md);
-    margin-top: var(--s-1); font-size: var(--f-sm);
-  }
-  .ctrl-summary {
-    cursor: pointer; color: var(--t-accent);
-    font-size: var(--f-sm); padding: var(--s-1) 0;
-    letter-spacing: 0.04em; text-transform: uppercase;
-  }
-  .ctrl-field       { display: flex; flex-direction: column; gap: 2px; }
-  .ctrl-field label { color: var(--t-text-dim); font-size: var(--f-xs); }
-  .ctrl-hint        { color: var(--t-text-mute); font-size: var(--f-xs); margin-top: 2px; }
-  .ctrl-val         { color: var(--t-text-dim); font-size: var(--f-xs); }
-  .ctrl-group       { display: flex; flex-direction: column; gap: var(--s-1); }
-  .ctrl-group label { color: var(--t-text); font-size: var(--f-sm); }
-  .ctrl-actions     { display: flex; flex-direction: column; gap: var(--s-1); align-items: flex-start; }
-
-  #stats-panel {
-    margin-bottom: var(--s-2); padding: var(--s-1) var(--s-3);
-    background: var(--t-panel); border: 1px solid var(--t-border);
-    border-radius: var(--r-md); font-size: var(--f-sm);
-  }
-  .ps-row { display: flex; gap: var(--s-4); flex-wrap: wrap; align-items: center; }
-  .ps-title { color: var(--t-accent); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  /* Perf chart */
+  .perf-row { display: flex; gap: var(--s-4); flex-wrap: wrap; align-items: center; padding: var(--s-1) var(--s-3); border-top: 1px solid var(--t-border); font-size: var(--f-sm); }
+  .ps-title { color: var(--t-accent); font-size: var(--f-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
   .ps-val { font-weight: 600; font-variant-numeric: tabular-nums; }
-  .ps-val.ok  { color: var(--t-ok); }
-  .ps-val.err { color: var(--t-err); }
-  .ps-val.warn{ color: var(--t-warn); }
-  #ps-chart { margin-top: var(--s-1); height: 40px; display: flex; align-items: flex-end; gap: 1px; }
-  .ps-chart-wrap { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 40px; }
-  .ps-chart-ref {
-    position: absolute; bottom: 30px; left: 0; right: 0;
-    border-top: 1px dashed var(--t-text-mute);
-  }
-  .ps-chart-label {
-    position: absolute; bottom: 30px; right: 0;
-    color: var(--t-text-mute); font-size: var(--f-xs);
-  }
-  .ps-bar { width: 12px; border-radius: 1px; }
+  .ps-val.ok   { color: var(--t-ok); }
+  .ps-val.err  { color: var(--t-err); }
+  .ps-val.warn { color: var(--t-warn); }
+  .ps-chart-wrap { display: flex; align-items: flex-end; gap: 2px; height: 28px; }
+  .ps-bar { width: 10px; border-radius: 1px; }
   .ps-bar.ok  { background: var(--t-ok); }
   .ps-bar.err { background: var(--t-err); }
-
-  .tx-state { display: inline-block; min-width: 110px; }
-  .tx-state.warn { color: var(--t-warn); }
-  .tx-state.ok   { color: var(--t-ok); }
-  .tx-state.dim  { color: var(--t-text-dim); }
-
-  /* Feed health readout — compact monospace line showing worker queue
-     depth, drop count, and per-call processing timing. Numbers go amber
-     when they indicate pressure, red when they indicate a real problem. */
-  .feed-health {
-    display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-1);
-    padding: var(--s-1) var(--s-2);
-    background: var(--t-panel); border: 1px solid var(--t-border);
-    border-radius: var(--r-sm); font-size: var(--f-xs);
-    color: var(--t-text-dim); font-variant-numeric: tabular-nums;
-  }
-  .feed-health .fh-label { text-transform: uppercase; letter-spacing: 0.06em; }
-  .feed-health .fh-val { color: var(--t-text); }
-  .feed-health .fh-val.warn { color: var(--t-warn); }
-  .feed-health .fh-val.err  { color: var(--t-err); }
-  .feed-health .fh-sep { color: var(--t-border-hi); }
-  .feed-health .fh-group { display: inline-flex; gap: 4px; align-items: center; }
 </style>
 </head>
 <body>
+<script src="/pages/common.js"></script>
+<script>openNav();</script>
 
+<!-- Status bar -->
 <div class="status-bar">
-  <span><label class="tgl"><input type="checkbox" id="st-enabled" onchange="setConfig('enabled', this.checked)" checked> <span class="dot" id="st-dot"></span> <span id="st-state">—</span></label></span>
-  <span><span class="st-label">Engine:</span> <span id="st-engine" class="white">moonshine</span></span>
-  <span><span class="st-label">Model:</span> <span id="st-model-disp" class="white">—</span></span>
+  <label class="tgl"><input type="checkbox" id="st-enabled" onchange="setConfig('enabled', this.checked)" checked> <span class="dot" id="st-dot"></span> <span id="st-state" class="tx-state">—</span></label>
+  <span><span class="st-label">Engine:</span> moonshine</span>
+  <span><span class="st-label">Model:</span> <span id="st-model-disp">—</span></span>
   <span class="meter-cluster"><span class="meter-label">Audio</span><span class="lvl-bar"><span class="lvl-fill" id="st-lvl"></span></span><span id="st-lvl-db" class="vad-db">—</span></span>
   <span class="meter-cluster"><span class="meter-label">Speech</span><span class="vad-bar"><span class="vad-fill" id="st-vad"></span><span id="st-vad-mark" class="vad-mark"></span></span><span id="st-vad-db" class="vad-db">—</span></span>
   <span><span class="st-label">Pending:</span> <span id="st-pending">0</span></span>
   <span><span class="st-label">Total:</span> <span id="st-total">0</span></span>
 </div>
 
-<div class="feed-health" id="feed-health" title="Transcription feed-worker health — queue depth, drops, and per-call processing time">
+<!-- Feed health -->
+<div class="feed-health">
   <span class="fh-group"><span class="fh-label">Queue</span> <span class="fh-val" id="fh-qd">0/200</span></span>
   <span class="fh-group"><span class="fh-label">Peak</span> <span class="fh-val" id="fh-peak">0</span></span>
   <span class="fh-group"><span class="fh-label">Drops</span> <span class="fh-val" id="fh-drops">0</span></span>
@@ -158,157 +139,167 @@
   <span class="fh-group"><span class="fh-label">Per-bus</span> <span class="fh-val" id="fh-perbus">—</span></span>
 </div>
 
-<details id="ctrl-panel-wrap">
-  <summary class="ctrl-summary">Controls</summary>
-  <div class="ctrl-panel">
+<!-- Latest result -->
+<div class="latest-card" id="latest-card">
+  <div class="latest-empty" id="latest-empty">Listening for transmissions…</div>
+  <div class="latest-meta" id="latest-meta" style="display:none">
+    <span class="latest-time" id="latest-time"></span>
+    <span class="latest-source" id="latest-source"></span>
+    <span class="latest-freq" id="latest-freq"></span>
+    <span class="latest-dur" id="latest-dur"></span>
+  </div>
+  <div class="latest-text" id="latest-text" style="display:none"></div>
+</div>
+
+<!-- Settings -->
+<div class="settings-panel">
+  <div class="settings-head">
+    <span class="settings-head-label">Settings</span>
+  </div>
+  <div class="settings-body">
+
     <div class="ctrl-field">
       <label>Model</label>
       <select id="st-model-sel" onchange="setConfig('model', this.value)" class="ctrl-sel">
         <option value="tiny">tiny (fastest)</option>
         <option value="base" selected>base (balanced)</option>
       </select>
-      <div class="ctrl-hint">Moonshine — English only. Change requires restart.</div>
+      <div class="ctrl-hint">English only. Change requires restart.</div>
     </div>
+
     <div class="ctrl-field">
-      <label>VAD Threshold (Silero probability)</label>
-      <input type="range" id="st-vad-thresh" min="0.1" max="0.9" step="0.05" value="0.5" oninput="document.getElementById('st-vad-val').textContent=parseFloat(this.value).toFixed(2)" onchange="setConfig('vad_threshold', this.value)">
+      <label>VAD Threshold</label>
+      <input type="range" id="st-vad-thresh" min="0.1" max="0.9" step="0.05" value="0.5"
+             oninput="document.getElementById('st-vad-val').textContent=parseFloat(this.value).toFixed(2)"
+             onchange="setConfig('vad_threshold', this.value)">
       <span id="st-vad-val" class="ctrl-val">0.50</span>
-      <div class="ctrl-hint">Higher = less sensitive. Exit = value − 0.15.</div>
+      <div class="ctrl-hint">Silero probability 0–1. Higher = less sensitive. Exit = value − 0.15.</div>
     </div>
+
     <div class="ctrl-field">
       <label>VAD Hold</label>
-      <input type="range" id="st-vad-hold" min="0.3" max="5.0" step="0.1" value="1.0" oninput="document.getElementById('st-hold-val').textContent=this.value+'s'" onchange="setConfig('vad_hold', this.value)">
+      <input type="range" id="st-vad-hold" min="0.3" max="5.0" step="0.1" value="1.0"
+             oninput="document.getElementById('st-hold-val').textContent=this.value+'s'"
+             onchange="setConfig('vad_hold', this.value)">
       <span id="st-hold-val" class="ctrl-val">1.0s</span>
+      <div class="ctrl-hint">Silence before segment is closed.</div>
     </div>
+
     <div class="ctrl-field">
       <label>Min Duration</label>
-      <input type="range" id="st-min-dur" min="0.1" max="3.0" step="0.1" value="0.5" oninput="document.getElementById('st-dur-val').textContent=this.value+'s'" onchange="setConfig('min_duration', this.value)">
+      <input type="range" id="st-min-dur" min="0.1" max="3.0" step="0.1" value="0.5"
+             oninput="document.getElementById('st-dur-val').textContent=this.value+'s'"
+             onchange="setConfig('min_duration', this.value)">
       <span id="st-dur-val" class="ctrl-val">0.5s</span>
+      <div class="ctrl-hint">Segments shorter than this are discarded.</div>
     </div>
+
     <div class="ctrl-field">
       <label>Audio Boost</label>
-      <input type="range" id="st-boost" min="100" max="1000" step="50" value="100" oninput="document.getElementById('st-boost-val').textContent=this.value+'%'" onchange="setConfig('audio_boost', this.value)">
+      <input type="range" id="st-boost" min="100" max="1000" step="50" value="100"
+             oninput="document.getElementById('st-boost-val').textContent=this.value+'%'"
+             onchange="setConfig('audio_boost', this.value)">
       <span id="st-boost-val" class="ctrl-val">100%</span>
-      <div class="ctrl-hint">Amplify before transcription</div>
+      <div class="ctrl-hint">Amplify audio before recognition.</div>
     </div>
+
+    <div class="ctrl-field">
+      <label>Alert Keywords</label>
+      <input type="text" id="st-keywords" class="ctrl-input"
+             placeholder="e.g. mayday, emergency"
+             onchange="setConfig('alert_keywords', this.value)">
+      <div class="ctrl-hint">Comma-separated. Match sends Telegram alert.</div>
+    </div>
+
     <div class="ctrl-group">
-      <label class="st-label">Forward to</label>
-      <label class="tgl"><input type="checkbox" id="st-mumble" onchange="setConfig('forward_mumble', this.checked)" checked> Mumble</label>
+      <label>Forward to</label>
+      <label class="tgl"><input type="checkbox" id="st-mumble" onchange="setConfig('forward_mumble', this.checked)"> Mumble chat</label>
       <label class="tgl"><input type="checkbox" id="st-telegram" onchange="setConfig('forward_telegram', this.checked)"> Telegram</label>
+      <label class="tgl"><input type="checkbox" id="st-log-results" onchange="setConfig('log_results', this.checked)"> Gateway log</label>
     </div>
-    <div class="ctrl-group">
-      <label class="st-label">Display</label>
-      <label class="tgl"><input type="checkbox" id="st-autoscroll" checked onchange="_autoScroll=this.checked"> Auto-scroll</label>
-      <select id="st-fontsize" onchange="document.getElementById('transcript-list').style.fontSize=this.value" class="ctrl-sel">
-        <option value="0.85em">Small</option>
-        <option value="1em" selected>Normal</option>
-        <option value="1.2em">Large</option>
-        <option value="1.5em">XL</option>
-      </select>
-    </div>
+
     <div class="ctrl-actions">
       <button class="rb rb-sm rb-warn" onclick="restartTranscriber()">Restart</button>
-      <button class="rb rb-sm rb-danger" onclick="clearTranscripts()">Clear All</button>
+      <button class="rb rb-sm" onclick="window.location='/txlog'">Open Tx Log</button>
     </div>
-  </div>
-</details>
 
-<div id="stats-panel" style="display:none;">
-  <div class="ps-row">
-    <span class="ps-title">Performance</span>
+  </div>
+
+  <!-- Performance row -->
+  <div class="perf-row" id="perf-row" style="display:none">
+    <span class="ps-title">Perf</span>
     <span>Avg: <span id="ps-ratio" class="ps-val">—</span>x realtime</span>
     <span>Realtime: <span id="ps-rt-pct" class="ps-val">—</span>%</span>
     <span>Avg audio: <span id="ps-dur">—</span>s</span>
-    <span>Avg process: <span id="ps-proc">—</span>s</span>
+    <span>Avg proc: <span id="ps-proc">—</span>s</span>
     <span>Samples: <span id="ps-count">0</span></span>
-  </div>
-  <div id="ps-chart"></div>
-</div>
-
-<div id="transcript-list">
-  <div class="empty empty-live">
-    <span class="empty-glyph icon icon-signal"></span>
-    <span>Listening for transmissions</span>
-    <span class="empty-hint" id="tx-last-age">no events yet</span>
+    <div class="ps-chart-wrap" id="ps-chart"></div>
   </div>
 </div>
 
-<script src="/pages/common.js"></script>
 <script>
 var _lastTimestamp = 0;
-var _entries = [];
-var _autoScroll = true;
 var _configSynced = false;
 
 function poll() {
   fetch('/transcriptions?since=' + _lastTimestamp)
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      // Update status bar
       var s = d.status || {};
+
+      // Status bar
       var dot = document.getElementById('st-dot');
       var state = document.getElementById('st-state');
       if (!s.enabled) {
-        dot.className = 'dot off';
-        state.textContent = 'Disabled';
-        state.className = 'tx-state dim';
+        dot.className = 'dot off'; state.textContent = 'Disabled'; state.className = 'tx-state dim';
       } else if (s.model_loaded) {
         dot.className = 'dot on';
-        state.textContent = s.vad_open ? 'Listening...' : 'Ready';
+        state.textContent = s.vad_open ? 'Listening…' : 'Ready';
         state.className = 'tx-state ' + (s.vad_open ? 'warn' : 'ok');
       } else {
-        dot.className = 'dot off';
-        state.textContent = 'Loading model...';
-        state.className = 'tx-state warn';
+        dot.className = 'dot off'; state.textContent = 'Loading model…'; state.className = 'tx-state warn';
       }
-      var _vprob = (s.vad_prob !== undefined) ? s.vad_prob : 0;
-      var _vth = (s.vad_threshold !== undefined) ? s.vad_threshold : 0.5;
-      var _vexit = Math.max(0, _vth - 0.15);
-      var vad_pct = Math.max(0, Math.min(100, _vprob * 100));
-      var vadFill = document.getElementById('st-vad');
-      vadFill.style.width = vad_pct + '%';
-      // Green = above enter, Orange = between exit & enter (hysteresis zone), Red = below exit
-      vadFill.className = 'vad-fill ' + (_vprob >= _vth ? 'speech' : (_vprob >= _vexit ? 'edge' : 'gated'));
-      document.getElementById('st-vad-mark').style.left = (_vth * 100) + '%';
-      document.getElementById('st-vad-db').textContent = _vprob.toFixed(2);
-      // Audio-level meter: vad_db is dBFS envelope (-96..0). Map -60..0 → 0..100%.
-      var _vdb = (s.vad_db !== undefined) ? s.vad_db : -96;
-      var lvl_pct = Math.max(0, Math.min(100, (_vdb + 60) * 100 / 60));
-      var lvlFill = document.getElementById('st-lvl');
-      lvlFill.style.width = lvl_pct + '%';
-      // Colour audio bar: green when signal is healthy (>-40), amber -40..-55, red below
-      lvlFill.style.background = (_vdb > -40) ? 'var(--t-ok)' : (_vdb > -55 ? 'var(--t-warn)' : 'var(--t-err)');
-      document.getElementById('st-lvl-db').textContent = (_vdb > -95) ? (_vdb.toFixed(0) + 'dB') : '—';
       document.getElementById('st-pending').textContent = s.pending || 0;
       document.getElementById('st-total').textContent = s.total_transcriptions || 0;
-      document.getElementById('st-engine').textContent = s.engine || 'moonshine';
       document.getElementById('st-model-disp').textContent = s.model || '—';
 
-      // Feed-worker health: colour-code anything worrying.
+      // VAD meters
+      var _vprob = s.vad_prob || 0, _vth = s.vad_threshold || 0.5;
+      var vadFill = document.getElementById('st-vad');
+      vadFill.style.width = Math.max(0, Math.min(100, _vprob * 100)) + '%';
+      vadFill.className = 'vad-fill ' + (_vprob >= _vth ? 'speech' : (_vprob >= _vth - 0.15 ? 'edge' : 'gated'));
+      document.getElementById('st-vad-mark').style.left = (_vth * 100) + '%';
+      document.getElementById('st-vad-db').textContent = _vprob.toFixed(2);
+      var _vdb = s.vad_db || -96;
+      var lvlFill = document.getElementById('st-lvl');
+      lvlFill.style.width = Math.max(0, Math.min(100, (_vdb + 60) * 100 / 60)) + '%';
+      lvlFill.style.background = _vdb > -40 ? 'var(--t-ok)' : _vdb > -55 ? 'var(--t-warn)' : 'var(--t-err)';
+      document.getElementById('st-lvl-db').textContent = _vdb > -95 ? _vdb.toFixed(0) + 'dB' : '—';
+
+      // Feed health
       var fh = s.feed || {};
-      var fhQd = fh.queue_depth || 0, fhMax = fh.queue_max || 200;
-      var fhEl = document.getElementById('fh-qd');
-      fhEl.textContent = fhQd + '/' + fhMax;
-      fhEl.className = 'fh-val' + (fhQd > fhMax * 0.5 ? ' err' : (fhQd > fhMax * 0.2 ? ' warn' : ''));
-      var fhPk = document.getElementById('fh-peak');
-      fhPk.textContent = fh.peak_qd || 0;
-      fhPk.className = 'fh-val' + ((fh.peak_qd || 0) > fhMax * 0.5 ? ' warn' : '');
-      var fhDr = document.getElementById('fh-drops');
-      fhDr.textContent = fh.dropped_full || 0;
-      fhDr.className = 'fh-val' + ((fh.dropped_full || 0) > 0 ? ' err' : '');
-      var fhBl = document.getElementById('fh-blocks');
-      fhBl.textContent = fh.enqueue_blocks_gt_5ms || 0;
-      fhBl.className = 'fh-val' + ((fh.enqueue_blocks_gt_5ms || 0) > 0 ? ' warn' : '');
-      var fhPr = document.getElementById('fh-proc');
+      var fhMax = fh.queue_max || 200, fhQd = fh.queue_depth || 0;
+      var el = document.getElementById('fh-qd');
+      el.textContent = fhQd + '/' + fhMax;
+      el.className = 'fh-val' + (fhQd > fhMax * 0.5 ? ' err' : fhQd > fhMax * 0.2 ? ' warn' : '');
+      var pk = document.getElementById('fh-peak');
+      pk.textContent = fh.peak_qd || 0;
+      pk.className = 'fh-val' + ((fh.peak_qd || 0) > fhMax * 0.5 ? ' warn' : '');
+      var dr = document.getElementById('fh-drops');
+      dr.textContent = fh.dropped_full || 0;
+      dr.className = 'fh-val' + ((fh.dropped_full || 0) > 0 ? ' err' : '');
+      var bl = document.getElementById('fh-blocks');
+      bl.textContent = fh.enqueue_blocks_gt_5ms || 0;
+      bl.className = 'fh-val' + ((fh.enqueue_blocks_gt_5ms || 0) > 0 ? ' warn' : '');
+      var pr = document.getElementById('fh-proc');
       var _lm = fh.proc_last_ms || 0, _mn = fh.proc_mean_ms || 0, _mx = fh.proc_max_ms || 0;
-      fhPr.textContent = 'last ' + _lm.toFixed(1) + ' / mean ' + _mn.toFixed(1) + ' / max ' + _mx.toFixed(1) + 'ms';
-      fhPr.className = 'fh-val' + (_mn > 20 ? ' err' : (_mn > 10 ? ' warn' : ''));
-      var _ps = fh.per_stream_mean_ms || {};
-      var _parts = [];
+      pr.textContent = 'last ' + _lm.toFixed(1) + ' / mean ' + _mn.toFixed(1) + ' / max ' + _mx.toFixed(1) + 'ms';
+      pr.className = 'fh-val' + (_mn > 20 ? ' err' : _mn > 10 ? ' warn' : '');
+      var _ps = fh.per_stream_mean_ms || {}, _parts = [];
       for (var sid in _ps) _parts.push(sid + '=' + _ps[sid].toFixed(1) + 'ms');
-      var fhPb = document.getElementById('fh-perbus');
-      fhPb.textContent = _parts.length ? _parts.join(' ') : '—';
-      // Sync control values from server on first poll
+      document.getElementById('fh-perbus').textContent = _parts.length ? _parts.join(' ') : '—';
+
+      // Sync controls on first load
       if (!_configSynced && s.model_loaded) {
         _configSynced = true;
         if (s.enabled !== undefined) document.getElementById('st-enabled').checked = s.enabled;
@@ -325,91 +316,61 @@ function poll() {
           document.getElementById('st-min-dur').value = s.min_duration;
           document.getElementById('st-dur-val').textContent = s.min_duration + 's';
         }
-        if (s.forward_mumble !== undefined) document.getElementById('st-mumble').checked = s.forward_mumble;
-        if (s.forward_telegram !== undefined) document.getElementById('st-telegram').checked = s.forward_telegram;
         if (s.audio_boost) {
           document.getElementById('st-boost').value = s.audio_boost;
           document.getElementById('st-boost-val').textContent = s.audio_boost + '%';
         }
+        if (s.forward_mumble !== undefined) document.getElementById('st-mumble').checked = s.forward_mumble;
+        if (s.forward_telegram !== undefined) document.getElementById('st-telegram').checked = s.forward_telegram;
+        if (s.log_results !== undefined) document.getElementById('st-log-results').checked = s.log_results;
+        if (s.alert_keywords !== undefined) document.getElementById('st-keywords').value = s.alert_keywords;
       }
 
-      // Update performance stats
+      // Performance
       var ps = s.stats || {};
-      var statsPanel = document.getElementById('stats-panel');
       if (ps.count > 0) {
-        statsPanel.style.display = '';
+        document.getElementById('perf-row').style.display = '';
         var ratioEl = document.getElementById('ps-ratio');
         ratioEl.textContent = ps.avg_ratio || '—';
-        ratioEl.className = 'ps-val ' + ((ps.avg_ratio||1) < 1 ? 'ok' : 'err');
+        ratioEl.className = 'ps-val ' + ((ps.avg_ratio || 1) < 1 ? 'ok' : 'err');
         var rtEl = document.getElementById('ps-rt-pct');
         rtEl.textContent = ps.realtime_pct || 0;
-        rtEl.className = 'ps-val ' + ((ps.realtime_pct||0) >= 80 ? 'ok' : (ps.realtime_pct||0) >= 50 ? 'warn' : 'err');
+        rtEl.className = 'ps-val ' + ((ps.realtime_pct || 0) >= 80 ? 'ok' : (ps.realtime_pct || 0) >= 50 ? 'warn' : 'err');
         document.getElementById('ps-dur').textContent = ps.avg_duration || '—';
         document.getElementById('ps-proc').textContent = ps.avg_proc_time || '—';
         document.getElementById('ps-count').textContent = ps.count;
-        // Mini bar chart of recent ratios
-        var recent = ps.recent || [];
-        var chartHtml = '';
+        var recent = ps.recent || [], chartHtml = '';
         for (var ri = 0; ri < recent.length; ri++) {
           var r = recent[ri];
-          var h = Math.min(40, Math.max(2, r.ratio * 30));
-          var cls = r.ratio < 1 ? 'ok' : 'err';
-          chartHtml += '<div class="ps-bar ' + cls + '" title="' + r.duration + 's→' + r.proc_time + 's (' + r.ratio + 'x)" style="height:' + h + 'px;"></div>';
+          chartHtml += '<div class="ps-bar ' + (r.ratio < 1 ? 'ok' : 'err') +
+            '" title="' + r.duration + 's→' + r.proc_time + 's (' + r.ratio + 'x)"' +
+            ' style="height:' + Math.min(28, Math.max(2, r.ratio * 22)) + 'px"></div>';
         }
-        document.getElementById('ps-chart').innerHTML = '<div class="ps-chart-wrap">' + chartHtml + '<div class="ps-chart-ref"></div><span class="ps-chart-label">1.0x</span></div>';
+        document.getElementById('ps-chart').innerHTML = chartHtml;
       }
 
-      // Add new results
+      // Latest result
       var results = d.results || [];
+      for (var i = 0; i < results.length; i++) {
+        if (results[i].timestamp > _lastTimestamp) _lastTimestamp = results[i].timestamp;
+      }
       if (results.length > 0) {
-        for (var i = 0; i < results.length; i++) {
-          var r = results[i];
-          if (r.timestamp > _lastTimestamp) {
-            _lastTimestamp = r.timestamp;
-            _entries.push(r);
-          }
-        }
-        renderList();
+        var latest = results[results.length - 1];
+        document.getElementById('latest-empty').style.display = 'none';
+        document.getElementById('latest-meta').style.display = '';
+        document.getElementById('latest-text').style.display = '';
+        document.getElementById('latest-time').textContent = latest.time_str || '';
+        document.getElementById('latest-source').textContent = latest.source || '';
+        document.getElementById('latest-freq').textContent = latest.freq ? latest.freq + ' MHz' : '';
+        var durStr = '';
+        if (latest.duration) durStr += latest.duration + 's';
+        if (latest.proc_time) durStr += ' → ' + latest.proc_time + 's';
+        if (latest.ratio) durStr += ' (' + latest.ratio + 'x)';
+        document.getElementById('latest-dur').textContent = durStr;
+        document.getElementById('latest-text').textContent = latest.text || '';
       }
     })
     .catch(function(e) { console.error('Poll error:', e); });
-}
-
-function renderList() {
-  var list = document.getElementById('transcript-list');
-  if (!_entries.length) {
-    list.innerHTML =
-      '<div class="empty empty-live">' +
-        '<span class="empty-glyph icon icon-signal"></span>' +
-        '<span>Listening for transmissions</span>' +
-        '<span class="empty-hint" id="tx-last-age">no events yet</span>' +
-      '</div>';
-    return;
-  }
-  // Show newest first
-  var html = '';
-  for (var i = _entries.length - 1; i >= 0; i--) {
-    var e = _entries[i];
-    html += '<div class="tx-entry">';
-    html += '<span class="tx-time">' + e.time_str + '</span>';
-    if (e.source) html += '<span class="tx-source">' + _escHtml(e.source) + '</span>';
-    if (e.freq) html += '<span class="tx-freq">' + _escHtml(e.freq) + ' MHz</span>';
-    html += '<span class="tx-duration">';
-    if (e.duration) html += e.duration + 's';
-    if (e.proc_time) html += ' &rarr; ' + e.proc_time + 's';
-    if (e.ratio) html += ' <span class="' + (e.ratio < 1 ? 'green' : 'red') + '">(' + e.ratio + 'x)</span>';
-    html += '</span>';
-    html += '<div class="tx-text">' + _escHtml(e.text) + '</div>';
-    html += '</div>';
-  }
-  list.innerHTML = html;
-  if (_autoScroll) list.scrollTop = 0;
-}
-
-function _escHtml(s) {
-  var d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
 }
 
 function setConfig(key, value) {
@@ -418,36 +379,19 @@ function setConfig(key, value) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({key: key, value: value})
   }).then(function(r) { return r.json(); }).then(function(d) {
-    if (!d.ok) alert(d.error || 'Failed');
+    if (!d.ok) alert(d.error || 'Failed to set ' + key);
   });
 }
 
 function restartTranscriber() {
   setConfig('restart', true);
-  _entries = [];
   _lastTimestamp = 0;
   _configSynced = false;
-  renderList();
-  var st = document.getElementById('st-state');
-  st.textContent = 'Restarting...';
-  st.className = 'tx-state warn';
+  document.getElementById('latest-empty').style.display = '';
+  document.getElementById('latest-meta').style.display = 'none';
+  document.getElementById('latest-text').style.display = 'none';
+  document.getElementById('latest-empty').textContent = 'Restarting…';
 }
-
-function clearTranscripts() {
-  _entries = [];
-  _lastTimestamp = 0;
-  renderList();
-  fetch('/transcribe_config', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({key: 'clear'})
-  });
-}
-
-// Update VAD threshold display
-document.getElementById('st-vad-thresh').addEventListener('input', function() {
-  document.getElementById('st-vad-val').textContent = parseFloat(this.value).toFixed(2);
-});
 
 setInterval(poll, 500);
 poll();

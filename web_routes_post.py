@@ -116,6 +116,12 @@ def handle_transcribe_config(handler, parent):
             # friendly with a short-lived no-op so old UI / saved settings
             # don't error out, but steer users to the routing page.
             result = {'ok': True, 'note': 'denoise is now a per-bus setting — use the routing page'}
+        elif key == 'log_results':
+            tx._log_results = bool(value)
+            tx._save(); result = {'ok': True}
+        elif key == 'alert_keywords':
+            tx._alert_keywords = str(value)
+            tx._save(); result = {'ok': True}
         elif key == 'clear':
             with tx._results_lock:
                 tx._results.clear()

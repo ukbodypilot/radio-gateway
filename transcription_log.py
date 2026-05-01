@@ -114,8 +114,8 @@ class TranscriptionLog:
             except Exception as e:
                 print(f'  [TxLog] insert error: {e}')
 
-    def check_keywords(self, result: dict):
-        raw = str(getattr(self._config, 'TRANSCRIPTION_ALERT_KEYWORDS', '') or '')
+    def check_keywords(self, result: dict, keywords_override: str | None = None):
+        raw = keywords_override if keywords_override is not None else str(getattr(self._config, 'TRANSCRIPTION_ALERT_KEYWORDS', '') or '')
         keywords = [k.strip().lower() for k in raw.split(',') if k.strip()]
         if not keywords:
             return
