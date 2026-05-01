@@ -212,19 +212,26 @@ class LoopRecorder:
     def feed(self, bus_id, pcm_data):
         """Feed PCM audio for a bus.  Called from BusManager thread."""
         seg_start = self._current_segment_start()
+        _old_seg = None
         with self._lock:
             current = self._active.get(bus_id)
 
             # Rotate segment if boundary crossed or first feed
             if current is None or current.segment_start != seg_start:
-                if current is not None:
-                    current.close()
+                _old_seg = current  # close outside lock to avoid blocking tick
                 bus_dir = os.path.join(self._base_dir, bus_id)
                 os.makedirs(bus_dir, exist_ok=True)
                 current = LoopSegment(bus_id, seg_start, bus_dir, self._sample_rate)
                 self._active[bus_id] = current
 
             current.feed(pcm_data)
+
+        # Close old segment in background so writer_thread.join() doesn't stall
+        # the BusManager tick (segment rotation was causing 800ms+ stalls).
+        if _old_seg is not None:
+            import threading as _t
+            _t.Thread(target=_old_seg.close, daemon=True,
+                      name=f'LoopClose-{bus_id}').start()
 
         # Periodic cleanup (every ~3 seconds at 50ms ticks)
         self._cleanup_counter += 1
