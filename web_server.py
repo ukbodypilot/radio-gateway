@@ -716,6 +716,7 @@ class WebConfigServer:
                             _body = _f.read()
                         self.send_response(200)
                         self.send_header('Content-Type', 'text/html; charset=utf-8')
+                        self.send_header('Cache-Control', 'no-cache')
                         self.end_headers()
                         self.wfile.write(_body)
                     except Exception:

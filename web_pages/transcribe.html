@@ -39,8 +39,8 @@
   .latest-card {
     background: var(--t-panel); border: 1px solid var(--t-border);
     border-left: 3px solid var(--t-accent); border-radius: var(--r-md);
-    padding: var(--s-3); flex-shrink: 0;
-    min-height: 72px; display: flex; flex-direction: column; gap: var(--s-1);
+    padding: var(--s-3); flex: 1 1 auto; min-height: 72px;
+    display: flex; flex-direction: column; gap: var(--s-1);
   }
   .latest-meta { display: flex; gap: var(--s-2); align-items: center; font-size: var(--f-sm); }
   .latest-time   { color: var(--t-accent); font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -67,7 +67,7 @@
   /* Settings panel */
   .settings-panel {
     background: var(--t-panel); border: 1px solid var(--t-border);
-    border-radius: var(--r-md); flex: 1 1 auto; overflow-y: auto; min-height: 0;
+    border-radius: var(--r-md); flex-shrink: 0;
   }
   .settings-head {
     display: flex; align-items: center; gap: var(--s-2);
@@ -137,18 +137,6 @@
   <span class="fh-group"><span class="fh-label">Blocks&gt;5ms</span> <span class="fh-val" id="fh-blocks">0</span></span>
   <span class="fh-group"><span class="fh-label">Proc</span> <span class="fh-val" id="fh-proc">—</span></span>
   <span class="fh-group"><span class="fh-label">Per-bus</span> <span class="fh-val" id="fh-perbus">—</span></span>
-</div>
-
-<!-- Latest result -->
-<div class="latest-card" id="latest-card">
-  <div class="latest-empty" id="latest-empty">Listening for transmissions…</div>
-  <div class="latest-meta" id="latest-meta" style="display:none">
-    <span class="latest-time" id="latest-time"></span>
-    <span class="latest-source" id="latest-source"></span>
-    <span class="latest-freq" id="latest-freq"></span>
-    <span class="latest-dur" id="latest-dur"></span>
-  </div>
-  <div class="latest-text" id="latest-text" style="display:none"></div>
 </div>
 
 <!-- Settings -->
@@ -235,6 +223,18 @@
     <span>Samples: <span id="ps-count">0</span></span>
     <div class="ps-chart-wrap" id="ps-chart"></div>
   </div>
+</div>
+
+<!-- Latest result -->
+<div class="latest-card" id="latest-card">
+  <div class="latest-empty" id="latest-empty">Listening for transmissions…</div>
+  <div class="latest-meta" id="latest-meta" style="display:none">
+    <span class="latest-time" id="latest-time"></span>
+    <span class="latest-source" id="latest-source"></span>
+    <span class="latest-freq" id="latest-freq"></span>
+    <span class="latest-dur" id="latest-dur"></span>
+  </div>
+  <div class="latest-text" id="latest-text" style="display:none"></div>
 </div>
 
 <script>
