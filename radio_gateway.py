@@ -743,7 +743,7 @@ def _acquire_lock():
             old_pid = int(open(_GATEWAY_LOCK).read().strip())
             os.kill(old_pid, 0)  # signal 0: just checks process exists
             print(f"ERROR: Gateway already running (PID {old_pid}).")
-            print("       Stop the existing instance first, or run start.sh.")
+            print("       Stop the existing instance first.")
             sys.exit(1)
         except (ValueError, OSError):
             pass  # stale lock — overwrite

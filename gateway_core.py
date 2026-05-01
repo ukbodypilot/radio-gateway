@@ -3132,7 +3132,7 @@ class RadioGateway:
         self._orig_stderr = sys.stderr
         sys.stderr = self._status_writer
 
-        # Pre-populate log buffer with start.sh output so web /logs shows full boot sequence
+        # Pre-populate log buffer with prior startup output so web /logs shows full boot sequence
         try:
             startup_log = '/tmp/gateway_startup.log'
             if os.path.exists(startup_log):

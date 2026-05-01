@@ -12,7 +12,7 @@ WorkingDirectory=__GATEWAY_DIR__
 # Wait for PipeWire/WirePlumber to be fully ready
 # (requires loginctl enable-linger for user session at boot)
 ExecStartPre=/bin/sleep 5
-ExecStart=__GATEWAY_DIR__/start.sh
+ExecStart=/usr/bin/python3 __GATEWAY_DIR__/radio_gateway.py
 ExecStop=/bin/kill -TERM $MAINPID
 KillMode=process
 KillSignal=SIGTERM

@@ -1,0 +1,38 @@
+# =============================================================================
+# Darkice configuration — Mumble Radio Gateway → Broadcastify streaming
+# =============================================================================
+# Copy to /etc/darkice.cfg and edit the [icecast2-0] section with your
+# Broadcastify stream key and stream secret.
+#
+# Find your stream credentials at:
+#   https://www.broadcastify.com/manage/feeds
+#
+# ALSA loopback card number: run  aplay -l | grep Loopback  to list cards.
+# The gateway's FFmpeg bridge writes audio to hw:<card>,0,0 (playback side).
+# Darkice must read from                     hw:<card>,1,0 (capture side).
+# Both must use the same card number.
+# =============================================================================
+
+[general]
+duration        = 0           # 0 = run forever
+bufferSecs      = 5           # Audio buffer (seconds)
+reconnect       = yes         # Auto-reconnect on drop
+
+[input]
+device          = hw:Loopback,1,0   # ALSA loopback capture side
+                                    # Change card if needed: hw:4,1,0 etc.
+sampleRate      = 48000
+bitsPerSample   = 16
+channel         = 1                 # Mono (required by Broadcastify)
+
+[icecast2-0]
+bitrateMode     = cbr
+format          = mp3
+bitrate         = 16                # Broadcastify requires 16 kbps
+server          = audioX.broadcastify.com   # Replace with your assigned server
+port            = 80
+password        = YOUR_STREAM_PASSWORD      # From Broadcastify feed settings
+mountPoint      = YOUR_STREAM_MOUNT         # From Broadcastify feed settings
+name            = My Radio Gateway
+description     = Mumble Radio Gateway Stream
+public          = yes

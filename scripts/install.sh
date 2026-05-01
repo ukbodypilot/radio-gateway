@@ -158,10 +158,10 @@ echo
 echo "[ 2/15 ] Setting up ALSA loopback (for SDR input)..."
 
 # Write modprobe options first:
-#   enable=1,1,1 → enable 3 independent loopback cards
-#   index=4,5,6  → pin them to hw:4 hw:5 hw:6 on every machine
-echo "options snd-aloop enable=1,1,1 index=4,5,6" | sudo tee /etc/modprobe.d/snd-aloop.conf > /dev/null
-echo "  ✓ /etc/modprobe.d/snd-aloop.conf → enable=1,1,1 index=4,5,6"
+#   enable=1   → enable a single loopback card (used by packet radio + DarkIce)
+#   index=4    → pin it to hw:4 on every machine
+echo "options snd-aloop enable=1 index=4" | sudo tee /etc/modprobe.d/snd-aloop.conf > /dev/null
+echo "  ✓ /etc/modprobe.d/snd-aloop.conf → enable=1 index=4"
 
 # Show what parameters this kernel's snd-aloop actually supports
 echo "  Supported module parameters:"
@@ -186,7 +186,7 @@ fi
 
 # Load with explicit parameters
 if ! lsmod | grep -q snd_aloop; then
-    if sudo modprobe snd-aloop enable=1,1,1 index=4,5,6; then
+    if sudo modprobe snd-aloop enable=1 index=4; then
         echo "  ✓ snd-aloop loaded"
     else
         echo "  ✗ Failed to load snd-aloop"
@@ -216,17 +216,17 @@ else
     fi
 fi
 
-# Verify — count cards (each card has 2 devices, count device 0 entries only)
-# Cards may take a moment to appear after modprobe — retry up to 3s
+# Verify — single card pinned at hw:4
+# Card may take a moment to appear after modprobe — retry up to 3s
 LOOPBACK_COUNT=0
 for _wait in 1 2 3 4 5 6; do
     LOOPBACK_LINES=$(aplay -l 2>/dev/null | grep "Loopback" | grep "device 0" || true)
     LOOPBACK_COUNT=$(echo "$LOOPBACK_LINES" | grep -c "Loopback" || true)
     [ -z "$LOOPBACK_LINES" ] && LOOPBACK_COUNT=0
-    [ "$LOOPBACK_COUNT" -ge 3 ] && break
+    [ "$LOOPBACK_COUNT" -ge 1 ] && break
     sleep 0.5
 done
-echo "  Loopback cards visible: $LOOPBACK_COUNT (expected 3 at hw:4 hw:5 hw:6)"
+echo "  Loopback cards visible: $LOOPBACK_COUNT (expected 1 at hw:4)"
 echo "$LOOPBACK_LINES" | grep "Loopback" | sed 's/^/    /' || true
 echo
 
@@ -690,17 +690,12 @@ else
     echo "  ✓ /etc/security/limits.d/audio-realtime.conf already exists"
 fi
 
-# Allow passwordless sudo for modprobe snd-aloop (used by start.sh on each run)
-MODPROBE_BIN=$(which modprobe 2>/dev/null || echo /usr/sbin/modprobe)
-SUDOERS_FILE=/etc/sudoers.d/mumble-gateway
-if [ -n "$ACTUAL_USER" ]; then
-    NICE_BIN=$(which nice 2>/dev/null || echo /usr/bin/nice)
-    printf '%s ALL=(ALL) NOPASSWD: %s snd-aloop, %s -r snd-aloop, %s\n' \
-        "$ACTUAL_USER" "$MODPROBE_BIN" "$MODPROBE_BIN" "$NICE_BIN" \
-        | sudo tee "$SUDOERS_FILE" > /dev/null \
-        && sudo chmod 440 "$SUDOERS_FILE" \
-        && echo "  ✓ Passwordless sudo configured for modprobe snd-aloop" \
-        || echo "  ⚠ Could not write sudoers rule — start.sh will prompt for sudo password"
+# Remove legacy sudoers rule (modprobe snd-aloop / nice) — no longer used at runtime.
+# snd-aloop is loaded at boot via /etc/modules-load.d/, and Python uses os.nice(-10)
+# directly; the gateway never shells out to either.
+if [ -f /etc/sudoers.d/mumble-gateway ]; then
+    sudo rm -f /etc/sudoers.d/mumble-gateway \
+        && echo "  ✓ Removed stale /etc/sudoers.d/mumble-gateway (no longer needed)"
 fi
 
 set -e
@@ -869,12 +864,20 @@ if [ "$DISTRO" = "arch" ]; then
         if pacman -Q soapysdrplay3-git 2>/dev/null | grep -q soapysdrplay3; then
             echo "  ✓ SoapySDRPlay3 plugin already installed"
         else
-            echo "  Installing SoapySDRPlay3 plugin from AUR..."
-            if sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm soapysdrplay3-git 2>/dev/null; then
+            # Upstream CMakeLists.txt declares cmake_minimum_required < 3.5,
+            # which CMake 4.x rejects. Patch the PKGBUILD to inject
+            # -DCMAKE_POLICY_VERSION_MINIMUM=3.5 before invoking makepkg.
+            echo "  Installing SoapySDRPlay3 plugin from AUR (with CMake 4.x compat patch)..."
+            _SOAPY_PKG=$(mktemp -d)
+            sudo chown "$AUR_USER:$AUR_USER" "$_SOAPY_PKG"
+            if sudo -u "$AUR_USER" bash -c "cd '$_SOAPY_PKG' && $AUR_HELPER -G soapysdrplay3-git" 2>/dev/null \
+                && sudo -u "$AUR_USER" sed -i 's|cmake -DCMAKE_INSTALL_PREFIX=/usr|cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_PREFIX=/usr|' "$_SOAPY_PKG/soapysdrplay3-git/PKGBUILD" \
+                && sudo -u "$AUR_USER" bash -c "cd '$_SOAPY_PKG/soapysdrplay3-git' && makepkg -si --noconfirm" 2>/dev/null; then
                 echo "  ✓ SoapySDRPlay3 installed"
             else
                 echo "  ⚠ Could not install SoapySDRPlay3 — install manually: $AUR_HELPER -S soapysdrplay3-git"
             fi
+            rm -rf "$_SOAPY_PKG"
         fi
 
         # Install rtl_airband (SDR demodulator — outputs audio to PulseAudio)
@@ -1052,8 +1055,8 @@ fi
 set -e
 echo
 
-# ── 7b. ADS-B stack (optional — dump1090-fa + FlightRadar24 feeder) ─
-echo "[ 7b ] Installing ADS-B stack (optional — dump1090-fa + fr24feed)..."
+# ── 8. ADS-B stack (optional — dump1090-fa + FlightRadar24 feeder) ─
+echo "[ 8/15 ] Installing ADS-B stack (optional — dump1090-fa + fr24feed)..."
 set +e
 
 DUMP1090_PORT=30080   # Avoids conflict with gateway default port 8080
@@ -1119,7 +1122,7 @@ if [ "$DISTRO" = "arch" ]; then
         echo "  Installing fr24feed from AUR (flightradar24)..."
         _FR24_PKG=$(mktemp -d)
         if sudo -u "$AUR_USER" bash -c "cd '$_FR24_PKG' && $AUR_HELPER -G flightradar24 --getpkgbuild" 2>/dev/null \
-            && sudo -u "$AUR_USER" bash -c "cd '$_FR24_PKG/flightradar24' && makepkg --noconfirm --skipchecksums" 2>/dev/null; then
+            && sudo -u "$AUR_USER" bash -c "cd '$_FR24_PKG/flightradar24' && makepkg --noconfirm --skipchecksums --nodeps" 2>/dev/null; then
             _PKG_FILE=$(ls "$_FR24_PKG"/flightradar24/flightradar24-*.pkg.tar.zst 2>/dev/null | head -1)
             if [ -n "$_PKG_FILE" ]; then
                 sudo pacman -U "$_PKG_FILE" --nodeps --nodeps --noconfirm \
@@ -1310,7 +1313,7 @@ echo "    ADSB_PORT   = $DUMP1090_PORT"
 set -e
 echo
 
-# ── 8. Mumble GUI client ─────────────────────────────────────
+# ── 9. Mumble GUI client ─────────────────────────────────────
 echo "[ 9/15 ] Installing Mumble client..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
@@ -1326,7 +1329,7 @@ fi
 set -e
 echo
 
-# ── 8. Mumble server (murmurd) ───────────────────────────────
+# ── 10. Mumble server (murmurd) ──────────────────────────────
 echo "[ 10/15 ] Installing Mumble server (optional — for local server instances)..."
 set +e
 if [ "$DISTRO" = "arch" ]; then
@@ -1375,7 +1378,7 @@ fi
 set -e
 echo
 
-# ── 9. OpenSSL TLS compatibility (for older Mumble servers) ──
+# ── 11. OpenSSL TLS compatibility (for older Mumble servers) ─
 echo "[ 11/15 ] Configuring OpenSSL for TLS 1.0 compatibility..."
 OPENSSL_CNF="/etc/ssl/openssl.cnf"
 if [ -f "$OPENSSL_CNF" ]; then
@@ -1404,7 +1407,7 @@ else
 fi
 echo
 
-# ── 10. Gateway configuration ────────────────────────────────
+# ── 12. Gateway configuration ────────────────────────────────
 echo "[ 12/15 ] Setting up configuration..."
 
 CONFIG_DEST="$GATEWAY_DIR/gateway_config.txt"
@@ -1426,7 +1429,7 @@ mkdir -p "$GATEWAY_DIR/audio"
 echo "  ✓ audio/ directory ready (place announcement files here)"
 echo
 
-# ── 11. Make scripts executable ──────────────────────────────
+# ── 13. Make scripts executable ──────────────────────────────
 echo "[ 13/15 ] Setting permissions..."
 chmod +x "$GATEWAY_DIR/radio_gateway.py" 2>/dev/null || true
 chmod +x "$GATEWAY_DIR/scripts/"*.sh 2>/dev/null || true
@@ -1434,7 +1437,7 @@ chmod +x "$GATEWAY_DIR/scripts/install.sh" 2>/dev/null || true
 echo "  ✓ Scripts are executable"
 echo
 
-# ── 12. Systemd service ─────────────────────────────────────
+# ── 14. Systemd service ──────────────────────────────────────
 echo "[ 14/15 ] Installing systemd service..."
 ACTUAL_USER=${SUDO_USER:-$USER}
 ACTUAL_HOME=$(eval echo "~$ACTUAL_USER")
@@ -1452,6 +1455,13 @@ if [ -f "$SERVICE_TEMPLATE" ]; then
     sudo systemctl daemon-reload
     sudo systemctl enable radio-gateway.service 2>/dev/null || true
     echo "  ✓ radio-gateway.service installed and enabled"
+    echo "    Start:   sudo systemctl start radio-gateway"
+    echo "    Stop:    sudo systemctl stop radio-gateway"
+    echo "    Restart: sudo systemctl restart radio-gateway"
+    echo "    Logs:    journalctl -u radio-gateway -f"
+else
+    echo "  ⚠ Service template not found ($SERVICE_TEMPLATE) — skipping"
+fi
 
 # Install Telegram bot service (not enabled — requires config first)
 TG_SERVICE_SRC="$GATEWAY_DIR/tools/telegram-bot.service"
@@ -1460,13 +1470,6 @@ if [ -f "$TG_SERVICE_SRC" ]; then
     sudo cp "$TG_SERVICE_SRC" "$TG_SERVICE_DEST"
     sudo systemctl daemon-reload
     echo "  ✓ telegram-bot.service installed (not enabled — configure first)"
-fi
-    echo "    Start:   sudo systemctl start radio-gateway"
-    echo "    Stop:    sudo systemctl stop radio-gateway"
-    echo "    Restart: sudo systemctl restart radio-gateway"
-    echo "    Logs:    journalctl -u radio-gateway -f"
-else
-    echo "  ⚠ Service template not found ($SERVICE_TEMPLATE) — skipping"
 fi
 
 # Passwordless sudo for systemctl start/stop/restart (needed by desktop shortcuts)
@@ -1490,7 +1493,7 @@ fi
 rm -f /tmp/_sudoers_gw
 echo
 
-# ── 13. Desktop shortcuts ──────────────────────────────────
+# ── 15. Desktop shortcuts ────────────────────────────────────
 echo "[ 15/15 ] Creating desktop shortcuts..."
 DESKTOP_DIR="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
 if [ -d "$DESKTOP_DIR" ] || mkdir -p "$DESKTOP_DIR" 2>/dev/null; then
@@ -1662,7 +1665,7 @@ echo
 echo "STREAMING (optional):"
 echo "  Configure /etc/darkice.cfg with your Broadcastify credentials"
 echo "  Set ENABLE_STREAM_OUTPUT = true in gateway_config.txt"
-echo "  Use start.sh to launch gateway + Darkice together"
+echo "  The gateway will start/stop Darkice via systemd as configured"
 echo
 echo "LOCAL MUMBLE SERVER (optional):"
 echo "  Set ENABLE_MUMBLE_SERVER_1 = true in gateway_config.txt"

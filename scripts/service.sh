@@ -12,7 +12,7 @@ case "$1" in
         # Update paths in service file to match current location
         GATEWAY_DIR="$(dirname "$SCRIPT_DIR")"
         sed "s|WorkingDirectory=.*|WorkingDirectory=$GATEWAY_DIR|; \
-             s|ExecStart=.*|ExecStart=$GATEWAY_DIR/start.sh|; \
+             s|ExecStart=.*|ExecStart=/usr/bin/python3 $GATEWAY_DIR/radio_gateway.py|; \
              s|User=.*|User=$(whoami)|; \
              s|Group=.*|Group=$(id -gn)|; \
              s|Environment=HOME=.*|Environment=HOME=$HOME|; \
@@ -76,7 +76,7 @@ case "$1" in
         echo "  $0 logs       — follow live logs (journalctl)"
         echo "  $0 stop       — stop the gateway"
         echo ""
-        echo "For interactive (console) mode, just run: ./start.sh"
+        echo "For interactive (console) mode, just run: python3 radio_gateway.py"
         exit 1
         ;;
 esac
