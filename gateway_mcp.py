@@ -1464,6 +1464,49 @@ def transcription_config(
 
 
 @mcp.tool()
+def transcription_log_query(question: str) -> str:
+    """
+    Search the persistent transcription log using plain English.
+
+    Ask anything about what has been said on-air — e.g. "What was said on
+    446.76 today?", "Any emergency traffic this week?", "Did anyone mention
+    APRS?". The gateway translates the question to SQL, runs it against the
+    SQLite log, then returns a plain-English summary.
+
+    Args:
+        question: Plain English question about radio traffic.
+    """
+    result = _post('/transcription/query', {'question': question})
+    if result.get('ok'):
+        return result.get('answer', 'No answer returned.')
+    return f"Query failed: {result.get('error', 'unknown error')}"
+
+
+@mcp.tool()
+def transcription_log_recent(limit: int = 20) -> str:
+    """
+    Return the most recent transcriptions from the persistent log.
+
+    Args:
+        limit: Number of entries to return (default 20, max 100).
+    """
+    limit = max(1, min(limit, 100))
+    result = _get(f'/transcription/log?limit={limit}&offset=0')
+    rows = result.get('rows', [])
+    if not rows:
+        return 'No transcriptions in log yet.'
+    lines = []
+    for r in rows:
+        import datetime as _dt
+        t = _dt.datetime.fromtimestamp(r['ts']).strftime('%H:%M:%S')
+        src = r.get('source', '?').upper()
+        freq = r.get('freq', '?')
+        dur = f"{r['duration']:.1f}s" if r.get('duration') else '?'
+        lines.append(f"[{t}] {src} {freq} ({dur}) {r.get('text', '')}")
+    return '\n'.join(lines)
+
+
+@mcp.tool()
 def bus_set_denoise_atten(bus_id: str, atten_db: float) -> str:
     """
     Set the DeepFilterNet attenuation cap for a bus (dB). 0 = model decides
