@@ -124,6 +124,32 @@ def handle_monitor_apk(handler, parent):
         handler.wfile.write(b'APK not built yet')
 
 
+def handle_transcription_log(handler, parent):
+    """GET /transcription/log?limit=100&offset=0"""
+    limit, offset = 100, 0
+    try:
+        qs = handler.path.split('?', 1)[1] if '?' in handler.path else ''
+        for part in qs.split('&'):
+            if part.startswith('limit='):
+                limit = max(1, min(500, int(part[6:])))
+            elif part.startswith('offset='):
+                offset = max(0, int(part[7:]))
+    except Exception:
+        pass
+    rows = []
+    tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
+    if tl:
+        rows = tl.get_recent(limit=limit, offset=offset)
+    try:
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        handler.send_header('Cache-Control', 'no-cache')
+        handler.end_headers()
+        handler.wfile.write(json_mod.dumps({'rows': rows}).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
 def handle_transcriptions(handler, parent):
     """GET /transcriptions"""
     # Return recent transcriptions as JSON

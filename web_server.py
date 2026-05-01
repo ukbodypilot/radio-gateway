@@ -690,6 +690,7 @@ class WebConfigServer:
                 '/recordings': 'recordings.html',
                 '/recorder': 'recorder.html',
                 '/transcribe': 'transcribe.html',
+                '/txlog': 'txlog.html',
                 '/logs': 'logs.html',
                 '/gps': 'gps.html',
                 '/repeaters': 'repeaters.html',
@@ -738,6 +739,8 @@ class WebConfigServer:
                     _rg.handle_catstatus(self, parent)
                 elif self.path == '/monitor-apk':
                     _rg.handle_monitor_apk(self, parent)
+                elif self.path.startswith('/transcription/log'):
+                    _rg.handle_transcription_log(self, parent)
                 elif self.path.startswith('/transcriptions'):
                     _rg.handle_transcriptions(self, parent)
                 elif self.path == '/d75status':
@@ -831,6 +834,8 @@ class WebConfigServer:
 
                 if self.path == '/key':
                     _rp.handle_key(self, parent)
+                elif self.path == '/transcription/query':
+                    _rp.handle_transcription_query(self, parent)
                 elif self.path == '/transcribe_config':
                     _rp.handle_transcribe_config(self, parent)
                 elif self.path == '/testloop':

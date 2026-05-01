@@ -43,6 +43,37 @@ def handle_key(handler, parent):
     return
 
 
+def handle_transcription_query(handler, parent):
+    """POST /transcription/query  body: {"question": "..."}"""
+    length = int(handler.headers.get('Content-Length', 0))
+    body = handler.rfile.read(length).decode('utf-8')
+    result = {'ok': False, 'error': 'unknown error'}
+    try:
+        data = json_mod.loads(body)
+        question = str(data.get('question', '')).strip()
+        if not question:
+            result = {'ok': False, 'error': 'No question provided.'}
+        else:
+            tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
+            if not tl:
+                result = {'ok': False, 'error': 'Transcription log not available.'}
+            else:
+                r = tl.query(question)
+                if 'answer' in r:
+                    result = {'ok': True, 'answer': r['answer']}
+                else:
+                    result = {'ok': False, 'error': r.get('error', 'Query failed.')}
+    except Exception as e:
+        result = {'ok': False, 'error': str(e)}
+    handler.send_response(200)
+    handler.send_header('Content-Type', 'application/json')
+    handler.end_headers()
+    try:
+        handler.wfile.write(json_mod.dumps(result).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
 def handle_transcribe_config(handler, parent):
     """POST /transcribe_config"""
     length = int(handler.headers.get('Content-Length', 0))

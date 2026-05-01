@@ -353,6 +353,7 @@ class RadioGateway:
 
         # Transcriber
         self.transcriber = None
+        self.transcription_log = None
         self.transcription_audio_level = 0
 
         # NUL Sink: drop-only destination; tracks activity level but never
@@ -3249,6 +3250,15 @@ class RadioGateway:
                 print(f"[Automation] Failed to start: {e}")
                 self.automation_engine = None
 
+        # Transcription log (persistent SQLite store)
+        if getattr(self.config, 'ENABLE_TRANSCRIPTION_LOG', True):
+            try:
+                from transcription_log import TranscriptionLog
+                self.transcription_log = TranscriptionLog(self.config)
+                print('  [TxLog] Transcription log ready')
+            except Exception as e:
+                print(f'  [TxLog] Failed to open log: {e}')
+
         # Start Transcriber if enabled
         if getattr(self.config, 'ENABLE_TRANSCRIPTION', False):
             try:
@@ -3416,6 +3426,12 @@ class RadioGateway:
         if self.transcriber:
             try:
                 self.transcriber.stop()
+            except Exception:
+                pass
+
+        if self.transcription_log:
+            try:
+                self.transcription_log.close()
             except Exception:
                 pass
 

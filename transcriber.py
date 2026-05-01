@@ -838,6 +838,16 @@ class RadioTranscriber:
                         }
                         with self._results_lock:
                             self._results.append(result)
+                        _tl = getattr(self._gateway, 'transcription_log', None) if self._gateway else None
+                        if _tl:
+                            try:
+                                _tl.insert(result)
+                            except Exception:
+                                pass
+                            try:
+                                _tl.check_keywords(result)
+                            except Exception:
+                                pass
                         _freq_prefix = f'[{freq_tag}] ' if freq_tag else ''
                         print(f"  [Transcribe] [{result['time_str']}] "
                               f"{_freq_prefix}({result['duration']}s) {result['text']}")

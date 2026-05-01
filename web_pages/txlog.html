@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcription Log</title>
+<link rel="stylesheet" href="/pages/common.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column;
+    padding: var(--s-3); box-sizing: border-box; gap: var(--s-3);
+  }
+
+  .query-panel {
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-md); padding: var(--s-3); flex-shrink: 0;
+  }
+  .query-row { display: flex; gap: var(--s-2); align-items: stretch; }
+  .query-input {
+    flex: 1; background: var(--t-btn); color: var(--t-text);
+    border: 1px solid var(--t-border); border-radius: var(--r-sm);
+    padding: var(--s-2) var(--s-3); font: inherit; font-size: var(--f-base);
+  }
+  .query-input:focus { border-color: var(--t-accent); outline: none; }
+  .query-input:disabled { color: var(--t-text-dim); }
+
+  .answer-box {
+    margin-top: var(--s-3); padding: var(--s-3);
+    background: var(--t-bg); border: 1px solid var(--t-border);
+    border-radius: var(--r-sm); color: var(--t-text); font-size: var(--f-md);
+    line-height: 1.6; white-space: pre-wrap; display: none;
+  }
+  .answer-box.thinking { color: var(--t-text-dim); font-style: italic; border-left: 3px solid var(--t-border-hi); }
+  .answer-box.error    { color: var(--t-err-soft);  border-left: 3px solid var(--t-err); }
+  .answer-box.ok       { border-left: 3px solid var(--t-ok); }
+
+  .history-panel {
+    display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-md); overflow: hidden;
+  }
+  .history-head {
+    display: flex; align-items: center; gap: var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    border-bottom: 1px solid var(--t-border); flex-shrink: 0;
+  }
+  .history-head-label {
+    color: var(--t-text-dim); font-size: var(--f-xs);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .row-count { color: var(--t-text-mute); font-size: var(--f-xs); }
+  .pager { display: flex; gap: var(--s-2); align-items: center; margin-left: auto; }
+  .pager-info { color: var(--t-text-dim); font-size: var(--f-xs); }
+
+  .history-scroll { flex: 1 1 auto; overflow-y: auto; }
+  .tx-table { width: 100%; border-collapse: collapse; font-size: var(--f-sm); }
+  .tx-table th {
+    position: sticky; top: 0; background: var(--t-panel);
+    color: var(--t-text-dim); font-size: var(--f-xs); font-weight: 500;
+    text-transform: uppercase; letter-spacing: .06em;
+    padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--t-border);
+    text-align: left;
+  }
+  .tx-table td { padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--t-border); vertical-align: top; }
+  .tx-table tbody tr:hover td { background: var(--t-panel-hi); }
+  .col-time { white-space: nowrap; color: var(--t-accent); font-variant-numeric: tabular-nums; }
+  .col-src  { white-space: nowrap; color: var(--t-text-dim); text-transform: uppercase; font-size: var(--f-xs); }
+  .col-freq { white-space: nowrap; color: var(--t-text-dim); font-variant-numeric: tabular-nums; }
+  .col-dur  { white-space: nowrap; color: var(--t-text-mute); text-align: right; }
+  .col-text { color: var(--t-text); word-break: break-word; }
+  .empty-row td { color: var(--t-text-mute); text-align: center; padding: var(--s-6); }
+</style>
+</head>
+<body>
+<script src="/pages/common.js"></script>
+<script>openNav();</script>
+
+<div class="query-panel">
+  <div class="query-row">
+    <input type="text" id="q-input" class="query-input"
+           placeholder="Ask anything — e.g. What was said on 446.76 today? Any emergency traffic this week?"
+           onkeydown="if(event.key==='Enter')submitQuery()">
+    <button class="rb" id="q-btn" onclick="submitQuery()">Ask</button>
+  </div>
+  <div class="answer-box" id="q-answer"></div>
+</div>
+
+<div class="history-panel">
+  <div class="history-head">
+    <span class="history-head-label">History</span>
+    <span class="row-count" id="pager-info"></span>
+    <div class="pager">
+      <button class="rb rb-sm" id="btn-prev" onclick="loadPage(_offset-_limit)" disabled>Prev</button>
+      <button class="rb rb-sm" id="btn-next" onclick="loadPage(_offset+_limit)">Next</button>
+    </div>
+  </div>
+  <div class="history-scroll">
+    <table class="tx-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Source</th>
+          <th>Freq</th>
+          <th>Dur</th>
+          <th>Text</th>
+        </tr>
+      </thead>
+      <tbody id="hist-body">
+        <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+var _offset = 0;
+var _limit  = 100;
+
+function _esc(s) {
+  var d = document.createElement('div');
+  d.textContent = String(s == null ? '' : s);
+  return d.innerHTML;
+}
+
+function _fmtTime(ts) {
+  var d = new Date(ts * 1000);
+  return d.toTimeString().slice(0, 8);
+}
+
+function loadPage(offset) {
+  offset = Math.max(0, Math.round(offset));
+  fetch('/transcription/log?limit=' + _limit + '&offset=' + offset)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var rows = d.rows || [];
+      _offset = offset;
+      var tbody = document.getElementById('hist-body');
+      if (!rows.length && offset === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No transcriptions stored yet.</td></tr>';
+      } else if (!rows.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No more records.</td></tr>';
+      } else {
+        tbody.innerHTML = rows.map(function(r) {
+          return '<tr>' +
+            '<td class="col-time">' + _esc(_fmtTime(r.ts)) + '</td>' +
+            '<td class="col-src">'  + _esc(r.source || '—') + '</td>' +
+            '<td class="col-freq">' + _esc(r.freq   || '—') + '</td>' +
+            '<td class="col-dur">'  + (r.duration ? _esc(r.duration.toFixed(1)) + 's' : '—') + '</td>' +
+            '<td class="col-text">' + _esc(r.text)  + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+      var showing = rows.length
+        ? (_offset + 1) + '–' + (_offset + rows.length)
+        : 'no records';
+      document.getElementById('pager-info').textContent = showing;
+      document.getElementById('btn-prev').disabled = _offset === 0;
+      document.getElementById('btn-next').disabled = rows.length < _limit;
+    })
+    .catch(function() {
+      document.getElementById('hist-body').innerHTML =
+        '<tr class="empty-row"><td colspan="5">Failed to load history.</td></tr>';
+    });
+}
+
+function submitQuery() {
+  var q = document.getElementById('q-input').value.trim();
+  if (!q) return;
+  var box = document.getElementById('q-answer');
+  var btn = document.getElementById('q-btn');
+  var inp = document.getElementById('q-input');
+  box.style.display = '';
+  box.className = 'answer-box thinking';
+  box.textContent = 'Thinking…';
+  btn.disabled = true;
+  inp.disabled = true;
+  fetch('/transcription/query', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({question: q})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    btn.disabled = false;
+    inp.disabled = false;
+    if (d.ok) {
+      box.className = 'answer-box ok';
+      box.textContent = d.answer;
+    } else {
+      box.className = 'answer-box error';
+      box.textContent = d.error || 'Query failed.';
+    }
+  })
+  .catch(function() {
+    btn.disabled = false;
+    inp.disabled = false;
+    box.className = 'answer-box error';
+    box.textContent = 'Network error. Try again.';
+  });
+}
+
+loadPage(0);
+</script>
+</body>
+</html>

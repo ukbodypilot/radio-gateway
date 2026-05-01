@@ -8,6 +8,10 @@ originSessionId: 7ea91610-ff2b-43d6-9bc6-0b176f2d8891
 
 These live in `/etc/systemd/system/` and `xfconf`, not in the radio-gateway repo. If a future session notices the effect (clean journal, low idle load, fast th9800-cat stops) and goes looking for the cause in the repo, they won't find it here. Check `systemctl cat <unit>` and `xfconf-query` instead.
 
+## Power management (2026-04-29)
+
+- **`/etc/systemd/system/radio-gateway-powersave.service`** — sets CPU governor to `schedutil` on all 4 cores at boot + USB autosuspend for GPS dongle (1-10) and unused RTL2838 dongle (1-9). Enabled in multi-user.target. `power-profiles-daemon` is set to `balanced` but does NOT apply the governor in intel_pstate passive/intel_cpufreq mode — this service fills the gap. AIOC, KV4P, SDRplay, relay FTDI, and CAT serial stay forced `on` (active radio devices — autosuspend would risk audio glitches). PCIe ASPM is firmware-locked (Optiplex 3020 BIOS takes control) — cannot override at runtime or via kernel param without risking instability.
+
 ## Systemd overrides
 
 - **`/etc/systemd/system/mumble-server-gw1.service.d/override.conf`** — `SuccessExitStatus=15 SIGTERM`. Silences the "Failed with result 'exit-code'" journal line that appeared on every gateway restart (Murmur exits 15 on SIGTERM, which is clean — systemd just didn't know).
