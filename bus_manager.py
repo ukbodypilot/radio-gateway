@@ -1107,7 +1107,11 @@ class BusManager:
                 # v3.5-A: send_audio runs off-tick on SinkDrain-broadcastify.
                 # Level meter still updates here so the UI tracks tick-aligned.
                 self._enqueue_sink('broadcastify', (audio,))
-                if _is_listen and ctx.stream_output.connected:
+                # Update the level meter whenever broadcastify is actually
+                # receiving audio, regardless of which bus delivered it.
+                # The pre-v2.0 `_is_listen` gate here was a holdover from
+                # the era when broadcastify always lived on the listen bus.
+                if ctx.stream_output.connected:
                     self._meters['stream_audio'] = _audio_level
                 if _st and _st.active:
                     _st.record(f'{bus_id}_deliver', 'broadcastify', audio, -1, 'enq')
