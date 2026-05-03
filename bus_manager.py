@@ -7,6 +7,7 @@ audio from BusManager queues.
 """
 
 import collections
+import dataclasses
 import gc
 import json
 import math
@@ -18,6 +19,46 @@ import numpy as np
 
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus, mix_audio_streams
 from audio_util import AudioProcessor, pcm_level, apply_gain
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class TickContext:
+    """Per-tick read-side snapshot of gateway state.
+
+    v3.5-C: built once at the start of each bus-tick iteration so the
+    bus tick / deliver code reads from a stable view instead of probing
+    `self.gateway` live across dozens of attribute lookups. Eliminates
+    mid-tick races where a routing reload or config flip half-applies
+    while a tick is in flight.
+
+    Mutating state (level meters, _link_ptt_active, _link_tx_levels)
+    intentionally NOT in here — those still live on `gw` and are
+    written through directly by the tick. Pulling those out belongs
+    to v3.5-D ("separate audio-critical state from UI state").
+    """
+    # Sink target object refs (frozen at tick start)
+    mumble: object
+    stream_output: object
+    transcriber: object
+    remote_audio_server: object
+    loop_recorder: object
+    automation_engine: object
+    echolink_source: object
+    link_server: object
+    web_config_server: object
+    th9800_plugin: object
+    kv4p_plugin: object
+    # Routing snapshot (frozenset / dict copy — caller mustn't mutate)
+    muted_sinks: frozenset
+    sink_gains: dict
+    link_endpoints: dict
+    link_endpoint_settings: dict
+    # Config snapshot (only the fields actually read per tick)
+    audio_rate: int
+    enable_vad: bool
+    radio_to_echolink: bool
+    # Diagnostics
+    stream_trace: object
 
 
 class BusManager:
@@ -246,6 +287,39 @@ class BusManager:
                 buf = buf[frame_bytes:]
             self._mumble_drain_buf = buf
         # Additional sinks added incrementally as v3.5-A progresses.
+
+    def _build_tick_context(self):
+        """Snapshot the read-side gateway state at the start of a tick.
+
+        See TickContext for the contract. Cheap — getattr lookups + two
+        small copies (muted_sinks set, sink_gains dict). Once per tick,
+        not once per bus.
+        """
+        gw = self.gateway
+        cfg = gw.config
+        # frozenset/dict copies so the tick can't observe mid-iteration
+        # mutation if the web UI / MCP toggles a sink mute or gain.
+        return TickContext(
+            mumble=getattr(gw, 'mumble', None),
+            stream_output=getattr(gw, 'stream_output', None),
+            transcriber=getattr(gw, 'transcriber', None),
+            remote_audio_server=getattr(gw, 'remote_audio_server', None),
+            loop_recorder=getattr(gw, 'loop_recorder', None),
+            automation_engine=getattr(gw, 'automation_engine', None),
+            echolink_source=getattr(gw, 'echolink_source', None),
+            link_server=getattr(gw, 'link_server', None),
+            web_config_server=getattr(gw, 'web_config_server', None),
+            th9800_plugin=getattr(gw, 'th9800_plugin', None),
+            kv4p_plugin=getattr(gw, 'kv4p_plugin', None),
+            muted_sinks=frozenset(getattr(gw, '_muted_sinks', ()) or ()),
+            sink_gains=dict(getattr(gw, '_sink_gains', {}) or {}),
+            link_endpoints=dict(getattr(gw, 'link_endpoints', {}) or {}),
+            link_endpoint_settings=dict(getattr(gw, 'link_endpoint_settings', {}) or {}),
+            audio_rate=int(getattr(cfg, 'AUDIO_RATE', 48000)),
+            enable_vad=bool(getattr(cfg, 'ENABLE_VAD', False)),
+            radio_to_echolink=bool(getattr(cfg, 'RADIO_TO_ECHOLINK', False)),
+            stream_trace=getattr(gw, '_stream_trace', None),
+        )
 
     def _mumble_sink_vad(self, audio):
         """Sink-side VAD gate for mumble TX from non-listen buses.
@@ -851,16 +925,19 @@ class BusManager:
             return proc.process(audio)
         return audio
 
-    def _deliver_audio(self, bus_output, bus_id):
-        """Deliver a bus's audio output to connected sinks + PCM/MP3 streams."""
+    def _deliver_audio(self, bus_output, bus_id, ctx):
+        """Deliver a bus's audio output to connected sinks + PCM/MP3 streams.
+
+        v3.5-C: read-side state comes from `ctx` (TickContext), built once
+        per tick. Writes (level meters, _link_tx_levels, _link_ptt_active,
+        calculate_audio_level method calls) still target `gw` directly —
+        those move in v3.5-D.
+        """
         _t_deliver_start = time.monotonic()
         gw = self.gateway
         bus_cfg = self._bus_config.get(bus_id, {})
-        _st = getattr(gw, '_stream_trace', None)
+        _st = ctx.stream_trace
         _is_listen = (bus_id == self._listen_bus_id)
-
-        _muted_sinks = getattr(gw, '_muted_sinks', set())
-        _sink_gains = getattr(gw, '_sink_gains', {})
         _audio_level = None  # cached: all sinks get same processed audio
 
         # Apply bus processing ONCE (IIR filters are stateful — must not run per-sink).
@@ -897,13 +974,13 @@ class BusManager:
                 if _st:
                     _st.record(f'{bus_id}_deliver', 'nul', audio)
                 continue
-            if sink_id in _muted_sinks:
+            if sink_id in ctx.muted_sinks:
                 continue
 
             # Apply per-sink gain (passive sinks like mumble, broadcastify, speaker).
             # Tanh soft-clip for gain > 1 so pushing sliders past 100% rolls
             # off cleanly instead of flat-topping into square-wave harmonics.
-            _sg = _sink_gains.get(sink_id)
+            _sg = ctx.sink_gains.get(sink_id)
             if _sg is not None and _sg != 1.0:
                 audio = apply_gain(audio, _sg)
 
@@ -914,7 +991,7 @@ class BusManager:
             _t_sink = time.monotonic()
 
             # Passive sinks
-            if sink_id == 'mumble' and gw.mumble:
+            if sink_id == 'mumble' and ctx.mumble:
                 # Listen-bus mumble: gate via the bus-wide VAD pass flag
                 # computed in _handle_listen_tick. Non-listen-bus mumble
                 # (solo / repeater) has no bus-wide VAD, so we apply a
@@ -942,19 +1019,19 @@ class BusManager:
                 gw._speaker_enqueue(audio)
                 if _st:
                     _st.record(f'{bus_id}_deliver', 'speaker', audio)
-            elif sink_id == 'broadcastify' and getattr(gw, 'stream_output', None):
+            elif sink_id == 'broadcastify' and ctx.stream_output is not None:
                 # v3.5-A: send_audio runs off-tick on SinkDrain-broadcastify.
                 # Level meter still updates here so the UI tracks tick-aligned.
                 self._enqueue_sink('broadcastify', (audio,))
-                if _is_listen and gw.stream_output.connected:
+                if _is_listen and ctx.stream_output.connected:
                     gw.stream_audio_level = _audio_level
                 if _st and _st.active:
                     _st.record(f'{bus_id}_deliver', 'broadcastify', audio, -1, 'enq')
-            elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
+            elif sink_id == 'transcription' and ctx.transcriber is not None:
                 try:
                     _bus_obj = self._busses.get(bus_id)
                     _upstream = getattr(_bus_obj, 'last_dominant_source', None) if _bus_obj else None
-                    gw.transcriber.feed(audio, source_id=bus_id, upstream_source=_upstream)
+                    ctx.transcriber.feed(audio, source_id=bus_id, upstream_source=_upstream)
                     if _audio_level > getattr(gw, 'transcription_audio_level', 0):
                         gw.transcription_audio_level = _audio_level
                     else:
@@ -964,11 +1041,11 @@ class BusManager:
                     if not hasattr(self, '_trans_err_logged'):
                         self._trans_err_logged = True
                         print(f"  [Transcribe] feed error: {_te}")
-            elif sink_id == 'remote_audio_tx' and getattr(gw, 'remote_audio_server', None):
-                if gw.remote_audio_server.connected:
+            elif sink_id == 'remote_audio_tx' and ctx.remote_audio_server is not None:
+                if ctx.remote_audio_server.connected:
                     try:
                         _t_ra = time.monotonic()
-                        gw.remote_audio_server.send_audio(audio)
+                        ctx.remote_audio_server.send_audio(audio)
                         _ra_ms = (time.monotonic() - _t_ra) * 1000
                         if _st:
                             _extra = f'remote_tx {_ra_ms:.1f}ms' if _ra_ms > 5 else ''
@@ -984,18 +1061,18 @@ class BusManager:
             # so here we only track TX level for the routing page display.
             # Listen bus: actually send audio to link endpoints via link_server.
             elif sink_id in ('kv4p_tx', 'aioc_tx') or self._get_radio_plugin(sink_id):
-                for _eln, _els in gw.link_endpoints.items():
+                for _eln, _els in ctx.link_endpoints.items():
                     if getattr(_els, 'sink_id', None) == sink_id:
                         # Send audio to link endpoint for TX
                         # Skip if the bus already sent via put_audio (solo bus Phase 3)
                         _bus_obj = self._busses.get(bus_id)
                         _already_sent = (hasattr(_bus_obj, '_tx_only') and _bus_obj._tx_only
                                          and hasattr(_bus_obj, '_ptt_active') and _bus_obj._ptt_active)
-                        if not _already_sent and getattr(gw, 'link_server', None):
-                            _ep_settings = gw.link_endpoint_settings.get(_eln, {})
+                        if not _already_sent and ctx.link_server is not None:
+                            _ep_settings = ctx.link_endpoint_settings.get(_eln, {})
                             if not _ep_settings.get('tx_muted', False):
                                 try:
-                                    gw.link_server.send_audio_to(_eln, audio)
+                                    ctx.link_server.send_audio_to(_eln, audio)
                                     if _st and _st.active:
                                         _st.record(f'{bus_id}_deliver', f'link_tx:{_eln}', audio)
                                 except Exception:
@@ -1035,7 +1112,7 @@ class BusManager:
                 self._mp3_tick.append(mixed)
             # Loop recording: feed processed audio to LoopRecorder
             if proc_cfg.get('loop', False):
-                _lr = getattr(gw, 'loop_recorder', None)
+                _lr = ctx.loop_recorder
                 if _lr:
                     # Sync per-bus retention from routing config
                     _lh = proc_cfg.get('loop_hours', 0)
@@ -1054,7 +1131,7 @@ class BusManager:
             _st.record(f'{bus_id}_deliver', 'total', bus_output.mixed_audio,
                        -1, f'{_deliver_total:.1f}ms')
 
-    def _handle_listen_tick(self, output, chunk_size):
+    def _handle_listen_tick(self, output, chunk_size, ctx):
         """Handle listen-bus-specific post-tick work.
 
         Called from _tick_loop after the primary listen bus tick, before
@@ -1093,7 +1170,7 @@ class BusManager:
         # For now, run on raw mixer output — matches old behavior.
         self._listen_vad_pass = (
             gw.check_vad(_audio_for_vad)
-            if (getattr(gw.config, 'ENABLE_VAD', False) and _audio_for_vad)
+            if (ctx.enable_vad and _audio_for_vad)
             else True
         )
 
@@ -1117,16 +1194,14 @@ class BusManager:
         # Automation recorder — v3.5-A: drained off-tick on
         # SinkDrain-automation_recorder (writes to lame ffmpeg stdin).
         if data is not None:
-            ae = getattr(gw, 'automation_engine', None)
+            ae = ctx.automation_engine
             if ae and ae.recorder.is_recording():
                 self._enqueue_sink('automation_recorder', (data,))
 
         # EchoLink (legacy — not in routing config, checked by config flag).
         # v3.5-A: drained off-tick on SinkDrain-echolink_legacy.
-        if data is not None:
-            _el = getattr(gw, 'echolink_source', None)
-            if _el and getattr(gw.config, 'RADIO_TO_ECHOLINK', False):
-                self._enqueue_sink('echolink_legacy', (data,))
+        if data is not None and ctx.echolink_source is not None and ctx.radio_to_echolink:
+            self._enqueue_sink('echolink_legacy', (data,))
 
     def _gc_callback(self, phase, info):
         """Record GC pause events for diagnostics."""
@@ -1190,6 +1265,10 @@ class BusManager:
             # ── Per-bus tick + deliver ──────────────────────────────────────
             _bus_timings = {}
             gw = self.gateway
+            # v3.5-C: snapshot the read-side gateway state once for the
+            # whole tick so deliver / listen-tick code observes a stable
+            # view of routing + config + sink target refs.
+            ctx = self._build_tick_context()
             for bus_id, bus in self._busses.items():
                 try:
                     # Skip muted busses
@@ -1202,7 +1281,7 @@ class BusManager:
 
                     # ── Listen bus specific handling ──
                     if bus_id == self._listen_bus_id:
-                        self._handle_listen_tick(output, chunk_size)
+                        self._handle_listen_tick(output, chunk_size, ctx)
 
                     # Track bus output level
                     _mixed = output.mixed_audio
@@ -1216,15 +1295,14 @@ class BusManager:
                     self._bus_levels[bus_id] = _lv
 
                     _t1 = time.monotonic()
-                    self._deliver_audio(output, bus_id)
+                    self._deliver_audio(output, bus_id, ctx)
                     _t_deliver = (time.monotonic() - _t1) * 1000
 
                     _bus_timings[bus_id] = (_t_tick, _t_deliver, _lv)
 
                     # Stream trace: record bus tick + deliver with timing
-                    _st = getattr(gw, '_stream_trace', None)
-                    if _st and (_t_tick > 5 or _t_deliver > 5):
-                        _st.record(f'{bus_id}_bus', 'tick_slow',
+                    if ctx.stream_trace and (_t_tick > 5 or _t_deliver > 5):
+                        ctx.stream_trace.record(f'{bus_id}_bus', 'tick_slow',
                                    output.mixed_audio, -1,
                                    f'tick={_t_tick:.1f}ms deliver={_t_deliver:.1f}ms')
 
