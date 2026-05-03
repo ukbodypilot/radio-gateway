@@ -435,6 +435,14 @@ class BusManager:
         for t in self._sink_threads.values():
             if t.is_alive():
                 t.join(timeout=0.5)
+        # Clear sink registries so the next start() lazy-inits fresh
+        # drain threads. Without this, reload() leaves dead Thread objects
+        # in self._sink_threads — _enqueue_sink sees a non-None entry,
+        # skips creation, and appends to a deque nothing drains. v3.5-A
+        # regression: routing reloads silently broke broadcastify/mumble.
+        self._sink_queues.clear()
+        self._sink_events.clear()
+        self._sink_threads.clear()
 
     def reload(self):
         """Reload config and recreate busses."""
