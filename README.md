@@ -83,6 +83,7 @@ Current-state summary. For how each subsystem works in detail, jump to the secti
 
 See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Latest releases:
 
+- **v3.5** (2026-05-03) — persistent transcription log with FTS5 + plain-English search via Claude CLI (`transcription_log_query` / `transcription_log_recent` MCP tools); per-transcript Mumble + Telegram forwarding toggles; transcription alert keywords. Bus tick refactor: sinks off-tick on per-sink drain threads, numba-jit noise gate, `TickContext` per-tick read snapshot, tick-owned level meters, per-sink + per-source instrumentation (`/sinkstats`, `/sourcestats` + matching MCP tools). UI: tabbed dashboard, shell redesign, routing scroll-wheel gain. Installer overhaul + clean-VM smoke test. Fixes: loop-recorder 820ms stall, stream auto-reconnect during quiet periods, broadcastify encoder stdin race, sink drain reload bug.
 - **v3.4** (2026-04-22) — deployability release: INSTALL.md, `requirements.txt`, AUR fail-fast, post-install health check, annotated example config, path de-mandate, loop playback owned by gateway, routing UI polish, TX/RX mute independence, Broadcastify reconnect fix.
 - **v3.3** (2026-04-19) — DeepFilterNet 3 denoise, phase-aligned wet/dry, per-stream transcription workers, design pass.
 - **v3.2** (2026-04-19) — Moonshine ASR, Silero VAD, RNNoise denoise, UI redesign.

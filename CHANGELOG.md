@@ -4,6 +4,63 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [3.5.0] -- 2026-05-03
+
+Two big things this release: a **persistent transcription log with natural-language search**, and a **bus tick refactor** that pushes every sink off the audio hot path. Plus an installer overhaul, several UI redesigns, and a handful of fixes for bugs that surfaced along the way.
+
+### Added — Transcription log + AI search
+
+- **Persistent transcription log** (`transcription_log.py`). SQLite database with FTS5 full-text search. Every transcript Moonshine produces is stored with its timestamp, source bus, frequency tag, duration, and text. Survives restarts.
+- **Natural-language query via Claude CLI.** `POST /transcription/query` takes plain English ("What was said on 446.76 today?", "Any emergency traffic this week?") and returns a plain-English answer. The gateway translates the question to SQL via the local Claude CLI, runs it against the FTS5 index, summarises the matching rows.
+- **MCP tools** `transcription_log_query(question)` and `transcription_log_recent(limit=20)` — same surface area, callable from any MCP client (e.g. the Telegram bot).
+- **Web UI** for the log: search box, answer box, recent-transcripts list. Lives on the Transcribe page.
+- **Alert keywords** (`TRANSCRIPTION_ALERT_KEYWORDS` config + runtime-persisted edit). Comma-separated list of words to watch for. When a transcript matches, the keyword check fires (current path: pluggable callback into the gateway; in this release wired up for log highlighting).
+- **Per-transcript forwarding toggles**: `forward_mumble` and `forward_telegram` (runtime-persisted via the Transcribe page). Lets you mirror live transcripts into the Mumble channel as text, or into a Telegram chat, without rewiring routing.
+
+### Added — Bus tick refactor (v3.5-A through E.1)
+
+The audio path off-tick rework. Five planned refactors; the fifth was instrumented and the data showed it wasn't worth doing. Headline numbers: noise gate 12-24 ms/call → 0.011 ms/call. No sink call blocks the bus tick anymore.
+
+- **Per-sink off-tick drain queues.** `BusManager._enqueue_sink` stages a sink call into a bounded deque (`maxlen=8`, drop-oldest); a per-sink daemon thread named `SinkDrain-<id>` drains and dispatches via `_do_sink_send`. Sinks converted: **broadcastify, mumble, automation_recorder, echolink_legacy**. Audit found that transcriber, speaker, link TX, loop_recorder, and remote_audio_tx were already off-tick by design.
+- **Per-sink drain stats** — `enqueued / drops / drained / errors / drain_total_ms / drain_max_ms / depth_max / depth_now / drain_avg_ms / idle_s / thread_alive` per sink, surfaced via `BusManager.get_sink_stats()`, `GET /sinkstats`, and the `bus_sink_stats` MCP tool. Closes the diagnostic blind spot the off-tick model created.
+- **Per-source `get_audio()` timing** — `audio_bus._timed_get_audio` wraps every call site (ListenBus / SoloBus / DuplexRepeater / SimplexRepeater). Counters surfaced via `BusManager.get_source_stats()`, `GET /sourcestats`, and the `bus_source_stats` MCP tool.
+- **`TickContext` (frozen dataclass)** — read-side gateway state snapshotted once per tick. `_deliver_audio` and `_handle_listen_tick` consume it instead of probing `self.gateway` live, so a routing reload or config flip mid-tick can no longer half-apply.
+- **Tick-owned level meters** — `BusManager._meters` and `_link_tx_meters` own the canonical values; one post-tick mirror copies them to gw so existing UI consumers keep working without learning new attribute paths.
+- **Numba-jit noise gate.** `_apply_noise_gate` inner loop moved into `@numba.njit(cache=True)` (`audio_util._gate_loop`). Bit-identical output verified against synthetic transient signal. JIT warmup runs in a daemon thread at module import (`GateJITWarmup`) so the first audio tick that needs the gate never sees the compile cost. Pure-Python fallback present.
+- **Mumble sink-side VAD** — `BusManager._mumble_sink_vad(audio)` envelope-follower for non-listen-bus mumble routings. Squelch hiss off the AIOC mic no longer shows as continuous TX when mumble is wired off a solo bus.
+
+### Added — UI
+
+- **Dashboard tabbed redesign.** Controls and dashboard merged into a unified tabbed layout. Smart button status rows, declutter pass on status blocks, panel reordering. Routing page gain via mouse-wheel.
+- **Shell redesign.** Site-wide shell template overhauled. Source name normalisation, TTS pre-key PTT, routing-port wiring polish.
+- **Recorder page** — upstream RX frequency now shown next to bus name on each segment.
+
+### Changed
+
+- **Bus tick service** uses `python3 radio_gateway.py` directly. The `start.sh` shim was already removed from the repo; the systemd service template still pointed at it. Cleaned up alongside the v3.5 work.
+- **Loop playback** streams `/loop/play` directly from ffmpeg now instead of writing a temp file first — lower disk churn, faster preview start.
+- **Per-decode transcriber timing log** (`X.Xs audio → Y.Ys process (Z.ZZx realtime)`) gated under `config.VERBOSE_LOGGING`. Was firing on every decode in production logs.
+- **Transcriber inference thread** runs at `nice +10` so it can't preempt BusManager.
+
+### Fixed
+
+- **Loop recorder 820 ms BusManager stall.** Old segment close ran synchronously at the rotation boundary and could block the bus tick for hundreds of ms. Now closed asynchronously in a background thread so the tick doesn't see it.
+- **Stream auto-reconnect when radio is quiet.** Reconnect was only tried from `send_audio()`, but when the radio is silent that path doesn't fire — so a broken Icecast connection during quiet periods stayed broken. Reconnect now also fires from the keepalive loop.
+- **TX level bars decay in the tick.** Previously only HTTP-poll-driven, so the bars stayed lit when the routing page was closed. Decay now happens per-tick.
+- **Broadcastify level meter** updates regardless of bus type. Was gated on `_is_listen` from the v1 era — caused the meter to stay at 0 when broadcastify lived on a non-listen bus, even though audio was flowing.
+- **`StreamOutputSource` ffmpeg encoder stdin race.** Two threads write PCM into the encoder's stdin: `send_audio()` and `_keepalive_loop()`. After v3.5-A moved broadcastify off-tick, occasional concurrent writes interleaved bytes mid-sample and the MP3 decoded as static. Fixed by serialising both write sites on `_encoder_lock`.
+- **`BusManager.reload()` orphaned drain threads.** `stop()` joined the SinkDrain threads but `start()` didn't recreate them, so the next enqueue appended to a deque nothing was draining. Fixed by clearing `_sink_queues / _sink_events / _sink_threads / _sink_stats` after the join.
+- **Bus-id tag on source → solo → sink routings** for the transcribe path — was reporting the bus id where the upstream source-id was the right tag.
+
+### Investigated and explicitly skipped
+
+- **E.2 — convert decode-on-demand sources to push-from-reader-thread.** After E.1 instrumentation ran in production for a few minutes, combined source overhead measured ~20 ms/sec (2 % of one core). The supposedly-slow sources (SDR1/SDR2) cost what they cost because of inline IIR filter processing in their per-source `AudioProcessor`, not because they decode on demand inside `get_audio()`. KV4P, the theoretical worst case, isn't routed in production. Pushing `get_audio()` off the tick would have changed nothing measurable. Decision recorded in `docs/v3.5-refactor.md`.
+
+### Installer
+
+- `scripts/install.sh` overhauled. ALSA loopback reduced to a single card (only the packet plugin uses it now). Step counter cleaned up — sections renumbered to a contiguous 1-15. SoapySDRPlay3 AUR build patched to inject `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` (CMake 4.x rejects pre-3.5 minimums). FlightRadar24 makepkg now passes `--nodeps` (the `dump1090` dep has no pacman provider). Stale sudoers rule for `modprobe snd-aloop` removed (snd-aloop is loaded at boot via `/etc/modules-load.d/`; gateway uses `os.nice` directly). New `scripts/darkice.cfg.example` ships in the repo so install.sh's auto-copy step actually has a template to copy. Telegram-bot service install moved out from inside the gateway-service install block.
+- Smoke-tested end-to-end on a clean Arch QEMU VM (`Arch-Linux-x86_64-cloudimg`). Documented in install.sh comments.
+
 ## [3.4.0] -- 2026-04-22
 
 Deployability release. First version where a fresh clone on a clean Arch / Debian box can be driven to a working install without hand-holding.
