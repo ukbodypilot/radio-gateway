@@ -213,6 +213,24 @@ class BusManager:
             _el = getattr(gw, 'echolink_source', None)
             if _el is not None:
                 _el.send_audio(audio)
+        elif sink_id == 'mumble':
+            (audio,) = payload
+            mumble = getattr(gw, 'mumble', None)
+            if mumble is None:
+                return
+            so = getattr(mumble, 'sound_output', None)
+            ef = getattr(so, 'encoder_framesize', None) if so else None
+            if so is None or ef is None:
+                return
+            # 20 ms frames = 960 samples = 1920 bytes at 48 kHz mono.
+            # pymumble requires whole-frame writes; partials get appended
+            # to the in-flight last frame and confuse downstream encoding.
+            frame_bytes = int(ef * getattr(gw.config, 'AUDIO_RATE', 48000) * 2)
+            buf = getattr(self, '_mumble_drain_buf', b'') + audio
+            while len(buf) >= frame_bytes:
+                so.add_sound(buf[:frame_bytes])
+                buf = buf[frame_bytes:]
+            self._mumble_drain_buf = buf
         # Additional sinks added incrementally as v3.5-A progresses.
 
     def get_listen_bus_id(self):
@@ -831,36 +849,17 @@ class BusManager:
                 if _is_listen and not self._listen_vad_pass:
                     gw.mumble_tx_level = max(0, int(getattr(gw, 'mumble_tx_level', 0) * 0.7))
                     continue
-                try:
-                    _so = getattr(gw.mumble, 'sound_output', None)
-                    _ef = getattr(_so, 'encoder_framesize', None) if _so else None
-                    if _so is not None and _ef is not None:
-                        # Feed in frame-aligned chunks (20ms = 960 samples = 1920 bytes)
-                        # to prevent fractional frame accumulation in pymumble's buffer
-                        _frame_bytes = int(_ef * getattr(gw.config, 'AUDIO_RATE', 48000) * 2)
-                        if not hasattr(self, '_mumble_buf'):
-                            self._mumble_buf = b''
-                        self._mumble_buf += audio
-                        while len(self._mumble_buf) >= _frame_bytes:
-                            _frame = self._mumble_buf[:_frame_bytes]
-                            self._mumble_buf = self._mumble_buf[_frame_bytes:]
-                            _so.add_sound(_frame)
-                        if _audio_level > getattr(gw, 'mumble_tx_level', 0):
-                            gw.mumble_tx_level = _audio_level
-                        else:
-                            gw.mumble_tx_level = int(getattr(gw, 'mumble_tx_level', 0) * 0.7 + _audio_level * 0.3)
-                    else:
-                        if not hasattr(self, '_mumble_skip_logged'):
-                            self._mumble_skip_logged = True
-                            print(f"  [Mumble-TX] SKIPPED: sound_output={_so is not None} encoder_framesize={_ef}")
-                except Exception as _me:
-                    if not hasattr(self, '_mumble_err_logged'):
-                        self._mumble_err_logged = True
-                        print(f"  [Mumble-TX] ERROR: {_me}")
-                _mumble_ms = (time.monotonic() - _t_sink) * 1000
-                if _st:
-                    _extra = f'mumble {_mumble_ms:.1f}ms' if _mumble_ms > 5 else ''
-                    _st.record(f'{bus_id}_deliver', 'mumble', audio, -1, _extra)
+                # v3.5-A: pymumble add_sound runs off-tick on
+                # SinkDrain-mumble. Frame buffering moved drain-side
+                # too (only one thread mutates the accumulator).
+                # pymumble.SoundOutput is internally thread-safe.
+                self._enqueue_sink('mumble', (audio,))
+                if _audio_level > getattr(gw, 'mumble_tx_level', 0):
+                    gw.mumble_tx_level = _audio_level
+                else:
+                    gw.mumble_tx_level = int(getattr(gw, 'mumble_tx_level', 0) * 0.7 + _audio_level * 0.3)
+                if _st and _st.active:
+                    _st.record(f'{bus_id}_deliver', 'mumble', audio, -1, 'enq')
             elif sink_id == 'speaker':
                 gw._speaker_enqueue(audio)
                 if _st:
