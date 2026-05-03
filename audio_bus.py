@@ -17,6 +17,56 @@ from audio_util import pcm_db, apply_gain
 
 
 # ---------------------------------------------------------------------------
+# v3.5-E.1: per-source get_audio() timing
+# ---------------------------------------------------------------------------
+# All bus types call source.get_audio(chunk_size) on every tick. Sources
+# can do real work in get_audio (KV4P Opus decode + adaptive PLL resampler,
+# file decode-on-demand, etc.) and any of them can stall the tick. Without
+# per-source timing we can't tell which one to convert to push-from-reader-
+# thread first.
+#
+# Module-level dict keyed by source.name. BusManager owns the snapshot
+# surface (get_source_stats / /sourcestats / bus_source_stats MCP).
+SOURCE_STATS = {}
+
+
+def _record_source_call(name, dur_ms, returned_audio):
+    """Record one source.get_audio() call. Cheap; safe from any thread."""
+    s = SOURCE_STATS.get(name)
+    if s is None:
+        s = {
+            'calls': 0,
+            'no_audio': 0,        # times get_audio returned None
+            'total_ms': 0.0,
+            'max_ms': 0.0,
+            'last_call_mono': 0.0,
+        }
+        SOURCE_STATS[name] = s
+    s['calls'] += 1
+    if returned_audio is None:
+        s['no_audio'] += 1
+    s['total_ms'] += dur_ms
+    if dur_ms > s['max_ms']:
+        s['max_ms'] = dur_ms
+    s['last_call_mono'] = time.monotonic()
+
+
+def _timed_get_audio(source, chunk_size):
+    """Wrapper around source.get_audio() that records timing into SOURCE_STATS.
+
+    Sources are expected to return (audio_bytes_or_None, ptt_flag). The
+    name used for the stats key falls back to the class name if the
+    source doesn't expose one.
+    """
+    _t0 = time.monotonic()
+    audio, ptt = source.get_audio(chunk_size)
+    _dur_ms = (time.monotonic() - _t0) * 1000
+    _name = getattr(source, 'name', None) or type(source).__name__
+    _record_source_call(_name, _dur_ms, audio)
+    return audio, ptt
+
+
+# ---------------------------------------------------------------------------
 # Module-level audio utilities
 # ---------------------------------------------------------------------------
 
@@ -378,7 +428,7 @@ class ListenBus(AudioBus):
 
         # ── Phase 1: Collect ducker (non-duckable) audio ──
         for slot in ducker_slots:
-            audio, ptt = slot.source.get_audio(chunk_size)
+            audio, ptt = _timed_get_audio(slot.source, chunk_size)
             if audio is None:
                 continue
             # Apply per-source gain (routing page slider)
@@ -423,7 +473,7 @@ class ListenBus(AudioBus):
         # ── Phase 3: Fetch duckee audio (always drain buffers) ──
         duckee_audio = {}
         for slot in duckee_slots:
-            audio, _ptt = slot.source.get_audio(chunk_size)
+            audio, _ptt = _timed_get_audio(slot.source, chunk_size)
             # Apply per-source gain (routing page slider)
             _boost = getattr(slot.source, 'audio_boost', 1.0)
             if _boost != 1.0 and audio:
@@ -731,7 +781,7 @@ class SoloBus(AudioBus):
         for slot in self._tx_sources:
             if not slot.source.enabled:
                 continue
-            audio, ptt = slot.source.get_audio(chunk_size)
+            audio, ptt = _timed_get_audio(slot.source, chunk_size)
             if audio is None:
                 continue
             # Apply per-source gain
@@ -778,7 +828,7 @@ class SoloBus(AudioBus):
         # ── Phase 4: Get RX audio from radio (skip during TX and if TX-only) ──
         rx_audio = None
         if self._radio and not self._tx_only and not self._ptt_active:
-            rx_audio, _rx_ptt = self._radio.get_audio(chunk_size)
+            rx_audio, _rx_ptt = _timed_get_audio(self._radio, chunk_size)
             if rx_audio is not None:
                 # Apply per-source gain
                 _boost = getattr(self._radio, 'audio_boost', 1.0)
@@ -871,12 +921,12 @@ class DuplexRepeaterBus(AudioBus):
         b_rx = None
 
         if self._side_a:
-            a_rx, _a_ptt = self._side_a.get_audio(chunk_size)
+            a_rx, _a_ptt = _timed_get_audio(self._side_a, chunk_size)
             if a_rx is not None:
                 active_sources.append(self._side_a.name)
 
         if self._side_b:
-            b_rx, _b_ptt = self._side_b.get_audio(chunk_size)
+            b_rx, _b_ptt = _timed_get_audio(self._side_b, chunk_size)
             if b_rx is not None:
                 active_sources.append(self._side_b.name)
 
@@ -1034,8 +1084,8 @@ class SimplexRepeaterBus(AudioBus):
             self._max_buffer_chunks = int(self._max_buffer_secs * 20)
 
         # Get RX audio from both sides (always drain to avoid stale buffers)
-        a_rx, _a_ptt = self._side_a.get_audio(chunk_size) if self._side_a else (None, False)
-        b_rx, _b_ptt = self._side_b.get_audio(chunk_size) if self._side_b else (None, False)
+        a_rx, _a_ptt = _timed_get_audio(self._side_a, chunk_size) if self._side_a else (None, False)
+        b_rx, _b_ptt = _timed_get_audio(self._side_b, chunk_size) if self._side_b else (None, False)
 
         a_has_signal = check_signal_instant(a_rx, self._signal_threshold) if a_rx else False
         b_has_signal = check_signal_instant(b_rx, self._signal_threshold) if b_rx else False

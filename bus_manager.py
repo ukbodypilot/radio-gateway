@@ -302,6 +302,36 @@ class BusManager:
                         setattr(self, _flag, True)
                         print(f"  [BusManager] Sink '{sink_id}' send error: {e}")
 
+    def get_source_stats(self):
+        """Snapshot per-source get_audio() timing.
+
+        v3.5-E.1: companion to get_sink_stats. Surfaces how long each
+        source spends in get_audio() per bus tick, where it gets called
+        from every bus that lists it (so a source on two buses shows
+        2× the call rate). Useful for picking which sources to convert
+        to push-from-reader-thread (E.2) based on evidence rather than
+        guesswork.
+
+        Returned per source name:
+        - calls / no_audio: total calls, of which returned None
+        - total_ms / max_ms / avg_ms: cumulative + worst-single + mean
+        - idle_s: seconds since last call (None if never called)
+
+        Smoking guns:
+        - max_ms in tens of ms → that source can stall the bus tick
+        - avg_ms > 1 ms with calls per second × buses-it-feeds → it's
+          eating real CPU on the tick
+        """
+        from audio_bus import SOURCE_STATS
+        out = {}
+        _now = time.monotonic()
+        for name, s in SOURCE_STATS.items():
+            d = dict(s)
+            d['avg_ms'] = (d['total_ms'] / d['calls']) if d['calls'] else 0.0
+            d['idle_s'] = (_now - d['last_call_mono']) if d['last_call_mono'] else None
+            out[name] = d
+        return out
+
     def get_sink_stats(self):
         """Snapshot per-sink drain stats for status / MCP consumption.
 

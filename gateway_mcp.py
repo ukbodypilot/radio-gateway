@@ -2735,6 +2735,43 @@ def bus_sink_stats() -> str:
     return "\n".join(lines) if lines else "No sinks active"
 
 
+@mcp.tool()
+def bus_source_stats() -> str:
+    """
+    Per-source get_audio() timing across the bus tick (v3.5-E.1).
+
+    Use to identify which sources are spending real time in get_audio()
+    per tick. KV4P (Opus decode + adaptive PLL resampler), file playback
+    (decode-on-demand), web mic, mumble RX and EchoLink RX all currently
+    do work inline; SDR / LoopPlayback / RemoteAudio already have async
+    reader threads internally and just dequeue.
+
+    Returned per source name:
+    - calls / no_audio: total calls, fraction returning None
+    - avg_ms / max_ms / total_ms: per-call mean, worst-single, cumulative
+    - idle_s: seconds since last call
+
+    Smoking guns:
+    - max_ms in tens of ms → that source can stall the bus tick
+    - avg_ms × calls/sec × buses_consuming → real tick CPU contributor
+    """
+    data = _get('/sourcestats')
+    if not data:
+        return "No source stats — bus_manager not running or no sources active"
+    lines = []
+    for name in sorted(data.keys()):
+        s = data[name]
+        idle_s = s.get('idle_s')
+        idle_str = f"{idle_s:.1f}s" if isinstance(idle_s, (int, float)) else "—"
+        lines.append(
+            f"{name}: "
+            f"calls={s['calls']} no_audio={s['no_audio']} "
+            f"avg={s['avg_ms']:.3f}ms max={s['max_ms']:.1f}ms "
+            f"total={s['total_ms']:.0f}ms idle={idle_str}"
+        )
+    return "\n".join(lines) if lines else "No sources active"
+
+
 # ---------------------------------------------------------------------------
 # Tools — Automation Scheme Management
 # ---------------------------------------------------------------------------

@@ -732,6 +732,8 @@ class WebConfigServer:
                     _rg.handle_status(self, parent)
                 elif self.path == '/sinkstats':
                     _rg.handle_sinkstats(self, parent)
+                elif self.path == '/sourcestats':
+                    _rg.handle_sourcestats(self, parent)
                 elif self.path == '/theme':
                     _rg.handle_theme(self, parent)
                 elif self.path.startswith('/pages/'):

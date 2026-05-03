@@ -19,6 +19,20 @@ def handle_status(handler, parent):
         pass
 
 
+def handle_sourcestats(handler, parent):
+    """GET /sourcestats — per-source get_audio() timing (v3.5-E.1)."""
+    bm = getattr(parent.gateway, 'bus_manager', None) if parent.gateway else None
+    data = bm.get_source_stats() if bm else {}
+    try:
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        handler.send_header('Cache-Control', 'no-cache')
+        handler.end_headers()
+        handler.wfile.write(json_mod.dumps(data).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
 def handle_sinkstats(handler, parent):
     """GET /sinkstats — per-sink off-tick drain queue stats.
 
