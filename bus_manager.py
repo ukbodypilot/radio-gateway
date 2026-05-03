@@ -59,6 +59,15 @@ class BusManager:
         self._tick_trace = collections.deque(maxlen=6000)  # per-tick timing records
         self._gc_events = collections.deque(maxlen=200)    # GC pause records
 
+        # ── v3.5-A: Per-sink off-tick drain queues ─────────────────────────
+        # Sinks that previously blocked the bus tick now enqueue here; a per-
+        # sink daemon thread drains and calls the actual sink. Started lazily
+        # on first enqueue. Bounded (maxlen=8) — when the consumer falls
+        # behind, oldest chunks drop (audio gap > runaway latency).
+        self._sink_queues = {}    # sink_id -> deque[payload tuple]
+        self._sink_events = {}    # sink_id -> threading.Event (drain wakeup)
+        self._sink_threads = {}   # sink_id -> threading.Thread
+
     def get_bus_sinks(self):
         """Return per-bus connected sink IDs from routing config.
 
@@ -137,6 +146,64 @@ class BusManager:
             except IndexError:
                 break
         return sdr_audio, ptt
+
+    # ── v3.5-A: off-tick sink delivery ──────────────────────────────────
+    def _enqueue_sink(self, sink_id, payload):
+        """Stage a sink call to run off-tick on the per-sink drain thread.
+
+        First call for a sink_id starts its drain thread. The queue is
+        bounded — if the consumer can't keep up, the OLDEST payload drops
+        (deque maxlen). Audio gap is preferable to runaway latency for
+        every sink we currently route.
+        """
+        q = self._sink_queues.get(sink_id)
+        if q is None:
+            q = collections.deque(maxlen=8)
+            evt = threading.Event()
+            self._sink_queues[sink_id] = q
+            self._sink_events[sink_id] = evt
+            t = threading.Thread(
+                target=self._sink_drain_loop,
+                args=(sink_id, q, evt),
+                name=f'SinkDrain-{sink_id}',
+                daemon=True,
+            )
+            self._sink_threads[sink_id] = t
+            t.start()
+        q.append(payload)
+        self._sink_events[sink_id].set()
+
+    def _sink_drain_loop(self, sink_id, q, evt):
+        """Drain a sink queue until BusManager.stop() clears _running."""
+        while self._running:
+            evt.wait(timeout=0.1)
+            evt.clear()
+            while q:
+                try:
+                    payload = q.popleft()
+                except IndexError:
+                    break
+                try:
+                    self._do_sink_send(sink_id, payload)
+                except Exception as e:
+                    _flag = f'_sink_err_{sink_id}'
+                    if not getattr(self, _flag, False):
+                        setattr(self, _flag, True)
+                        print(f"  [BusManager] Sink '{sink_id}' send error: {e}")
+
+    def _do_sink_send(self, sink_id, payload):
+        """Dispatch a queued sink payload to the actual sink call.
+
+        Runs on the per-sink drain thread, NOT the bus tick. Add a branch
+        per sink as we convert each one off-tick (v3.5-A).
+        """
+        gw = self.gateway
+        if sink_id == 'broadcastify':
+            (audio,) = payload
+            so = getattr(gw, 'stream_output', None)
+            if so is not None:
+                so.send_audio(audio)
+        # Additional sinks added incrementally as v3.5-A progresses.
 
     def get_listen_bus_id(self):
         """Return the ID of the first listen-type bus in routing config."""
@@ -330,10 +397,16 @@ class BusManager:
         print(f"  [BusManager] Started with {len(self._busses)} bus(ses): {_types}")
 
     def stop(self):
-        """Stop the tick loop."""
+        """Stop the tick loop and the per-sink drain threads."""
         self._running = False
+        # Wake any sleeping sink drains so they observe _running=False
+        for evt in self._sink_events.values():
+            evt.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        for t in self._sink_threads.values():
+            if t.is_alive():
+                t.join(timeout=0.5)
 
     def reload(self):
         """Reload config and recreate busses."""
@@ -783,15 +856,13 @@ class BusManager:
                 if _st:
                     _st.record(f'{bus_id}_deliver', 'speaker', audio)
             elif sink_id == 'broadcastify' and getattr(gw, 'stream_output', None):
-                try:
-                    gw.stream_output.send_audio(audio)
-                    if _is_listen and gw.stream_output.connected:
-                        gw.stream_audio_level = _audio_level
-                except Exception:
-                    pass
-                _bcast_ms = (time.monotonic() - _t_sink) * 1000
-                if _st and _bcast_ms > 5:
-                    _st.record(f'{bus_id}_deliver', 'broadcastify', audio, -1, f'{_bcast_ms:.1f}ms')
+                # v3.5-A: send_audio runs off-tick on SinkDrain-broadcastify.
+                # Level meter still updates here so the UI tracks tick-aligned.
+                self._enqueue_sink('broadcastify', (audio,))
+                if _is_listen and gw.stream_output.connected:
+                    gw.stream_audio_level = _audio_level
+                if _st and _st.active:
+                    _st.record(f'{bus_id}_deliver', 'broadcastify', audio, -1, 'enq')
             elif sink_id == 'transcription' and getattr(gw, 'transcriber', None):
                 try:
                     _bus_obj = self._busses.get(bus_id)
