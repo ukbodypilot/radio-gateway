@@ -59,6 +59,35 @@ def _gate_loop(samples, threshold, attack_coef, release_coef, env_in):
     return out, env
 
 
+def _warmup_gate_loop():
+    """Pay the numba JIT cost at gateway startup, not on the first audio tick.
+
+    With `cache=True`, the compiled artefact lives in `__pycache__/`
+    (.nbi + .nbc beside the .pyc). Cold compile is ~550 ms; cached load
+    is ~290 ms. Either way we want to absorb it during init rather than
+    on the first time a user toggles the noise gate, where it would
+    show up as a multi-hundred-ms tick stall.
+
+    Run in a background daemon thread so module import (which happens
+    early in radio_gateway.py startup) doesn't block on it.
+    """
+    if not _HAVE_NUMBA:
+        return
+    import threading
+    def _go():
+        try:
+            _samples = np.zeros(48, dtype=np.int16)
+            _gate_loop(_samples, 327.0, 0.01, 0.001, 0.0)
+        except Exception:
+            pass
+    threading.Thread(
+        target=_go, name='GateJITWarmup', daemon=True,
+    ).start()
+
+
+_warmup_gate_loop()
+
+
 # ── Neural denoise — engine-abstracted ──────────────────────────────────────
 #
 # Two engines are available:
