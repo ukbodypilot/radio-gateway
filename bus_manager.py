@@ -109,6 +109,23 @@ class BusManager:
         self._sink_events = {}    # sink_id -> threading.Event (drain wakeup)
         self._sink_threads = {}   # sink_id -> threading.Thread
 
+        # ── v3.5-D: tick-owned level meters ────────────────────────────────
+        # Read-modify-write level state used to live on the gateway object
+        # (gw.mumble_tx_level etc.) — every tick read it back from gw to
+        # do the envelope smoothing. Now BusManager owns the canonical
+        # values; we mirror to gw once per tick at the end of the loop so
+        # existing UI consumers (status JSON, level bars) keep working.
+        self._meters = {
+            'stream_audio': 0,
+            'mumble_tx': 0,
+            'transcription': 0,
+            'remote_audio_tx': 0,
+            'nul': 0,
+        }
+        # Per-link-endpoint TX levels. Was gw._link_tx_levels — now owned
+        # here, mirrored to gw post-tick.
+        self._link_tx_meters = {}
+
         # ── Mumble sink VAD ────────────────────────────────────────────────
         # The listen bus VAD (self._listen_vad_pass, computed in
         # _handle_listen_tick) only applies to listen-bus mumble. When mumble
@@ -957,9 +974,9 @@ class BusManager:
 
         # Listen bus: decay sink levels when no audio
         if _is_listen and bus_output.mixed_audio is None:
-            gw.stream_audio_level = max(0, int(getattr(gw, 'stream_audio_level', 0) * 0.7))
-            gw.mumble_tx_level = max(0, int(getattr(gw, 'mumble_tx_level', 0) * 0.7))
-            gw.transcription_audio_level = max(0, int(getattr(gw, 'transcription_audio_level', 0) * 0.7))
+            self._meters['stream_audio'] = max(0, int(self._meters['stream_audio'] * 0.7))
+            self._meters['mumble_tx'] = max(0, int(self._meters['mumble_tx'] * 0.7))
+            self._meters['transcription'] = max(0, int(self._meters['transcription'] * 0.7))
 
         for sink_id, audio in bus_output.audio.items():
             if audio is None:
@@ -969,8 +986,8 @@ class BusManager:
             # even though NUL is presented as permanently muted.
             if sink_id == 'nul':
                 _lvl = gw.calculate_audio_level(audio)
-                _prev = getattr(gw, 'nul_audio_level', 0)
-                gw.nul_audio_level = _lvl if _lvl > _prev else int(_prev * 0.7 + _lvl * 0.3)
+                _prev = self._meters['nul']
+                self._meters['nul'] = _lvl if _lvl > _prev else int(_prev * 0.7 + _lvl * 0.3)
                 if _st:
                     _st.record(f'{bus_id}_deliver', 'nul', audio)
                 continue
@@ -1002,17 +1019,15 @@ class BusManager:
                 else:
                     _gate_pass = self._mumble_sink_vad(audio)
                 if not _gate_pass:
-                    gw.mumble_tx_level = max(0, int(getattr(gw, 'mumble_tx_level', 0) * 0.7))
+                    self._meters['mumble_tx'] = max(0, int(self._meters['mumble_tx'] * 0.7))
                     continue
                 # v3.5-A: pymumble add_sound runs off-tick on
                 # SinkDrain-mumble. Frame buffering moved drain-side
                 # too (only one thread mutates the accumulator).
                 # pymumble.SoundOutput is internally thread-safe.
                 self._enqueue_sink('mumble', (audio,))
-                if _audio_level > getattr(gw, 'mumble_tx_level', 0):
-                    gw.mumble_tx_level = _audio_level
-                else:
-                    gw.mumble_tx_level = int(getattr(gw, 'mumble_tx_level', 0) * 0.7 + _audio_level * 0.3)
+                _prev = self._meters['mumble_tx']
+                self._meters['mumble_tx'] = _audio_level if _audio_level > _prev else int(_prev * 0.7 + _audio_level * 0.3)
                 if _st and _st.active:
                     _st.record(f'{bus_id}_deliver', 'mumble', audio, -1, 'enq')
             elif sink_id == 'speaker':
@@ -1024,7 +1039,7 @@ class BusManager:
                 # Level meter still updates here so the UI tracks tick-aligned.
                 self._enqueue_sink('broadcastify', (audio,))
                 if _is_listen and ctx.stream_output.connected:
-                    gw.stream_audio_level = _audio_level
+                    self._meters['stream_audio'] = _audio_level
                 if _st and _st.active:
                     _st.record(f'{bus_id}_deliver', 'broadcastify', audio, -1, 'enq')
             elif sink_id == 'transcription' and ctx.transcriber is not None:
@@ -1032,10 +1047,8 @@ class BusManager:
                     _bus_obj = self._busses.get(bus_id)
                     _upstream = getattr(_bus_obj, 'last_dominant_source', None) if _bus_obj else None
                     ctx.transcriber.feed(audio, source_id=bus_id, upstream_source=_upstream)
-                    if _audio_level > getattr(gw, 'transcription_audio_level', 0):
-                        gw.transcription_audio_level = _audio_level
-                    else:
-                        gw.transcription_audio_level = int(getattr(gw, 'transcription_audio_level', 0) * 0.7 + _audio_level * 0.3)
+                    _prev = self._meters['transcription']
+                    self._meters['transcription'] = _audio_level if _audio_level > _prev else int(_prev * 0.7 + _audio_level * 0.3)
                 except Exception as _te:
                     # Log once so future regressions are visible instead of silent.
                     if not hasattr(self, '_trans_err_logged'):
@@ -1050,10 +1063,8 @@ class BusManager:
                         if _st:
                             _extra = f'remote_tx {_ra_ms:.1f}ms' if _ra_ms > 5 else ''
                             _st.record(f'{bus_id}_deliver', 'remote_audio_tx', audio, -1, _extra)
-                        if _audio_level > getattr(gw, 'remote_audio_tx_level', 0):
-                            gw.remote_audio_tx_level = _audio_level
-                        else:
-                            gw.remote_audio_tx_level = int(getattr(gw, 'remote_audio_tx_level', 0) * 0.7 + _audio_level * 0.3)
+                        _prev = self._meters['remote_audio_tx']
+                        self._meters['remote_audio_tx'] = _audio_level if _audio_level > _prev else int(_prev * 0.7 + _audio_level * 0.3)
                     except Exception:
                         pass
 
@@ -1091,10 +1102,11 @@ class BusManager:
                                         self._sink_ptt_pending[_eln] = True
                                         self._sink_ptt_start[_eln] = time.monotonic()
                         # Track TX level for routing display
-                        if _audio_level and _audio_level > gw._link_tx_levels.get(_eln, 0):
-                            gw._link_tx_levels[_eln] = _audio_level
+                        _prev = self._link_tx_meters.get(_eln, 0)
+                        if _audio_level and _audio_level > _prev:
+                            self._link_tx_meters[_eln] = _audio_level
                         else:
-                            gw._link_tx_levels[_eln] = int(gw._link_tx_levels.get(_eln, 0) * 0.7 + (_audio_level or 0) * 0.3)
+                            self._link_tx_meters[_eln] = int(_prev * 0.7 + (_audio_level or 0) * 0.3)
                         break
 
         # Per-bus PCM/MP3: deposit processed audio into shared buffer.
@@ -1310,6 +1322,24 @@ class BusManager:
                     print(f"  [BusManager] {bus_id} tick error: {e}")
                     import traceback; traceback.print_exc()
 
+            # ── v3.5-D: publish tick-owned meters to gateway ───────────────
+            # BusManager owns the canonical level values; one-shot mirror
+            # per tick keeps existing UI consumers (status JSON, level bars,
+            # link endpoint /level field) reading from gw without each
+            # consumer learning a new attribute path.
+            gw.stream_audio_level = self._meters['stream_audio']
+            gw.mumble_tx_level = self._meters['mumble_tx']
+            gw.transcription_audio_level = self._meters['transcription']
+            gw.remote_audio_tx_level = self._meters['remote_audio_tx']
+            gw.nul_audio_level = self._meters['nul']
+            # Reuse the dict in-place so anything holding a reference still works.
+            _gw_link_tx = getattr(gw, '_link_tx_levels', None)
+            if _gw_link_tx is not None:
+                _gw_link_tx.clear()
+                _gw_link_tx.update(self._link_tx_meters)
+            else:
+                gw._link_tx_levels = dict(self._link_tx_meters)
+
             # ── Flush per-tick PCM/MP3: mix contributions from all buses ──
             # Multiple buses routed to pcm/mp3 are mixed (summed with soft
             # limiter) into one chunk per tick rather than interleaved.
@@ -1384,8 +1414,8 @@ class BusManager:
             # Ensures link/radio TX bars clear after playback even when
             # the routing page is not open (routing/levels is not polled).
             if _tick_num % 4 == 0:
-                for _ln in list(gw._link_tx_levels):
-                    gw._link_tx_levels[_ln] = max(0, int(gw._link_tx_levels[_ln] * 0.8))
+                for _ln in list(self._link_tx_meters):
+                    self._link_tx_meters[_ln] = max(0, int(self._link_tx_meters[_ln] * 0.8))
                 if gw.kv4p_plugin:
                     gw.kv4p_plugin.tx_audio_level = max(
                         0, int(getattr(gw.kv4p_plugin, 'tx_audio_level', 0) * 0.8))
