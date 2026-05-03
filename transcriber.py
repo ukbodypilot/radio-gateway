@@ -833,7 +833,8 @@ class RadioTranscriber:
                     }
                     with self._stats_lock:
                         self._stats.append(_stat)
-                    print(f"  [Transcribe] {_duration:.1f}s audio → {_proc_time:.1f}s process ({_ratio:.2f}x realtime)")
+                    if getattr(getattr(self._gateway, 'config', None), 'VERBOSE_LOGGING', False):
+                        print(f"  [Transcribe] {_duration:.1f}s audio → {_proc_time:.1f}s process ({_ratio:.2f}x realtime)")
                     if text and text.strip() and not _is_hallucination(text):
                         # Prefer the upstream source (sdr1/sdr2/aioc) for
                         # tagging — gives per-tuner freqs. Fall back to the
