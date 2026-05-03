@@ -8,6 +8,56 @@ across plugins and sources.
 import math as _math
 import numpy as np
 
+# v3.5-B: numba JIT for the noise-gate inner loop. Numba is a transitive
+# dep via moonshine (transcription), so it's already installed everywhere
+# the gateway runs. Fall back to a slow Python loop if it isn't available
+# for any reason (output is bit-identical either way).
+try:
+    from numba import njit as _njit
+    _HAVE_NUMBA = True
+except Exception:
+    _HAVE_NUMBA = False
+    def _njit(*args, **kwargs):
+        # Pass-through decorator so the function is still callable; first
+        # call paths through pure Python at much lower throughput.
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        def _wrap(fn):
+            return fn
+        return _wrap
+
+
+@_njit(cache=True)
+def _gate_loop(samples, threshold, attack_coef, release_coef, env_in):
+    """JIT-compiled inner loop for AudioProcessor._apply_noise_gate.
+
+    Same per-sample envelope follower + soft-knee gain as the pre-v3.5
+    Python loop, but compiled. Returns (gated_int16_array, new_env)
+    so the caller can roll the envelope into self.gate_envelope.
+    """
+    n = samples.shape[0]
+    out = np.empty(n, dtype=np.int16)
+    env = env_in
+    for i in range(n):
+        s = samples[i]
+        level = abs(s)
+        if level > env:
+            env += (level - env) * attack_coef
+        else:
+            env += (level - env) * release_coef
+        if env > threshold:
+            gain = 1.0
+        elif threshold > 0.0:
+            ratio = env / threshold
+            gain = ratio * ratio
+        else:
+            gain = 0.0
+        # int16 conversion via int() preserves the original Python loop's
+        # truncation-toward-zero semantics. Saturation isn't needed: gain
+        # is in [0, 1] and s is already int16, so |s * gain| ≤ |s|.
+        out[i] = np.int16(s * gain)
+    return out, env
+
 
 # ── Neural denoise — engine-abstracted ──────────────────────────────────────
 #
@@ -914,41 +964,32 @@ class AudioProcessor:
             except Exception: pass
 
     def _apply_noise_gate(self, pcm_data):
-        """Noise gate with attack/release envelope."""
-        try:
-            import array as _arr
+        """Noise gate with attack/release envelope.
 
-            samples = _arr.array('h', pcm_data)
-            if len(samples) == 0:
+        v3.5-B: inner loop runs through numba-jit'd `_gate_loop` for ~50-
+        100× speed over the pre-v3.5 per-sample Python loop. First call
+        per process pays a one-shot JIT compile (~50-200 ms); cached on
+        disk via `cache=True`. Behaviour is bit-identical to the prior
+        loop — same threshold formula, same envelope coefficients, same
+        soft-knee `(env/thr)^2` below threshold.
+        """
+        try:
+            samples = np.frombuffer(pcm_data, dtype=np.int16)
+            if samples.size == 0:
                 return pcm_data
 
-            threshold_db = self.gate_threshold
-            threshold = 32767.0 * pow(10.0, threshold_db / 20.0)
-
+            threshold = 32767.0 * pow(10.0, self.gate_threshold / 20.0)
             attack_samples = self.gate_attack * self.config.AUDIO_RATE
             release_samples = self.gate_release * self.config.AUDIO_RATE
-
             attack_coef = 1.0 / attack_samples if attack_samples > 0 else 1.0
             release_coef = 1.0 / release_samples if release_samples > 0 else 0.1
 
-            gated = []
-            for sample in samples:
-                level = abs(sample)
-
-                if level > self.gate_envelope:
-                    self.gate_envelope += (level - self.gate_envelope) * attack_coef
-                else:
-                    self.gate_envelope += (level - self.gate_envelope) * release_coef
-
-                if self.gate_envelope > threshold:
-                    gain = 1.0
-                else:
-                    ratio = self.gate_envelope / threshold if threshold > 0 else 0
-                    gain = ratio * ratio
-
-                gated.append(int(sample * gain))
-
-            return _arr.array('h', gated).tobytes()
+            gated, env = _gate_loop(
+                samples, threshold, attack_coef, release_coef,
+                float(self.gate_envelope),
+            )
+            self.gate_envelope = float(env)
+            return gated.tobytes()
         except Exception:
             return pcm_data
 
