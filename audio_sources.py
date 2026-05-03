@@ -2444,6 +2444,12 @@ class StreamOutputSource:
         self._encoder = None      # ffmpeg subprocess
         self._icecast_sock = None  # TCP socket to Icecast
         self._lock = threading.Lock()
+        # Serialise writes to the ffmpeg encoder's stdin. Two threads write
+        # PCM into it: send_audio() (called from BusManager / sink-drain
+        # thread) and _keepalive_loop (silence when idle). Concurrent writes
+        # interleave bytes mid-sample and the MP3 output decodes as static
+        # / "silence" — see v3.5-A regression notes (2026-05-02).
+        self._encoder_lock = threading.Lock()
         self._reader_thread = None
         self._keepalive_thread = None
         self._last_audio_time = 0  # monotonic time of last real audio push
@@ -2602,8 +2608,9 @@ class StreamOutputSource:
                 threading.Thread(target=_auto_reconnect, daemon=True).start()
             return
         try:
-            self._encoder.stdin.write(audio_data)
-            self._last_audio_time = time.monotonic()
+            with self._encoder_lock:
+                self._encoder.stdin.write(audio_data)
+                self._last_audio_time = time.monotonic()
         except (BrokenPipeError, OSError):
             self.connected = False
         except Exception:
@@ -2626,11 +2633,14 @@ class StreamOutputSource:
                 if self._was_connected and not getattr(self, '_reconnecting', False):
                     self.send_audio(b'')
                 continue
-            # Only send silence if no real audio in the last 100ms
-            if time.monotonic() - self._last_audio_time < 0.1:
-                continue
             try:
-                self._encoder.stdin.write(_silence)
+                # Re-check idle gate while holding the lock so we never
+                # race with send_audio mid-frame; both writers always
+                # produce whole 4800-byte frames into the encoder.
+                with self._encoder_lock:
+                    if time.monotonic() - self._last_audio_time < 0.1:
+                        continue
+                    self._encoder.stdin.write(_silence)
             except (BrokenPipeError, OSError):
                 self.connected = False
             except Exception:
