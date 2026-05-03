@@ -203,6 +203,16 @@ class BusManager:
             so = getattr(gw, 'stream_output', None)
             if so is not None:
                 so.send_audio(audio)
+        elif sink_id == 'automation_recorder':
+            (audio,) = payload
+            ae = getattr(gw, 'automation_engine', None)
+            if ae is not None and getattr(ae, 'recorder', None) is not None:
+                ae.recorder.feed(audio)
+        elif sink_id == 'echolink_legacy':
+            (audio,) = payload
+            _el = getattr(gw, 'echolink_source', None)
+            if _el is not None:
+                _el.send_audio(audio)
         # Additional sinks added incrementally as v3.5-A progresses.
 
     def get_listen_bus_id(self):
@@ -1027,20 +1037,19 @@ class BusManager:
                     if output.audio[sink_id] is not None:
                         output.audio[sink_id] = _fixed
 
-        # Automation recorder
+        # Automation recorder — v3.5-A: drained off-tick on
+        # SinkDrain-automation_recorder (writes to lame ffmpeg stdin).
         if data is not None:
             ae = getattr(gw, 'automation_engine', None)
             if ae and ae.recorder.is_recording():
-                ae.recorder.feed(data)
+                self._enqueue_sink('automation_recorder', (data,))
 
-        # EchoLink (legacy — not in routing config, checked by config flag)
+        # EchoLink (legacy — not in routing config, checked by config flag).
+        # v3.5-A: drained off-tick on SinkDrain-echolink_legacy.
         if data is not None:
             _el = getattr(gw, 'echolink_source', None)
             if _el and getattr(gw.config, 'RADIO_TO_ECHOLINK', False):
-                try:
-                    _el.send_audio(data)
-                except Exception:
-                    pass
+                self._enqueue_sink('echolink_legacy', (data,))
 
     def _gc_callback(self, phase, info):
         """Record GC pause events for diagnostics."""
