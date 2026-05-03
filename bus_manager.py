@@ -109,6 +109,13 @@ class BusManager:
         self._sink_events = {}    # sink_id -> threading.Event (drain wakeup)
         self._sink_threads = {}   # sink_id -> threading.Thread
 
+        # ── v3.5-A++: per-sink counters for diagnostics ────────────────────
+        # Without these the off-tick model hides sink stalls and queue
+        # overflows from the tick-time diagnostics that previously caught
+        # them. Surfaced via get_sink_stats() and the bus_sink_stats MCP
+        # tool. Memory rule: instrument first, debug after.
+        self._sink_stats = {}     # sink_id -> dict (enqueued/drops/drained/...)
+
         # ── v3.5-D: tick-owned level meters ────────────────────────────────
         # Read-modify-write level state used to live on the gateway object
         # (gw.mumble_tx_level etc.) — every tick read it back from gw to
@@ -220,6 +227,19 @@ class BusManager:
         return sdr_audio, ptt
 
     # ── v3.5-A: off-tick sink delivery ──────────────────────────────────
+    @staticmethod
+    def _new_sink_stats():
+        return {
+            'enqueued': 0,         # total payloads accepted
+            'drops': 0,            # times the deque was at maxlen on enqueue
+            'drained': 0,          # total payloads sent to _do_sink_send
+            'errors': 0,           # exceptions during _do_sink_send
+            'drain_total_ms': 0.0, # cumulative drain-side wall time
+            'drain_max_ms': 0.0,   # worst single _do_sink_send call
+            'depth_max': 0,        # peak queue depth observed at enqueue
+            'last_send_mono': 0.0, # monotonic timestamp of last successful send
+        }
+
     def _enqueue_sink(self, sink_id, payload):
         """Stage a sink call to run off-tick on the per-sink drain thread.
 
@@ -234,6 +254,7 @@ class BusManager:
             evt = threading.Event()
             self._sink_queues[sink_id] = q
             self._sink_events[sink_id] = evt
+            self._sink_stats[sink_id] = self._new_sink_stats()
             t = threading.Thread(
                 target=self._sink_drain_loop,
                 args=(sink_id, q, evt),
@@ -242,11 +263,21 @@ class BusManager:
             )
             self._sink_threads[sink_id] = t
             t.start()
+        # Detect drop *before* the append — deque silently displaces
+        # the oldest when at maxlen, so we have to check up front.
+        _stats = self._sink_stats.setdefault(sink_id, self._new_sink_stats())
+        _depth = len(q)
+        if _depth >= q.maxlen:
+            _stats['drops'] += 1
+        if _depth > _stats['depth_max']:
+            _stats['depth_max'] = _depth
+        _stats['enqueued'] += 1
         q.append(payload)
         self._sink_events[sink_id].set()
 
     def _sink_drain_loop(self, sink_id, q, evt):
         """Drain a sink queue until BusManager.stop() clears _running."""
+        _stats = self._sink_stats.setdefault(sink_id, self._new_sink_stats())
         while self._running:
             evt.wait(timeout=0.1)
             evt.clear()
@@ -255,13 +286,50 @@ class BusManager:
                     payload = q.popleft()
                 except IndexError:
                     break
+                _t0 = time.monotonic()
                 try:
                     self._do_sink_send(sink_id, payload)
+                    _dur_ms = (time.monotonic() - _t0) * 1000
+                    _stats['drained'] += 1
+                    _stats['drain_total_ms'] += _dur_ms
+                    if _dur_ms > _stats['drain_max_ms']:
+                        _stats['drain_max_ms'] = _dur_ms
+                    _stats['last_send_mono'] = time.monotonic()
                 except Exception as e:
+                    _stats['errors'] += 1
                     _flag = f'_sink_err_{sink_id}'
                     if not getattr(self, _flag, False):
                         setattr(self, _flag, True)
                         print(f"  [BusManager] Sink '{sink_id}' send error: {e}")
+
+    def get_sink_stats(self):
+        """Snapshot per-sink drain stats for status / MCP consumption.
+
+        Returns a dict keyed by sink_id, each value a dict with:
+        - enqueued / drops / drained / errors: counters since process start
+        - drain_total_ms / drain_max_ms: cumulative + worst-single drain
+          time (peer-thread cost; not on the bus tick)
+        - depth_max: peak queue depth observed at enqueue (out of maxlen=8)
+        - depth_now: current queue depth at snapshot time
+        - drain_avg_ms: drain_total_ms / drained (when drained > 0)
+        - idle_s: seconds since last successful send
+        - thread_alive: whether the drain thread is still running
+
+        Drops > 0 means audio was discarded because the consumer fell
+        behind. drain_max_ms in the seconds is the smoking gun for a
+        sink stall. errors > 0 with first error printed once on stdout.
+        """
+        out = {}
+        _now = time.monotonic()
+        for sink_id, q in self._sink_queues.items():
+            s = dict(self._sink_stats.get(sink_id, self._new_sink_stats()))
+            s['depth_now'] = len(q)
+            s['drain_avg_ms'] = (s['drain_total_ms'] / s['drained']) if s['drained'] else 0.0
+            s['idle_s'] = (_now - s['last_send_mono']) if s['last_send_mono'] else None
+            t = self._sink_threads.get(sink_id)
+            s['thread_alive'] = bool(t and t.is_alive())
+            out[sink_id] = s
+        return out
 
     def _do_sink_send(self, sink_id, payload):
         """Dispatch a queued sink payload to the actual sink call.
@@ -596,6 +664,7 @@ class BusManager:
         self._sink_queues.clear()
         self._sink_events.clear()
         self._sink_threads.clear()
+        self._sink_stats.clear()
 
     def reload(self):
         """Reload config and recreate busses."""

@@ -2694,6 +2694,48 @@ def stream_trace_read(lines: int = 100) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tools — Sink drain stats (v3.5-A off-tick sinks)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def bus_sink_stats() -> str:
+    """
+    Per-sink off-tick drain queue stats. Use when audio drops on a converted
+    sink (broadcastify, mumble, automation_recorder, echolink_legacy) — the
+    bus tick won't show the stall because the call now runs on a peer thread.
+
+    Returned per sink:
+    - enqueued / drops / drained / errors: counters since process start
+    - depth_now / depth_max: current and peak queue depth (max queue size 8)
+    - drain_avg_ms / drain_max_ms: drain-thread timing of the actual sink call
+    - idle_s: seconds since last successful send (None if never sent)
+    - thread_alive: whether the SinkDrain-* thread is still running
+
+    Smoking guns:
+    - drops > 0 → consumer too slow; oldest audio discarded
+    - drain_max_ms in seconds → the sink stalled (network, pipe, etc.)
+    - idle_s rising while enqueued keeps growing → drain thread is stuck
+    - thread_alive False → BusManager.stop() didn't recreate the thread
+    """
+    data = _get('/sinkstats')
+    if not data:
+        return "No sink stats — bus_manager not running or no sinks active"
+    lines = []
+    for sink_id in sorted(data.keys()):
+        s = data[sink_id]
+        idle_s = s.get('idle_s')
+        idle_str = f"{idle_s:.1f}s" if isinstance(idle_s, (int, float)) else "—"
+        lines.append(
+            f"{sink_id}: "
+            f"enq={s['enqueued']} drained={s['drained']} drops={s['drops']} "
+            f"err={s['errors']} depth={s['depth_now']}/{s['depth_max']} "
+            f"avg={s['drain_avg_ms']:.2f}ms max={s['drain_max_ms']:.1f}ms "
+            f"idle={idle_str} alive={s['thread_alive']}"
+        )
+    return "\n".join(lines) if lines else "No sinks active"
+
+
+# ---------------------------------------------------------------------------
 # Tools — Automation Scheme Management
 # ---------------------------------------------------------------------------
 

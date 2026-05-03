@@ -19,6 +19,26 @@ def handle_status(handler, parent):
         pass
 
 
+def handle_sinkstats(handler, parent):
+    """GET /sinkstats — per-sink off-tick drain queue stats.
+
+    Surface for v3.5-A's per-sink drain threads. Useful when audio
+    drops or stalls on a converted sink (broadcastify, mumble,
+    automation_recorder, echolink_legacy) — the bus tick won't show
+    it because the call now runs on a peer thread.
+    """
+    bm = getattr(parent.gateway, 'bus_manager', None) if parent.gateway else None
+    data = bm.get_sink_stats() if bm else {}
+    try:
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        handler.send_header('Cache-Control', 'no-cache')
+        handler.end_headers()
+        handler.wfile.write(json_mod.dumps(data).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
 def handle_theme(handler, parent):
     """GET /theme"""
     # Theme config JSON — used by static HTML pages
