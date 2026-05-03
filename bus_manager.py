@@ -68,6 +68,20 @@ class BusManager:
         self._sink_events = {}    # sink_id -> threading.Event (drain wakeup)
         self._sink_threads = {}   # sink_id -> threading.Thread
 
+        # ── Mumble sink VAD ────────────────────────────────────────────────
+        # The listen bus VAD (self._listen_vad_pass, computed in
+        # _handle_listen_tick) only applies to listen-bus mumble. When mumble
+        # is wired off a solo / repeater bus, the source feed (e.g. AIOC mic
+        # capturing radio audio) is continuous even when the radio is
+        # squelched, and pre-v3.5-A had no gate either — fixed here by giving
+        # the mumble sink its own envelope-follower with the same VAD config
+        # thresholds as the listen-bus path. Independent state so different
+        # buses sharing this gate don't fight the listen-bus envelope.
+        self._mumble_vad_envelope = -90.0
+        self._mumble_vad_active = False
+        self._mumble_vad_open_time = 0.0
+        self._mumble_vad_close_time = 0.0
+
     def get_bus_sinks(self):
         """Return per-bus connected sink IDs from routing config.
 
@@ -232,6 +246,54 @@ class BusManager:
                 buf = buf[frame_bytes:]
             self._mumble_drain_buf = buf
         # Additional sinks added incrementally as v3.5-A progresses.
+
+    def _mumble_sink_vad(self, audio):
+        """Sink-side VAD gate for mumble TX from non-listen buses.
+
+        Mirrors the envelope-follower in gateway_core.check_vad but holds
+        its own state so it doesn't fight the listen-bus envelope. Used
+        by the mumble branch in _deliver_audio for solo / repeater buses
+        that don't have a bus-wide VAD pass flag.
+
+        Returns True when the gateway should transmit this chunk to
+        mumble, False otherwise. When VAD is disabled, always returns
+        True (matches gw.check_vad behavior).
+        """
+        cfg = self.config
+        if not getattr(cfg, 'ENABLE_VAD', False):
+            return True
+        if not audio:
+            return False
+        from audio_util import pcm_db
+        db_level = pcm_db(audio)
+        chunks_per_second = max(1.0, cfg.AUDIO_RATE / cfg.AUDIO_CHUNK_SIZE)
+        attack_coef = 1.0 / (cfg.VAD_ATTACK * chunks_per_second)
+        release_coef = 1.0 / (cfg.VAD_RELEASE * chunks_per_second)
+        if db_level > self._mumble_vad_envelope:
+            self._mumble_vad_envelope += (db_level - self._mumble_vad_envelope) * min(1.0, attack_coef)
+        else:
+            self._mumble_vad_envelope += (db_level - self._mumble_vad_envelope) * min(1.0, release_coef)
+        now = time.monotonic()
+        if self._mumble_vad_envelope > cfg.VAD_THRESHOLD:
+            if not self._mumble_vad_active:
+                self._mumble_vad_active = True
+                self._mumble_vad_open_time = now
+                self._mumble_vad_close_time = 0.0
+            return True
+        # Below threshold
+        if not self._mumble_vad_active:
+            self._mumble_vad_close_time = 0.0
+            return False
+        # Active — honour minimum-duration and release-tail like check_vad
+        if now - self._mumble_vad_open_time < cfg.VAD_MIN_DURATION:
+            return True
+        if self._mumble_vad_close_time == 0.0:
+            self._mumble_vad_close_time = now
+        if now - self._mumble_vad_close_time < cfg.VAD_RELEASE:
+            return True
+        self._mumble_vad_active = False
+        self._mumble_vad_close_time = 0.0
+        return False
 
     def get_listen_bus_id(self):
         """Return the ID of the first listen-type bus in routing config."""
@@ -853,8 +915,16 @@ class BusManager:
 
             # Passive sinks
             if sink_id == 'mumble' and gw.mumble:
-                # Listen bus: gate mumble delivery with VAD
-                if _is_listen and not self._listen_vad_pass:
+                # Listen-bus mumble: gate via the bus-wide VAD pass flag
+                # computed in _handle_listen_tick. Non-listen-bus mumble
+                # (solo / repeater) has no bus-wide VAD, so we apply a
+                # sink-side envelope-follower so squelch-hiss off the AIOC
+                # mic doesn't show as continuous TX in the Mumble channel.
+                if _is_listen:
+                    _gate_pass = self._listen_vad_pass
+                else:
+                    _gate_pass = self._mumble_sink_vad(audio)
+                if not _gate_pass:
                     gw.mumble_tx_level = max(0, int(getattr(gw, 'mumble_tx_level', 0) * 0.7))
                     continue
                 # v3.5-A: pymumble add_sound runs off-tick on
