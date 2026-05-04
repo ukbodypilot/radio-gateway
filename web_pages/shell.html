@@ -247,7 +247,6 @@
       <a href="/recorder" target="content" onclick="setActive(this)">Loop Recorder</a>
       <a href="/transcribe" target="content" onclick="setActive(this)">Transcribe</a>
       <a href="/txlog" target="content" onclick="setActive(this)">Tx Log</a>
-      <a href="/voice" target="content" onclick="setActive(this)">Voice</a>
     </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">Radios</span><div class="nav-drop">
       <a href="/radio" target="content" onclick="setActive(this)" id="nav-radio">TH-9800</a>
       <a href="/d75" target="content" onclick="setActive(this)" id="nav-d75">TH-D75</a>
@@ -261,6 +260,7 @@
       <a href="/packet" target="content" onclick="setActive(this)" id="nav-packet">Packet</a>
       <a href="/gdrive" target="content" onclick="setActive(this)">GDrive</a>
     </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">System</span><div class="nav-drop">
+      <a href="/voice" target="content" onclick="setActive(this)">Voice</a>
       <a href="/config" target="content" onclick="setActive(this)">Config</a>
       <a href="/logs" target="content" onclick="setActive(this)">Logs</a>
     </div></div>
@@ -640,7 +640,18 @@ function _sbUpdate(key, label, raw, cls, ducked, muted) {
 createPoller('/status', 250, function(s) {
     _sbOrder = [];
     _sbUpdate('rx', 'RX', s.radio_rx, 'sb-in', false, false);
-    _sbUpdate('tx', 'TX', s.radio_tx, 'sb-out', false, false);
+    // Unified TX meter: max level across every TX-capable path so the user sees
+    // activity regardless of which radio (AIOC / D75 / link endpoint) is keyed.
+    // Legacy bar showed only AIOC; D75 TX (and other link endpoints) silently registered nothing.
+    var _txLvl = s.radio_tx || 0;
+    if (s.kv4p_tx_level > _txLvl) _txLvl = s.kv4p_tx_level;
+    if (s.link_endpoints) {
+      for (var _i = 0; _i < s.link_endpoints.length; _i++) {
+        var _le = s.link_endpoints[_i];
+        if (_le && _le.tx_level > _txLvl) _txLvl = _le.tx_level;
+      }
+    }
+    _sbUpdate('tx', 'TX', _txLvl, 'sb-out', false, false);
     if(s.kv4p_enabled) _sbUpdate('kv4p', 'KV4P', s.kv4p_level, 'sb-in', false, s.kv4p_muted);
     if(s.d75_enabled)  _sbUpdate('d75',  'D75',  s.d75_level,  'sb-in', false, s.d75_muted);
     if(s.sdr1_enabled) _sbUpdate('sdr1', 'SDR1', s.sdr1_level, 'sb-in', s.sdr1_ducked, false);

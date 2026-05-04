@@ -602,6 +602,50 @@ class LoopRecorder:
         minute = (now.minute // (self._segment_seconds // 60)) * (self._segment_seconds // 60)
         return now.replace(minute=minute, second=0, microsecond=0)
 
+    def find_segment(self, bus_id, ts):
+        """Resolve (bus_id, epoch_ts) → segment file metadata, or None.
+
+        Returns dict {'path', 'wfm_path', 'start_epoch', 'duration', 'offset_s'}
+        where `offset_s` is the seek position into the file that corresponds to
+        `ts`. Falls back to a directory scan when the boundary-floored filename
+        doesn't exist (e.g. recording was rotated out, or boundary math drifted
+        past a clock change), so the caller doesn't need to know the layout.
+        """
+        bus_dir = os.path.join(self._base_dir, bus_id)
+        if not os.path.isdir(bus_dir):
+            return None
+        # Floor to the segment boundary; this is the canonical filename.
+        boundary = int(ts // self._segment_seconds) * self._segment_seconds
+        candidate = datetime.fromtimestamp(boundary).strftime('%Y%m%d_%H%M')
+        mp3 = os.path.join(bus_dir, f'{candidate}.mp3')
+        if os.path.isfile(mp3):
+            wfm = os.path.join(bus_dir, f'{candidate}.wfm')
+            return {
+                'path': mp3,
+                'wfm_path': wfm if os.path.isfile(wfm) else None,
+                'start_epoch': float(boundary),
+                'duration': float(self._segment_seconds),
+                'offset_s': max(0.0, ts - boundary),
+            }
+        # Fallback: scan the dir for a segment whose [start, start+dur) brackets ts.
+        for fname in sorted(os.listdir(bus_dir)):
+            if not fname.endswith('.mp3'):
+                continue
+            try:
+                seg_start = self._filename_to_epoch(fname)
+            except ValueError:
+                continue
+            if seg_start <= ts < seg_start + self._segment_seconds:
+                wfm = os.path.join(bus_dir, fname[:-4] + '.wfm')
+                return {
+                    'path': os.path.join(bus_dir, fname),
+                    'wfm_path': wfm if os.path.isfile(wfm) else None,
+                    'start_epoch': seg_start,
+                    'duration': float(self._segment_seconds),
+                    'offset_s': max(0.0, ts - seg_start),
+                }
+        return None
+
     def _filename_to_epoch(self, fname):
         """Parse YYYYMMDD_HHMM.mp3 → epoch float."""
         base = fname.replace('.mp3', '').replace('.wfm', '')

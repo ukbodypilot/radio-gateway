@@ -73,6 +73,62 @@
   .col-dur  { white-space: nowrap; color: var(--t-text-mute); text-align: right; }
   .col-text { color: var(--t-text); word-break: break-word; }
   .empty-row td { color: var(--t-text-mute); text-align: center; padding: var(--s-6); }
+
+  /* Keyword search panel */
+  .search-panel {
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-md); flex-shrink: 0;
+    display: flex; flex-direction: column; gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+  }
+  .search-row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+  .search-input {
+    flex: 1 1 240px;
+    background: var(--t-btn); color: var(--t-text);
+    border: 1px solid var(--t-border); border-radius: var(--r-sm);
+    padding: var(--s-1) var(--s-2); font: inherit; font-size: var(--f-sm);
+  }
+  .search-input:focus { border-color: var(--t-accent); outline: none; }
+  .search-hint { color: var(--t-text-mute); font-size: var(--f-xs); }
+  .search-status { color: var(--t-text-dim); font-size: var(--f-xs); margin-left: auto; }
+  .search-status.err { color: var(--t-err); }
+
+  .hit-list { display: flex; flex-direction: column; gap: 2px;
+              max-height: 320px; overflow-y: auto; padding-right: var(--s-1); }
+  .hit { display: flex; gap: var(--s-2); align-items: center;
+         padding: var(--s-1) var(--s-2); border-radius: var(--r-sm);
+         font-size: var(--f-sm); line-height: 1.4;
+         border: 1px solid transparent; }
+  .hit:hover { background: var(--t-bg); border-color: var(--t-border); }
+  .hit.playing { background: var(--t-bg); border-color: var(--t-accent); }
+  .hit-play { flex-shrink: 0; width: 28px; height: 22px; padding: 0;
+              font-size: 11px; line-height: 1; }
+  .hit-play[disabled] { opacity: 0.3; cursor: not-allowed; }
+  .hit-time { color: var(--t-accent); font-variant-numeric: tabular-nums;
+              font-size: var(--f-xs); flex-shrink: 0; min-width: 130px; }
+  .hit-meta { color: var(--t-text-dim); font-size: var(--f-xs);
+              text-transform: uppercase; letter-spacing: 0.04em;
+              flex-shrink: 0; min-width: 110px; }
+  .hit-text { color: var(--t-text); flex: 1; overflow: hidden;
+              text-overflow: ellipsis; }
+
+  /* Sticky player — keep it slim. Native <audio> defaults to a chunky black
+     bar when stretched; clamp width and height so it sits inline with the
+     meta line rather than dominating the page. */
+  .sticky-player {
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-md); padding: var(--s-1) var(--s-2);
+    display: flex; gap: var(--s-2); align-items: center;
+    flex-shrink: 0; flex-wrap: wrap;
+  }
+  .sticky-player audio {
+    width: 320px; max-width: 100%; height: 32px;
+    flex: 0 0 auto;
+  }
+  .sticky-player .sp-meta { color: var(--t-text-dim); font-size: var(--f-xs);
+                            font-variant-numeric: tabular-nums; flex: 1 1 auto; }
+  .sticky-player.empty audio { display: none; }
+  .sticky-player.empty { opacity: 0.6; }
 </style>
 </head>
 <body>
@@ -87,6 +143,26 @@
     <button class="rb" id="q-btn" onclick="submitQuery()">Ask</button>
   </div>
   <div class="answer-box" id="q-answer"></div>
+</div>
+
+<!-- Keyword search -->
+<div class="search-panel">
+  <div class="search-row">
+    <input id="kw-input" class="search-input" type="text"
+           placeholder='Keyword search — e.g.  fire OR ambulance,  "copy that",  helicopter NEAR/3 hazard'
+           onkeydown="if(event.key==='Enter')doSearch()">
+    <button class="rb rb-sm" onclick="doSearch()">Search</button>
+    <button class="rb rb-sm" onclick="clearSearch()">Clear</button>
+    <span id="kw-status" class="search-status"></span>
+  </div>
+  <div class="search-hint">FTS5 syntax: <code>AND</code> · <code>OR</code> · <code>"phrase"</code> · <code>NEAR/N</code>. Empty = no results.</div>
+  <div id="kw-hits" class="hit-list"></div>
+</div>
+
+<!-- Sticky player (single shared audio element) -->
+<div id="sticky-player" class="sticky-player empty">
+  <audio id="hit-audio" controls preload="none"></audio>
+  <span id="sp-meta" class="sp-meta">no clip loaded</span>
 </div>
 
 <div class="history-panel">
@@ -204,6 +280,107 @@ function submitQuery() {
 }
 
 loadPage(0);
+
+// ── Keyword search + replay ───────────────────────────────────────────────
+var _currentHitRow = null;
+
+function _fmtFullTime(epoch) {
+  var d = new Date(epoch * 1000);
+  var pad = function(n){return n<10?'0'+n:n;};
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+
+         ' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+}
+
+function doSearch() {
+  var q = document.getElementById('kw-input').value.trim();
+  var st = document.getElementById('kw-status');
+  st.className = 'search-status';
+  if (!q) { st.textContent = ''; renderHits([]); return; }
+  st.textContent = 'searching…';
+  fetch('/transcript_search?q=' + encodeURIComponent(q) + '&limit=200')
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.error) { st.className = 'search-status err'; st.textContent = d.error; renderHits([]); return; }
+      var rows = d.results || [];
+      st.textContent = rows.length + ' hit' + (rows.length===1?'':'s');
+      renderHits(rows);
+    })
+    .catch(function(){ st.className='search-status err'; st.textContent='request failed'; });
+}
+
+function clearSearch() {
+  document.getElementById('kw-input').value = '';
+  document.getElementById('kw-status').textContent = '';
+  renderHits([]);
+}
+
+function renderHits(rows) {
+  var c = document.getElementById('kw-hits');
+  c.innerHTML = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var row = document.createElement('div');
+    row.className = 'hit';
+    var btn = document.createElement('button');
+    btn.className = 'rb rb-sm hit-play';
+    btn.textContent = '▶';
+    if (!r.bus) {
+      btn.disabled = true;
+      btn.title = 'No bus recorded for this row (predates the play feature).';
+    } else if (r.loop_available === false) {
+      btn.disabled = true;
+      btn.title = 'Recording rotated out of retention or loop disabled for this bus.';
+    } else {
+      (function(rr, rowEl){
+        btn.onclick = function(){ playHit(rr, rowEl); };
+      })(r, row);
+    }
+    row.appendChild(btn);
+
+    var time = document.createElement('span');
+    time.className = 'hit-time';
+    time.textContent = _fmtFullTime(r.ts);
+    row.appendChild(time);
+
+    var meta = document.createElement('span');
+    meta.className = 'hit-meta';
+    var metaParts = [];
+    if (r.bus) metaParts.push(r.bus);
+    if (r.source && r.source !== r.bus) metaParts.push(r.source);
+    if (r.freq) metaParts.push(r.freq);
+    meta.textContent = metaParts.join(' · ');
+    row.appendChild(meta);
+
+    var text = document.createElement('span');
+    text.className = 'hit-text';
+    text.textContent = r.text;
+    row.appendChild(text);
+
+    c.appendChild(row);
+  }
+}
+
+function playHit(r, rowEl) {
+  var audio = document.getElementById('hit-audio');
+  var sp = document.getElementById('sticky-player');
+  var spMeta = document.getElementById('sp-meta');
+  var off = r.loop_offset || 0;
+  var startEpoch = r.loop_start_epoch || r.ts;
+  var url = '/loopaudio?bus=' + encodeURIComponent(r.bus) + '&ts=' + r.ts;
+
+  sp.classList.remove('empty');
+  audio.src = url;
+  var _seekOnce = function(){ audio.currentTime = off; audio.removeEventListener('loadedmetadata', _seekOnce); };
+  audio.addEventListener('loadedmetadata', _seekOnce);
+  audio.play().catch(function(){});
+  spMeta.textContent = _fmtFullTime(r.ts) + '  ·  ' + r.bus +
+                       '  ·  +' + off.toFixed(1) + 's into segment ' +
+                       _fmtFullTime(startEpoch);
+
+  if (_currentHitRow) _currentHitRow.classList.remove('playing');
+  rowEl.classList.add('playing');
+  _currentHitRow = rowEl;
+}
 </script>
 </body>
 </html>

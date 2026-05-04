@@ -746,6 +746,10 @@ class WebConfigServer:
                     _rg.handle_monitor_apk(self, parent)
                 elif self.path.startswith('/transcription/log'):
                     _rg.handle_transcription_log(self, parent)
+                elif self.path.startswith('/transcript_search'):
+                    _rg.handle_transcript_search(self, parent)
+                elif self.path.startswith('/loopaudio'):
+                    _rg.handle_loopaudio(self, parent)
                 elif self.path.startswith('/transcriptions'):
                     _rg.handle_transcriptions(self, parent)
                 elif self.path == '/d75status':

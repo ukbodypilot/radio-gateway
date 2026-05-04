@@ -1027,10 +1027,12 @@ def handle_tracecmd(handler, parent):
                 _gw._stream_trace.stop()
             print(f"\n[Trace] Recording STOPPED ({len(_gw._audio_trace)} ticks captured)")
             _gw._dump_audio_trace()
-            # Dump stream trace
+            # Dump stream trace alongside, with matching timestamp so the pair is easy to find.
             if hasattr(_gw, '_stream_trace'):
-                import os as _os
-                _st_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'tools', 'stream_trace.txt')
+                import os as _os, datetime as _dt
+                _ts = _dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+                _st_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                         'tools', f'stream_trace_{_ts}.txt')
                 _gw._stream_trace.dump(_st_path)
         import time as _trace_time2
         _gw._trace_events.append((_trace_time2.monotonic(), 'trace', 'on' if _gw._trace_recording else 'off'))

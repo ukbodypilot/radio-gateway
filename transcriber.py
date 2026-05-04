@@ -849,6 +849,7 @@ class RadioTranscriber:
                             'text': text.strip(),
                             'freq': freq_tag,
                             'source': _tag_id or item.get('source_id', ''),
+                            'bus': item.get('source_id', ''),
                             'time_str': time.strftime('%H:%M:%S',
                                                       time.localtime(item['start_time'])),
                         }

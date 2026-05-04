@@ -62,11 +62,22 @@ function setTraceBtn(id, active) {
   btn.classList.toggle('rb-active', active);
 }
 
+var _traceBusy = {audio:false, watchdog:false};
 function toggleTrace(type) {
+  if (_traceBusy[type]) return;
+  _traceBusy[type] = true;
+  var btnId = type==='audio'?'btn-trace':'btn-watchdog';
+  var btn = document.getElementById(btnId);
+  btn.disabled = true;
   fetch('/tracecmd', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'type='+type})
     .then(function(r){ return r.json(); })
     .then(function(d) {
-      setTraceBtn(type==='audio'?'btn-trace':'btn-watchdog', !!d.active);
+      setTraceBtn(btnId, !!d.active);
+    })
+    .catch(function(){})
+    .then(function() {
+      // Hold the lock briefly so a stale click/double-click won't immediately re-toggle.
+      setTimeout(function(){ _traceBusy[type] = false; btn.disabled = false; }, 800);
     });
 }
 

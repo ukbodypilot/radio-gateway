@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     source   TEXT    NOT NULL DEFAULT '',
     freq     TEXT    NOT NULL DEFAULT '',
     text     TEXT    NOT NULL,
-    duration REAL    NOT NULL DEFAULT 0.0
+    duration REAL    NOT NULL DEFAULT 0.0,
+    bus      TEXT    NOT NULL DEFAULT ''
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts
     USING fts5(text, content=transcriptions, content_rowid=id);
@@ -77,6 +78,15 @@ class TranscriptionLog:
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.executescript('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;')
         self._conn.executescript(_SCHEMA)
+        # Migration: add `bus` column on databases predating it. Old rows get '',
+        # which the UI treats as "no recording linkage available."
+        try:
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(transcriptions)")}
+            if 'bus' not in cols:
+                self._conn.execute(
+                    "ALTER TABLE transcriptions ADD COLUMN bus TEXT NOT NULL DEFAULT ''")
+        except sqlite3.Error as e:
+            print(f'  [TxLog] migration error: {e}')
         self._conn.commit()
 
     def _find_claude(self):
@@ -102,13 +112,14 @@ class TranscriptionLog:
         with self._lock:
             try:
                 self._conn.execute(
-                    'INSERT INTO transcriptions(ts, source, freq, text, duration) '
-                    'VALUES (?,?,?,?,?)',
+                    'INSERT INTO transcriptions(ts, source, freq, text, duration, bus) '
+                    'VALUES (?,?,?,?,?,?)',
                     (result['timestamp'],
                      result.get('source', ''),
                      result.get('freq', ''),
                      result['text'],
-                     result.get('duration', 0.0))
+                     result.get('duration', 0.0),
+                     result.get('bus', ''))
                 )
                 self._conn.commit()
             except Exception as e:
@@ -145,13 +156,43 @@ class TranscriptionLog:
         with self._lock:
             try:
                 cur = self._conn.execute(
-                    'SELECT id, ts, source, freq, text, duration '
+                    'SELECT id, ts, source, freq, text, duration, bus '
                     'FROM transcriptions ORDER BY ts DESC LIMIT ? OFFSET ?',
                     (limit, offset))
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
             except Exception:
                 return []
+
+    def search_keyword(self, query: str, limit: int = 200) -> dict:
+        """FTS5 keyword search. Returns {'results': [...], 'error': str|None}.
+
+        FTS5 syntax is passed straight through, so callers get OR / AND / NEAR /
+        phrase-quoting for free. An empty query returns no rows (rather than the
+        full table) — keep get_recent() for that case.
+        """
+        if not self._conn:
+            return {'results': [], 'error': 'log unavailable'}
+        q = (query or '').strip()
+        if not q:
+            return {'results': [], 'error': None}
+        limit = max(1, min(int(limit), 500))
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    'SELECT id, ts, source, freq, text, duration, bus '
+                    'FROM transcriptions WHERE id IN ('
+                    '  SELECT rowid FROM transcriptions_fts WHERE text MATCH ?'
+                    ') ORDER BY ts DESC LIMIT ?',
+                    (q, limit))
+                cols = [d[0] for d in cur.description]
+                rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+                return {'results': rows, 'error': None}
+            except sqlite3.Error as e:
+                # FTS5 throws on malformed match expressions (unbalanced quotes,
+                # bare punctuation, etc.). Surface as a user-facing error rather
+                # than 500ing the request.
+                return {'results': [], 'error': f'invalid query: {e}'}
 
     def _get_context(self) -> dict:
         with self._lock:

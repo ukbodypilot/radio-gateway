@@ -184,6 +184,137 @@ def handle_transcription_log(handler, parent):
         pass
 
 
+def handle_loopaudio(handler, parent):
+    """GET /loopaudio?bus=<id>&ts=<epoch>
+
+    Resolves (bus, ts) to a segment file via LoopRecorder.find_segment and
+    streams the MP3 with HTTP Range support so <audio> can seek. The seek
+    offset is also returned in the X-Loop-Offset header (seconds, float).
+    Responds 404 (JSON) when no segment exists — typical when the recording
+    rotated out of retention or the bus has loop disabled.
+    """
+    import urllib.parse as _up
+    qs = _up.urlparse(handler.path).query
+    params = _up.parse_qs(qs)
+    bus = params.get('bus', [''])[0]
+    try:
+        ts = float(params.get('ts', ['0'])[0])
+    except ValueError:
+        ts = 0.0
+
+    lr = getattr(parent.gateway, 'loop_recorder', None) if parent.gateway else None
+    seg = lr.find_segment(bus, ts) if (lr and bus and ts > 0) else None
+    if not seg:
+        try:
+            handler.send_response(404)
+            handler.send_header('Content-Type', 'application/json')
+            handler.end_headers()
+            handler.wfile.write(json_mod.dumps(
+                {'error': 'no recording', 'bus': bus, 'ts': ts}).encode('utf-8'))
+        except BrokenPipeError:
+            pass
+        return
+
+    path = seg['path']
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        try:
+            handler.send_response(404); handler.end_headers()
+        except BrokenPipeError:
+            pass
+        return
+
+    # Parse Range header. Only the simple `bytes=N-M`, `bytes=N-`, `bytes=-M`
+    # forms — multi-range isn't worth supporting for plain audio playback.
+    rng = handler.headers.get('Range', '')
+    start, end = 0, size - 1
+    is_range = False
+    if rng.startswith('bytes='):
+        try:
+            spec = rng[6:].split(',', 1)[0].strip()
+            a, b = spec.split('-', 1)
+            if a == '' and b:
+                # suffix range: last N bytes
+                n = int(b)
+                start = max(0, size - n)
+                end = size - 1
+            else:
+                start = int(a) if a else 0
+                end = int(b) if b else size - 1
+            if start < 0 or end >= size or start > end:
+                raise ValueError('out of range')
+            is_range = True
+        except (ValueError, IndexError):
+            try:
+                handler.send_response(416)
+                handler.send_header('Content-Range', f'bytes */{size}')
+                handler.end_headers()
+            except BrokenPipeError:
+                pass
+            return
+
+    length = end - start + 1
+    try:
+        handler.send_response(206 if is_range else 200)
+        handler.send_header('Content-Type', 'audio/mpeg')
+        handler.send_header('Accept-Ranges', 'bytes')
+        handler.send_header('Content-Length', str(length))
+        if is_range:
+            handler.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        handler.send_header('X-Loop-Offset', f'{seg["offset_s"]:.3f}')
+        handler.send_header('X-Loop-Start-Epoch', f'{seg["start_epoch"]:.3f}')
+        handler.send_header('X-Loop-Duration', f'{seg["duration"]:.1f}')
+        handler.send_header('Cache-Control', 'no-cache')
+        handler.end_headers()
+        with open(path, 'rb') as f:
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                remaining -= len(chunk)
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+
+
+def handle_transcript_search(handler, parent):
+    """GET /transcript_search?q=<fts-expr>&limit=200"""
+    import urllib.parse as _up
+    qs = _up.urlparse(handler.path).query
+    params = _up.parse_qs(qs)
+    query = params.get('q', [''])[0]
+    try:
+        limit = max(1, min(500, int(params.get('limit', ['200'])[0])))
+    except ValueError:
+        limit = 200
+    tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
+    out = tl.search_keyword(query, limit=limit) if tl else {
+        'results': [], 'error': 'log unavailable'}
+    # Enrich each hit with loop-recorder availability so the front-end can
+    # grey/enable the play button without a separate HEAD probe per row.
+    lr = getattr(parent.gateway, 'loop_recorder', None) if parent.gateway else None
+    if lr:
+        for row in out.get('results') or []:
+            seg = lr.find_segment(row.get('bus', ''), row.get('ts', 0))
+            if seg:
+                row['loop_available'] = True
+                row['loop_offset'] = seg['offset_s']
+                row['loop_start_epoch'] = seg['start_epoch']
+            else:
+                row['loop_available'] = False
+    try:
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        handler.send_header('Cache-Control', 'no-cache')
+        handler.end_headers()
+        handler.wfile.write(json_mod.dumps(out).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
 def handle_transcriptions(handler, parent):
     """GET /transcriptions"""
     # Return recent transcriptions as JSON

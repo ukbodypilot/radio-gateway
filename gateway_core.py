@@ -2269,6 +2269,12 @@ class RadioGateway:
                 if _lbid:
                     _tr_mixer_got = self.bus_manager._bus_levels.get(_lbid, 0) > 0
                     _tr_mixer_state = getattr(self, '_last_mixer_trace_state', {})
+                # Populate trace source breakdown from active busses (non-zero level).
+                # Under v2.0 bus routing the legacy per-source mixer list is empty,
+                # so without this the trace shows SOURCE BREAKDOWN: (none) 100%.
+                _bm_levels = getattr(self.bus_manager, '_bus_levels', None)
+                if _bm_levels:
+                    active_sources = [bid for bid, lvl in _bm_levels.items() if lvl > 0]
 
                 # SDR rebroadcast: route SDR-only mix to AIOC radio TX
                 if self.sdr_rebroadcast and not ptt_required and sdr_only_audio is not None:
@@ -2881,6 +2887,7 @@ class RadioGateway:
             'd75_muted': getattr(_d75_link, 'muted', False) if _d75_link else False,
             'kv4p_enabled': bool(self.kv4p_plugin),
             'kv4p_level': self.kv4p_plugin.audio_level if self.kv4p_plugin else 0,
+            'kv4p_tx_level': getattr(self.kv4p_plugin, 'tx_audio_level', 0) if self.kv4p_plugin else 0,
             'kv4p_muted': getattr(self, 'kv4p_muted', False),
             'gps_enabled': bool(self.gps_manager),
             'repeater_db_enabled': bool(self.repeater_manager),
@@ -3283,7 +3290,7 @@ class RadioGateway:
         watchdog_trace_loop(self)
     def _dump_audio_trace(self):
         from audio_trace import dump_audio_trace
-        dump_audio_trace(self)
+        return dump_audio_trace(self)
     def cleanup(self):
         """Clean up resources"""
         # Restore terminal settings (keyboard thread is daemon and may not

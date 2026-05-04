@@ -158,13 +158,18 @@ def watchdog_trace_loop(gw):
             pass
 
 
-def dump_audio_trace(gw):
-    """Write audio trace to tools/audio_trace.txt on shutdown."""
+def dump_audio_trace(gw, out_path=None):
+    """Write audio trace to tools/audio_trace_<ts>.txt (timestamped so consecutive
+    dumps don't overwrite each other). Returns the path written, or None if no
+    trace data was captured. Pass `out_path` to override the auto-named target."""
     from gateway_core import __version__
     trace = list(gw._audio_trace)
     if not trace:
-        return
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'audio_trace.txt')
+        return None
+    if out_path is None:
+        ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'tools', f'audio_trace_{ts}.txt')
     try:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
     except Exception:
@@ -921,3 +926,4 @@ def dump_audio_trace(gw):
         f.write(f"End of trace ({len(trace)} main ticks, {len(spk) if spk else 0} speaker iterations)\n")
 
     print(f"\n  Audio trace written to: {out_path}")
+    return out_path
