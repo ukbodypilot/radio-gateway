@@ -106,7 +106,7 @@
   }
   #shell-bars .sb {
     display: flex; gap: var(--s-2); align-items: center;
-    white-space: nowrap; min-width: 220px;
+    white-space: nowrap;
   }
   #shell-bars .sb-label {
     color: var(--t-text-dim);
@@ -152,18 +152,30 @@
   #shell-bars .sb-track::after  { left: 95%; background: var(--t-err);  opacity: 0.45; }
   #shell-bars .sb-bar {
     display: block;
-    height: calc(100% - 10px);
-    margin: 5px 0;
+    position: absolute;
+    left: 0; width: 0%;
+    height: calc(50% - 3px);
     transition: width 0.08s linear;
     box-shadow: 0 0 6px currentColor;
-    position: relative; z-index: 1;
+    z-index: 1;
   }
   /* Semantic bar colors: in=receive, out=transmit, loc=local output.
-     color = background so the currentColor glow matches the fill hue. */
-  .sb-in  { background: var(--t-ok);     color: var(--t-ok); }
-  .sb-out { background: var(--t-err);    color: var(--t-err); }
-  .sb-loc { background: var(--t-accent); color: var(--t-accent); }
-  .sb-ducked-bar { background: var(--t-warn); color: var(--t-warn); }
+     color = background so the currentColor glow matches the fill hue.
+     Position mirrors dual-lane layout: RX types sit in top half, TX/output in bottom half. */
+  .sb-in         { background: var(--t-ok);     color: var(--t-ok);     top: 2px; }
+  .sb-out        { background: var(--t-err);    color: var(--t-err);    bottom: 2px; }
+  .sb-loc        { background: var(--t-accent); color: var(--t-accent); bottom: 2px; }
+  .sb-ducked-bar { background: var(--t-warn);   color: var(--t-warn);   top: 2px; }
+  /* Dual-lane bars: RX (green) top half, TX (red) bottom half — no pct label. */
+  .sb-bar-rx, .sb-bar-tx {
+    position: absolute; left: 0; width: 0%;
+    height: calc(50% - 3px);
+    box-shadow: 0 0 5px currentColor;
+    z-index: 1;
+    transition: width 0.08s linear;
+  }
+  .sb-bar-rx { top: 2px;    background: var(--t-ok);  color: var(--t-ok); }
+  .sb-bar-tx { bottom: 2px; background: var(--t-err); color: var(--t-err); }
 
   #shell-bars .mute-ind {
     color: var(--t-err);
@@ -602,7 +614,7 @@ function stopMic() {
 // Semantic bar classes: sb-in (receive), sb-out (transmit), sb-loc (local output).
 // Ducked overrides to amber — identity comes from the text label, not hue.
 // In-place DOM updates (keyed by label) let the CSS width transition actually run.
-var _sbRows = {};   // key -> {row, pct, bar, mute}
+var _sbRows = {};   // key -> {row, bar, mute}
 var _sbSmooth = {}; // key -> smoothed level (exponential)
 var _sbOrder = [];  // last-seen order of keys so re-orderings are reflected
 function _sbEnsure(key, label) {
@@ -610,10 +622,9 @@ function _sbEnsure(key, label) {
   if (r) return r;
   var row = document.createElement('div'); row.className = 'sb';
   row.innerHTML = '<span class="sb-label">'+label+'</span>'
-                + '<span class="sb-pct">0%</span>'
                 + '<span class="sb-track"><span class="sb-bar"></span></span>'
                 + '<span class="mute-ind" style="display:none">M</span>';
-  r = { row: row, pct: row.children[1], bar: row.children[2].firstChild, mute: row.children[3] };
+  r = { row: row, bar: row.children[1].firstChild, mute: row.children[2] };
   _sbRows[key] = r;
   return r;
 }
@@ -627,8 +638,6 @@ function _sbUpdate(key, label, raw, cls, ducked, muted) {
   var s = prev + (v - prev) * a;
   _sbSmooth[key] = s;
   var w = Math.round(s);
-  r.pct.textContent = w + '%';
-  r.pct.className = ducked ? 'sb-pct ducked' : 'sb-pct';
   r.bar.className = 'sb-bar ' + (ducked ? 'sb-ducked-bar' : cls);
   // Asymmetric CSS transition: snappy rise (80ms), smooth fall (250ms) so
   // the bar slides continuously between polls rather than stepping.
@@ -637,33 +646,54 @@ function _sbUpdate(key, label, raw, cls, ducked, muted) {
   r.mute.style.display = muted ? '' : 'none';
   _sbOrder.push(key);
 }
+// Dual-lane bars: one track split into green RX (top) + red TX (bottom), no pct label.
+var _sbDualRows = {};   // key -> {row, rxBar, txBar, mute}
+var _sbDualSmooth = {}; // key -> {rx, tx}
+function _sbEnsureDual(key, label) {
+  var r = _sbDualRows[key];
+  if (r) return r;
+  var row = document.createElement('div'); row.className = 'sb';
+  row.innerHTML = '<span class="sb-label">'+label+'</span>'
+                + '<span class="sb-track" style="position:relative">'
+                +   '<span class="sb-bar-rx"></span><span class="sb-bar-tx"></span>'
+                + '</span>'
+                + '<span class="mute-ind" style="display:none">M</span>';
+  r = { row: row, rxBar: row.children[1].children[0], txBar: row.children[1].children[1], mute: row.children[2] };
+  _sbDualRows[key] = r;
+  return r;
+}
+function _sbUpdateDual(key, label, rxRaw, txRaw, muted) {
+  var r = _sbEnsureDual(key, label);
+  var sm = _sbDualSmooth[key] || {rx:0, tx:0};
+  var rx = Math.min(Math.max(rxRaw||0,0),100);
+  var tx = Math.min(Math.max(txRaw||0,0),100);
+  sm.rx = sm.rx + (rx - sm.rx) * (rx > sm.rx ? 1.0 : 0.15);
+  sm.tx = sm.tx + (tx - sm.tx) * (tx > sm.tx ? 1.0 : 0.15);
+  _sbDualSmooth[key] = sm;
+  r.rxBar.style.transition = 'width '+(rx > sm.rx ? '0.08s' : '0.25s')+' linear';
+  r.txBar.style.transition = 'width '+(tx > sm.tx ? '0.08s' : '0.25s')+' linear';
+  r.rxBar.style.width = Math.round(sm.rx)+'%';
+  r.txBar.style.width = Math.round(sm.tx)+'%';
+  r.mute.style.display = muted ? '' : 'none';
+  _sbOrder.push(key);
+}
 createPoller('/status', 250, function(s) {
     _sbOrder = [];
-    _sbUpdate('rx', 'RX', s.radio_rx, 'sb-in', false, false);
-    // Unified TX meter: max level across every TX-capable path so the user sees
-    // activity regardless of which radio (AIOC / D75 / link endpoint) is keyed.
-    // Legacy bar showed only AIOC; D75 TX (and other link endpoints) silently registered nothing.
-    var _txLvl = s.radio_tx || 0;
-    if (s.kv4p_tx_level > _txLvl) _txLvl = s.kv4p_tx_level;
-    if (s.link_endpoints) {
-      for (var _i = 0; _i < s.link_endpoints.length; _i++) {
-        var _le = s.link_endpoints[_i];
-        if (_le && _le.tx_level > _txLvl) _txLvl = _le.tx_level;
-      }
-    }
-    _sbUpdate('tx', 'TX', _txLvl, 'sb-out', false, false);
-    if(s.kv4p_enabled) _sbUpdate('kv4p', 'KV4P', s.kv4p_level, 'sb-in', false, s.kv4p_muted);
-    if(s.d75_enabled)  _sbUpdate('d75',  'D75',  s.d75_level,  'sb-in', false, s.d75_muted);
+    // Dual-lane bars: each full-duplex radio gets its own RX+TX compound bar.
+    _sbUpdateDual('aioc', 'AIOC', s.radio_rx, s.radio_tx, false);
+    if(s.kv4p_enabled) _sbUpdateDual('kv4p', 'KV4P', s.kv4p_level, s.kv4p_tx_level, s.kv4p_muted);
+    // Single-lane bars for RX-only sources and output sinks.
     if(s.sdr1_enabled) _sbUpdate('sdr1', 'SDR1', s.sdr1_level, 'sb-in', s.sdr1_ducked, false);
     if(s.sdr2_enabled) _sbUpdate('sdr2', 'SDR2', s.sdr2_level, 'sb-in', s.sdr2_ducked, false);
     if(s.remote_enabled) _sbUpdate('remote', s.remote_mode, s.remote_level, 'sb-in', s.remote_mode==='CL'&&s.cl_ducked, false);
     if(s.announce_enabled) _sbUpdate('an', 'AN', s.an_level, 'sb-out', false, false);
     if(s.speaker_enabled)  _sbUpdate('sp', 'SP', s.speaker_level, 'sb-loc', false, false);
     if(s.monitor_enabled)  _sbUpdate('mon', 'MON', s.monitor_level, 'sb-in', false, false);
+    // Link endpoints (incl. D75) get dual bars — tx_level is already in the status payload.
     if(s.link_enabled && s.link_endpoints) {
       for(var i=0; i<s.link_endpoints.length; i++) {
         var le = s.link_endpoints[i];
-        _sbUpdate('link_'+le.name, le.name, le.level, 'sb-in', false, le.rx_muted);
+        _sbUpdateDual('link_'+le.name, le.name, le.level, le.tx_level, le.rx_muted);
       }
     }
     // Reconcile: remove rows no longer present, append/reorder the rest.
@@ -672,8 +702,11 @@ createPoller('/status', 250, function(s) {
     Object.keys(_sbRows).forEach(function(k){
       if (!want[k]) { _sbRows[k].row.remove(); delete _sbRows[k]; delete _sbSmooth[k]; }
     });
+    Object.keys(_sbDualRows).forEach(function(k){
+      if (!want[k]) { _sbDualRows[k].row.remove(); delete _sbDualRows[k]; delete _sbDualSmooth[k]; }
+    });
     for (var i=0; i<_sbOrder.length; i++) {
-      var row = _sbRows[_sbOrder[i]].row;
+      var row = (_sbRows[_sbOrder[i]] || _sbDualRows[_sbOrder[i]]).row;
       if (container.children[i] !== row) container.insertBefore(row, container.children[i] || null);
     }
   });

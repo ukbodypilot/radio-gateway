@@ -569,8 +569,9 @@ function updateStatus() {
           var le=eps[i]; if(i>0) lh+='<div class="ep-sep"></div>';
           var est=le.endpoint_status||{};
           var _model=est.model||le.plugin||'';
-          lh+='<div class="ep-head"><span class="st-val white">'+le.name+'</span><span class="ep-tool"><span class="st-val cyan">'+_model+'</span><button class="rb rb-sm" onclick="restartEndpoint(\''+le.name+'\')"><span class="icon icon-refresh"></span></button></span></div>';
+          lh+='<div class="ep-head"><span class="st-val white">'+le.name+'</span><span class="ep-tool"><button class="rb rb-sm" onclick="restartEndpoint(\''+le.name+'\')"><span class="icon icon-refresh"></span></button></span></div>';
           var eh='';
+          if(_model) eh+='<div class="st-item"><span class="st-label">Type:</span><span class="st-val white">'+_model+'</span></div>';
           eh+='<div class="st-item"><span class="st-label">Link:</span><span class="st-val '+(le.via_tunnel?'yellow':'green')+'">'+(le.via_tunnel?'CF':'LAN')+'</span></div>';
           if(le.addr){var _ip=le.addr.split(':')[0];eh+='<div class="st-item"><span class="st-label">IP:</span><span class="st-val white">'+_ip+'</span></div>';}
           if(le.ping_ms>=0) eh+='<div class="st-item"><span class="st-label">Ping:</span><span class="st-val white">'+le.ping_ms+'ms</span></div>';

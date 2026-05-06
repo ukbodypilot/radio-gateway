@@ -1493,40 +1493,25 @@ class RadioGateway:
                         src.setup_audio()
                         src.enabled = True
 
-                        # Compute device identity from REGISTER payload
-                        _raw_id = _sanitize_ep_name(name)
+                        # Compute device identity from REGISTER payload.
+                        # Plugin type is the stable routing ID — it survives endpoint
+                        # renames. Fall back to sanitized name only for generic 'audio'
+                        # plugins or when the plugin type would collide with a builtin.
                         _plugin = info.get('plugin', 'audio')
                         src.plugin_type = _plugin
 
-                        # Backward compat: if routing config references plugin type
-                        # as a source ID and no other endpoint claimed it, use the
-                        # plugin type so existing configs keep working
-                        # Reserved IDs for built-in devices — never alias to these
                         _builtin_ids = {'aioc', 'kv4p', 'sdr', 'sdr1', 'sdr2',
                                         'playback', 'loop_playback', 'webmic',
                                         'announce', 'monitor', 'mumble_rx',
                                         'remote_audio', 'echolink'}
                         _existing_ids = {getattr(s, 'source_id', None)
                                          for s in self.link_endpoints.values()}
-                        if (_raw_id != _plugin and _plugin not in _existing_ids
-                                and _plugin not in _builtin_ids):
-                            try:
-                                import json as _rc_json
-                                _rc_path = os.path.join(
-                                    os.path.dirname(os.path.abspath(__file__)),
-                                    'routing_config.json')
-                                with open(_rc_path) as _f:
-                                    _rc = _rc_json.load(_f)
-                                _rc_ids = {c['from'] for c in _rc.get('connections', [])
-                                           if c['type'] == 'source-bus'}
-                                _rc_ids.update(
-                                    c['to'].replace('_tx', '')
-                                    for c in _rc.get('connections', [])
-                                    if c['type'] == 'bus-sink')
-                                if _plugin in _rc_ids:
-                                    _raw_id = _plugin
-                            except Exception:
-                                pass
+                        if (_plugin and _plugin != 'audio'
+                                and _plugin not in _builtin_ids
+                                and _plugin not in _existing_ids):
+                            _raw_id = _plugin
+                        else:
+                            _raw_id = _sanitize_ep_name(name)
 
                         src.source_id = _raw_id
                         src.sink_id = _raw_id + '_tx'
