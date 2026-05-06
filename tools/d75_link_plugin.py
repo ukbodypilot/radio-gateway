@@ -81,8 +81,8 @@ class D75Plugin(RadioPlugin):
         "frequency": True,
         "ctcss": True,
         "power": False,
-        "rx_gain": False,
-        "tx_gain": False,
+        "rx_gain": True,
+        "tx_gain": True,
         "smeter": False,
         "status": True,
     }
@@ -97,12 +97,21 @@ class D75Plugin(RadioPlugin):
         self._chunk_size = 4800  # 50ms at 48kHz 16-bit mono
         self._status_dirty = False  # set by execute() to trigger immediate status report
         self.status_interval = 2.0  # D75 has live telemetry (S-meter, freq push)
+        self._rx_gain_db = 0.0
+        self._tx_gain_db = 0.0
+        self._settings_file = os.path.expanduser('~/.config/link-endpoint/d75-settings.json')
 
     def setup(self, config):
         """Connect to D75 via Bluetooth."""
         mac = config.get('device', '') or self._mac
         if mac and ':' in mac:
             self._mac = mac
+
+        saved = self._load_settings()
+        if saved:
+            self._rx_gain_db = max(-20, min(20, float(saved.get('rx_gain_db', 0))))
+            self._tx_gain_db = max(-20, min(20, float(saved.get('tx_gain_db', 0))))
+            print(f"[D75] Restored gains RX={self._rx_gain_db:+.1f} dB TX={self._tx_gain_db:+.1f} dB")
 
         print(f"[D75] Connecting to {self._mac}...")
 
@@ -142,6 +151,8 @@ class D75Plugin(RadioPlugin):
         """Get one chunk of 48kHz PCM audio from D75 RX."""
         try:
             data = self._rx_queue.get_nowait()
+            if self._rx_gain_db != 0.0:
+                data = self._apply_volume(data, self._db_to_linear(self._rx_gain_db))
             return data, False
         except _queue_mod.Empty:
             return None, False
@@ -156,6 +167,8 @@ class D75Plugin(RadioPlugin):
                 with self._audio._tx_buf_lock:
                     if len(self._audio._tx_buf) > 1600:
                         return  # drop — buffer full
+            if self._tx_gain_db != 0.0:
+                pcm = self._apply_volume(pcm, self._db_to_linear(self._tx_gain_db))
             data_8k = _downsample(pcm)
             self._audio.write_sco(data_8k)
         except Exception as e:
@@ -236,6 +249,18 @@ class D75Plugin(RadioPlugin):
             # Scan memory channels and return parsed list
             return self._memscan()
 
+        elif action == 'rx_gain':
+            self._rx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
+            self._save_settings()
+            print(f"[D75] RX gain set to {self._rx_gain_db:+.1f} dB")
+            return {"ok": True, "rx_gain_db": self._rx_gain_db}
+
+        elif action == 'tx_gain':
+            self._tx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
+            self._save_settings()
+            print(f"[D75] TX gain set to {self._tx_gain_db:+.1f} dB")
+            return {"ok": True, "tx_gain_db": self._tx_gain_db}
+
         elif action == 'status':
             return {"ok": True, "status": self.get_status()}
 
@@ -264,9 +289,49 @@ class D75Plugin(RadioPlugin):
         # RX/TX active state
         status["input_active"] = bool(self._audio and self._audio.connected)
         status["output_active"] = bool(self._audio and self._audio.connected)
+        # Gain settings
+        status["rx_gain_db"] = self._rx_gain_db
+        status["tx_gain_db"] = self._tx_gain_db
         # System stats (CPU, RAM, disk, temp)
         status.update(self._get_system_stats())
         return status
+
+    @staticmethod
+    def _apply_volume(pcm, gain):
+        """Apply a gain multiplier to 16-bit signed LE PCM audio."""
+        import struct as _struct
+        n = len(pcm) // 2
+        samples = _struct.unpack(f'<{n}h', pcm)
+        out = []
+        for s in samples:
+            v = int(s * gain)
+            if v > 32767: v = 32767
+            elif v < -32768: v = -32768
+            out.append(v)
+        return _struct.pack(f'<{n}h', *out)
+
+    @staticmethod
+    def _db_to_linear(db):
+        return 10 ** (db / 20.0)
+
+    def _save_settings(self):
+        try:
+            import json
+            d = os.path.dirname(self._settings_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self._settings_file, 'w') as f:
+                json.dump({"rx_gain_db": self._rx_gain_db, "tx_gain_db": self._tx_gain_db}, f)
+        except Exception as e:
+            print(f"[D75] Failed to save settings: {e}")
+
+    def _load_settings(self):
+        try:
+            import json
+            with open(self._settings_file, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, ValueError, OSError):
+            return None
 
     @classmethod
     def _get_system_stats(cls):
