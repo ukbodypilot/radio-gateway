@@ -160,6 +160,17 @@ class _EndpointConn:
             pass
 
 
+def _set_keepalive(sock, idle=10, interval=5, count=3):
+    """Enable TCP keepalives so dead connections are detected in ~idle+interval*count seconds."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, count)
+    except (AttributeError, OSError):
+        pass  # not supported on all platforms
+
+
 class GatewayLinkServer:
     """Listens for multiple simultaneous endpoint connections and exchanges
     framed messages.
@@ -400,6 +411,7 @@ class GatewayLinkServer:
                 return
 
             sock.settimeout(120.0)  # must exceed DEAD_PEER_TIMEOUT (90s) so dead-peer check fires first
+            _set_keepalive(sock)
 
             info = json.loads(payload)
             ep_name = info.get('name', '')
@@ -955,6 +967,7 @@ class GatewayLinkClient:
                     sock.connect((self._host, self._port))
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     sock.settimeout(120.0)  # generous timeout for lossy WiFi
+                    _set_keepalive(sock)
                     print(f"  [{_ts()}] [Link] Connected to {self._host}:{self._port} (TCP) [#{_connect_count}]")
                     with self._send_lock:
                         self._sock = sock
