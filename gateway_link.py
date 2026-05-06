@@ -1257,6 +1257,77 @@ class RadioPlugin:
         """Return current hardware state as a dict."""
         return {"plugin": self.name}
 
+    @classmethod
+    def _get_system_stats(cls):
+        """Return CPU, RAM, disk, temp, and network interface stats."""
+        stats = {}
+        try:
+            with open('/proc/stat') as f:
+                parts = f.readline().split()
+            vals = [int(v) for v in parts[1:]]
+            total = sum(vals)
+            idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
+            if cls._prev_cpu:
+                dt = total - cls._prev_cpu[0]
+                di = idle - cls._prev_cpu[1]
+                stats['cpu_pct'] = round((1.0 - di / dt) * 100, 1) if dt > 0 else 0.0
+            else:
+                stats['cpu_pct'] = 0.0
+            cls._prev_cpu = (total, idle)
+        except Exception:
+            pass
+        try:
+            mem = {}
+            with open('/proc/meminfo') as f:
+                for line in f:
+                    parts = line.split()
+                    if parts[0] in ('MemTotal:', 'MemAvailable:'):
+                        mem[parts[0]] = int(parts[1]) * 1024
+            total = mem.get('MemTotal:', 0)
+            avail = mem.get('MemAvailable:', 0)
+            if total > 0:
+                stats['ram_pct'] = round((1 - avail / total) * 100, 1)
+                stats['ram_mb'] = round((total - avail) / 1048576)
+                stats['ram_total_mb'] = round(total / 1048576)
+        except Exception:
+            pass
+        try:
+            st = os.statvfs('/')
+            total = st.f_blocks * st.f_frsize
+            free = st.f_bavail * st.f_frsize
+            if total > 0:
+                stats['disk_pct'] = round((1 - free / total) * 100, 1)
+                stats['disk_free_gb'] = round(free / 1073741824, 1)
+        except Exception:
+            pass
+        try:
+            with open('/sys/class/thermal/thermal_zone0/temp') as f:
+                stats['cpu_temp_c'] = round(int(f.read().strip()) / 1000, 1)
+        except Exception:
+            pass
+        try:
+            with open('/proc/net/route') as f:
+                for line in f:
+                    fields = line.strip().split()
+                    if fields[1] == '00000000':
+                        stats['net_iface'] = fields[0]
+                        break
+            if 'net_iface' in stats:
+                import subprocess
+                out = subprocess.check_output(
+                    ['ip', '-4', 'addr', 'show', stats['net_iface']],
+                    stderr=subprocess.DEVNULL, timeout=2).decode()
+                for line in out.split('\n'):
+                    line = line.strip()
+                    if line.startswith('inet '):
+                        stats['net_ip'] = line.split()[1].split('/')[0]
+                        break
+        except Exception:
+            pass
+        return stats
+
+    _prev_cpu = None
+
 
 # ---------------------------------------------------------------------------
 # AudioPlugin — generic sound-card plugin
@@ -1615,83 +1686,6 @@ class AudioPlugin(RadioPlugin):
         # System stats — CPU, RAM, disk for endpoint machine health
         status.update(self._get_system_stats())
         return status
-
-    _prev_cpu = None  # class-level: (total, idle) from last sample
-
-    @classmethod
-    def _get_system_stats(cls):
-        """Get CPU, RAM, and disk usage for the endpoint machine."""
-        stats = {}
-        try:
-            # CPU usage from /proc/stat delta (all cores combined)
-            with open('/proc/stat') as f:
-                parts = f.readline().split()  # cpu user nice system idle iowait irq softirq ...
-            vals = [int(v) for v in parts[1:]]
-            total = sum(vals)
-            idle = vals[3] + (vals[4] if len(vals) > 4 else 0)  # idle + iowait
-            if cls._prev_cpu:
-                dt = total - cls._prev_cpu[0]
-                di = idle - cls._prev_cpu[1]
-                stats['cpu_pct'] = round((1.0 - di / dt) * 100, 1) if dt > 0 else 0.0
-            else:
-                stats['cpu_pct'] = 0.0
-            cls._prev_cpu = (total, idle)
-        except Exception:
-            pass
-        try:
-            # RAM usage from /proc/meminfo
-            mem = {}
-            with open('/proc/meminfo') as f:
-                for line in f:
-                    parts = line.split()
-                    if parts[0] in ('MemTotal:', 'MemAvailable:'):
-                        mem[parts[0]] = int(parts[1]) * 1024  # kB to bytes
-            total = mem.get('MemTotal:', 0)
-            avail = mem.get('MemAvailable:', 0)
-            if total > 0:
-                stats['ram_pct'] = round((1 - avail / total) * 100, 1)
-                stats['ram_mb'] = round((total - avail) / 1048576)
-                stats['ram_total_mb'] = round(total / 1048576)
-        except Exception:
-            pass
-        try:
-            # Disk usage for root filesystem
-            st = os.statvfs('/')
-            total = st.f_blocks * st.f_frsize
-            free = st.f_bavail * st.f_frsize
-            if total > 0:
-                stats['disk_pct'] = round((1 - free / total) * 100, 1)
-                stats['disk_free_gb'] = round(free / 1073741824, 1)
-        except Exception:
-            pass
-        try:
-            # CPU temperature (RPi / thermal zone)
-            with open('/sys/class/thermal/thermal_zone0/temp') as f:
-                stats['cpu_temp_c'] = round(int(f.read().strip()) / 1000, 1)
-        except Exception:
-            pass
-        try:
-            # Network interface — find default route interface and its IP
-            with open('/proc/net/route') as f:
-                for line in f:
-                    fields = line.strip().split()
-                    if fields[1] == '00000000':  # default route
-                        iface = fields[0]
-                        stats['net_iface'] = iface
-                        break
-            if 'net_iface' in stats:
-                import subprocess
-                out = subprocess.check_output(
-                    ['ip', '-4', 'addr', 'show', stats['net_iface']],
-                    stderr=subprocess.DEVNULL, timeout=2).decode()
-                for line in out.split('\n'):
-                    line = line.strip()
-                    if line.startswith('inet '):
-                        stats['net_ip'] = line.split()[1].split('/')[0]
-                        break
-        except Exception:
-            pass
-        return stats
 
     @staticmethod
     def _apply_volume(pcm, gain):
