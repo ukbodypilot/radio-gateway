@@ -589,12 +589,12 @@ function updateStatus() {
           if(est.gate_enabled!==undefined) eh+='<div class="st-item"><span class="st-label">Gate:</span><span class="st-val '+(est.gate_open?'green':'yellow')+'">'+(est.gate_open?'Open':'Closed')+'</span></div>';
           if(est.rx_gain_db!==undefined) eh+='<div class="st-item"><span class="st-label">RX:</span><span class="st-val white">'+(est.rx_gain_db>=0?'+':'')+est.rx_gain_db.toFixed(1)+' dB</span></div>';
           if(est.tx_gain_db!==undefined) eh+='<div class="st-item"><span class="st-label">TX:</span><span class="st-val white">'+(est.tx_gain_db>=0?'+':'')+est.tx_gain_db.toFixed(1)+' dB</span></div>';
-          if(est.band&&Array.isArray(est.band)){for(var b=0;b<est.band.length;b++){var bd=est.band[b];if(bd.frequency)eh+='<div class="st-item"><span class="st-label">Band '+(b===0?'A':'B')+':</span><span class="st-val cyan">'+bd.frequency+' MHz</span></div>';}}
           if(est.cpu_pct!==undefined) eh+='<div class="st-item"><span class="st-label">CPU:</span><span class="st-val '+(est.cpu_pct>80?'red':est.cpu_pct>50?'yellow':'green')+'">'+est.cpu_pct+'%</span></div>';
           if(est.cpu_temp_c!==undefined) eh+='<div class="st-item"><span class="st-label">Temp:</span><span class="st-val '+(est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')+'">'+est.cpu_temp_c+'°</span></div>';
           if(est.ram_pct!==undefined) eh+='<div class="st-item"><span class="st-label">RAM:</span><span class="st-val '+(est.ram_pct>85?'red':est.ram_pct>70?'yellow':'green')+'">'+est.ram_pct+'%</span></div>';
           if(est.disk_pct!==undefined) eh+='<div class="st-item"><span class="st-label">Disk:</span><span class="st-val '+(est.disk_pct>90?'red':est.disk_pct>75?'yellow':'green')+'">'+est.disk_pct+'%</span></div>';
           if(est.uptime!==undefined){var _ut=est.uptime;eh+='<div class="st-item"><span class="st-label">Up:</span><span class="st-val white">'+Math.floor(_ut/3600)+'h'+Math.floor((_ut%3600)/60)+'m</span></div>';}
+          if(est.band&&Array.isArray(est.band)){var _isDual=(est.dual_band===0),_ab=(est.active_band||0);for(var b=0;b<est.band.length;b++){if(!_isDual&&b!==_ab)continue;var bd=est.band[b];if(bd.frequency)eh+='<div class="st-item"><span class="st-label">Band '+(b===0?'A':'B')+':</span><span class="st-val '+(_isDual&&b===_ab?'yellow':'cyan')+'">'+bd.frequency+' MHz</span></div>';}}
           if(eh) lh+='<div class="st-row">'+eh+'</div>';
         }
         document.getElementById('link-info').innerHTML=lh;
