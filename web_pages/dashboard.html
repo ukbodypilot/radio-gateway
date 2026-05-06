@@ -590,14 +590,12 @@ function updateStatus() {
           if(est.rx_gain_db!==undefined) eh+='<div class="st-item"><span class="st-label">RX:</span><span class="st-val white">'+(est.rx_gain_db>=0?'+':'')+est.rx_gain_db.toFixed(1)+' dB</span></div>';
           if(est.tx_gain_db!==undefined) eh+='<div class="st-item"><span class="st-label">TX:</span><span class="st-val white">'+(est.tx_gain_db>=0?'+':'')+est.tx_gain_db.toFixed(1)+' dB</span></div>';
           if(est.band&&Array.isArray(est.band)){for(var b=0;b<est.band.length;b++){var bd=est.band[b];if(bd.frequency)eh+='<div class="st-item"><span class="st-label">Band '+(b===0?'A':'B')+':</span><span class="st-val cyan">'+bd.frequency+' MHz</span></div>';}}
+          if(est.cpu_pct!==undefined) eh+='<div class="st-item"><span class="st-label">CPU:</span><span class="st-val '+(est.cpu_pct>80?'red':est.cpu_pct>50?'yellow':'green')+'">'+est.cpu_pct+'%</span></div>';
+          if(est.cpu_temp_c!==undefined) eh+='<div class="st-item"><span class="st-label">Temp:</span><span class="st-val '+(est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')+'">'+est.cpu_temp_c+'°</span></div>';
+          if(est.ram_pct!==undefined) eh+='<div class="st-item"><span class="st-label">RAM:</span><span class="st-val '+(est.ram_pct>85?'red':est.ram_pct>70?'yellow':'green')+'">'+est.ram_pct+'%</span></div>';
+          if(est.disk_pct!==undefined) eh+='<div class="st-item"><span class="st-label">Disk:</span><span class="st-val '+(est.disk_pct>90?'red':est.disk_pct>75?'yellow':'green')+'">'+est.disk_pct+'%</span></div>';
+          if(est.uptime!==undefined){var _ut=est.uptime;eh+='<div class="st-item"><span class="st-label">Up:</span><span class="st-val white">'+Math.floor(_ut/3600)+'h'+Math.floor((_ut%3600)/60)+'m</span></div>';}
           if(eh) lh+='<div class="st-row">'+eh+'</div>';
-          var sh='';
-          if(est.cpu_pct!==undefined) sh+='<div class="st-item"><span class="st-label">CPU:</span><span class="st-val '+(est.cpu_pct>80?'red':est.cpu_pct>50?'yellow':'green')+'">'+est.cpu_pct+'%</span></div>';
-          if(est.cpu_temp_c!==undefined) sh+='<div class="st-item"><span class="st-label">Temp:</span><span class="st-val '+(est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')+'">'+est.cpu_temp_c+'°</span></div>';
-          if(est.ram_pct!==undefined) sh+='<div class="st-item"><span class="st-label">RAM:</span><span class="st-val '+(est.ram_pct>85?'red':est.ram_pct>70?'yellow':'green')+'">'+est.ram_pct+'%</span></div>';
-          if(est.disk_pct!==undefined) sh+='<div class="st-item"><span class="st-label">Disk:</span><span class="st-val '+(est.disk_pct>90?'red':est.disk_pct>75?'yellow':'green')+'">'+est.disk_pct+'%</span></div>';
-          if(est.uptime!==undefined){var _ut=est.uptime;sh+='<div class="st-item"><span class="st-label">Up:</span><span class="st-val white">'+Math.floor(_ut/3600)+'h'+Math.floor((_ut%3600)/60)+'m</span></div>';}
-          if(sh) lh+='<div class="st-row">'+sh+'</div>';
         }
         document.getElementById('link-info').innerHTML=lh;
         document.getElementById('link-status-badge').innerHTML='<span class="green">'+eps.length+' connected</span>';
