@@ -1049,7 +1049,16 @@ class GatewayLinkClient:
                     hb_stop.wait(5.0)
                     if hb_stop.is_set():
                         break
-                    self.send_status({"type": "heartbeat"})
+                    if _hb_count % 6 == 0:
+                        # Every 30s send a full status update (net_iface, cpu, etc.)
+                        try:
+                            _full = self.get_status()
+                            _full['type'] = 'heartbeat'
+                            self.send_status(_full)
+                        except Exception:
+                            self.send_status({"type": "heartbeat"})
+                    else:
+                        self.send_status({"type": "heartbeat"})
                     _hb_count += 1
                     # If on WS tunnel, periodically check if LAN is available
                     if (connected_via == 'ws' and self._host and self._port
