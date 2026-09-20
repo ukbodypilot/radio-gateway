@@ -764,10 +764,11 @@ class FilePlaybackSource(AudioSource):
         
         return status_str
         
-    def queue_file(self, filepath):
+    def queue_file(self, filepath, target_rms_db=None):
         """Pre-decode an audio file and add it to the playback queue.
         Decoding happens here (caller's thread) so the audio transmit loop
-        never blocks on file I/O."""
+        never blocks on file I/O. `target_rms_db` forwards to _decode_file
+        for loudness-normalising synthesised TTS — see its docstring."""
         import os
 
         # Check if file exists
@@ -786,7 +787,7 @@ class FilePlaybackSource(AudioSource):
                 return False
 
         # Pre-decode the file now (runs in keyboard/callback thread, not audio thread)
-        pcm_bytes = self._decode_file(full_path)
+        pcm_bytes = self._decode_file(full_path, target_rms_db=target_rms_db)
         if pcm_bytes is None:
             return False
 
@@ -898,7 +899,7 @@ class FilePlaybackSource(AudioSource):
         if self.gateway.config.VERBOSE_LOGGING:
             print("\n[Playback] ✓ Stopped playback and cleared queue")
     
-    def _decode_file(self, filepath, normalize=True):
+    def _decode_file(self, filepath, normalize=True, target_rms_db=None):
         """Decode an audio file to PCM bytes.  Returns bytes on success, None on failure.
         Called from queue_file() in the caller's thread so the audio loop never blocks.
 
@@ -907,7 +908,16 @@ class FilePlaybackSource(AudioSource):
         offline, and peak-normalising them re-levels each one by its own crest
         factor, which silently undoes that match (measured: a 0.0 LU set came out
         2.2 dB apart). The caller states the intent rather than this function
-        guessing from the filename."""
+        guessing from the filename.
+
+        `target_rms_db`, when set, adds a loudness (RMS) pass on top of the peak
+        pass: measured across kokoro/edge/gtts, all three sit well under −1 dBFS
+        peak with a 16-18 dB crest factor, so peak-normalising alone still leaves
+        RMS around −17 to −19 dBFS — quiet enough that operators reach for a gain
+        slider downstream instead. This pass boosts to the target through the same
+        tanh soft-clip as the mixer's sink gain, so unlike a hard-clamped gain
+        stage it saturates gracefully rather than flat-topping. One-way like the
+        peak pass — never attenuates."""
         try:
             import os
 
@@ -992,6 +1002,19 @@ class FilePlaybackSource(AudioSource):
                     audio_data = np.clip(_f32, -32768, 32767).astype(np.int16)
                     if self.gateway.config.VERBOSE_LOGGING:
                         print(f"  Normalised peak {_peak} → 29204 (+{20*np.log10(_ratio):.1f} dB)")
+
+                if target_rms_db is not None:
+                    _rms = pcm_rms(audio_data.tobytes())
+                    if _rms > 0:
+                        _cur_db = 20 * np.log10(_rms / 32768.0)
+                        _need_db = target_rms_db - _cur_db
+                        if _need_db > 0.5:
+                            _gain = 10 ** (_need_db / 20.0)
+                            audio_data = np.frombuffer(
+                                apply_gain(audio_data.tobytes(), _gain), dtype=np.int16)
+                            if self.gateway.config.VERBOSE_LOGGING:
+                                print(f"  Loudness-normalised RMS {_cur_db:.1f} → "
+                                      f"{target_rms_db:.1f} dBFS (+{_need_db:.1f} dB, tanh)")
 
                 duration_sec = len(audio_data) / self.config.AUDIO_RATE
                 if self.gateway.config.VERBOSE_LOGGING:

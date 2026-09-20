@@ -126,7 +126,7 @@ def synthesize(gw, text, voice=''):
             lang, tld, _ = gw.TTS_VOICES[n]
             engine(text, lang=lang, tld=tld, slow=False).save(path)
 
-        pcm = ps._decode_file(path)
+        pcm = ps._decode_file(path, target_rms_db=getattr(gw.config, 'TTS_TARGET_RMS_DB', None))
         if not pcm:
             return None, 'could not decode the synthesised audio'
         return pcm, ''

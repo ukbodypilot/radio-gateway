@@ -275,7 +275,8 @@ def speak_text(gw, text, voice=None):
                 print(f"[TTS] Boosting volume from {original_volume}x to {gw.config.TTS_VOLUME}x for TTS playback")
                 print(f"[TTS] Volume will auto-reset to 1.0x when TTS finishes")
 
-            result = gw.playback_source.queue_file(temp_path)
+            _target_rms = getattr(gw.config, 'TTS_TARGET_RMS_DB', None)
+            result = gw.playback_source.queue_file(temp_path, target_rms_db=_target_rms)
 
             if gw.config.VERBOSE_LOGGING:
                 print(f"[TTS] Queue result: {result}")

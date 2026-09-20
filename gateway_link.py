@@ -57,10 +57,17 @@ def pcm_db(data):
 
 
 def pcm_apply_gain(pcm, gain):
-    """Multiply int16 PCM by *gain*, clamped to the int16 range.
+    """Multiply int16 PCM by *gain*.
 
-    Truncates toward zero on both paths (numpy's float->int16 cast and the
-    stdlib int() behave the same), so output is byte-identical either way.
+    This is the endpoint's own RX/TX gain knob (AudioPlugin._write_output
+    et al) — the last gain stage before hardware playback, downstream of
+    any gateway-side mixer gain, so nothing upstream can rescue a clipped
+    sample here. Above unity, soft-clips via tanh (same shape as the
+    gateway mixer's audio_util.apply_gain — this module ships standalone
+    to remote endpoints so can't import that directly) so pushing the
+    slider past 0 dB rolls peaks off smoothly instead of flat-topping into
+    square-wave harmonics. At or below unity it's a plain multiply, same
+    as before.
     """
     if gain == 1.0:
         return pcm
@@ -68,12 +75,19 @@ def pcm_apply_gain(pcm, gain):
     if n == 0:
         return pcm
     if _np is not None:
-        arr = _np.frombuffer(pcm, dtype='<i2', count=n).astype(_np.float32) * gain
-        return _np.clip(arr, -32768, 32767).astype('<i2').tobytes()
+        arr = _np.frombuffer(pcm, dtype='<i2', count=n).astype(_np.float32)
+        if gain > 1.0:
+            out = _np.tanh(arr / 32768.0 * gain) * 32768.0
+        else:
+            out = arr * gain
+        return _np.clip(out, -32768, 32767).astype('<i2').tobytes()
     samples = struct.unpack(f'<{n}h', pcm)
     gained = []
     for s in samples:
-        v = int(s * gain)
+        if gain > 1.0:
+            v = int(math.tanh(s / 32768.0 * gain) * 32768.0)
+        else:
+            v = int(s * gain)
         if v > 32767:
             v = 32767
         elif v < -32768:
