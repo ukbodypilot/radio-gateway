@@ -129,7 +129,7 @@ def speak_text(gw, text, voice=None):
                 if gw.config.VERBOSE_LOGGING:
                     print(f"[TTS] ✓ Audio file saved")
             except Exception as tts_error:
-                print(f"[TTS] ✗ Edge TTS generation failed: {tts_error}")
+                print(f"[TTS] ✗ Edge TTS generation failed (voice {voice_num}: {edge_voice}, {len(text)} chars): {tts_error}")
                 try:
                     os.unlink(temp_path)
                 except Exception:
