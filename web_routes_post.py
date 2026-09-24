@@ -30,7 +30,6 @@ from web_routes_system  import (
     handle_restartgateway, handle_telegramcmd, handle_open_tmux,
     handle_exit, handle_config_form, handle_gdrive_publish_tunnel,
 )
-from web_routes_voice  import handle_voice_send, handle_voice_session
 from web_routes_manager  import (
     handle_manager_toggle, handle_manager_config,
     handle_manager_save, handle_manager_run, handle_manager_ack,

@@ -1,8 +1,8 @@
 # MCP Server
 
-`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **173 tools** across status, radios, routing, transcription, packet, fleet management, and more.
+`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **170 tools** across status, radios, routing, transcription, packet, fleet management, and more.
 
-The Telegram bot, the Fleet Manager's hourly/daily Claude runs, and the voice control page all use these tools internally — the gateway itself reads its own state through this surface.
+The Telegram bot, the Fleet Manager's hourly/daily Claude runs all use these tools internally — the gateway itself reads its own state through this surface.
 
 ## How it's used
 
@@ -12,7 +12,7 @@ In Claude Code or any MCP client, the server is registered in `.mcp.json` at the
 { "enableAllProjectMcpServers": true }
 ```
 
-The MCP server is launched as a child process of the MCP client (Claude Code, voice page, Telegram bot). Restarting the radio-gateway service does **not** restart the MCP server — they're separate processes connected by HTTP.
+The MCP server is launched as a child process of the MCP client (Claude Code, Telegram bot). Restarting the radio-gateway service does **not** restart the MCP server — they're separate processes connected by HTTP.
 
 ## Tool categories
 
@@ -42,7 +42,7 @@ The MCP server is launched as a child process of the MCP client (Claude Code, vo
 | **ADS-B / Pi-hole** | `adsb_status`, `pihole_status` |
 | **Metrics** | `metrics_list`, `metrics_query` |
 | **Recordings** | `recordings_list`, `recordings_delete` |
-| **Cloud / GDrive** | `gdrive_status`, `gdrive_list_files`, `gdrive_publish_tunnel`, `cloudflare_status`, `tunnel_link_url`, `voice_view`, `voice_status`, `voice_send` |
+| **Cloud / GDrive** | `gdrive_status`, `gdrive_list_files`, `gdrive_publish_tunnel`, `cloudflare_status`, `tunnel_link_url` |
 | **System / Diag** | `gateway_logs`, `gateway_restart`, `gateway_key`, `audio_trace_toggle`, `stream_trace_toggle`, `stream_trace_read`, `trace_status`, `bus_sink_stats`, `bus_source_stats`, `config_read`, `process_control`, `processes_status`, `usbip_status` |
 | **Telegram** | `telegram_reply`, `telegram_status`, `telegram_logs` |
 | **TH-9800 CAT recovery** | `cat_serial_status`, `cat_reconnect`, `cat_serial_connect`, `cat_setup_radio` |
@@ -55,7 +55,7 @@ The gateway exposes its HTTP API on `:8080` (web UI port). The MCP server is a t
 2. Translates each to an HTTP call against `localhost:8080`
 3. Returns the parsed JSON response back over stdio
 
-This split lets multiple MCP clients (Claude Code, Telegram bot, voice page, Fleet Manager) all talk to the same gateway concurrently — they each spawn their own `gateway_mcp.py` instance but all converge on the single HTTP API.
+This split lets multiple MCP clients (Claude Code, Telegram bot, Fleet Manager) all talk to the same gateway concurrently — they each spawn their own `gateway_mcp.py` instance but all converge on the single HTTP API.
 
 ## Adding a tool
 
@@ -101,7 +101,7 @@ The tool's docstring becomes what the LLM reads when deciding whether to call it
   - `link.py` — gateway link endpoints
   - `loop_recorder.py` — loop recorder + playback
   - `transcription.py` — transcription engine + log search
-  - `cloud.py` — Cloudflare, GDrive, voice relay
+  - `cloud.py` — Cloudflare, GDrive
   - `repeaters.py` — repeater directory + GPS
   - `metrics.py` — Prometheus metrics
 - [`.mcp.json`](../.mcp.json) — Claude Code registration

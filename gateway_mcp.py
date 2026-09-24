@@ -29,7 +29,7 @@ The implementation lives in the ``mcp_server`` package:
   - ``mcp_server/tools/transcription.py`` — transcription status, config, log query
   - ``mcp_server/tools/link.py``          — link endpoint status + commands
   - ``mcp_server/tools/loop_recorder.py`` — loop recorder status, retention, export, archive
-  - ``mcp_server/tools/cloud.py``         — Cloudflare tunnel / Google Drive / voice relay
+  - ``mcp_server/tools/cloud.py``         — Cloudflare tunnel / Google Drive
   - ``mcp_server/tools/repeaters.py``     — repeater lookup, tune, refresh
   - ``mcp_server/tools/metrics.py``       — Prometheus metric discovery + PromQL queries
   - ``mcp_server/tools/usrp.py``          — AllStar USRP node connect/disconnect/stats (usrp + usrp2)

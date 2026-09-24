@@ -312,7 +312,7 @@ def _inject(session: str, message: str, suffix: str) -> bool:
             f.write(full_prompt)
         # Use tmux load-buffer then paste-buffer for reliable injection
         # Clear anything already typed in the prompt box, so a half-typed
-        # line (e.g. from /voice) can't get our prompt appended to it and
+        # line (e.g. typed in the tmux session) can't get our prompt appended to it and
         # submitted as one garbled request. C-u is verified to clear real
         # input; when the box is empty it is a no-op, and it does NOT disturb
         # the greyed-out placeholder showing the previous prompt.

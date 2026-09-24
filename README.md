@@ -1,6 +1,6 @@
 # Radio Gateway
 
-A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, Telegram bot control, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 173 MCP tools for AI control.
+A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, Telegram bot control, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 170 MCP tools for AI control.
 
 **Radios:** TH-9800 (AIOC USBIP), TH-D75 (Bluetooth RFCOMM + SCO), KV4P (USB serial), FTM-150 (remote AIOC endpoint), IC-7100 (CI-V remote endpoint), RSPduo dual SDR receiver.
 
@@ -36,7 +36,7 @@ More screenshots in `docs/screenshots/`.
 
 **Streaming** — Broadcastify / Icecast via internal ffmpeg pipe (no DarkIce, no ALSA loopback). Auto-reconnect. Cloudflare quick-tunnel for free public HTTPS with URL discovery via Google Drive.
 
-**Control surfaces** — 20+ page web UI, 173 MCP tools, Telegram bot (text routes through Claude Code + MCP; voice notes stream straight to radio TX), Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
+**Control surfaces** — 20+ page web UI, 170 MCP tools, Telegram bot (text routes through Claude Code + MCP; voice notes stream straight to radio TX), Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
 
 **Fleet Manager** — document-driven autonomous monitoring. Plain-English tasks in `hourly.md` / `daily.md` are handed to a Claude session on a schedule; structured reports come back with Telegram escalation on `elevated` severity. Auto-discovers nodes that change DHCP IP. See [docs/fleet-manager.md](docs/fleet-manager.md).
 
@@ -103,7 +103,7 @@ radio-gateway/
 ├── radio_gateway.py            entry point
 ├── gateway_core.py             RadioGateway class, main loop
 ├── gateway_setup.py            phased initialization helpers
-├── gateway_mcp.py              MCP server entry point (173 tools, stdio)
+├── gateway_mcp.py              MCP server entry point (170 tools, stdio)
 ├── web_server.py               HTTP/WS server + config UI
 ├── config_format.py            gateway_config.txt value read/write rules (quoting, inline comments)
 ├── web_routes_*.py             per-domain POST handlers (transcribe / radio / audio / text / system / voice / manager / automation)

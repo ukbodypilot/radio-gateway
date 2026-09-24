@@ -1345,41 +1345,6 @@ def handle_routing_levels(handler, parent):
         pass
 
 
-def handle_voice_status(handler, parent):
-    """GET /voice/status"""
-    import subprocess
-    _vr_target = os.environ.get('TMUX_TARGET', 'claude-voice')
-    result = subprocess.run(
-        ['tmux', 'has-session', '-t', _vr_target],
-        capture_output=True,
-    )
-    alive = result.returncode == 0
-    handler.send_response(200)
-    handler.send_header('Content-Type', 'application/json')
-    handler.end_headers()
-    handler.wfile.write(json_mod.dumps({'tmux_target': _vr_target, 'session_alive': alive}).encode())
-
-
-def handle_voice_view(handler, parent):
-    """GET /voice/view"""
-    import subprocess
-    tmux_target = os.environ.get('TMUX_TARGET', 'claude-voice')
-    result = subprocess.run(
-        ['tmux', 'capture-pane', '-t', tmux_target, '-p'],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        handler.send_response(503)
-        handler.send_header('Content-Type', 'application/json')
-        handler.end_headers()
-        handler.wfile.write(json_mod.dumps({'error': f"tmux session '{tmux_target}' not found"}).encode())
-    else:
-        handler.send_response(200)
-        handler.send_header('Content-Type', 'application/json')
-        handler.end_headers()
-        handler.wfile.write(json_mod.dumps({'content': result.stdout}).encode())
-
-
 # ── Packet Radio GET handlers ──
 
 # Packet/Winlink handlers moved to web_routes_packet.py

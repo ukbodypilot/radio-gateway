@@ -4,6 +4,20 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Removed — the /voice page and its MCP tools
+
+The talk-to-Claude tmux relay is gone: `web_routes_voice.py`, `voice.html`, the
+`/voice`, `/voice/status`, `/voice/view`, `/voice/send` and `/voice/session`
+routes, the Voice nav link, the "Voice Tmux"/"LAN Voice" lines in the status
+emails, and the `voice_view` / `voice_status` / `voice_send` MCP tools
+(173 -> 170). Claude Code's own remote control replaces it.
+
+It ran in its own `claude-voice` tmux session and shared nothing with the
+Telegram bot, which uses `claude-gateway`; that session, its service, and
+`/open_tmux` are unchanged. `/voice/send` typed into a
+`--dangerously-skip-permissions` session, so on an install with a blank
+`WEB_CONFIG_PASSWORD` it was an unauthenticated command path. That is closed.
+
 ### Added — 18 MCP tools (155 -> 173), audit of the tool layer
 
 The BGM beds, per-bed announcer, hot-swappable TTS engine and soundboard
