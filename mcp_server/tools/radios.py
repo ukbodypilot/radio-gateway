@@ -724,3 +724,72 @@ def d75_memscan() -> str:
 
 
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Tools — TH-9800 CAT link recovery
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def cat_serial_status() -> str:
+    """
+    Ask the TH-9800 CAT bridge whether its serial link to the radio is up.
+    Read-only. Use this to diagnose before cat_reconnect / cat_serial_connect.
+    """
+    result = _post('/catcmd', {'cmd': 'SERIAL_STATUS'}, timeout=10)
+    if not result.get('ok'):
+        return f"Failed: {result.get('error') or 'CAT client not connected (try cat_reconnect)'}"
+    return f"CAT serial: {result.get('status', 'unknown')}"
+
+
+@mcp.tool()
+def cat_reconnect() -> str:
+    """
+    Reconnect the gateway's TCP link to the TH-9800 CAT bridge, creating a
+    fresh client if there is none. Does not touch the radio itself.
+    """
+    result = _post('/catcmd', {'cmd': 'CAT_RECONNECT'}, timeout=20)
+    if result.get('ok'):
+        return "CAT link reconnected"
+    return f"Failed: {result.get('error') or 'reconnect returned false'}"
+
+
+@mcp.tool()
+def cat_serial_connect() -> str:
+    """
+    Open the CAT bridge's serial connection to the TH-9800 (runs its ~4 s
+    startup sequence and raises RTS). Use when cat_serial_status shows the
+    serial side is down but the CAT link itself is up.
+    """
+    result = _post('/catcmd', {'cmd': 'SERIAL_CONNECT'}, timeout=25)
+    if result.get('ok'):
+        return f"CAT serial connected: {result.get('status', '')}"
+    return f"Failed: {result.get('status') or result.get('error') or 'CAT client not connected'}"
+
+
+@mcp.tool()
+def cat_setup_radio() -> str:
+    """
+    Push the configured channels, volume and power settings to the TH-9800
+    (the gateway's setup_radio routine). This CHANGES the radio's settings to
+    match gateway_config.txt, so any manual front-panel changes are overwritten.
+    It does not key the transmitter.
+    """
+    result = _post('/catcmd', {'cmd': 'SETUP_RADIO'}, timeout=90)
+    if result.get('ok'):
+        return "Radio setup from config complete"
+    return f"Failed: {result.get('status') or result.get('error') or 'CAT client not connected'}"
+
+
+# ---------------------------------------------------------------------------
+# Tools — Telegram bot logs
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def telegram_logs() -> str:
+    """
+    Last 50 lines of the telegram-bot service journal. Read-only; start, stop
+    and restart are intentionally not exposed (the bot hosts the Claude session).
+    """
+    result = _post('/telegramcmd', {'cmd': 'logs'}, timeout=15)
+    if not result.get('ok'):
+        return f"Failed: {result.get('error', 'unknown')}"
+    return result.get('logs') or "No logs available"

@@ -29,6 +29,7 @@ def _register_all_tools():
         metrics,
         usrp,
         manager,
+        audio_beds,
     )
 
 

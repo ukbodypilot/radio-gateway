@@ -172,3 +172,34 @@ def transcription_log_recent(limit: int = 20) -> str:
         dur = f"{r['duration']:.1f}s" if r.get('duration') else '?'
         lines.append(f"[{t}] {src} {freq} ({dur}) {r.get('text', '')}")
     return '\n'.join(lines)
+
+
+@mcp.tool()
+def transcription_search(query: str, limit: int = 50) -> str:
+    """
+    Full-text search of the transcription log (SQLite FTS5). Newest first.
+    FTS5 syntax works: quoted phrases, AND / OR / NOT, NEAR(a b), prefix*.
+    Each hit says whether the loop recorder still holds the audio.
+
+    Args:
+        query: Search expression, e.g. 'weather AND warning' or '"net control"'.
+        limit: Max hits, 1-500 (default 50).
+    """
+    import time
+    import urllib.parse
+    if not query.strip():
+        return "Error: query is empty (use transcription_log_recent for the latest)"
+    limit = max(1, min(500, int(limit)))
+    data = _get('/transcript_search?' + urllib.parse.urlencode({'q': query, 'limit': limit}))
+    if data.get('error'):
+        return f"Search failed: {data['error']}"
+    rows = data.get('results') or []
+    if not rows:
+        return f"No matches for {query!r}"
+    lines = [f"{len(rows)} match(es) for {query!r}:"]
+    for r in rows:
+        when = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r.get('ts', 0)))
+        audio = 'audio' if r.get('loop_available') else 'no audio'
+        lines.append(f"  [{when}] {r.get('bus') or r.get('source', '?')} "
+                     f"({r.get('duration', 0):.0f}s, {audio}): {r.get('text', '')}")
+    return '\n'.join(lines)

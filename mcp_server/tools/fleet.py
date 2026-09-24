@@ -787,3 +787,17 @@ def pihole_status() -> str:
 
 if __name__ == '__main__':
     mcp.run(transport='stdio')
+
+
+@mcp.tool()
+def trace_status() -> str:
+    """
+    Report whether the audio trace and the watchdog trace are currently
+    recording. Read this before audio_trace_toggle / stream_trace_toggle,
+    which only flip the state and cannot tell you which way it went.
+    """
+    data = _get('/tracestatus')
+    if 'audio_trace' not in data:
+        return f"Error: {data.get('error', 'unexpected response')}"
+    return (f"audio trace   : {'RECORDING' if data['audio_trace'] else 'off'}\n"
+            f"watchdog trace: {'RECORDING' if data.get('watchdog_trace') else 'off'}")

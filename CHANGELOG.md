@@ -4,6 +4,30 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Added — 18 MCP tools (155 -> 173), audit of the tool layer
+
+The BGM beds, per-bed announcer, hot-swappable TTS engine and soundboard
+category picker (v4.3/v4.4) had web routes but no MCP tools: `bgm_status`,
+`bgm_control`, `announcer_status`, `announcer_configure`, `tts_engine_status`,
+`tts_engine_set`, `soundboard_categories`, `soundboard_set_categories`,
+`soundboard_refresh` (new `mcp_server/tools/audio_beds.py`).
+
+A dashboard-vs-tools sweep then added the panel actions that had no tool:
+`gps_set_position`, `gps_switch_mode`, `transcription_search` (FTS5),
+`trace_status` (the trace toggles were blind), `telegram_logs`, and TH-9800 CAT
+link recovery — `cat_serial_status`, `cat_reconnect`, `cat_serial_connect`,
+`cat_setup_radio`. `cat_setup_radio` overwrites the radio's settings from
+config; none of these key the transmitter. Still gated, not built: TH-9800
+`MIC_PTT`, KV4P test tone, IC-7100 power/mic gain (TX-side), and Telegram
+start/stop/restart.
+
+Deliberately NOT exposed: restart/reboot/exit routes, `/config` (carries
+secrets), websocket and file-serving routes, worker self-registration.
+
+### Removed
+- `broadcastify_control` (start/stop/restart) went away with the dead DarkIce
+  control surface in `e18435b`; docs and tool counts still listed it.
+
 ### Fixed — a config value could not contain a `#`
 
 `PACKET_APRS_SYMBOL` could not be set from `gateway_config.txt` at all. Its

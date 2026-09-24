@@ -153,3 +153,55 @@ def repeater_refresh() -> str:
     return (f"Repeater DB: {st.get('loaded', 0)} repeaters loaded from "
             f"{', '.join(st.get('states', []))}. "
             f"Data auto-refreshes every 24h or when position moves >10km.")
+
+
+@mcp.tool()
+def gps_set_position(
+    lat: float = None,
+    lon: float = None,
+    alt: float = None,
+    speed: float = None,
+    heading: float = None,
+) -> str:
+    """
+    Set the simulated GPS position. Only works while the GPS manager is in
+    'simulate' mode (see gps_switch_mode); a real serial GPS is read-only.
+    Moving more than ~10 km triggers a nearby-repeater database refresh.
+
+    Args:
+        lat:     Latitude, -90..90.
+        lon:     Longitude, -180..180.
+        alt:     Altitude in metres.
+        speed:   Speed (units as the GPS status reports).
+        heading: Heading in degrees.
+    """
+    if lat is None and lon is None and alt is None and speed is None and heading is None:
+        return "Error: nothing to set — pass at least one field"
+    if lat is not None and not -90 <= lat <= 90:
+        return "Error: lat must be between -90 and 90"
+    if lon is not None and not -180 <= lon <= 180:
+        return "Error: lon must be between -180 and 180"
+    result = _post('/gpscmd', {'cmd': 'set_position', 'lat': lat, 'lon': lon,
+                               'alt': alt, 'speed': speed, 'heading': heading})
+    if result.get('ok'):
+        return "Simulated position updated"
+    return f"Failed: {result.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def gps_switch_mode(mode: str) -> str:
+    """
+    Switch the GPS source between a simulated position and the real serial
+    receiver, without a gateway restart. The GPS thread is stopped and
+    restarted, and the current fix is cleared until the new source reports.
+
+    Args:
+        mode: 'simulate' or 'serial'.
+    """
+    mode = mode.lower().strip()
+    if mode not in ('simulate', 'serial'):
+        return "Error: mode must be 'simulate' or 'serial'"
+    result = _post('/gpscmd', {'cmd': 'switch_mode', 'mode': mode})
+    if result.get('ok'):
+        return result.get('message', f"Switched to {mode}")
+    return f"Failed: {result.get('message') or result.get('error', 'unknown')}"
