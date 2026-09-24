@@ -757,7 +757,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                 '/manager': 'manager.html',
                 '/grafana': 'grafana.html',
                 '/endpoints/logs': 'endpoint_logs.html',
-                '/test': 'test.html',
             }
 
             # ── Route tables ─────────────────────────────────────────────

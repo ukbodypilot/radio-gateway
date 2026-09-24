@@ -4,6 +4,12 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Removed — the GUI Test Bench page
+
+`/test` (`web_pages/test.html`, 300 lines) and its System-menu link. It was a
+standalone widget playground that called no endpoints and that nothing else
+linked to.
+
 ### Removed — the Telegram bot; alerts are emailed instead
 
 The bot and everything behind it are gone: `tools/telegram_bot.py`, the
