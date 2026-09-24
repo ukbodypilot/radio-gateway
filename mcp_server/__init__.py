@@ -2,7 +2,7 @@
 
 Split out of the single 3175-LOC gateway_mcp.py so each tool category lives
 in its own module. The legacy entry point ``gateway_mcp.py`` still exists and
-just runs ``mcp_server.run()`` — `.mcp.json` and existing tmux scripts keep
+just runs ``mcp_server.run()`` — `.mcp.json` and any external scripts keep
 working unchanged.
 
 Tool registration relies on import side effects: importing each tool module

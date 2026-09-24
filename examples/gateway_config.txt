@@ -15,9 +15,8 @@
 # RECOMMENDED (enables key optional features):
 #   [stream_output] STREAM_*       — Broadcastify feed key (sign up at
 #                                    broadcastify.com)
-#   [telegram] TELEGRAM_BOT_TOKEN  — create a bot via @BotFather on Telegram
-#   [telegram] TELEGRAM_CHAT_ID    — get via the "getUpdates" curl once
-#                                    you've messaged your bot
+#   [email] EMAIL_ADDRESS,         — stream / Fleet Manager / keyword alerts are
+#           EMAIL_APP_PASSWORD       emailed; use a Gmail app password
 #   [gdrive] GDRIVE_*              — OAuth in the web UI at /gdrive
 #
 # RADIO HARDWARE (enable only what you own):
@@ -704,7 +703,6 @@ TRANSCRIBE_SPLIT_THRESHOLD_SECS = 10.0
 
 # Where finished transcripts go
 TRANSCRIBE_FORWARD_MUMBLE = true
-TRANSCRIBE_FORWARD_TELEGRAM = false
 TRANSCRIBE_LOG_RESULTS = false
 
 # Remote workers, comma-separated, e.g.
@@ -874,51 +872,14 @@ SMART_ANNOUNCE_3_MODE = auto
 SMART_ANNOUNCE_3_TOP_TEXT =
 SMART_ANNOUNCE_3_TAIL_TEXT =
 
-[telegram]
-# Telegram bot — control the gateway from your phone via plain English.
-# Messages are injected into a running Claude Code tmux session which
-# uses the gateway MCP tools to act on requests.  Claude replies via
-# the telegram_reply() MCP tool, which sends the response back to Telegram.
-#
-# Setup:
-#   1. Create a bot via @BotFather on Telegram → copy the token below
-#   2. Send /start to the bot from your phone → check the update for your chat ID
-#   3. Set ENABLE_TELEGRAM = true
-#   4. Start Claude Code in a tmux session:
-#        tmux new-session -s claude-gateway
-#        claude
-#   5. Enable the systemd service:
-#        sudo cp tools/telegram-bot.service /etc/systemd/system/
-#        sudo systemctl enable --now telegram-bot
-
-ENABLE_TELEGRAM = false
-
-TELEGRAM_BOT_TOKEN =          # Token from @BotFather (e.g. 123456:ABC-DEF...)
-TELEGRAM_CHAT_ID =             # Your Telegram chat ID (integer) — only this ID is accepted
-TELEGRAM_TMUX_SESSION = claude-gateway   # Name of the tmux session running Claude Code
-
-# --- Fleet Manager runs -------------------------------------------------
-# How each scheduled check is executed.
-#   oneshot  (default) spawn a fresh `claude -p` per run. Context cannot
-#            accumulate across runs. The old tmux session lived for days and
-#            re-sent + re-cached its whole history on every hourly check --
-#            one 9-day session burned ~68M tokens to move ~174k of content.
-#   tmux     legacy: paste into the long-lived TELEGRAM_TMUX_SESSION and poll
-#            for the report. Fallback only.
-MANAGER_RUN_MODE = oneshot
+[manager]
+# Fleet Manager: scheduled Claude health checks. Each run spawns a fresh
+# `claude -p`, so context cannot accumulate across runs (a long-lived session
+# once burned ~68M tokens to move ~174k of content). Alerts are emailed --
+# see [email].
 MANAGER_CLAUDE_BIN =                     # blank -> $CLAUDE_BIN, then ~/.local/bin/claude
 MANAGER_CLAUDE_MODEL = sonnet
 MANAGER_MAX_TURNS = 40                   # hard cap on tool-use turns per run
-TELEGRAM_STATUS_FILE = /tmp/tg_status.json
-TELEGRAM_PROMPT_SUFFIX = When you have completely finished, call telegram_reply() with your response. Do not call it until done.
-
-
-
-# Seconds to wait for the Claude session to call telegram_reply() before the
-# bot falls back to sending the last assistant block from the pane itself.
-# A missed call is otherwise invisible — "answered but never sent" and "never
-# ran" both look like silence. 0 disables the watchdog.
-TELEGRAM_REPLY_TIMEOUT = 300
 
 [web]
 # Web-based configuration editor and live dashboard
@@ -959,6 +920,8 @@ EMAIL_ADDRESS =                    # Gmail address (sender)
 EMAIL_APP_PASSWORD =               # Gmail app password (16 chars, not your regular password)
 EMAIL_RECIPIENT =                  # Recipient (blank = same as sender)
 EMAIL_ON_STARTUP = true            # Send status email when gateway starts
+ENABLE_ALERT_ENGINE = false          # In-process Prometheus threshold alerts, emailed. Off by default: raw
+                                    # thresholds page on quiet-but-healthy states; the Fleet Manager judges them.
 
 
 

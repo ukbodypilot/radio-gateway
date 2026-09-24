@@ -284,7 +284,6 @@
       <a href="/gps" target="content" onclick="setActive(this)" id="nav-gps">GPS</a>
       <a href="/repeaters" target="content" onclick="setActive(this)" id="nav-repeaters">Repeaters</a>
       <a href="/aircraft" target="content" onclick="setActive(this)" id="nav-adsb">ADS-B</a>
-      <a href="/telegram" target="content" onclick="setActive(this)" id="nav-telegram">Telegram</a>
       <a href="/packet" target="content" onclick="setActive(this)" id="nav-packet">Packet</a>
       <a href="/gdrive" target="content" onclick="setActive(this)">GDrive</a>
     </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">System <span id="mgr-shell-dot" style="display:none;color:var(--t-err);font-size:0.65em;vertical-align:middle;">&#x25cf;</span></span><div class="nav-drop">
@@ -1024,7 +1023,6 @@ function updateNavFromStatus(s) {
   _navShow('nav-gps', s.gps_enabled !== false);
   _navShow('nav-repeaters', s.repeater_db_enabled !== false);
   _navShow('nav-adsb', s.adsb_enabled !== false);
-  _navShow('nav-telegram', s.telegram_enabled !== false);
 }
 
 // Turn off every node tap. Called when the PCM player stops — see stopWS.

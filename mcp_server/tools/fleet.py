@@ -10,7 +10,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from mcp_server.server import mcp, _get, _post, _load_telegram_config, GW_BASE_URL, GW_ROOT, _auth_headers
+from mcp_server.server import mcp, _get, _post, GW_BASE_URL, GW_ROOT, _auth_headers
 
 
 # ---------------------------------------------------------------------------

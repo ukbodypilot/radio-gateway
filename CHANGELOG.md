@@ -4,6 +4,58 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Removed — the Telegram bot; alerts are emailed instead
+
+The bot and everything behind it are gone: `tools/telegram_bot.py`, the
+`telegram-bot` and `claude-gateway` services and `claude-gateway.sh`, the
+`/telegram` page, `/telegramstatus`, `/telegramcmd`, `/open_tmux`, the Telegram
+dashboard chip and panel, the `telegram_reply` / `telegram_status` /
+`telegram_logs` MCP tools (170 -> 167), and every `TELEGRAM_*` config key.
+Voice-note-to-radio-TX went with it. Claude Code's own remote control replaces
+the interactive side.
+
+Why: the bot typed messages into a `--dangerously-skip-permissions` Claude
+session, so the only lock was the Telegram account itself — a hijacked account
+was a root shell (`sudo` is NOPASSWD here), with no second factor, allowlist or
+confirmation.
+
+Alerts moved to email (`EmailNotifier`, already used for startup, periodic
+status, tunnel and DDNS notices):
+- **Fleet Manager** reports (`elevated`/`warning`), the pre-fix "attempting"
+  notice and the post-fix outcome. The notice is sent synchronously before the
+  fix runs because `restart-gateway` kills the sender; SMTP is bounded at 15 s.
+- **In-process alert engine** (`alerts.py`). It now defaults to **off** (`ENABLE_ALERT_ENGINE = false`): the key had dropped out of the live config while the code defaulted to on, so it was running and would have started emailing raw-threshold noise.
+- **Broadcastify stream alerts** already emailed; the duplicate Telegram send
+  was dropped.
+- A missing or unconfigured notifier is logged as `ALERT NOT SENT (email not
+  configured)` rather than swallowed, and `install.sh`'s health check now warns
+  when `EMAIL_APP_PASSWORD` is unset.
+
+Also removed with it: the Fleet Manager's tmux fallback (`MANAGER_RUN_MODE`,
+`_send_to_tmux`, `_run_via_tmux`, `tests/test_manager_tmux_submit.py`) — with no
+`claude-gateway` session it could only fail — and `tmux` from the installer's
+package list.
+
+### Fixed — transcription keyword alerts had been dead
+
+`TRANSCRIPTION_ALERT_KEYWORDS` (and the keyword box on `/transcribe`) POSTed to
+`/telegram_send`, a route that no longer exists, inside a bare `except: pass`,
+so it silently did nothing. `check_keywords()` now returns the hit and the
+transcriber emails it, at most once per keyword per 5 minutes, from a background
+thread. `TRANSCRIBE_FORWARD_TELEGRAM` / `forward_telegram` (same dead route) is
+removed.
+
+### Upgrading
+
+On an existing install, after pulling: `sudo systemctl disable --now
+telegram-bot claude-gateway`, remove `/etc/systemd/system/telegram-bot.service`
+and `claude-gateway.service`, then `sudo systemctl daemon-reload`. Delete the
+`[telegram]` block from `gateway_config.txt` (unknown keys are harmless, but the
+bot token should not sit there), revoke the bot with `@BotFather`, and remove
+the `telegram-bot` and `claude-gateway` entries from your `SYSTEM_MANIFEST.md`.
+Set `EMAIL_ADDRESS` and `EMAIL_APP_PASSWORD` if you have not, or nothing will
+tell you when something breaks.
+
 ### Removed — the /voice page and its MCP tools
 
 The talk-to-Claude tmux relay is gone: `web_routes_voice.py`, `voice.html`, the
@@ -13,8 +65,7 @@ emails, and the `voice_view` / `voice_status` / `voice_send` MCP tools
 (173 -> 170). Claude Code's own remote control replaces it.
 
 It ran in its own `claude-voice` tmux session and shared nothing with the
-Telegram bot, which uses `claude-gateway`; that session, its service, and
-`/open_tmux` are unchanged. `/voice/send` typed into a
+Telegram bot, which used `claude-gateway` (both since removed — see above). `/voice/send` typed into a
 `--dangerously-skip-permissions` session, so on an install with a blank
 `WEB_CONFIG_PASSWORD` it was an unauthenticated command path. That is closed.
 
@@ -28,12 +79,11 @@ category picker (v4.3/v4.4) had web routes but no MCP tools: `bgm_status`,
 
 A dashboard-vs-tools sweep then added the panel actions that had no tool:
 `gps_set_position`, `gps_switch_mode`, `transcription_search` (FTS5),
-`trace_status` (the trace toggles were blind), `telegram_logs`, and TH-9800 CAT
+`trace_status` (the trace toggles were blind), and TH-9800 CAT
 link recovery — `cat_serial_status`, `cat_reconnect`, `cat_serial_connect`,
 `cat_setup_radio`. `cat_setup_radio` overwrites the radio's settings from
 config; none of these key the transmitter. Still gated, not built: TH-9800
-`MIC_PTT`, KV4P test tone, IC-7100 power/mic gain (TX-side), and Telegram
-start/stop/restart.
+`MIC_PTT`, KV4P test tone, and IC-7100 power/mic gain (TX-side).
 
 Deliberately NOT exposed: restart/reboot/exit routes, `/config` (carries
 secrets), websocket and file-serving routes, worker self-registration.

@@ -52,7 +52,8 @@ table_rows = '\n'.join(l for l in doc.splitlines() if l.startswith('|'))
 documented = set(re.findall(r'`([a-z][a-z0-9_]+)`', table_rows))
 check("every registered tool is listed in docs/mcp.md",
       not (registered - documented), str(sorted(registered - documented)))
-removed = {'broadcastify_control', 'voice_view', 'voice_status', 'voice_send'}
+removed = {'broadcastify_control', 'voice_view', 'voice_status', 'voice_send',
+           'telegram_reply', 'telegram_status', 'telegram_logs'}
 check("no removed tool is registered or left in the docs tables",
       not (removed & registered) and not (removed & documented),
       str(sorted(removed & (registered | documented))))

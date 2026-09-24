@@ -48,7 +48,7 @@ annunciator on the landing page so everything is visible at one glance.
 |------|-----|
 | **Overview** (`/dashboard`) | System bars (CPU/RAM/swap/disk/net/temps), gateway status flags (PTT, Mumble, CAT, D75, smart countdowns…), and the subsystem **annunciator** — one lamp per subsystem, always present, dark when disabled, each linking to its sub-page. |
 | **Endpoints** (`/dashboard/endpoints`) | One card per Gateway Link endpoint: status readouts plus PTT / RX-TX VU bars / mute / gain sliders together. Below, one card per **transcribe worker** (local + remote): engine/model tags, ready state, done/active counts, ratio, RAM/temp/fan, URL + heartbeat for self-registered workers. |
-| **Services** (`/dashboard/services`) | Broadcastify (uptime, throughput, last error, bitrate sparkline from Prometheus), Loop Recorder buses, AllStar nodes, GPS fix + satellites, ADS-B, USB/IP devices, Telegram bot. All visible; disabled services ghost out. |
+| **Services** (`/dashboard/services`) | Broadcastify (uptime, throughput, last error, bitrate sparkline from Prometheus), Loop Recorder buses, AllStar nodes, GPS fix + satellites, ADS-B, USB/IP devices. All visible; disabled services ghost out. |
 | **Operate** (`/dashboard/operate`) | Playback soundboard grid, Smart Announce slots, Transmit (TTS / CW / AI / Fart tabs), Automation engine tasks + history. |
 
 ## Notes from running it

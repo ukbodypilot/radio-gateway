@@ -44,7 +44,7 @@ Key modules:
 | File | Role |
 |------|------|
 | `transcribe_engine.py` | `LocalInferenceEngine`, `RemoteEngine`, `_pick_worker()` — shared by gateway and worker |
-| `transcriber.py` | VAD, dispatcher loop, result ordering, forwarding to Mumble/Telegram |
+| `transcriber.py` | VAD, dispatcher loop, result ordering, forwarding to Mumble, keyword email alerts |
 | `tools/transcribe_worker.py` | Standalone HTTP server — runs on the remote host |
 
 ## Pool modes
@@ -93,7 +93,7 @@ TRANSCRIBE_REMOTE_URLS = http://192.168.2.143:9800
 TRANSCRIBE_SPLIT_THRESHOLD_SECS = 10
 ```
 
-All other transcription settings (VAD threshold, audio boost, alert keywords, Mumble/Telegram forwarding) live in `.transcribe_settings.json` and are edited via the `/transcribe` page.
+All other transcription settings (VAD threshold, audio boost, alert keywords, Mumble forwarding) live in `.transcribe_settings.json` and are edited via the `/transcribe` page.
 
 ## Remote worker
 

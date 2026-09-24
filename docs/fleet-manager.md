@@ -1,6 +1,6 @@
 # Fleet Manager
 
-A **document-driven autonomous monitoring and maintenance system**. Plain-English task lists are handed to a Claude Code session running on the gateway on a schedule. Claude does the checks (and the repairs), writes a structured JSON report back, and the engine reads it, surfaces it to the UI, and escalates to Telegram when it's bad.
+A **document-driven autonomous monitoring and maintenance system**. Plain-English task lists are handed to a one-shot Claude Code run on the gateway on a schedule. Claude does the checks (and the repairs), writes a structured JSON report back, and the engine reads it, surfaces it to the UI, and emails you when it's bad.
 
 The entire behaviour of the monitoring system is text you can read and edit in a browser. No code changes, no restarts.
 
@@ -34,7 +34,7 @@ Most of the power of this system is hiding in how short the task lists are. Each
 **English:**
 > Pull the live transcription pool state from `/transcriptions`. Flag elevated if any worker is unreachable, the queue has more than 30 items or 60 seconds of audio, the CPU temp is above 90°C, or the average ratio is above 3x.
 
-**What runs**: a `curl` against the gateway's status endpoint, JSON parsing, threshold checks on six fields, and a JSON report appended to `manager_reports.jsonl` with the right severity. If a threshold trips, a Telegram alert is fired and a red badge appears in the UI. The next time you want to add a threshold — say, swap RAM watch — you literally write the new sentence into the doc.
+**What runs**: a `curl` against the gateway's status endpoint, JSON parsing, threshold checks on six fields, and a JSON report appended to `manager_reports.jsonl` with the right severity. If a threshold trips, an alert email is sent and a red badge appears in the UI. The next time you want to add a threshold — say, swap RAM watch — you literally write the new sentence into the doc.
 
 ---
 
@@ -57,7 +57,7 @@ That's not a check we wrote. That's a *finding* the agent produced after noticin
 To start monitoring a new condition, you open `hourly.md` in the browser and add a numbered line. That's it.
 
 ```
-8. **Telegram bot health** — `systemctl --user is-active telegram-bot`; flag warning if not active. If `/tmp/telegram_bot_last_msg` is more than 24h old, flag elevated.
+8. **Nightly backup timer** — `systemctl is-active radio-gateway-backup.timer`; flag warning if not active.
 ```
 
 Save. Next run, the agent does it.
@@ -90,7 +90,7 @@ The agent re-reads its instructions every run. No deploy, no restart.
 | Maintain a list of fleet IPs in a shell script *and* in your head | Update the manifest; let the daily run discover misses |
 | Cron a `systemctl restart` job and hope it doesn't loop forever | Write the policy as English; the agent decides when to restart |
 | Read a 50-entry JSON log to figure out what changed overnight | Read one paragraph summary in the daily report |
-| File a ticket when prod looks weird | The agent has already flagged it; the Telegram message is in your phone |
+| File a ticket when prod looks weird | The agent has already flagged it; the alert email is already in your inbox |
 
 Nothing in the above section requires editing Python, restarting the gateway, or learning a DSL. The whole monitoring layer is hand-editable text.
 
@@ -113,7 +113,7 @@ Nothing in the above section requires editing Python, restarting the gateway, or
    │    ▼ matched by run_id                                  │
    │  Engine reads back the report                           │
    │    │                                                    │
-   │    ├─▶ Severity elevated? → Telegram alert              │
+   │    ├─▶ Severity elevated? → email alert                 │
    │    ├─▶ UI: badge on System nav, report list             │
    │    └─▶ fix field present? → execute the action          │
    │                                                          │
@@ -122,15 +122,15 @@ Nothing in the above section requires editing Python, restarting the gateway, or
 
 ### How the check is executed
 
-Each run is a **fresh `claude -p` process** (`MANAGER_RUN_MODE = oneshot`, the
-default since v4.6.0). The engine builds the whole prompt, spawns the process,
+Each run is a **fresh `claude -p` process** (the only mode since the tmux
+fallback was removed). The engine builds the whole prompt, spawns the process,
 and blocks until it exits; the answer comes back through `manager_reports.jsonl`
 keyed by `run_id`, not through the process's stdout.
 
 A fresh process per run is deliberate. The manager contract is already
 stateless — `_build_prompt` inlines the entire snapshot — so reusing a
 conversation buys nothing and costs a great deal. The previous design pasted
-each prompt into a long-lived `claude-gateway` tmux session; because runs are an
+each prompt into a long-lived tmux session; because runs are an
 hour apart (past the prompt-cache TTL), every run re-sent *and* re-cached the
 whole accumulated history. One 9-day session burned **~68M tokens to move ~174k
 tokens of actual content**, with the final hourly checks paying ~370k
@@ -142,15 +142,9 @@ a JSON object printed to stdout before giving up and writing an error report.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `MANAGER_RUN_MODE` | `oneshot` | `oneshot` = fresh `claude -p` per run. `tmux` = legacy paste-into-session mode, kept as a fallback only |
 | `MANAGER_CLAUDE_BIN` | `claude` | Path to the Claude Code binary |
 | `MANAGER_CLAUDE_MODEL` | `sonnet` | Model for manager runs |
 | `MANAGER_MAX_TURNS` | `40` | Hard cap on tool-use turns per run |
-
-**The `tmux` fallback is not recommended.** Besides the token cost, a large
-pasted prompt can swallow the submitting Enter, leaving the prompt sitting
-unsent until the run times out. `_send_to_tmux` retries the Enter to work around
-this; `oneshot` avoids the problem entirely.
 
 ## Files
 
@@ -198,8 +192,8 @@ Each report is one JSON line appended to `manager_reports.jsonl`:
 | Severity | Meaning | Side effect |
 |----------|---------|-------------|
 | `ok` | Healthy | — |
-| `warning` | Non-critical issue worth noting | UI only |
-| `elevated` | Something is wrong and you probably want to know now | Telegram alert + red `●` badge on System menu |
+| `warning` | Non-critical issue worth noting | Alert email + unread flag |
+| `elevated` | Something is wrong and you probably want to know now | Alert email + red `●` badge on System menu |
 
 ## Remediation
 
@@ -230,8 +224,8 @@ Two constraints, both learned the hard way in the 2026-07-30 stream outage:
    `stream_output.connected` — the gateway's own Python Icecast client. DarkIce is a
    separate legacy process; restarting it can never clear that alarm.
 
-Every fix now logs its subprocess stderr and sends a second Telegram message with the
-real outcome. A failed fix appends an `AUTO-FIX FAILED: ...` finding to the report and
+Every fix now logs its subprocess stderr and emails a second time with the
+real outcome (an email goes out *before* the fix runs, because `restart-gateway` kills the sender). A failed fix appends an `AUTO-FIX FAILED: ...` finding to the report and
 leaves the alert unread.
 
 ## Web UI
@@ -267,7 +261,7 @@ The daily task list itself includes a backup-health check (timer active, last ru
 
 ## Use cases
 
-**Fleet health at a glance** — every hour, Claude checks that all radio services are alive, the SDR is receiving, the stream is connected, transcription is keeping up, disk and memory are healthy. One-line summary in the report list; click to expand findings. If anything is wrong you get a Telegram message within minutes.
+**Fleet health at a glance** — every hour, Claude checks that all radio services are alive, the SDR is receiving, the stream is connected, transcription is keeping up, disk and memory are healthy. One-line summary in the report list; click to expand findings. If anything is wrong you get an email within minutes.
 
 **Automatic node discovery** — if a DHCP node moves to a new address, the daily run detects the miss, sweeps the subnet, identifies the node by SSH fingerprint (or hostname/uname), and updates `SYSTEM_MANIFEST.md` in place. Next time you SSH in, the address in the manifest is correct.
 
@@ -289,4 +283,4 @@ A few things that came up while running this in production:
 
 - **Don't fight the manifest** — if the agent updates the manifest with a new IP, that's authoritative. The agent saw the live state; you didn't. Diff the change before reverting if it looks suspicious.
 
-- **Telegram for severity, UI for everything** — every report appears in the UI feed. Only elevated reports page you. Warning is the "I want to know later" band.
+- **Email for severity, UI for everything** — every report appears in the UI feed. Only `elevated` and `warning` reports email you. Warning is the "I want to know later" band.

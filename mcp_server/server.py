@@ -56,33 +56,6 @@ def _load_config():
 GW_BASE_URL, GW_PASSWORD = _load_config()
 
 
-def _load_telegram_config() -> dict:
-    """Read Telegram settings from gateway_config.txt."""
-    cfg = {'token': '', 'chat_id': 0, 'status_file': '/tmp/tg_status.json'}
-    cfg_path = os.path.join(GW_ROOT, 'gateway_config.txt')
-    if not os.path.isfile(cfg_path):
-        return cfg
-    with open(cfg_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            k, _, v = line.partition('=')
-            k = k.strip(); v = v.strip()
-            if v == '':
-                continue
-            if k == 'TELEGRAM_BOT_TOKEN':
-                cfg['token'] = v
-            elif k == 'TELEGRAM_CHAT_ID':
-                try:
-                    cfg['chat_id'] = int(v)
-                except ValueError:
-                    pass
-            elif k == 'TELEGRAM_STATUS_FILE':
-                cfg['status_file'] = v
-    return cfg
-
-
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------

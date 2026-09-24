@@ -501,6 +501,7 @@ class Config:
             'SUPERVISE_MUMBLE': False,
             # Email notifications (Gmail SMTP)
             'ENABLE_EMAIL': False,
+            'ENABLE_ALERT_ENGINE': False,   # raw-threshold Prometheus alerts, emailed; the Fleet Manager is the calibrated path
             'EMAIL_ADDRESS': '',          # Gmail address (sender)
             'EMAIL_APP_PASSWORD': '',     # Gmail app password (not regular password)
             'EMAIL_RECIPIENT': '',        # Where to send notifications (blank = same as EMAIL_ADDRESS)
@@ -569,16 +570,8 @@ class Config:
             'LINK_AUDIO_BOOST': 1.0,
             'LINK_AUDIO_DISPLAY_GAIN': 1.0,
 
-            # Telegram Bot
-            'ENABLE_TELEGRAM': False,
-            'TELEGRAM_BOT_TOKEN': '',
-            'TELEGRAM_CHAT_ID': 0,
-            'TELEGRAM_TMUX_SESSION': 'claude-gateway',
-
-            # Fleet Manager runs. 'oneshot' spawns a fresh `claude -p` per run
-            # so context cannot accumulate across runs; 'tmux' is the legacy
-            # paste-into-a-live-session path, kept only as a fallback.
-            'MANAGER_RUN_MODE': 'oneshot',
+            # Fleet Manager runs spawn a fresh `claude -p` per run so context
+            # cannot accumulate across runs.
             'MANAGER_CLAUDE_BIN': '',        # blank -> $CLAUDE_BIN, then ~/.local/bin/claude
             'MANAGER_CLAUDE_MODEL': 'sonnet',
             'MANAGER_MAX_TURNS': 40,

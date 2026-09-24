@@ -7,7 +7,7 @@ decides when speech starts/stops. Buffered audio is transcribed with Moonshine
 source info.
 
 Results are served via HTTP for the web UI and optionally forwarded to
-Mumble/Telegram.
+Mumble, and keyword hits are emailed.
 """
 
 import collections
@@ -485,7 +485,7 @@ class RadioTranscriber:
             getattr(config, 'TRANSCRIBE_SPLIT_THRESHOLD_SECS', 10.0) or 10.0))
         self._sample_rate = int(getattr(config, 'AUDIO_RATE', 48000))
         self._forward_mumble = _saved.get('forward_mumble', bool(getattr(config, 'TRANSCRIBE_FORWARD_MUMBLE', True)))
-        self._forward_telegram = _saved.get('forward_telegram', bool(getattr(config, 'TRANSCRIBE_FORWARD_TELEGRAM', False)))
+        self._keyword_last_sent = {}    # keyword -> monotonic time of last email
         self._audio_boost = float(_saved.get('audio_boost', 100)) / 100.0
         self._log_results = _saved.get('log_results', bool(getattr(config, 'TRANSCRIBE_LOG_RESULTS', False)))
         self._alert_keywords = _saved.get('alert_keywords', str(getattr(config, 'TRANSCRIPTION_ALERT_KEYWORDS', '') or ''))
@@ -524,7 +524,6 @@ class RadioTranscriber:
             'vad_hold': self._vad_hold_time,
             'min_duration': self._min_duration,
             'forward_mumble': self._forward_mumble,
-            'forward_telegram': self._forward_telegram,
             'audio_boost': int(self._audio_boost * 100),
             'log_results': self._log_results,
             'alert_keywords': self._alert_keywords,
@@ -963,7 +962,6 @@ class RadioTranscriber:
             'vad_hold': self._vad_hold_time,
             'min_duration': self._min_duration,
             'forward_mumble': self._forward_mumble,
-            'forward_telegram': self._forward_telegram,
             'audio_boost': int(self._audio_boost * 100),
             'log_results': self._log_results,
             'alert_keywords': self._alert_keywords,
@@ -1286,7 +1284,7 @@ class RadioTranscriber:
             except Exception:
                 pass
             try:
-                _tl.check_keywords(result, self._alert_keywords)
+                self._email_keyword_hit(_tl.check_keywords(result, self._alert_keywords), result)
             except Exception:
                 pass
         _freq_prefix = f'[{result["freq"]}] ' if result.get('freq') else ''
@@ -1299,18 +1297,34 @@ class RadioTranscriber:
                     f"[{result['time_str']}] {_freq_prefix}{result['text']}")
             except Exception:
                 pass
-        if self._forward_telegram and self._gateway:
-            try:
-                import urllib.request
-                _tg_data = json.dumps(
-                    {'text': f"[{result['time_str']}] {result['text']}"}).encode()
-                urllib.request.urlopen(
-                    urllib.request.Request(
-                        'http://127.0.0.1:8080/telegram_send', data=_tg_data,
-                        headers={'Content-Type': 'application/json'}),
-                    timeout=5)
-            except Exception:
-                pass
+
+    _KEYWORD_EMAIL_COOLDOWN = 300.0   # seconds between emails for the same keyword
+
+    def _email_keyword_hit(self, keyword, result):
+        """Email a keyword hit, at most once per cooldown per keyword.
+
+        Sent from a daemon thread: SMTP can take up to 15 s and this runs on
+        the transcription path. Says so in the log when email is not
+        configured, since a keyword alert that goes nowhere is
+        indistinguishable from a quiet band.
+        """
+        if not keyword:
+            return
+        now = time.monotonic()
+        last = self._keyword_last_sent.get(keyword)
+        if last is not None and now - last < self._KEYWORD_EMAIL_COOLDOWN:
+            return
+        notifier = getattr(self._gateway, 'email_notifier', None) if self._gateway else None
+        if notifier is None or not notifier.is_configured():
+            print(f"  [Transcribe] keyword '{keyword}' heard but email is not configured")
+            return
+        self._keyword_last_sent[keyword] = now
+        freq = result.get('freq') or '?'
+        subject = f"[Gateway] keyword '{keyword}' heard on {freq}"
+        body = (f"Keyword: {keyword}\nFrequency: {freq}\nTime: {result.get('time_str', '?')}\n\n"
+                f"{result.get('text', '')}\n\n-- Radio Gateway")
+        threading.Thread(target=notifier.send, args=(subject, body),
+                         daemon=True, name='KeywordEmail').start()
 
     def _store_result_ordered(self, result):
         """Insert result into _results sorted by timestamp (not arrival order)."""

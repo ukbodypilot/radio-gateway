@@ -113,7 +113,6 @@ if [ "$DISTRO" = "arch" ]; then
         opus \
         alsa-utils \
         git \
-        tmux \
         avahi \
         nss-mdns
 else
@@ -130,7 +129,6 @@ else
         libopus0 \
         libopus-dev \
         git \
-        tmux \
         alsa-utils \
         avahi-daemon \
         avahi-utils
@@ -1695,15 +1693,6 @@ if [ -f "$BK_SVC_SRC" ] && [ -f "$BK_TIM_SRC" ]; then
     fi
 fi
 
-# Install Telegram bot service (not enabled — requires config first)
-TG_SERVICE_SRC="$GATEWAY_DIR/tools/telegram-bot.service"
-TG_SERVICE_DEST="/etc/systemd/system/telegram-bot.service"
-if [ -f "$TG_SERVICE_SRC" ]; then
-    sudo cp "$TG_SERVICE_SRC" "$TG_SERVICE_DEST"
-    sudo systemctl daemon-reload
-    echo "  ✓ telegram-bot.service installed (not enabled — configure first)"
-fi
-
 # Passwordless sudo for systemctl start/stop/restart (needed by desktop shortcuts)
 SUDOERS_GW="/etc/sudoers.d/radio-gateway"
 printf '%s ALL=(ALL) NOPASSWD: %s start radio-gateway.service\n' \
@@ -1896,8 +1885,8 @@ if [ -f "$GATEWAY_DIR/gateway_config.txt" ]; then
     if [ -z "$_mumble_pw" ]; then
         _hc_warn "MUMBLE_PASSWORD is empty — set it if your server requires one"
     fi
-    if ! grep -qE '^\s*TELEGRAM_BOT_TOKEN\s*=\s*[A-Za-z0-9:_-]+' "$GATEWAY_DIR/gateway_config.txt"; then
-        _hc_warn "TELEGRAM_BOT_TOKEN not set (optional — skip if not using Telegram)"
+    if ! grep -qE '^\s*EMAIL_APP_PASSWORD\s*=\s*[^#[:space:]]+' "$GATEWAY_DIR/gateway_config.txt"; then
+        _hc_warn "EMAIL_APP_PASSWORD not set — stream, fleet-manager and keyword alerts are emailed, so they will NOT be sent"
     fi
     # Streaming config sanity. These two mistakes are silent at runtime: the
     # encoder just clamps or the feed goes mono, and nothing logs an error.
@@ -1977,7 +1966,7 @@ fi
 
 # Claim the core binaries a running gateway will reach for
 echo "  Runtime binaries:"
-for _bin in ffmpeg lame pactl parec direwolf pat rclone cloudflared tmux; do
+for _bin in ffmpeg lame pactl parec direwolf pat rclone cloudflared; do
     if command -v "$_bin" &>/dev/null; then
         printf "      ✓ %s\n" "$_bin"
     else
@@ -2129,23 +2118,13 @@ echo "      Operate    http://<gateway-ip>:8080/dashboard/operate"
 echo "  Set WEB_CONFIG_PASSWORD for basic auth (user: admin)"
 echo "  Firewall: sudo ufw allow 8080/tcp"
 echo
-echo "TELEGRAM BOT — PHONE CONTROL (optional):"
-echo "  Control the gateway from your phone in plain English via a Claude Code session."
-echo "  Voice notes sent to the bot are transmitted over the radio automatically."
-echo "  1. Create a bot via @BotFather on Telegram — copy the token"
-echo "  2. Send a message to your bot to get your chat_id:"
-echo "       curl 'https://api.telegram.org/bot<TOKEN>/getUpdates'"
-echo "  3. Edit gateway_config.txt:"
-echo "       ENABLE_TELEGRAM      = true"
-echo "       TELEGRAM_BOT_TOKEN   = <token>"
-echo "       TELEGRAM_CHAT_ID     = <chat_id>"
-echo "  4. Start Claude Code in a named tmux session:"
-echo "       tmux new-session -s claude-gateway"
-echo "       cd $GATEWAY_DIR && claude --dangerously-skip-permissions --model sonnet --effort medium"
-echo "       (detach: Ctrl+B then D)"
-echo "  5. Enable and start the bot service:"
-echo "       sudo systemctl enable --now telegram-bot"
-echo "  See README.md — Telegram Bot section for full details."
+echo "EMAIL ALERTS (recommended):"
+echo "  Stream outages, Fleet Manager reports and auto-fix notices, and transcription"
+echo "  keyword hits are sent by email. Set in gateway_config.txt:"
+echo "       ENABLE_EMAIL         = true"
+echo "       EMAIL_ADDRESS        = <gmail address>"
+echo "       EMAIL_APP_PASSWORD   = <16-char Gmail app password>"
+echo "  Without these, alerts are logged as NOT SENT and nothing else notifies you."
 echo
 echo "DYNAMIC DNS (optional):"
 echo "  Set ENABLE_DDNS = true in gateway_config.txt"

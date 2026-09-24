@@ -1,4 +1,4 @@
-"""POST handlers for host/system: keypress, reboot, restart, tmux, config form, etc."""
+"""POST handlers for host/system: keypress, reboot, restart, config form, etc."""
 
 """POST route handlers extracted from web_server.py."""
 
@@ -102,60 +102,6 @@ def handle_restartgateway(handler, parent):
         _sp.Popen(['sudo', 'systemctl', 'restart', 'radio-gateway.service'])
     except Exception as _e:
         print(f"  [restart] failed: {_e}")
-    return
-
-def handle_telegramcmd(handler, parent):
-    """POST /telegramcmd"""
-    length = int(handler.headers.get('Content-Length', 0))
-    body = handler.rfile.read(length).decode('utf-8')
-    result = {'ok': False, 'error': 'unknown command'}
-    try:
-        data = json_mod.loads(body)
-        cmd = data.get('cmd', '')
-        if cmd in ('start', 'stop', 'restart'):
-            _r = subprocess.run(['sudo', 'systemctl', cmd, 'telegram-bot'],
-                                capture_output=True, text=True, timeout=10)
-            result = {'ok': _r.returncode == 0,
-                      'output': (_r.stdout + _r.stderr).strip()}
-        elif cmd == 'enable':
-            _r = subprocess.run(['sudo', 'systemctl', 'enable', 'telegram-bot'],
-                                capture_output=True, text=True, timeout=10)
-            result = {'ok': _r.returncode == 0}
-        elif cmd == 'disable':
-            _r = subprocess.run(['sudo', 'systemctl', 'disable', 'telegram-bot'],
-                                capture_output=True, text=True, timeout=10)
-            result = {'ok': _r.returncode == 0}
-        elif cmd == 'logs':
-            _r = subprocess.run(['journalctl', '-u', 'telegram-bot', '--no-pager', '-n', '50'],
-                                capture_output=True, text=True, timeout=5)
-            result = {'ok': True, 'logs': _r.stdout}
-        else:
-            result = {'ok': False, 'error': f'unknown command: {cmd}'}
-    except Exception as e:
-        result = {'ok': False, 'error': str(e)}
-    handler.send_response(200)
-    handler.send_header('Content-Type', 'application/json')
-    handler.end_headers()
-    handler.wfile.write(json_mod.dumps(result).encode('utf-8'))
-    return
-
-def handle_open_tmux(handler, parent):
-    """POST /open_tmux"""
-    session = getattr(parent.config, 'TELEGRAM_TMUX_SESSION', 'claude-gateway') if parent.config else 'claude-gateway'
-    try:
-        subprocess.Popen(
-            ['xfce4-terminal', '-e', f'tmux attach-session -t {session}'],
-            env={**os.environ, 'DISPLAY': ':0'},
-            start_new_session=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        ok = True
-    except Exception:
-        ok = False
-    handler.send_response(200)
-    handler.send_header('Content-Type', 'application/json')
-    handler.end_headers()
-    handler.wfile.write(json_mod.dumps({'ok': ok}).encode('utf-8'))
     return
 
 def handle_exit(handler, parent):

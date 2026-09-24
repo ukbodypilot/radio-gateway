@@ -41,7 +41,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
     """
 
     # Keys whose values should be masked in the UI
-    _SENSITIVE_KEYS = {'TELEGRAM_BOT_TOKEN', 'STREAM_PASSWORD', 'EMAIL_APP_PASSWORD', 'WEB_CONFIG_PASSWORD',
+    _SENSITIVE_KEYS = {'STREAM_PASSWORD', 'EMAIL_APP_PASSWORD', 'WEB_CONFIG_PASSWORD',
                        'USRP_AMI_SECRET', 'USRP2_AMI_SECRET', 'DDNS_PASSWORD'}
 
     # Keys that store hex integers
@@ -396,7 +396,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         ]),
         ('email', 'Email Notifications', [
             'ENABLE_EMAIL', 'EMAIL_ADDRESS', 'EMAIL_APP_PASSWORD',
-            'EMAIL_RECIPIENT', 'EMAIL_ON_STARTUP',
+            'EMAIL_RECIPIENT', 'EMAIL_ON_STARTUP', 'ENABLE_ALERT_ENGINE',
         ]),
         ('playback', 'System Sounds', [
             'ENABLE_PLAYBACK', 'PLAYBACK_DIRECTORY',
@@ -579,17 +579,12 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
             'ENABLE_CLOUDFLARE_TUNNEL',
             'ENABLE_GDRIVE', 'GDRIVE_REMOTE', 'GDRIVE_FOLDER',
         ]),
-        ('telegram', 'Telegram Bot', [
-            'ENABLE_TELEGRAM', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
-            'TELEGRAM_TMUX_SESSION',
-            'TELEGRAM_STATUS_FILE', 'TELEGRAM_PROMPT_SUFFIX',
-        ]),
         ('transcription', 'Transcription', [
             'ENABLE_TRANSCRIPTION',
             'TRANSCRIBE_MODEL',
             'TRANSCRIBE_VAD_THRESHOLD', 'TRANSCRIBE_VAD_HOLD',
             'TRANSCRIBE_MIN_DURATION',
-            'TRANSCRIBE_FORWARD_MUMBLE', 'TRANSCRIBE_FORWARD_TELEGRAM',
+            'TRANSCRIBE_FORWARD_MUMBLE',
         ]),
         ('advanced', 'Advanced / Diagnostics', [
             'HEADLESS_MODE', 'START_CLAUDE_CODE', 'LOG_BUFFER_LINES', 'LOG_FILE_DAYS',
@@ -746,7 +741,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                 '/ic7100': 'ic7100.html',
                 '/kv4p': 'kv4p.html',
                 '/radio': 'radio.html',
-                '/telegram': 'telegram.html',
                 '/monitor': 'monitor.html',
                 '/recordings': 'recordings.html',
                 '/recorder': 'recorder.html',
@@ -793,7 +787,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                 '/sdrstatus':             'g:handle_sdrstatus',
                 '/automationstatus':      'g:handle_automationstatus',
                 '/adsbstatus':            'g:handle_adsbstatus',
-                '/telegramstatus':        'g:handle_telegramstatus',
                 '/usbipstatus':           'g:handle_usbipstatus',
                 '/gpsstatus':             'g:handle_gpsstatus',
                 '/automationhistory':     'g:handle_automationhistory',
@@ -949,8 +942,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                 '/soundboard/categories':      'p:handle_soundboard_categories',
                 '/tts/engine':                 'p:handle_tts_engine',
                 '/recordingsdelete':           'p:handle_recordingsdelete',
-                '/telegramcmd':                'p:handle_telegramcmd',
-                '/open_tmux':                  'p:handle_open_tmux',
                 '/exit':                       'p:handle_exit',
                 '/routing/cmd':                'p:handle_routing_cmd',
                 # Exact match wins before the '/loop/' prefix below.

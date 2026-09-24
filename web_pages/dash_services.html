@@ -107,25 +107,6 @@
   <div id="usbip-devices-list" class="usbip-list">No devices</div>
 </div>
 
-<!-- ═══ Telegram ═══ -->
-<div class="panel" id="tg-panel">
-  <div class="panel-head">
-    <h2 class="panel-title">Telegram Bot</h2>
-    <span id="tg-bot-name" class="panel-meta"></span>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Bot:</span><span id="tg-dot-bot" class="st-val dot">&#x25cf;</span></div>
-    <div class="st-item"><span class="st-label">Claude tmux:</span><span id="tg-dot-tmux" class="st-val dot">&#x25cf;</span> <button onclick="openTmux()" class="rb rb-sm">Open</button></div>
-    <div class="st-item"><span class="st-label">Session:</span><span id="tg-session" class="st-val white">--</span></div>
-  </div>
-  <div class="st-row">
-    <div class="st-item"><span class="st-label">Today:</span><span id="tg-msgs-today" class="st-val cyan">--</span><span class="st-label"> msgs</span></div>
-    <div class="st-item"><span class="st-label">Last in:</span><span id="tg-last-in" class="st-val white">--</span></div>
-    <div class="st-item"><span class="st-label">Last out:</span><span id="tg-last-out" class="st-val green">--</span></div>
-  </div>
-  <div id="tg-last-text" class="trunc"></div>
-</div>
-
 <script src="/pages/common.js"></script>
 <script src="/pages/dash.js"></script>
 <script>
@@ -353,21 +334,6 @@ createPoller('/usbipstatus',10000,function(d){
   var list=document.getElementById('usbip-devices-list');
   if(!d.devices||d.devices.length===0){list.innerHTML=d.server_reachable?'<div class="empty"><span class="empty-glyph">&#9675;</span>No exported devices</div>':'<div class="empty err"><span class="empty-glyph">&#9888;</span>Server unreachable</div>';}
   else{list.innerHTML=d.devices.map(function(dev){return'<span class="dot '+(dev.attached?'ok':'err')+'">&#x25cf;</span> <b>'+dev.bus_id+'</b> &nbsp;'+dev.description+' <span class="usbip-dev-status">'+(dev.attached?'attached':'not attached')+'</span>';}).join('<br>');}
-});
-
-// ── Telegram ──
-createPoller('/telegramstatus',5000,function(d){
-  setPanelOff('tg-panel', !d.enabled);
-  if(!d.enabled)return;
-  function dot(id,ok,title){var el=document.getElementById(id);flashDotOnChange(el,!!ok);el.textContent='●';el.classList.toggle('ok',!!ok);el.classList.toggle('err',!ok);el.title=title||(ok?'ok':'offline');}
-  dot('tg-dot-bot',d.bot_running,d.bot_running?'bot running':'bot not running');
-  dot('tg-dot-tmux',d.tmux_active,d.tmux_active?'session active':'session not found');
-  document.getElementById('tg-bot-name').textContent=d.bot_username||'';
-  document.getElementById('tg-session').textContent=d.tmux_session||'--';
-  setFlash(document.getElementById('tg-msgs-today'),d.messages_today!=null?d.messages_today:'--');
-  setFlash(document.getElementById('tg-last-in'),fmtTimestamp(d.last_message_time));
-  document.getElementById('tg-last-out').textContent=fmtTimestamp(d.last_reply_time);
-  document.getElementById('tg-last-text').textContent=d.last_message_text?'» '+d.last_message_text:'';
 });
 </script>
 

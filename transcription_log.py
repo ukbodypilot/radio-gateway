@@ -126,26 +126,16 @@ class TranscriptionLog:
                 print(f'  [TxLog] insert error: {e}')
 
     def check_keywords(self, result: dict, keywords_override: str | None = None):
+        """Return the first watched keyword found in the result, or None."""
         raw = keywords_override if keywords_override is not None else str(getattr(self._config, 'TRANSCRIPTION_ALERT_KEYWORDS', '') or '')
         keywords = [k.strip().lower() for k in raw.split(',') if k.strip()]
         if not keywords:
-            return
+            return None
         text_lower = result['text'].lower()
         for kw in keywords:
             if kw in text_lower:
-                try:
-                    freq = result.get('freq', '?')
-                    ts = result.get('time_str', '?')
-                    msg = (f"Transcription alert: [{kw}] heard on {freq} "
-                           f"at {ts}: {result['text']}")
-                    _data = json.dumps({'text': msg}).encode()
-                    req = urllib.request.Request(
-                        'http://127.0.0.1:8080/telegram_send', data=_data,
-                        headers={'Content-Type': 'application/json'})
-                    urllib.request.urlopen(req, timeout=5)
-                except Exception:
-                    pass
-                break
+                return kw
+        return None
 
     # ------------------------------------------------------------------
     # Read path

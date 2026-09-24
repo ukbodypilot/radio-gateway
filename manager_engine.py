@@ -28,7 +28,6 @@ _DEFAULT_STATE = {
 }
 
 _MAX_WAIT_SECS   = 600   # 10 min timeout waiting for Claude's report
-_POLL_INTERVAL   = 5     # seconds between polls
 _LOOP_INTERVAL   = 30    # seconds between schedule checks
 
 
@@ -74,9 +73,6 @@ class ManagerEngine:
     def get_status(self):
         with self._lock:
             st = dict(self._state)
-        # Surfaced so the dashboard can show which execution path is live
-        # without anyone having to read gateway_config.txt.
-        st['run_mode'] = self._run_mode()
         return st
 
     def get_reports(self, limit=50):
@@ -211,15 +207,12 @@ class ManagerEngine:
 
             prompt = self._build_prompt(task_type, run_id, task_content)
 
-            if self._run_mode() == 'oneshot':
-                # _run_oneshot blocks until the process exits, and writes its
-                # own error report on every failure path.
-                if not self._run_oneshot(prompt, run_id, task_type):
-                    print(f"  [Manager] Run {run_id} failed")
-                    return
-                entry = self._find_report(run_id)
-            else:
-                entry = self._run_via_tmux(prompt, run_id, task_type)
+            # _run_oneshot blocks until the process exits, and writes its
+            # own error report on every failure path.
+            if not self._run_oneshot(prompt, run_id, task_type):
+                print(f"  [Manager] Run {run_id} failed")
+                return
+            entry = self._find_report(run_id)
             if not entry:
                 return
 
@@ -230,7 +223,7 @@ class ManagerEngine:
                     self._state['unread_alerts'] = True
                     self._save_state()
             if severity in ('elevated', 'warning'):
-                self._send_telegram_alert(task_type, entry)
+                self._send_alert(task_type, entry)
             fix = entry.get('fix', '').strip()
             if fix:
                 self._apply_fix(fix, entry)
@@ -365,94 +358,6 @@ class ManagerEngine:
             f"Your run_id for the report is: {run_id}"
         )
 
-    def _send_to_tmux(self, session: str, text: str,
-                      settle: float = 1.5, attempts: int = 3) -> bool:
-        """Paste a prompt into the Claude tmux session and make sure it is SENT.
-
-        The Enter used to be fired in the same breath as the paste. A prompt
-        this size arrives as a bracketed paste that the TUI collapses into a
-        "[Pasted text #N]" placeholder, and an Enter landing during that window
-        is consumed as part of the paste instead of submitting it. The prompt
-        then just sits in the input line, Claude is never actually asked
-        anything, and the run only discovers this by timing out 600s later.
-
-        Seen 2026-08-20 with two prompts stacked unsent in the buffer
-        ("[Pasted text #23 +151 lines][Pasted text #24 +114 lines]"). It is the
-        DAILY run that fails because its prompt is the large one; the hourly
-        prompt is small enough to usually win the race. Both 06:00 timeouts in
-        the last week (the 17th and the 20th) have this shape.
-
-        Returns True if the prompt was submitted.
-        """
-        try:
-            # Clear whatever is already in the input line. Without this, a
-            # previous run whose Enter was swallowed leaves its entire prompt
-            # sitting there and the next paste is appended to it — so a later
-            # successful Enter submits both mashed into one message.
-            subprocess.run(['tmux', 'send-keys', '-t', session, 'C-u'], check=True)
-            time.sleep(0.2)
-            # Snapshot the IDLE input line. An empty Claude Code prompt is not
-            # blank — it carries dimmed placeholder hint text — so "is there
-            # anything on the line" would call every successful submit a
-            # failure and abort a run that had in fact gone through. Comparing
-            # against this baseline is what makes the check mean "our paste is
-            # still sitting there" rather than "the line is non-empty".
-            baseline = self._prompt_line(session)
-            subprocess.run(['tmux', 'send-keys', '-t', session, '-l', text], check=True)
-            for i in range(attempts):
-                time.sleep(settle)
-                subprocess.run(['tmux', 'send-keys', '-t', session, 'Enter'], check=True)
-                time.sleep(0.5)
-                current = self._prompt_line(session)
-                # None = no input line visible, i.e. Claude is busy answering.
-                if current is None or current == baseline:
-                    return True
-                print(f"  [Manager] tmux prompt still unsent after Enter #{i + 1} — retrying")
-            print("  [Manager] tmux prompt could not be submitted — giving up")
-            return False
-        except Exception as e:
-            print(f"  [Manager] tmux send error: {e}")
-            return False
-
-    def _run_via_tmux(self, prompt: str, run_id: str, task_type: str):
-        """Legacy path: paste into a long-lived Claude TUI and poll for the report.
-
-        Kept behind MANAGER_RUN_MODE='tmux' as a fallback only. See
-        _run_oneshot for why this is no longer the default.
-        """
-        session = self._tmux_session()
-        if not self._session_alive(session):
-            print(f"  [Manager] tmux session '{session}' not found \u2014 skipping run")
-            self._write_error_report(run_id, task_type, f"tmux session '{session}' not found")
-            return None
-
-        if not self._send_to_tmux(session, prompt):
-            # Nothing was ever asked, so waiting the full 600s would only
-            # delay a failure we already know about.
-            print(f"  [Manager] Run {run_id} aborted \u2014 prompt never submitted")
-            self._write_error_report(run_id, task_type,
-                                     "prompt could not be submitted to tmux session")
-            return None
-
-        # Poll for a new report entry matching this run_id
-        deadline = time.time() + _MAX_WAIT_SECS
-        entry = None
-        while time.time() < deadline:
-            time.sleep(_POLL_INTERVAL)
-            entry = self._find_report(run_id)
-            if entry:
-                break
-
-        if not entry:
-            print(f"  [Manager] Run {run_id} timed out after {_MAX_WAIT_SECS}s")
-            self._write_error_report(run_id, task_type, "timed out waiting for Claude response")
-            return None
-        return entry
-
-    def _run_mode(self) -> str:
-        mode = str(getattr(self.config, 'MANAGER_RUN_MODE', 'oneshot') or 'oneshot').lower()
-        return mode if mode in ('oneshot', 'tmux') else 'oneshot'
-
     def _claude_bin(self) -> str:
         return str(getattr(self.config, 'MANAGER_CLAUDE_BIN', '') or
                    os.environ.get('CLAUDE_BIN', '') or
@@ -546,36 +451,6 @@ class ManagerEngine:
                 print(f"  [Manager] Salvage write failed: {exc}")
                 return False
         return False
-
-    def _prompt_line(self, session: str):
-        """Contents of the TUI input line, or None if it is not on screen.
-
-        None is also what an unreadable pane returns: callers treat that as
-        "assume it went through" so a capture failure can never turn into an
-        Enter-spamming loop.
-        """
-        try:
-            r = subprocess.run(['tmux', 'capture-pane', '-p', '-t', session],
-                               capture_output=True, text=True, timeout=5)
-            for line in r.stdout.splitlines():
-                ls = line.strip()
-                for marker in ('\u276f', '>'):
-                    if ls.startswith(marker):
-                        return ls[len(marker):].strip()
-            return None
-        except Exception:
-            return None
-
-    def _session_alive(self, session: str) -> bool:
-        try:
-            r = subprocess.run(['tmux', 'has-session', '-t', session],
-                               capture_output=True, timeout=3)
-            return r.returncode == 0
-        except Exception:
-            return False
-
-    def _tmux_session(self) -> str:
-        return str(getattr(self.config, 'TELEGRAM_TMUX_SESSION', 'claude-gateway') or 'claude-gateway')
 
     def _report_count(self) -> int:
         try:
@@ -687,20 +562,20 @@ class ManagerEngine:
             print(f"  [Manager] Fix '{fix}' is deprecated — treating as '{alias}'")
             fix = alias
         print(f"  [Manager] Applying fix: {fix}")
-        # Telegram goes out BEFORE the fix runs, because restart-gateway kills
-        # this process — but it now says "attempting", and a second message
-        # reports the actual outcome for every fix that survives to send one.
-        self._send_fix_telegram(fix, entry)
+        # The notice goes out BEFORE the fix runs, because restart-gateway kills
+        # this process — but it says "attempting", and a second email reports
+        # the actual outcome for every fix that survives to send one.
+        self._send_fix_notice(fix, entry)
         if fix == 'restart-stream':
             ok, detail = self._fix_restart_stream()
         elif fix in self._UNIT_FIX_ACTIONS:
             ok, detail = self._fix_restart_unit(self._UNIT_FIX_ACTIONS[fix])
         else:
             print(f"  [Manager] Unknown fix '{fix}' — ignored")
-            self._send_fix_result_telegram(fix, False, 'unknown fix action')
+            self._send_fix_result(fix, False, 'unknown fix action')
             return
         print(f"  [Manager] Fix '{fix}': {'ok' if ok else 'FAILED'} — {detail}")
-        self._send_fix_result_telegram(fix, ok, detail)
+        self._send_fix_result(fix, ok, detail)
         # A fix that failed is not a resolved incident. Record it on the entry
         # so the report carries the reason, and keep the alert unread.
         if not ok:
@@ -713,68 +588,51 @@ class ManagerEngine:
             except Exception:
                 pass
 
-    def _send_fix_telegram(self, fix: str, entry: dict):
-        bot_token = str(getattr(self.config, 'TELEGRAM_BOT_TOKEN', '') or '').strip()
-        chat_id   = str(getattr(self.config, 'TELEGRAM_CHAT_ID',   '') or '').strip()
-        if not bot_token or not chat_id:
-            return
-        # "Attempting", not "applied". This message is sent before the fix
-        # runs (restart-gateway kills this process, so there may be no "after"
-        # for that one) — wording it as a completed action is how a fix that
-        # had never once succeeded still read as a success in Telegram for
-        # months. _send_fix_result_telegram reports what actually happened.
-        text = (
-            f"[Manager — auto-fix] {entry.get('ts','')}\n"
-            f"Attempting: {fix}\n"
-            f"{entry.get('summary','')}"
-        )
-        self._telegram_send(text, f"Fix Telegram sent: {fix}")
+    def _notify_email(self, subject: str, body: str, log_note: str) -> bool:
+        """Email an alert via the gateway's EmailNotifier; True only if it went.
 
-    def _send_fix_result_telegram(self, fix: str, ok: bool, detail: str):
-        """Report the ACTUAL outcome of a fix."""
-        text = (f"[Manager — auto-fix {'OK' if ok else 'FAILED'}]\n"
-                f"Action: {fix}\n{detail}")
-        self._telegram_send(text, f"Fix result Telegram sent: {fix}")
-
-    def _telegram_send(self, text: str, log_note: str):
-        bot_token = str(getattr(self.config, 'TELEGRAM_BOT_TOKEN', '') or '').strip()
-        chat_id   = str(getattr(self.config, 'TELEGRAM_CHAT_ID',   '') or '').strip()
-        if not bot_token or not chat_id:
-            return
+        Bounded (smtplib timeout is 15 s), so it is safe to call before a fix
+        that may kill this process. A missing or unconfigured notifier is
+        logged loudly rather than swallowed: an alert path that fails silently
+        looks identical to a healthy fleet.
+        """
+        notifier = getattr(self.gateway, 'email_notifier', None)
+        if notifier is None or not notifier.is_configured():
+            print(f"  [Manager] ALERT NOT SENT (email not configured): {subject}")
+            return False
         try:
-            import urllib.request
-            url  = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            data = json.dumps({'chat_id': chat_id, 'text': text}).encode()
-            req  = urllib.request.Request(url, data=data,
-                                          headers={'Content-Type': 'application/json'})
-            urllib.request.urlopen(req, timeout=10)
-            print(f"  [Manager] {log_note}")
+            ok = bool(notifier.send(subject, body))
         except Exception as e:
-            print(f"  [Manager] Telegram send failed: {e}")
+            print(f"  [Manager] Email send raised: {e}")
+            return False
+        print(f"  [Manager] {log_note}" if ok else f"  [Manager] Email send FAILED: {subject}")
+        return ok
 
-    def _send_telegram_alert(self, task_type: str, entry: dict):
-        bot_token = str(getattr(self.config, 'TELEGRAM_BOT_TOKEN', '') or '').strip()
-        chat_id   = str(getattr(self.config, 'TELEGRAM_CHAT_ID',   '') or '').strip()
-        if not bot_token or not chat_id:
-            return
-        summary  = entry.get('summary', '')
+    def _send_alert(self, task_type: str, entry: dict):
+        text = f"{entry.get('summary', '')}"
         findings = entry.get('findings', [])
-        text = (
-            f"[Manager — {task_type}] {entry.get('ts','')}\n"
-            f"{summary}"
-        )
         if findings:
-            text += "\n\n" + "\n".join(f"• {f}" for f in findings[:10])
-        try:
-            import urllib.request
-            url  = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            data = json.dumps({'chat_id': chat_id, 'text': text}).encode()
-            req  = urllib.request.Request(url, data=data,
-                                          headers={'Content-Type': 'application/json'})
-            urllib.request.urlopen(req, timeout=10)
-            print(f"  [Manager] Telegram alert sent for {task_type} run")
-        except Exception as e:
-            print(f"  [Manager] Telegram send failed: {e}")
+            text += "\n\n" + "\n".join(f"- {f}" for f in findings[:10])
+        self._notify_email(
+            f"[Gateway Manager] {task_type} run: {entry.get('severity', 'alert')}",
+            f"{entry.get('ts', '')}\n\n{text}",
+            f"Alert email sent for {task_type} run")
+
+    def _send_fix_notice(self, fix: str, entry: dict):
+        # "Attempting", not "applied". This goes out BEFORE the fix runs
+        # (restart-gateway kills this process, so there may be no "after" for
+        # that one); _send_fix_result reports what actually happened.
+        self._notify_email(
+            f"[Gateway Manager] auto-fix attempting: {fix}",
+            f"{entry.get('ts', '')}\nAttempting: {fix}\n\n{entry.get('summary', '')}",
+            f"Fix notice sent: {fix}")
+
+    def _send_fix_result(self, fix: str, ok: bool, detail: str):
+        """Report the ACTUAL outcome of a fix."""
+        self._notify_email(
+            f"[Gateway Manager] auto-fix {'OK' if ok else 'FAILED'}: {fix}",
+            f"Action: {fix}\n{detail}",
+            f"Fix result sent: {fix}")
 
     def _doc_path(self, name: str):
         return {

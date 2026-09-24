@@ -26,7 +26,7 @@ class _StreamMixin:
         return get_stream_stats(self)
 
     def _send_stream_alert(self, message, subject=None):
-        """Send Broadcastify stream alert via email and Telegram.
+        """Send Broadcastify stream alert via email.
 
         `subject` is the email subject line, minus the hostname suffix. It
         used to be hardcoded to "Broadcastify Stream Down" for EVERY alert,
@@ -42,7 +42,7 @@ class _StreamMixin:
         Fire-and-forget: the caller is status_monitor_loop — the thread
         that enforces the legacy PTT release timeout and runs the
         watchdogs. Synchronous SMTP (15s timeout across several socket
-        ops) + Telegram (10s) here used to block PTT unkey for up to a
+        ops) here used to block PTT unkey for up to a
         minute, exactly during network/DNS outages when streams drop.
         """
         threading.Thread(
@@ -64,18 +64,4 @@ class _StreamMixin:
             subject = f"{line}{' — ' + hostname if hostname else ''}"
             body = f"{message}\n\nTime: {now}\n\n-- Radio Gateway"
             self.email_notifier.send(subject, body)
-        # Telegram alert
-        bot_token = str(getattr(self.config, 'TELEGRAM_BOT_TOKEN', '') or '').strip()
-        chat_id = str(getattr(self.config, 'TELEGRAM_CHAT_ID', '') or '').strip()
-        if bot_token and chat_id:
-            try:
-                import urllib.request, json
-                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                data = json.dumps({'chat_id': chat_id, 'text': f"[Gateway] {message}\n{now}"}).encode()
-                req = urllib.request.Request(url, data=data,
-                                            headers={'Content-Type': 'application/json'})
-                urllib.request.urlopen(req, timeout=10)
-                print(f"  [Telegram] Stream alert sent")
-            except Exception as e:
-                print(f"  [Telegram] Alert failed: {e}")
 

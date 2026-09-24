@@ -409,7 +409,7 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
         # Fleet Manager Engine
         self.manager_engine = None  # ManagerEngine instance
 
-        # Alert engine (Prom polling → Telegram)
+        # Alert engine (Prom polling → email)
         self.alert_engine = None
 
         # Automation Engine
@@ -711,7 +711,6 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
             'gps_enabled': bool(self.gps_manager),
             'repeater_db_enabled': bool(self.repeater_manager),
             'adsb_enabled': getattr(self.config, 'ENABLE_ADSB', False),
-            'telegram_enabled': getattr(self.config, 'ENABLE_TELEGRAM', False),
             'monitor_enabled': bool(self.web_monitor_source),
             'monitor_level': self.web_monitor_source.audio_level if self.web_monitor_source else 0,
             'link_enabled': bool(self.link_server),

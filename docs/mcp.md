@@ -1,8 +1,8 @@
 # MCP Server
 
-`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **170 tools** across status, radios, routing, transcription, packet, fleet management, and more.
+`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **167 tools** across status, radios, routing, transcription, packet, fleet management, and more.
 
-The Telegram bot, the Fleet Manager's hourly/daily Claude runs all use these tools internally — the gateway itself reads its own state through this surface.
+The Fleet Manager's hourly/daily Claude runs use these tools internally — the gateway itself reads its own state through this surface.
 
 ## How it's used
 
@@ -12,13 +12,13 @@ In Claude Code or any MCP client, the server is registered in `.mcp.json` at the
 { "enableAllProjectMcpServers": true }
 ```
 
-The MCP server is launched as a child process of the MCP client (Claude Code, Telegram bot). Restarting the radio-gateway service does **not** restart the MCP server — they're separate processes connected by HTTP.
+The MCP server is launched as a child process of the MCP client (Claude Code, the Fleet Manager). Restarting the radio-gateway service does **not** restart the MCP server — they're separate processes connected by HTTP.
 
 ## Tool categories
 
 | Category | Tools |
 |----------|-------|
-| **Status** | `gateway_status`, `sdr_status`, `cat_status`, `system_info`, `d75_status`, `ic7100_status`, `kv4p_status`, `telegram_status`, `gps_status`, `cloudflare_status` |
+| **Status** | `gateway_status`, `sdr_status`, `cat_status`, `system_info`, `d75_status`, `ic7100_status`, `kv4p_status`, `gps_status`, `cloudflare_status` |
 | **Radio TX** | `radio_ptt`, `radio_tts`, `radio_cw`, `radio_ai_announce`, `radio_set_tx`, `radio_get_tx` |
 | **TH-9800** | `radio_frequency` |
 | **TH-D75** | `d75_command`, `d75_frequency`, `d75_memscan` |
@@ -44,7 +44,6 @@ The MCP server is launched as a child process of the MCP client (Claude Code, Te
 | **Recordings** | `recordings_list`, `recordings_delete` |
 | **Cloud / GDrive** | `gdrive_status`, `gdrive_list_files`, `gdrive_publish_tunnel`, `cloudflare_status`, `tunnel_link_url` |
 | **System / Diag** | `gateway_logs`, `gateway_restart`, `gateway_key`, `audio_trace_toggle`, `stream_trace_toggle`, `stream_trace_read`, `trace_status`, `bus_sink_stats`, `bus_source_stats`, `config_read`, `process_control`, `processes_status`, `usbip_status` |
-| **Telegram** | `telegram_reply`, `telegram_status`, `telegram_logs` |
 | **TH-9800 CAT recovery** | `cat_serial_status`, `cat_reconnect`, `cat_serial_connect`, `cat_setup_radio` |
 
 ## Tools that change state
@@ -67,7 +66,7 @@ knowing before you let an AI call them unattended:
 Read-only additions: `bgm_status`, `announcer_status`, `tts_engine_status`,
 `soundboard_categories`, `transcription_search` (SQLite FTS5 — quoted phrases,
 `AND`/`OR`/`NOT`, `NEAR()`, prefix `*`), `trace_status` (read this before the
-trace toggles, which only flip state), `cat_serial_status`, `telegram_logs`.
+trace toggles, which only flip state), `cat_serial_status`.
 
 ## Not exposed on purpose
 
@@ -76,7 +75,6 @@ These have web routes or dashboard buttons but no MCP tool, deliberately:
 - **Gateway/host lifecycle** — restart, reboot, exit. An unattended AI should not be able to take the gateway down.
 - **`/config` read/write** — carries secrets. `config_read` exists for the non-secret view.
 - **Transmit-side hardware controls** — TH-9800 `MIC_PTT`, the KV4P test tone, IC-7100 power and mic gain. Gate these behind a dummy load and a maximum key-down time first.
-- **Telegram start/stop/restart** — the bot hosts the Claude session that is calling the tool. `telegram_logs` and `telegram_status` are read-only.
 - **Plumbing** — websocket audio, file serving, transcribe-worker self-registration.
 
 The IC-7100 and KV4P tools also validate `cmd` against a fixed list that is
@@ -85,7 +83,8 @@ shorter than what the panels send; those extra commands are still UI-only.
 ## Removed
 
 - `broadcastify_control` (start/stop/restart) went with the dead DarkIce control code. Use `broadcastify_status`, and the fleet manager's `restart-stream` action for a reconnect.
-- `voice_view`, `voice_status`, `voice_send` went with the `/voice` page (2026-09-23). Claude Code's own remote control replaces it. The page ran in a separate `claude-voice` tmux session, so nothing else depended on it. The Telegram bot's `claude-gateway` tmux session is unaffected.
+- `voice_view`, `voice_status`, `voice_send` went with the `/voice` page (2026-09-23). Claude Code's own remote control replaces it.
+- `telegram_reply`, `telegram_status`, `telegram_logs` went with the Telegram bot. Alerts are emailed instead (see [Fleet Manager](fleet-manager.md)); for an interactive session use Claude Code's remote control.
 
 ## Architecture
 
@@ -95,7 +94,7 @@ The gateway exposes its HTTP API on `:8080` (web UI port). The MCP server is a t
 2. Translates each to an HTTP call against `localhost:8080`
 3. Returns the parsed JSON response back over stdio
 
-This split lets multiple MCP clients (Claude Code, Telegram bot, Fleet Manager) all talk to the same gateway concurrently — they each spawn their own `gateway_mcp.py` instance but all converge on the single HTTP API.
+This split lets multiple MCP clients (Claude Code, Fleet Manager) all talk to the same gateway concurrently — they each spawn their own `gateway_mcp.py` instance but all converge on the single HTTP API.
 
 ## Adding a tool
 
@@ -134,7 +133,7 @@ The tool's docstring becomes what the LLM reads when deciding whether to call it
 - [`mcp_server/server.py`](../mcp_server/server.py) — shared `mcp` instance, `_get`/`_post` HTTP helpers, config loader
 - [`mcp_server/tools/`](../mcp_server/tools/) — one module per tool category:
   - `control.py` — status, radio TX, broadcastify, smart announce, relay, ADS-B, automation, system
-  - `radios.py` — TH-9800 (incl. CAT link recovery), D75, IC-7100, KV4P, processes, Telegram
+  - `radios.py` — TH-9800 (incl. CAT link recovery), D75, IC-7100, KV4P, processes
   - `usrp.py` — AllStar/USRP node control
   - `routing.py` — bus mixer + routing
   - `fleet.py` — endpoint management, packet, Winlink, audio/stream trace + `trace_status`, automation schemes

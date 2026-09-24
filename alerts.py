@@ -1,9 +1,9 @@
 """In-process alert engine — evaluates PromQL against the local Prometheus
-and dispatches Telegram notifications when rules trip.
+and dispatches email notifications when rules trip.
 
 Why in-process and not alertmanager? alertmanager is the standard answer but
-adds a new daemon, config file, and Telegram bridge. The gateway already has
-a working Telegram path and a single-host scope, so a small polling loop
+adds a new daemon, config file, and mail bridge. The gateway already has
+a working email path and a single-host scope, so a small polling loop
 delivers the same outcome with a fraction of the moving parts. Swap to
 alertmanager later if the rule set grows past a few dozen.
 
@@ -96,7 +96,7 @@ def _query_prometheus(prom_url: str, query: str, timeout: float = 5.0):
 
 
 class AlertEngine:
-    """Polls Prom on an interval, fires/recovers rules, dispatches Telegram."""
+    """Polls Prom on an interval, fires/recovers rules, dispatches email."""
 
     def __init__(self, gateway, prom_url='http://127.0.0.1:9090/prometheus',
                  poll_interval=30, rules=None):
@@ -187,24 +187,19 @@ class AlertEngine:
         else:
             text = f"[RECOVERED] {rule['name']} — {label_str}"
         print(f"  [Alerts] {text}")
-        self._send_telegram(text)
+        self._send_email(rule, text, fired)
 
-    def _send_telegram(self, text):
+    def _send_email(self, rule, text, fired):
         gw = self.gateway
-        if gw is None or getattr(gw, 'config', None) is None:
+        notifier = getattr(gw, 'email_notifier', None) if gw is not None else None
+        if notifier is None or not notifier.is_configured():
+            print(f"  [Alerts] NOT SENT (email not configured): {rule['name']}")
             return
-        bot_token = str(getattr(gw.config, 'TELEGRAM_BOT_TOKEN', '') or '').strip()
-        chat_id = str(getattr(gw.config, 'TELEGRAM_CHAT_ID', '') or '').strip()
-        if not bot_token or not chat_id:
-            return
+        state = rule['severity'].upper() if fired else 'RECOVERED'
         try:
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            payload = json.dumps({'chat_id': chat_id, 'text': text}).encode()
-            req = urllib.request.Request(
-                url, data=payload, headers={'Content-Type': 'application/json'})
-            urllib.request.urlopen(req, timeout=10)
+            notifier.send(f"[Gateway alert] {state}: {rule['name']}", text)
         except Exception as e:
-            print(f"  [Alerts] Telegram send failed: {e}")
+            print(f"  [Alerts] Email send failed: {e}")
 
 
 def _series_key(metric_labels):

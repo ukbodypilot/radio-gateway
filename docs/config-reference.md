@@ -27,7 +27,7 @@ The installer copies the example to `gateway_config.txt` if one doesn't exist. T
 | Section | Key | Purpose |
 |---------|-----|---------|
 | `[streaming]` | `STREAM_*` | Broadcastify feed key |
-| `[telegram]` | `TELEGRAM_BOT_TOKEN` + `_CHAT_ID` | Telegram bot control |
+| `[email]` | `EMAIL_ADDRESS` + `EMAIL_APP_PASSWORD` | Alert emails (stream outages, Fleet Manager, keyword hits) |
 
 ## Section index
 
@@ -53,7 +53,8 @@ The installer copies the example to `gateway_config.txt` if one doesn't exist. T
 | `[allstar]` | AllStarLink bridge via USRP — `ENABLE_USRP`, `USRP_REMOTE_HOST/PORT`, `USRP_LISTEN_PORT`, `USRP_NODE`, `USRP_AMI_*` (see [allstar_bridge.md](allstar_bridge.md)) |
 | `[relay]` | USB relay control (radio power, antenna switches) |
 | `[smart]` | AI-generated smart announcements |
-| `[telegram]` | Telegram bot for remote control |
+| `[email]` | Gmail SMTP alerting — `ENABLE_EMAIL`, `EMAIL_ADDRESS`, `EMAIL_APP_PASSWORD`, `EMAIL_RECIPIENT`, `EMAIL_ON_STARTUP`, `ENABLE_ALERT_ENGINE` (raw Prometheus-threshold alerts; off by default) |
+| `[manager]` | Fleet Manager runs — `MANAGER_CLAUDE_BIN`, `MANAGER_CLAUDE_MODEL`, `MANAGER_MAX_TURNS` |
 | `[web]` | Web UI port, theme, auth |
 | `[ddns]` | DDNS updater (No-IP, Dynu) |
 | `[cat]` | TH-9800 CAT control startup commands |

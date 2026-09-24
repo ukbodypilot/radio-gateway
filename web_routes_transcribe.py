@@ -122,9 +122,6 @@ def handle_transcribe_config(handler, parent):
         elif key == 'forward_mumble':
             tx._forward_mumble = bool(value)
             tx._save(); result = {'ok': True}
-        elif key == 'forward_telegram':
-            tx._forward_telegram = bool(value)
-            tx._save(); result = {'ok': True}
         elif key == 'audio_boost':
             tx._audio_boost = float(value) / 100.0
             tx._save(); result = {'ok': True}

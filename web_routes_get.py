@@ -696,51 +696,6 @@ def handle_adsbstatus(handler, parent):
         pass
 
 
-def handle_telegramstatus(handler, parent):
-    """GET /telegramstatus"""
-    import json as json_mod, os as _os
-    data = {'enabled': False, 'bot_running': False, 'bot_username': '',
-            'tmux_session': '', 'tmux_active': False,
-            'messages_today': 0, 'last_message_time': None,
-            'last_message_text': '', 'last_reply_time': None}
-    data['enabled'] = bool(getattr(parent.config, 'ENABLE_TELEGRAM', False)) if parent.config else False
-    # Always check bot process and token — even if disabled in config
-    try:
-        import subprocess as _sp
-        _r = _sp.run(['systemctl', 'is-active', 'telegram-bot'],
-                     capture_output=True, text=True, timeout=2)
-        data['bot_running'] = _r.stdout.strip() == 'active'
-    except Exception:
-        data['bot_running'] = False
-    _token = str(getattr(parent.config, 'TELEGRAM_BOT_TOKEN', '')) if parent.config else ''
-    data['token_set'] = bool(_token and len(_token) > 10)
-    if data['enabled']:
-        status_file = getattr(parent.config, 'TELEGRAM_STATUS_FILE', '/tmp/tg_status.json')
-        try:
-            with open(status_file) as _sf:
-                _sd = json_mod.load(_sf)
-            data.update({k: _sd[k] for k in data if k in _sd and k != 'bot_running'})
-        except Exception:
-            pass
-    # Always check tmux session
-    session = getattr(parent.config, 'TELEGRAM_TMUX_SESSION', 'claude-gateway') if parent.config else 'claude-gateway'
-    data['tmux_session'] = session
-    try:
-        _r = _sp.run(['tmux', 'has-session', '-t', session],
-                     capture_output=True, timeout=2)
-        data['tmux_active'] = (_r.returncode == 0)
-    except Exception:
-        data['tmux_active'] = False
-    try:
-        handler.send_response(200)
-        handler.send_header('Content-Type', 'application/json')
-        handler.send_header('Cache-Control', 'no-cache')
-        handler.end_headers()
-        handler.wfile.write(json_mod.dumps(data).encode('utf-8'))
-    except BrokenPipeError:
-        pass
-
-
 def handle_usbipstatus(handler, parent):
     """GET /usbipstatus"""
     import json as json_mod

@@ -35,7 +35,6 @@ class Stub:
     _salvage_report     = ME_cls._salvage_report
     _find_report        = ME_cls._find_report
     _write_error_report = ME_cls._write_error_report
-    _run_mode           = ME_cls._run_mode
     _claude_bin         = ME_cls._claude_bin
     _ONESHOT_SYSTEM     = ME_cls._ONESHOT_SYSTEM
 
@@ -141,12 +140,6 @@ print(f"{'bounded-log rules injected':>34}: {'journalctl -n 50' in cmd[cmd.index
 print(f"{'wall-clock timeout set':>34}: {kw.get('timeout') == ME._MAX_WAIT_SECS}")
 print(f"{'runs in the gateway dir':>34}: {kw.get('cwd') == ME._BASE}")
 
-print()
-print('--- run mode selector ---')
-for cfg, label in ((None, 'unset'), ('oneshot', "'oneshot'"), ('tmux', "'tmux'"),
-                   ('nonsense', "'nonsense'"), ('', 'empty string')):
-    s = Stub() if cfg is None else Stub(MANAGER_RUN_MODE=cfg)
-    print(f"{label:>34}: {s._run_mode()}")
 
 print()
 print('--- claude binary resolution ---')

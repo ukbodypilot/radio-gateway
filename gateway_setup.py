@@ -720,13 +720,13 @@ def setup_manager_engine(gw):
 
 
 def setup_alert_engine(gw):
-    """In-process alert engine — polls local Prometheus, fires Telegram.
+    """In-process alert engine — polls local Prometheus, sends email.
 
     Skipped silently if local Prometheus isn't reachable; the gateway works
     fine without it, the only loss is alerting (and the Manager docs already
     cover threshold queries from their side).
     """
-    if not getattr(gw.config, 'ENABLE_ALERT_ENGINE', True):
+    if not getattr(gw.config, 'ENABLE_ALERT_ENGINE', False):
         print(f"  [Alerts] disabled via config")
         return
     try:

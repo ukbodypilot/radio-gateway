@@ -38,7 +38,6 @@
     <a class="chip off" id="chip-gps"    href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">GPS</span><span class="chip-val">--</span></a>
     <a class="chip off" id="chip-adsb"   href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">ADS-B</span><span class="chip-val">--</span></a>
     <a class="chip off" id="chip-usbip"  href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">USB/IP</span><span class="chip-val">--</span></a>
-    <a class="chip off" id="chip-tg"     href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">Telegram</span><span class="chip-val">--</span></a>
     <a class="chip off" id="chip-auto"   href="/dashboard/operate"><span class="chip-dot"></span><span class="chip-name">Automation</span><span class="chip-val">--</span></a>
   </div>
 </div>
@@ -120,7 +119,7 @@ createPoller('/sysinfo',2000,function(s){
   if(h!==_lastSysinfoHTML){_lastSysinfoHTML=h;document.getElementById('sysinfo').innerHTML=h;}
 });
 
-// ── Slow chips (10s): workers, loop, GPS, ADS-B, USB/IP, Telegram, automation ──
+// ── Slow chips (10s): workers, loop, GPS, ADS-B, USB/IP, automation ──
 // since=2100 → status only, skips the transcript payload we don't need here.
 createPoller('/transcriptions?since=4102444800', 10000, function(d) {
   var st = d.status || {};
@@ -151,10 +150,6 @@ createPoller('/usbipstatus', 15000, function(d) {
   if (!d.enabled) { setChip('chip-usbip', 'off', 'off'); return; }
   var n = (d.devices||[]).filter(function(x){ return x.attached; }).length;
   setChip('chip-usbip', d.server_reachable ? 'ok' : 'err', d.server_reachable ? n + ' attached' : 'unreachable');
-});
-createPoller('/telegramstatus', 10000, function(d) {
-  if (!d.enabled) { setChip('chip-tg', 'off', 'off'); return; }
-  setChip('chip-tg', d.bot_running ? 'ok' : 'err', d.bot_running ? 'bot up' : 'bot down');
 });
 createPoller('/automationstatus', 10000, function(a) {
   if (!a.enabled) { setChip('chip-auto', 'off', 'off'); return; }

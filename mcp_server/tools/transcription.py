@@ -113,7 +113,6 @@ def transcription_config(
                'min_duration' — seconds, e.g. 0.5
                'audio_boost' — percentage, e.g. 200
                'forward_mumble' — true/false
-               'forward_telegram' — true/false
                'restart'     — restart transcriber with saved settings
                'clear'       — clear all results
 
@@ -122,7 +121,7 @@ def transcription_config(
                that feeds the transcription sink.
         value: The value to set (ignored for restart/clear).
     """
-    if key in ('enabled', 'forward_mumble', 'forward_telegram'):
+    if key in ('enabled', 'forward_mumble'):
         value = value.lower() in ('true', '1', 'yes')
     result = _post('/transcribe_config', {'key': key, 'value': value})
     if result.get('ok'):

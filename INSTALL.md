@@ -152,26 +152,24 @@ If you want the gateway to re-broadcast audio to https://broadcastify.com:
    STREAM_SERVER = audio9.broadcastify.com   # or whichever server they assigned
    ```
 
-### Telegram bot (optional — phone control)
+### Email alerts (recommended)
 
-Lets you control the gateway from your phone via a Claude Code
-session.
+Stream outages, Fleet Manager reports and auto-fix notices, and transcription
+keyword hits are sent by email. Nothing else notifies you, so set this up.
 
-1. On Telegram, message `@BotFather`, run `/newbot`, follow prompts.
-2. BotFather gives you a token like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`.
-3. Message your new bot from your personal account. Then run:
-   ```bash
-   curl "https://api.telegram.org/bot<TOKEN>/getUpdates"
-   ```
-   Find your chat_id in the JSON response.
-4. Edit `gateway_config.txt`:
+1. Use a Gmail account and turn on 2-Step Verification.
+2. Create an **App password** (Google Account → Security → App passwords). It is
+   16 characters and is not your normal password.
+3. Edit `gateway_config.txt`:
    ```ini
-   ENABLE_TELEGRAM     = true
-   TELEGRAM_BOT_TOKEN  = <token>
-   TELEGRAM_CHAT_ID    = <chat_id>
+   ENABLE_EMAIL        = true
+   EMAIL_ADDRESS       = you@gmail.com
+   EMAIL_APP_PASSWORD  = <16-char app password>
+   EMAIL_RECIPIENT     =            # blank = send to yourself
    ```
 
-See `README.md → Telegram Bot` for the full Claude-Code-in-tmux setup.
+Without these the gateway logs each alert as `NOT SENT (email not configured)`,
+and the installer's health check warns about it.
 
 ### Google Drive (optional — cloud backup + tunnel URL publishing)
 
@@ -328,10 +326,8 @@ No automated uninstall yet. Manual:
 
 ```bash
 # Stop + disable services
-sudo systemctl disable --now radio-gateway telegram-bot claude-gateway
-sudo rm /etc/systemd/system/radio-gateway.service \
-         /etc/systemd/system/telegram-bot.service \
-         /etc/systemd/system/claude-gateway.service
+sudo systemctl disable --now radio-gateway
+sudo rm /etc/systemd/system/radio-gateway.service
 
 # Remove UDEV rules
 sudo rm -f /etc/udev/rules.d/99-{kv4p,aioc,ch340-relay}.rules

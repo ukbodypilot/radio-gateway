@@ -1,6 +1,6 @@
 # Radio Gateway
 
-A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, Telegram bot control, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 170 MCP tools for AI control.
+A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, email alerting, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 167 MCP tools for AI control.
 
 **Radios:** TH-9800 (AIOC USBIP), TH-D75 (Bluetooth RFCOMM + SCO), KV4P (USB serial), FTM-150 (remote AIOC endpoint), IC-7100 (CI-V remote endpoint), RSPduo dual SDR receiver.
 
@@ -26,7 +26,7 @@ More screenshots in `docs/screenshots/`.
 
 **Audio routing v2.0** — bus-based mixer with a visual drag-and-drop editor at `/routing`. Four bus types (Listen / Solo / Duplex / Simplex Repeater), per-bus processing chain (gate / HPF / LPF / notch / **neural denoise** with RNNoise *or* DeepFilterNet 3), per-bus PCM + MP3 streaming, NUL sink for recording-only paths. Independent TX/RX muting per radio.
 
-**Transcription** — distributed pool. Moonshine (linear cost, wins on short clips) + Whisper via faster-whisper (better accuracy on long clips), routed by clip length. Local engine or [remote workers](docs/transcription-pool.md) on other Linux boxes. Silero v5 VAD. Per-utterance frequency tagging and Mumble/Telegram cross-posting.
+**Transcription** — distributed pool. Moonshine (linear cost, wins on short clips) + Whisper via faster-whisper (better accuracy on long clips), routed by clip length. Local engine or [remote workers](docs/transcription-pool.md) on other Linux boxes. Silero v5 VAD. Per-utterance frequency tagging and Mumble cross-posting and keyword email alerts.
 
 **Loop recorder** — per-bus continuous recording (1h – 7d retention), canvas waveform with click-to-play and drag-select export. Server-owned playback so it survives browser close.
 
@@ -36,9 +36,9 @@ More screenshots in `docs/screenshots/`.
 
 **Streaming** — Broadcastify / Icecast via internal ffmpeg pipe (no DarkIce, no ALSA loopback). Auto-reconnect. Cloudflare quick-tunnel for free public HTTPS with URL discovery via Google Drive.
 
-**Control surfaces** — 20+ page web UI, 170 MCP tools, Telegram bot (text routes through Claude Code + MCP; voice notes stream straight to radio TX), Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
+**Control surfaces** — 20+ page web UI, 167 MCP tools, Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
 
-**Fleet Manager** — document-driven autonomous monitoring. Plain-English tasks in `hourly.md` / `daily.md` are handed to a Claude session on a schedule; structured reports come back with Telegram escalation on `elevated` severity. Auto-discovers nodes that change DHCP IP. See [docs/fleet-manager.md](docs/fleet-manager.md).
+**Fleet Manager** — document-driven autonomous monitoring. Plain-English tasks in `hourly.md` / `daily.md` are handed to a one-shot Claude run on a schedule; structured reports come back, with an email alert on `elevated` or `warning` severity. Auto-discovers nodes that change DHCP IP. See [docs/fleet-manager.md](docs/fleet-manager.md).
 
 **Telemetry, AI, automation** — Smart Announcements (Claude CLI → Kokoro/Edge TTS → broadcast on schedule), scheduled automation tasks, live transcription, dashboard CPU breakdown (real-time critical / background nice / iowait / per-core load avg).
 
@@ -103,7 +103,7 @@ radio-gateway/
 ├── radio_gateway.py            entry point
 ├── gateway_core.py             RadioGateway class, main loop
 ├── gateway_setup.py            phased initialization helpers
-├── gateway_mcp.py              MCP server entry point (170 tools, stdio)
+├── gateway_mcp.py              MCP server entry point (167 tools, stdio)
 ├── web_server.py               HTTP/WS server + config UI
 ├── config_format.py            gateway_config.txt value read/write rules (quoting, inline comments)
 ├── web_routes_*.py             per-domain POST handlers (transcribe / radio / audio / text / system / manager / automation)
@@ -120,7 +120,7 @@ radio-gateway/
 ├── web_pages/                  HTML pages + common.css/.js (shell) + dash.css/.js (dashboard family)
 ├── docs/                       feature docs grouped by audience (see docs/index.md)
 ├── scripts/                    install.sh + systemd unit templates
-├── tools/                      telegram_bot.py, transcribe_worker.py, link_endpoint.py
+├── tools/                      transcribe_worker.py, link_endpoint.py
 └── examples/gateway_config.txt the canonical config template (read this once)
 ```
 

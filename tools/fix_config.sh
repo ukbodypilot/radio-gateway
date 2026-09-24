@@ -40,7 +40,6 @@ sed -i \
   -e 's/^ENABLE_EMAIL = false/ENABLE_EMAIL = true/' \
   -e 's/^EMAIL_ON_STARTUP = false/EMAIL_ON_STARTUP = true/' \
   -e 's/^ENABLE_GATEWAY_LINK = false/ENABLE_GATEWAY_LINK = true/' \
-  -e 's/^ENABLE_TELEGRAM = false/ENABLE_TELEGRAM = true/' \
   "$CONFIG"
 
 # Mumble

@@ -22,7 +22,7 @@ Claude Code configuration (.mcp.json at the repo root):
 
 The implementation lives in the ``mcp_server`` package:
   - ``mcp_server/server.py`` — FastMCP instance + HTTP helpers + config loader + GW_ROOT
-  - ``mcp_server/tools/control.py``       — gateway/SDR/radio TX/recordings/logs/automation/audio-trace/telegram/ADS-B/USB-IP
+  - ``mcp_server/tools/control.py``       — gateway/SDR/radio TX/recordings/logs/automation/audio-trace/ADS-B/USB-IP
   - ``mcp_server/tools/radios.py``        — TH-9800 / D75 / KV4P / IC-7100 / processes / mixer / config / process control
   - ``mcp_server/tools/routing.py``       — audio routing: bus/sink wiring, mute, gain, processing filters, denoise tuning, bus delay
   - ``mcp_server/tools/fleet.py``         — endpoint SSH / packet + BBS / Winlink / stream-trace / sink-stats / scheme mgmt / endpoint battery
@@ -42,8 +42,8 @@ it is added to that import list.
 Tool modules must resolve repo files against ``server.GW_ROOT``, not their own
 ``__file__``: they sit two directories below the gateway root.
 
-This file is intentionally a thin shim so the ``.mcp.json`` entry, tmux session
-launchers, and any external scripts that spawn ``python3 gateway_mcp.py``
+This file is intentionally a thin shim so the ``.mcp.json`` entry and any
+external scripts that spawn ``python3 gateway_mcp.py``
 continue working without modification.
 """
 

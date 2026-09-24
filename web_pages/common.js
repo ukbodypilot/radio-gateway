@@ -94,10 +94,6 @@ function sendKey(k) {
   if (document.activeElement) document.activeElement.blur();
 }
 
-function openTmux() {
-  postJson('/open_tmux', {});
-}
-
 
 // ── Formatting ─────────────────────────────────────────────────────────────
 

@@ -27,7 +27,7 @@ from web_routes_automation  import (handle_automationcmd, handle_refreshsounds,
                                     handle_soundboard_categories, handle_tts_engine)
 from web_routes_system  import (
     handle_key, handle_gpscmd, handle_reboothost,
-    handle_restartgateway, handle_telegramcmd, handle_open_tmux,
+    handle_restartgateway,
     handle_exit, handle_config_form, handle_gdrive_publish_tunnel,
 )
 from web_routes_manager  import (

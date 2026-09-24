@@ -10,7 +10,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from mcp_server.server import mcp, _get, _post, _load_telegram_config, GW_BASE_URL, GW_ROOT
+from mcp_server.server import mcp, _get, _post, GW_BASE_URL, GW_ROOT
 
 
 # ---------------------------------------------------------------------------
@@ -602,7 +602,7 @@ def config_read(section: str | None = None) -> str:
 
     Args:
         section: Optional INI section name to filter (e.g. 'audio', 'sdr',
-                 'telegram', 'radio').  Omit to return all settings.
+                 'radio').  Omit to return all settings.
     """
     cfg_path = os.path.join(GW_ROOT, 'gateway_config.txt')
     if not os.path.isfile(cfg_path):
@@ -639,19 +639,6 @@ def config_read(section: str | None = None) -> str:
             return f'Section [{section}] not found in config'
         return 'Config file is empty'
     return '\n'.join(lines)
-
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Tools — Telegram Status
-# ---------------------------------------------------------------------------
-@mcp.tool()
-def telegram_status() -> str:
-    """
-    Get Telegram bot status: whether the bot process is running, tmux session
-    state, message counts today, and last message timestamps.
-    """
-    return json.dumps(_get('/telegramstatus'), indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -778,18 +765,3 @@ def cat_setup_radio() -> str:
     if result.get('ok'):
         return "Radio setup from config complete"
     return f"Failed: {result.get('status') or result.get('error') or 'CAT client not connected'}"
-
-
-# ---------------------------------------------------------------------------
-# Tools — Telegram bot logs
-# ---------------------------------------------------------------------------
-@mcp.tool()
-def telegram_logs() -> str:
-    """
-    Last 50 lines of the telegram-bot service journal. Read-only; start, stop
-    and restart are intentionally not exposed (the bot hosts the Claude session).
-    """
-    result = _post('/telegramcmd', {'cmd': 'logs'}, timeout=15)
-    if not result.get('ok'):
-        return f"Failed: {result.get('error', 'unknown')}"
-    return result.get('logs') or "No logs available"

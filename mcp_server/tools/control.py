@@ -10,7 +10,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from mcp_server.server import mcp, _get, _post, _load_telegram_config, GW_BASE_URL, _auth_headers
+from mcp_server.server import mcp, _get, _post, GW_BASE_URL, _auth_headers
 
 
 # ---------------------------------------------------------------------------
@@ -499,63 +499,6 @@ def audio_trace_toggle() -> str:
         return f"Error: {e}"
     active = result.get('active', False)
     return f"Audio trace {'STARTED' if active else 'STOPPED and dumped to disk'}"
-
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Tools — Telegram
-# ---------------------------------------------------------------------------
-@mcp.tool()
-def telegram_reply(message: str) -> str:
-    """
-    Send a reply to the Telegram user who sent the current command.
-    Call this ONCE when you have completely finished processing the request.
-    Do not call it until you are done — this is the user's only feedback channel.
-
-    Args:
-        message: Plain-text response to send back to the user's phone.
-                 Keep it concise — Telegram messages should be readable on mobile.
-                 Use newlines for structure, avoid markdown formatting.
-    """
-    import json as _json
-    import time as _time
-
-    tg = _load_telegram_config()
-    token = tg['token']
-    chat_id = tg['chat_id']
-
-    if not token or not chat_id:
-        return 'Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)'
-
-    url = f'https://api.telegram.org/bot{token}/sendMessage'
-    payload = json.dumps({'chat_id': chat_id, 'text': message}).encode()
-    headers = {'Content-Type': 'application/json'}
-    req = urllib.request.Request(url, data=payload, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read())
-    except Exception as e:
-        return f'Telegram send failed: {e}'
-
-    if not result.get('ok'):
-        return f"Telegram send failed: {result.get('description', 'unknown error')}"
-
-    # Update status file with reply timestamp
-    ts = _time.strftime('%Y-%m-%dT%H:%M:%S')
-    try:
-        status_path = tg['status_file']
-        existing = {}
-        if os.path.isfile(status_path):
-            with open(status_path) as f:
-                existing = _json.load(f)
-        existing['last_reply_time'] = ts
-        existing['last_reply_text'] = message[:120]
-        with open(status_path, 'w') as f:
-            _json.dump(existing, f)
-    except Exception:
-        pass
-
-    return f'Telegram reply sent at {ts}'
 
 
 # ---------------------------------------------------------------------------

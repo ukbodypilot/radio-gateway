@@ -476,14 +476,13 @@
     <input type="text" id="st-keywords"
            placeholder="mayday, emergency"
            onchange="setConfig('alert_keywords', this.value)">
-    <div class="ctrl-hint">Comma-separated. Match sends Telegram alert.</div>
+    <div class="ctrl-hint">Comma-separated. A match sends an email (at most one per keyword every 5 min).</div>
   </div>
 
   <div class="ctrl-cell">
     <div class="ctrl-head"><span>Forward to</span></div>
     <div class="check-row">
       <label class="tgl"><input type="checkbox" id="st-mumble"      onchange="setConfig('forward_mumble', this.checked)"> Mumble</label>
-      <label class="tgl"><input type="checkbox" id="st-telegram"    onchange="setConfig('forward_telegram', this.checked)"> Telegram</label>
       <label class="tgl"><input type="checkbox" id="st-log-results" onchange="setConfig('log_results', this.checked)"> Log</label>
     </div>
     <div class="ctrl-hint">Cross-post each transcript.</div>
@@ -602,7 +601,6 @@ function poll() {
           _set('st-boost-val', s.audio_boost + '%');
         }
         if (s.forward_mumble !== undefined)   document.getElementById('st-mumble').checked = s.forward_mumble;
-        if (s.forward_telegram !== undefined) document.getElementById('st-telegram').checked = s.forward_telegram;
         if (s.log_results !== undefined)      document.getElementById('st-log-results').checked = s.log_results;
         if (s.alert_keywords !== undefined)   document.getElementById('st-keywords').value = s.alert_keywords;
         if (s.mode)                           document.getElementById('st-mode').value = s.mode;

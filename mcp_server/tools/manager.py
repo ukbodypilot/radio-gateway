@@ -1,7 +1,7 @@
 """Fleet Manager MCP tools — scheduled Claude-driven fleet health checks.
 
 The manager engine (manager_engine.py) runs hourly and daily checks by
-collecting a system snapshot and feeding it to a Claude session over tmux;
+collecting a system snapshot and handing it to a one-shot `claude -p` run;
 each run appends a report to manager_reports.jsonl and can raise an unread
 alert. The /manager web page has driven all of this since 2026-05-18 with
 no MCP coverage at all — these tools close that gap.
@@ -217,8 +217,8 @@ def manager_run(task: str = 'hourly') -> str:
     Args:
         task: 'hourly' (default) or 'daily'.
 
-    CAUTION — this starts a Claude session in the manager's tmux target and
-    hands it the fleet snapshot; it is not a cheap status read. The call
+    CAUTION — this spawns a one-shot `claude -p` run and hands it the fleet
+    snapshot; it is not a cheap status read. The call
     returns as soon as the run is dispatched, not when it finishes: poll
     manager_status() for running=False, then manager_reports() for the
     result. Do not call this from an automated loop.
