@@ -223,7 +223,7 @@ class Config:
             'TTS_ENGINE': 'kokoro',  # kokoro (offline ONNX, default) | edge (Microsoft Neural) | gtts (Google)
             'KOKORO_DEFAULT_VOICE': 'af_heart',  # Kokoro voice ID — see docs/TTS_TEXT_COMMANDS_GUIDE.md
             'TTS_VOLUME': 1.0,  # Volume multiplier for TTS audio (1.0 = normal, 2.0 = double, 3.0 = triple)
-            'TTS_TARGET_RMS_DB': -10.0,  # Loudness-normalise synthesised TTS to this RMS (all 3 engines land quieter); tanh soft-clip, one-way
+            'TTS_TARGET_RMS_DB': -16.0,  # Loudness-normalise synthesised TTS to this RMS (all 3 engines land quieter); tanh soft-clip, one-way
             'TTS_SPEED': 1.0,   # Speech speed (1.0 = normal, 1.3 = 30% faster, 0.8 = slower, requires ffmpeg)
             'TTS_DEFAULT_VOICE': 1, # gTTS/Edge voice (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
             'PTT_TTS_DELAY': 0.5,   # Silence padding before TTS (seconds) to prevent cutoff
