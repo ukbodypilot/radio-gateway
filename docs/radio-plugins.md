@@ -17,6 +17,8 @@ Yaesu FTM-9800 dual-band quad-receiver. Connected via **AIOC** (All-In-One-Cable
 
 **Web UI**: `/radio` — full front-panel emulation plus signal meters and per-VFO frequency display.
 
+**CAT link recovery** (also MCP tools): `cat_serial_status` reports the bridge's serial state; `cat_reconnect` re-opens the TCP link to the CAT bridge; `cat_serial_connect` opens its serial side (~4 s startup, raises RTS); `cat_setup_radio` re-pushes channels, volume and power from config and so overwrites front-panel changes. None of them key the transmitter.
+
 **Source**: [`plugins/th9800.py`](../plugins/th9800.py) · **Config**: `[radio]`, `[ptt]`, `[cat]` in `gateway_config.txt`.
 
 ## TH-D75

@@ -21,6 +21,10 @@ The voice list follows the active engine automatically. Edge labels carry
 Microsoft's own personality tags where useful — `Ana (US F) — Cartoon`,
 `Christopher (US M) — Authority`, `Roger (US M) — Lively`.
 
+**From an MCP client:** `tts_engine_status` lists engines, which is active and
+whether each is importable; `tts_engine_set` performs the same live swap as the
+dropdown and persists `TTS_ENGINE`.
+
 ### Installing / upgrading
 
 ```bash
@@ -172,6 +176,10 @@ directory that Refresh wipes, so a rejected clip is never re-fetched.
 Files named `station_id*`, `loop.*` and the configured BGM beds are reserved and
 never occupy a numbered slot.
 
+**From an MCP client:** `soundboard_categories` shows counts and the current
+selection, `soundboard_set_categories` persists a new filter, and
+`soundboard_refresh` clears the cache and re-fills the slots.
+
 ## Background music and the repeating message
 
 Three looping music beds, each with its own spoken message, mixed with
@@ -202,6 +210,13 @@ Behaviour worth knowing:
   rather than enabled-but-mute.
 - A per-bed voice belonging to a different engine is dropped in favour of the
   engine default, so hot-swapping the engine degrades rather than breaks.
+
+### Controlling beds and the announcer from an MCP client
+
+`bgm_status` / `bgm_control` (slot 1-3, `start`/`stop`/`toggle`) drive the pads,
+and `announcer_status` / `announcer_configure` edit the per-bed messages,
+voices, interval, max length and master enable. Starting a bed plays through the
+**System Sounds** routing, so if that node feeds a radio sink it transmits.
 
 ### Why the bed ducks itself
 

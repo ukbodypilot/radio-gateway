@@ -47,11 +47,15 @@ check("every decorated function is registered", set(decorated) == registered,
       str(sorted(set(decorated) ^ registered)))
 
 doc = open(os.path.join(ROOT, 'docs', 'mcp.md')).read()
-documented = set(re.findall(r'`([a-z][a-z0-9_]+)`', doc))
+# Only the tool tables count; prose (the "Removed" section) may name old tools.
+table_rows = '\n'.join(l for l in doc.splitlines() if l.startswith('|'))
+documented = set(re.findall(r'`([a-z][a-z0-9_]+)`', table_rows))
 check("every registered tool is listed in docs/mcp.md",
       not (registered - documented), str(sorted(registered - documented)))
-check("docs/mcp.md lists no tool that was removed",
-      'broadcastify_control' not in registered and 'broadcastify_control' not in documented)
+removed = {'broadcastify_control', 'voice_view', 'voice_status', 'voice_send'}
+check("no removed tool is registered or left in the docs tables",
+      not (removed & registered) and not (removed & documented),
+      str(sorted(removed & (registered | documented))))
 
 n = len(registered)
 for rel, pat in (('README.md', r'(\d+) MCP tools'), ('docs/index.md', r'(\d+) MCP tools'),

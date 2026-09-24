@@ -216,6 +216,15 @@ journalctl --user -u transcribe-worker -f
 
 The gateway polls `/status` every 10 seconds on each configured remote worker.
 
+## Searching the log
+
+Every transcription is stored in a SQLite log with an FTS5 index. The `/txlog`
+page searches it through `GET /transcript_search?q=<expr>&limit=N`, and the
+`transcription_search` MCP tool does the same. FTS5 syntax is passed straight
+through: quoted phrases, `AND` / `OR` / `NOT`, `NEAR(a b)`, and prefix `wea*`.
+A malformed expression returns an `invalid query` error rather than a 500. Each
+hit reports whether the loop recorder still holds its audio.
+
 ## Telemetry
 
 Per-engine fields surface in `/transcriptions` → `status.workers[]`:

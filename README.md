@@ -106,7 +106,7 @@ radio-gateway/
 ├── gateway_mcp.py              MCP server entry point (170 tools, stdio)
 ├── web_server.py               HTTP/WS server + config UI
 ├── config_format.py            gateway_config.txt value read/write rules (quoting, inline comments)
-├── web_routes_*.py             per-domain POST handlers (transcribe / radio / audio / text / system / voice / manager / automation)
+├── web_routes_*.py             per-domain POST handlers (transcribe / radio / audio / text / system / manager / automation)
 ├── audio_bus.py, bus_manager.py        bus mixer
 ├── audio_sources.py            all source/sink classes
 ├── transcriber.py, transcribe_engine.py    ASR + pool dispatcher

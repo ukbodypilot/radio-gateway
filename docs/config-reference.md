@@ -159,6 +159,9 @@ SOUNDBOARD_CATEGORIES = boing, fart, scream, squeak, wrong
 SOUNDBOARD_CATEGORIES = -animals, -applause, -arcade
 ```
 
+The same setting can be changed without editing the file via the `/controls`
+Cats picker or the `soundboard_set_categories` MCP tool.
+
 Behaviour:
 
 - **Live** — read at refresh time, so saving the config page applies on the very

@@ -47,6 +47,46 @@ The MCP server is launched as a child process of the MCP client (Claude Code, Te
 | **Telegram** | `telegram_reply`, `telegram_status`, `telegram_logs` |
 | **TH-9800 CAT recovery** | `cat_serial_status`, `cat_reconnect`, `cat_serial_connect`, `cat_setup_radio` |
 
+## Tools that change state
+
+Most tools act on the gateway rather than just reading it. The ones worth
+knowing before you let an AI call them unattended:
+
+| Tool | Effect |
+|------|--------|
+| `bgm_control` | Starts/stops a BGM bed. Audio follows the **System Sounds** routing, so a bed routed to a radio sink **transmits** |
+| `announcer_configure` | Edits per-bed messages, voices, interval, enable. Text is saved even if synthesis fails |
+| `tts_engine_set` | Hot-swaps the TTS engine and persists `TTS_ENGINE`; per-bed voices from another engine fall back to the default |
+| `soundboard_set_categories` | Persists `SOUNDBOARD_CATEGORIES` (all categories are stored as blank = "all") |
+| `soundboard_refresh` | Wipes the soundboard cache and re-fills slots; downloads finish in the background |
+| `gps_set_position` | Simulated GPS only; fails on a real serial receiver |
+| `gps_switch_mode` | `simulate` / `serial`; restarts the GPS thread and clears the fix |
+| `cat_reconnect`, `cat_serial_connect` | Re-open the TH-9800 CAT link / its serial side (~4 s) |
+| `cat_setup_radio` | **Overwrites the radio's channels, volume and power from `gateway_config.txt`** — front-panel changes are lost. Does not key the transmitter |
+
+Read-only additions: `bgm_status`, `announcer_status`, `tts_engine_status`,
+`soundboard_categories`, `transcription_search` (SQLite FTS5 — quoted phrases,
+`AND`/`OR`/`NOT`, `NEAR()`, prefix `*`), `trace_status` (read this before the
+trace toggles, which only flip state), `cat_serial_status`, `telegram_logs`.
+
+## Not exposed on purpose
+
+These have web routes or dashboard buttons but no MCP tool, deliberately:
+
+- **Gateway/host lifecycle** — restart, reboot, exit. An unattended AI should not be able to take the gateway down.
+- **`/config` read/write** — carries secrets. `config_read` exists for the non-secret view.
+- **Transmit-side hardware controls** — TH-9800 `MIC_PTT`, the KV4P test tone, IC-7100 power and mic gain. Gate these behind a dummy load and a maximum key-down time first.
+- **Telegram start/stop/restart** — the bot hosts the Claude session that is calling the tool. `telegram_logs` and `telegram_status` are read-only.
+- **Plumbing** — websocket audio, file serving, transcribe-worker self-registration.
+
+The IC-7100 and KV4P tools also validate `cmd` against a fixed list that is
+shorter than what the panels send; those extra commands are still UI-only.
+
+## Removed
+
+- `broadcastify_control` (start/stop/restart) went with the dead DarkIce control code. Use `broadcastify_status`, and the fleet manager's `restart-stream` action for a reconnect.
+- `voice_view`, `voice_status`, `voice_send` went with the `/voice` page (2026-09-23). Claude Code's own remote control replaces it. The page ran in a separate `claude-voice` tmux session, so nothing else depended on it. The Telegram bot's `claude-gateway` tmux session is unaffected.
+
 ## Architecture
 
 The gateway exposes its HTTP API on `:8080` (web UI port). The MCP server is a thin shim that:
@@ -94,14 +134,15 @@ The tool's docstring becomes what the LLM reads when deciding whether to call it
 - [`mcp_server/server.py`](../mcp_server/server.py) — shared `mcp` instance, `_get`/`_post` HTTP helpers, config loader
 - [`mcp_server/tools/`](../mcp_server/tools/) — one module per tool category:
   - `control.py` — status, radio TX, broadcastify, smart announce, relay, ADS-B, automation, system
-  - `radios.py` — TH-9800, D75, IC-7100, KV4P, processes, Telegram
+  - `radios.py` — TH-9800 (incl. CAT link recovery), D75, IC-7100, KV4P, processes, Telegram
   - `usrp.py` — AllStar/USRP node control
   - `routing.py` — bus mixer + routing
-  - `fleet.py` — endpoint management, packet, Winlink, stream trace, automation schemes
+  - `fleet.py` — endpoint management, packet, Winlink, audio/stream trace + `trace_status`, automation schemes
   - `link.py` — gateway link endpoints
   - `loop_recorder.py` — loop recorder + playback
   - `transcription.py` — transcription engine + log search
   - `cloud.py` — Cloudflare, GDrive
+  - `audio_beds.py` — BGM beds, announcer, TTS engine, soundboard
   - `repeaters.py` — repeater directory + GPS
   - `metrics.py` — Prometheus metrics
 - [`.mcp.json`](../.mcp.json) — Claude Code registration
