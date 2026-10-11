@@ -99,7 +99,7 @@ class _LifecycleMixin:
             log_path = os.path.join(log_dir, f'gateway-{today}.log')
             log_file = open(log_path, 'a', encoding='utf-8')
             # Clean up old log files beyond retention
-            keep_days = int(getattr(self.config, 'LOG_FILE_DAYS', 7))
+            keep_days = int(getattr(self.config, 'LOG_FILE_DAYS', 30))
             import glob
             for old_log in sorted(glob.glob(os.path.join(log_dir, 'gateway-*.log'))):
                 try:
@@ -132,7 +132,7 @@ class _LifecycleMixin:
         self._status_writer = LogWriter(
             sys.stdout, buffer_lines=buf_lines, log_file=log_file,
             log_dir=getattr(self, '_log_dir', None),
-            keep_days=int(getattr(self.config, 'LOG_FILE_DAYS', 7)),
+            keep_days=int(getattr(self.config, 'LOG_FILE_DAYS', 30)),
         )
         sys.stdout = self._status_writer
         self._orig_stderr = sys.stderr

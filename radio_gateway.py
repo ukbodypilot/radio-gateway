@@ -190,7 +190,7 @@ class Config:
             'NETWORK_TIMEOUT': 10,
             'HEADLESS_MODE': True,          # No console status bar, log to file + web UI
             'LOG_BUFFER_LINES': 2000,      # Lines kept in memory for web /logs viewer
-            'LOG_FILE_DAYS': 7,            # Days to keep rolling log files
+            'LOG_FILE_DAYS': 30,           # Days to keep rolling log files
             'VERBOSE_LOGGING': False,
             'STATUS_UPDATE_INTERVAL': 1.0,  # seconds
             'MAX_MUMBLE_BUFFER_SECONDS': 1.0,

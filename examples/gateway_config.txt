@@ -1042,7 +1042,7 @@ HEADLESS_MODE = false
 LOG_BUFFER_LINES = 2000
 
 # Days to keep rolling log files (logs/gateway.log, rotates at midnight)
-LOG_FILE_DAYS = 7
+LOG_FILE_DAYS = 30
 
 # LEGACY external-darkice streaming. Leave false unless you specifically need
 # it: the default Broadcastify path encodes in-process (see [streaming]) and
