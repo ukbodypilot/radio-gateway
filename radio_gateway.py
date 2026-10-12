@@ -670,7 +670,7 @@ def _pre_flight(config):
     Runs before RadioGateway init:
     1. Kill stale processes from prior runs
     2. Start TH-9800 CAT systemd service (if enabled)
-    3. Set CPU governor to performance
+    3. Set CPU governor to schedutil
     4. Reset AIOC USB device
     """
     import glob
@@ -745,12 +745,12 @@ def _pre_flight(config):
         print("  Disabled in config")
 
     # 3. CPU governor
-    print(f"[{time.strftime('%H:%M:%S')}] [3/4] Setting CPU governor to performance...")
+    print(f"[{time.strftime('%H:%M:%S')}] [3/4] Setting CPU governor to schedutil...")
     for gov_path in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'):
         try:
-            _sudo(['tee', gov_path]).input = 'performance'
+            _sudo(['tee', gov_path]).input = 'schedutil'
             # Use shell for tee stdin
-            subprocess.run(f'echo performance | sudo -n tee {gov_path} > /dev/null 2>&1',
+            subprocess.run(f'echo schedutil | sudo -n tee {gov_path} > /dev/null 2>&1',
                            shell=True, timeout=5)
         except Exception:
             pass
