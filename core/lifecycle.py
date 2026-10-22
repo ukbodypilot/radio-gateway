@@ -305,26 +305,28 @@ class _LifecycleMixin:
     def _dump_audio_trace(self):
         from audio_trace import dump_audio_trace
         return dump_audio_trace(self)
-    def cleanup(self):
-        """Clean up resources"""
-        # Reap supervised child processes first (respects per-entry
-        # persist_across_restart so cloudflared stays running)
+    def _shutdown_step(self, what, fn, done=None, quiet=False):
+        """Run one shutdown step. A failure is reported (or, with quiet,
+        swallowed: ALSA and PyAudio grumble on every close) and the
+        remaining steps still run."""
         try:
-            if hasattr(self, 'process_supervisor') and self.process_supervisor:
-                self.process_supervisor.shutdown_all(timeout=5.0)
-        except Exception as _e:
-            print(f"\n  [Warning] ProcessSupervisor shutdown error: {_e}")
+            fn()
+            if done and self.config.VERBOSE_LOGGING:
+                print(f"  {done}")
+        except Exception as e:
+            if not quiet:
+                print(f"  [Warning] shutdown: {what} failed: {type(e).__name__}: {e}")
 
-        # Restore terminal settings (keyboard thread is daemon and may not
-        # reach its own finally block before the process exits)
-        if hasattr(self, '_terminal_settings'):
-            try:
-                import termios
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._terminal_settings)
-            except Exception:
-                log_exc()
+    def _close_stream(self, stream, settle):
+        # Stop before close (prevents ALSA mmap errors), then let ALSA settle.
+        if stream.is_active():
+            stream.stop_stream()
+        if settle:
+            time.sleep(0.05)
+        stream.close()
 
-        # Restore original stdout/stderr before cleanup prints
+    def _restore_stdio(self):
+        """Undo run()'s stdout/stderr capture so the shutdown prints land."""
         if hasattr(self, '_orig_stderr') and self._orig_stderr:
             sys.stderr = self._orig_stderr
             # Restore fd 2 if we piped it
@@ -342,248 +344,128 @@ class _LifecycleMixin:
             sys.stdout = self._status_writer._orig
             self._status_writer = None
 
+    def cleanup(self):
+        """Clean up resources.
+
+        The ORDER is load-bearing (tests/test_lifecycle_ordering.py): the
+        supervisor is reaped first, the stream closes before ALSA, Mumble
+        stops before the audio streams it calls back into. Every step runs
+        through _shutdown_step, so one that raises can no longer skip the
+        rest: an exception from the loop recorder used to leave PTT keyed.
+        """
+        # Each step is a lambda so that even the attribute lookup happens
+        # inside _shutdown_step's try, as it did inside the old try blocks.
+        step = self._shutdown_step
+
+        # Reap supervised child processes first (respects per-entry
+        # persist_across_restart so cloudflared stays running)
+        if getattr(self, 'process_supervisor', None):
+            step('process supervisor', lambda: self.process_supervisor.shutdown_all(timeout=5.0))
+
+        # Restore terminal settings (keyboard thread is daemon and may not
+        # reach its own finally block before the process exits)
+        if hasattr(self, '_terminal_settings'):
+            def _restore_terminal():
+                import termios
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._terminal_settings)
+            step('terminal settings', _restore_terminal)
+
+        # Restore original stdout/stderr before cleanup prints
+        self._restore_stdio()
+
         # Stop watchdog trace and flush remaining samples
         if self._watchdog_active:
             self._watchdog_active = False
 
         # Dump audio trace before anything else
-        try:
-            self._dump_audio_trace()
-        except Exception as e:
-            print(f"\n  [Warning] Failed to write audio trace: {e}")
+        step('audio trace', lambda: self._dump_audio_trace())
 
         if self.config.VERBOSE_LOGGING:
             print("\nCleaning up...")
 
-        # Stop loop recorder
         if getattr(self, 'loop_recorder', None):
-            self.loop_recorder.stop()
+            step('loop recorder', lambda: self.loop_recorder.stop())
 
-        # Cleanup external plugins
         for pid, plugin in getattr(self, '_external_plugins', {}).items():
-            try:
-                plugin.cleanup()
-            except Exception:
-                pass
+            step(f'plugin {pid}', lambda p=plugin: p.cleanup(), quiet=True)
 
-        # Signal threads to stop
+        # Signal threads to stop, and give them time to finish current operations
         self.running = False
-
-        # Give threads time to finish current operations
         time.sleep(0.2)
 
         # Close stream output pipe first (before stopping other things)
-        if hasattr(self, 'stream_output') and self.stream_output:
-            try:
-                self.stream_output.cleanup()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Stream output closed")
-            except:
-                log_exc()
-        
-        # Release PTT
+        if getattr(self, 'stream_output', None):
+            step('stream output', lambda: self.stream_output.cleanup(), done='Stream output closed')
+
         if self.ptt_active:
-            self.set_ptt_state(False)
-        
-        # Close Mumble connection first (stops audio callbacks)
+            step('PTT release', lambda: self.set_ptt_state(False))
+
+        # Close Mumble connection first (stops audio callbacks), and let it
+        # fully stop
         if self.mumble:
-            try:
-                self.mumble.stop()
-            except:
-                pass
-        
-        # Small delay to let Mumble fully stop
+            step('Mumble', lambda: self.mumble.stop(), quiet=True)
         time.sleep(0.1)
-        
-        # Now close audio streams (with better error handling for ALSA)
-        if self.sdr_plugin:
-            try:
-                self.sdr_plugin.cleanup()
-                if self.config.VERBOSE_LOGGING:
-                    print("  SDR audio closed")
-            except Exception:
-                log_exc()  # Suppress ALSA errors during shutdown
 
-        if self.remote_audio_source:
-            try:
-                self.remote_audio_source.cleanup()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Remote audio source closed")
-            except Exception:
-                log_exc()
+        # Now the audio sources and servers
+        for obj, what, done in (
+            (self.sdr_plugin, 'SDR', 'SDR audio closed'),
+            (self.remote_audio_source, 'remote audio source', 'Remote audio source closed'),
+            (self.remote_audio_server, 'remote audio server', 'Remote audio server closed'),
+            (self.announce_input_source, 'announcement input', 'Announcement input closed'),
+        ):
+            if obj:
+                step(what, lambda o=obj: o.cleanup(), done=done)
 
-        if self.remote_audio_server:
-            try:
-                self.remote_audio_server.cleanup()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Remote audio server closed")
-            except Exception:
-                log_exc()
-
-        if self.announce_input_source:
-            try:
-                self.announce_input_source.cleanup()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Announcement input closed")
-            except Exception:
-                log_exc()
-
-        # Close relay serial ports (leave relays in current state — don't power-cycle on restart)
+        # Close relay serial ports (leave relays in current state — don't
+        # power-cycle on restart)
         if self.relay_radio:
-            try:
-                self.relay_radio.close()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Radio relay port closed")
-            except Exception:
-                log_exc()
+            step('radio relay', lambda: self.relay_radio.close(), done='Radio relay port closed')
         if self.relay_charger:
-            try:
-                self.relay_charger.close()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Charger relay port closed")
-            except Exception:
-                log_exc()
+            step('charger relay', lambda: self.relay_charger.close(), done='Charger relay port closed')
 
-        if self.automation_engine:
-            try:
-                self.automation_engine.stop()
-            except Exception:
-                pass
-
-        if self.transcriber:
-            try:
-                self.transcriber.stop()
-            except Exception:
-                pass
-
-        if self.transcription_log:
-            try:
-                self.transcription_log.close()
-            except Exception:
-                pass
-
-        if self.smart_announce:
-            try:
-                self.smart_announce.stop()
-            except Exception:
-                pass
-
-        if self.manager_engine:
-            try:
-                self.manager_engine.stop()
-            except Exception:
-                pass
-
-        if self.alert_engine:
-            try:
-                self.alert_engine.stop()
-            except Exception:
-                pass
-
-        if self.web_config_server:
-            try:
-                self.web_config_server.stop()
-            except Exception:
-                pass
-
-        if self.gps_manager:
-            try:
-                self.gps_manager.stop()
-            except Exception:
-                pass
-
-        if self.repeater_manager:
-            try:
-                self.repeater_manager.stop()
-            except Exception:
-                pass
-
-        if self.ddns_updater:
-            try:
-                self.ddns_updater.stop()
-            except Exception:
-                pass
-
-        if self.cloudflare_tunnel:
-            try:
-                self.cloudflare_tunnel.stop()
-            except Exception:
-                pass
+        # Background services, in this order
+        for obj, what, method in (
+            (self.automation_engine, 'automation', 'stop'),
+            (self.transcriber, 'transcriber', 'stop'),
+            (self.transcription_log, 'transcription log', 'close'),
+            (self.smart_announce, 'smart announce', 'stop'),
+            (self.manager_engine, 'manager', 'stop'),
+            (self.alert_engine, 'alerts', 'stop'),
+            (self.web_config_server, 'web server', 'stop'),
+            (self.gps_manager, 'GPS', 'stop'),
+            (self.repeater_manager, 'repeater manager', 'stop'),
+            (self.ddns_updater, 'DDNS', 'stop'),
+            (self.cloudflare_tunnel, 'Cloudflare tunnel', 'stop'),
+        ):
+            if obj:
+                step(what, lambda o=obj, m=method: getattr(o, m)(), quiet=True)
 
         if self.relay_ptt:
-            try:
+            def _ptt_relay_off():
                 self.relay_ptt.set_state(False)
                 self.relay_ptt.close()
-            except Exception:
-                log_exc()
+            step('PTT relay', _ptt_relay_off)
 
         if self.cat_client:
-            try:
-                self.cat_client.close()
-                if self.config.VERBOSE_LOGGING:
-                    print("  CAT client closed")
-            except Exception:
-                log_exc()
-
-        # D75 cleanup removed — D75 is now a link endpoint
+            step('CAT client', lambda: self.cat_client.close(), done='CAT client closed')
 
         # Stop local Mumble Server instances on gateway exit
         if self.mumble_server_1:
-            try:
-                self.mumble_server_1.stop()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Mumble Server 1 stopped")
-            except Exception:
-                log_exc()
+            step('Mumble server 1', lambda: self.mumble_server_1.stop(), done='Mumble Server 1 stopped')
         if self.mumble_server_2:
-            try:
-                self.mumble_server_2.stop()
-                if self.config.VERBOSE_LOGGING:
-                    print("  Mumble Server 2 stopped")
-            except Exception:
-                log_exc()
+            step('Mumble server 2', lambda: self.mumble_server_2.stop(), done='Mumble Server 2 stopped')
 
         if self.input_stream:
-            try:
-                # Stop stream first (prevents ALSA mmap errors)
-                if self.input_stream.is_active():
-                    self.input_stream.stop_stream()
-                time.sleep(0.05)  # Give ALSA time to clean up
-                self.input_stream.close()
-            except Exception as e:
-                log_exc()  # Suppress ALSA errors during shutdown
-        
+            step('input stream', lambda: self._close_stream(self.input_stream, True), quiet=True)
         if self.speaker_stream:
-            try:
-                if self.speaker_stream.is_active():
-                    self.speaker_stream.stop_stream()
-                self.speaker_stream.close()
-            except Exception:
-                log_exc()
-
+            step('speaker stream', lambda: self._close_stream(self.speaker_stream, False), quiet=True)
         if self.output_stream:
-            try:
-                # Stop stream first
-                if self.output_stream.is_active():
-                    self.output_stream.stop_stream()
-                time.sleep(0.05)  # Give ALSA time to clean up
-                self.output_stream.close()
-            except Exception as e:
-                log_exc()  # Suppress ALSA errors during shutdown
-        
+            step('output stream', lambda: self._close_stream(self.output_stream, True), quiet=True)
         if self.pyaudio_instance:
-            try:
-                self.pyaudio_instance.terminate()
-            except Exception as e:
-                pass  # Suppress errors
-        
-        # Close AIOC device
+            step('PyAudio', lambda: self.pyaudio_instance.terminate(), quiet=True)
         if self.aioc_device:
-            try:
-                self.aioc_device.close()
-            except:
-                pass
-        
+            step('AIOC device', lambda: self.aioc_device.close(), quiet=True)
+
         print("Shutdown complete")
 
     def _on_tunnel_url_changed(self, new_url):
