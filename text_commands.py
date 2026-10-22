@@ -311,6 +311,320 @@ def speak_text(gw, text, voice=None):
 # Mumble text-message command dispatcher
 # ---------------------------------------------------------------------------
 
+def _cmd_speak(gw, args):
+    if args:
+        voice = None
+        speak_txt = args
+        speak_parts = args.split(None, 1)
+        if len(speak_parts) == 2:
+            tok = speak_parts[0]
+            if gw._tts_backend == 'kokoro' and tok in gw.KOKORO_VOICES:
+                voice = tok
+                speak_txt = speak_parts[1]
+            elif tok.isdigit():
+                v = int(tok)
+                # Validate against the ACTIVE backend's table. This used
+                # to always check TTS_VOICES (gTTS), so on edge any
+                # number above the gTTS table size was rejected and
+                # silently spoken in the default voice instead.
+                _tbl = gw.EDGE_TTS_VOICES if gw._tts_backend == 'edge' else gw.TTS_VOICES
+                if v in _tbl:
+                    voice = v
+                    speak_txt = speak_parts[1]
+        if speak_text(gw, speak_txt, voice=voice):
+            v_info = f" (voice {voice})" if voice else ""
+            gw.send_text_message(f"Speaking{v_info}: {speak_txt[:50]}...")
+        else:
+            gw.send_text_message("TTS not available")
+    else:
+        if gw._tts_backend == 'kokoro':
+            voices = " | ".join(f"{k}={v}" for k, v in list(gw.KOKORO_VOICES.items())[:6])
+            gw.send_text_message(f"Usage: !speak [voice_id] <text>\nVoices (first 6): {voices}")
+        elif gw._tts_backend == 'edge':
+            # Label is index 1 in the edge tuple, 2 in the gTTS tuple.
+            voices = " | ".join(f"{k}={v[1]}" for k, v in list(gw.EDGE_TTS_VOICES.items())[:8])
+            gw.send_text_message(f"Usage: !speak [voice#] <text>\n"
+                                 f"Voices (first 8 of {len(gw.EDGE_TTS_VOICES)}): {voices}")
+        else:
+            voices = " | ".join(f"{k}={v[2]}" for k, v in gw.TTS_VOICES.items())
+            gw.send_text_message(f"Usage: !speak [voice#] <text> — Voices: {voices}")
+
+
+def _cmd_play(gw, args):
+    # Multi-digit now that slots run past 9. `args in '0123456789'`
+    # was a substring test, so it also matched '' and '123' — the
+    # latter would have raised a KeyError below.
+    if args and args.strip().isdigit() and \
+            args.strip() in gw.playback_source.file_status:
+        key = args.strip()
+        if gw.playback_source:
+            path = gw.playback_source.file_status[key]['path']
+            filename = gw.playback_source.file_status[key].get('filename', '')
+            if path:
+                gw.playback_source.queue_file(path)
+                gw.send_text_message(f"Playing: {filename}")
+            else:
+                gw.send_text_message(f"No file on key {key}")
+        else:
+            gw.send_text_message("Playback not available")
+    else:
+        gw.send_text_message("Usage: !play <0-9>")
+
+
+def _cmd_cw(gw, args):
+    if not args:
+        gw.send_text_message("Usage: !cw &lt;text&gt;")
+    else:
+        pcm = generate_cw_pcm(args, gw.config.CW_WPM,
+                              gw.config.CW_FREQUENCY, 48000)
+        if gw.config.CW_VOLUME != 1.0:
+            pcm = np.clip(pcm.astype(np.float32) * gw.config.CW_VOLUME,
+                          -32768, 32767).astype(np.int16)
+        import wave
+        tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False, prefix='cw_')
+        tmp.close()
+        with wave.open(tmp.name, 'wb') as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(48000)
+            wf.writeframes(pcm.tobytes())
+        if gw.playback_source and gw.playback_source.queue_file(tmp.name):
+            gw.send_text_message(f"CW: {args}")
+        else:
+            gw.send_text_message("CW: playback unavailable")
+            os.unlink(tmp.name)
+
+
+def _cmd_status(gw, args):
+    import psutil
+
+    s = []
+    s.append("━━━ GATEWAY STATUS ━━━")
+
+    # Uptime
+    uptime_s = int(time.time() - gw.start_time)
+    days, rem = divmod(uptime_s, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, _ = divmod(rem, 60)
+    uptime_str = f"{days}d {hours}h {mins}m" if days else f"{hours}h {mins}m"
+    s.append(f"Uptime: {uptime_str}")
+
+    # Host — CPU, RAM, Disk
+    cpu = psutil.cpu_percent(interval=0.1)
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    load1, load5, load15 = os.getloadavg()
+    s.append(f"\n📊 HOST:")
+    s.append(f"  CPU: {cpu:.0f}%  Load: {load1:.1f} / {load5:.1f} / {load15:.1f}")
+    try:
+        temps = psutil.sensors_temperatures()
+        cpu_temp = temps.get('cpu_thermal', temps.get('coretemp', [{}]))[0]
+        s.append(f"  Temp: {cpu_temp.current:.0f}°C")
+    except Exception:
+        log_exc()
+    s.append(f"  RAM: {mem.used // (1024**2)}M / {mem.total // (1024**2)}M ({mem.percent:.0f}%)")
+    s.append(f"  Disk: {disk.used // (1024**3)}G / {disk.total // (1024**3)}G ({disk.percent:.0f}%)")
+
+    # Radio
+    mutes = []
+    if gw.tx_muted: mutes.append("TX")
+    if gw.rx_muted: mutes.append("RX")
+    if gw.tx_muted and gw.rx_muted: mutes.append("ALL")
+    ptt = "TX" if gw.ptt_active else "Idle"
+    if gw.manual_ptt_mode: ptt += " (manual)"
+    s.append(f"\n📻 RADIO:")
+    s.append(f"  PTT: {ptt}  Muted: {', '.join(mutes) if mutes else 'None'}")
+
+    # Sources
+    sources = []
+    if gw.radio_source:
+        sources.append(f"AIOC ({'muted' if gw.tx_muted else 'active'})")
+    if gw.sdr_plugin:
+        sources.append(f"SDR1 ({'muted' if gw.sdr_muted else 'active'})")
+    if gw.sdr_plugin:
+        sources.append(f"SDR2 ({'muted' if gw.sdr2_muted else 'active'})")
+    if gw.remote_audio_source:
+        sources.append(f"Remote ({'muted' if gw.remote_audio_muted else 'active'})")
+    if hasattr(gw, 'announce_source') and gw.announce_source:
+        ann_muted = getattr(gw, 'announce_muted', False)
+        sources.append(f"Announce ({'muted' if ann_muted else 'active'})")
+    if sources:
+        s.append(f"  Sources: {', '.join(sources)}")
+
+    # Mumble
+    ch = gw.config.MUMBLE_CHANNEL if gw.config.MUMBLE_CHANNEL else "Root"
+    users = len(gw.mumble.users) if gw.mumble else 0
+    s.append(f"\n💬 MUMBLE:")
+    s.append(f"  Channel: {ch}  Users: {users}")
+
+    # Processing — compact, per-source
+    proc = []
+    if gw.config.ENABLE_VAD: proc.append("VAD")
+    radio_active = gw.radio_processor.get_active_list()
+    if radio_active:
+        proc.append(f"Radio[{','.join(radio_active)}]")
+    sdr_active = gw.sdr_processor.get_active_list()
+    if sdr_active:
+        proc.append(f"SDR[{','.join(sdr_active)}]")
+    if proc:
+        s.append(f"\n🎛️ Processing: {' | '.join(proc)}")
+
+    # Network
+    s.append(f"\n🌐 NETWORK:")
+    for iface_name, addrs in psutil.net_if_addrs().items():
+        for addr in addrs:
+            if addr.family.name == 'AF_INET' and addr.address != '127.0.0.1':
+                s.append(f"  {iface_name}: {addr.address}")
+
+    s.append("━━━━━━━━━━━━━━━━━━━━━━")
+    gw.send_text_message("\n".join(s))
+
+
+def _cmd_files(gw, args):
+    if gw.playback_source:
+        lines = ["=== Announcement Files ==="]
+        found = False
+        for key in gw.playback_source.slot_keys(include_station_id=True):
+            info = gw.playback_source.file_status[key]
+            if info['exists']:
+                label = "Station ID" if key == '0' else f"Slot {key}"
+                playing = " [PLAYING]" if info['playing'] else ""
+                lines.append(f"  {label}: {info['filename']}{playing}")
+                found = True
+        if not found:
+            lines.append("  No files loaded")
+        gw.send_text_message("\n".join(lines))
+    else:
+        gw.send_text_message("Playback not available")
+
+
+def _cmd_stop(gw, args):
+    if gw.playback_source:
+        gw.playback_source.stop_playback()
+        gw.send_text_message("Playback stopped")
+    else:
+        gw.send_text_message("Playback not available")
+
+
+def _cmd_restart(gw, args):
+    gw.send_text_message("Gateway restarting...")
+    gw.restart_requested = True
+    gw.running = False
+
+
+def _cmd_mute(gw, args):
+    gw.tx_muted = True
+    gw.send_text_message("TX muted (Mumble → Radio)")
+
+
+def _cmd_unmute(gw, args):
+    gw.tx_muted = False
+    gw.send_text_message("TX unmuted")
+
+
+def _cmd_id(gw, args):
+    if gw.playback_source:
+        info = gw.playback_source.file_status['0']
+        if info['path']:
+            gw.playback_source.queue_file(info['path'])
+            gw.send_text_message(f"Playing station ID: {info['filename']}")
+        else:
+            gw.send_text_message("No station ID file on slot 0")
+    else:
+        gw.send_text_message("Playback not available")
+
+
+def _cmd_smart(gw, args):
+    if not gw.smart_announce or not gw.smart_announce._claude_bin:
+        gw.send_text_message("Smart announcements not configured")
+    elif args and args.isdigit():
+        entry_id = int(args)
+        if gw.smart_announce.trigger(entry_id):
+            gw.send_text_message(f"Triggering smart announcement #{entry_id}...")
+        else:
+            gw.send_text_message(f"No smart announcement #{entry_id}")
+    else:
+        entries = gw.smart_announce.get_entries()
+        if entries:
+            lines = [f"#{e['id']}: every {e['interval']}s, voice {e['voice']}, "
+                     f"~{e['target_secs']}s — {e['prompt'][:50]}" for e in entries]
+            gw.send_text_message("Smart announcements:\n" + "\n".join(lines)
+                                   + "\n\nUsage: !smart <N> to trigger")
+        else:
+            gw.send_text_message("No smart announcements configured")
+
+
+def _cmd_endpoints(gw, args):
+    eps = getattr(gw, 'link_endpoints', {})
+    if not eps:
+        gw.send_text_message("No link endpoints connected")
+    else:
+        lines = ["=== Link Endpoints ==="]
+        for name, src in eps.items():
+            sid = getattr(src, 'source_id', '?')
+            plugin = getattr(src, 'plugin_type', '?')
+            status = gw._link_last_status.get(name, {})
+            cpu = status.get('cpu_pct', '?')
+            ram = status.get('ram_pct', '?')
+            temp = status.get('cpu_temp_c', '?')
+            ver = status.get('code_version', '?')[:8]
+            uptime = status.get('uptime', 0)
+            h, m = int(uptime) // 3600, (int(uptime) % 3600) // 60
+            lines.append(f"  {name} [{plugin}] sid={sid} "
+                         f"CPU:{cpu}% RAM:{ram}% {temp}C "
+                         f"Up:{h}h{m:02d}m v={ver}")
+        gw.send_text_message("\n".join(lines))
+
+
+def _cmd_loop(gw, args):
+    if hasattr(gw, 'loop_recorder') and gw.loop_recorder:
+        lr = gw.loop_recorder
+        buses = lr.get_active_buses() if hasattr(lr, 'get_active_buses') else []
+        total = sum(lr.get_segment_count(b) for b in buses) if hasattr(lr, 'get_segment_count') else 0
+        gw.send_text_message(f"Loop recorder: {len(buses)} buses, {total} segments")
+    else:
+        gw.send_text_message("Loop recorder not active")
+
+
+def _cmd_help(gw, args):
+    help_text = [
+        "=== Gateway Commands ===",
+        "!speak [voice#] <text> - TTS broadcast (voices 1-9)",
+        "!smart [N]    - List or trigger smart announcement",
+        "!cw <text>    - Send Morse code on radio",
+        "!play <0-9>   - Play announcement by slot",
+        "!files        - List loaded announcement files",
+        "!stop         - Stop playback and clear queue",
+        "!mute         - Mute TX (Mumble → Radio)",
+        "!unmute       - Unmute TX",
+        "!id           - Play station ID (slot 0)",
+        "!endpoints    - Show connected link endpoints",
+        "!loop         - Loop recorder status",
+        "!restart      - Restart the gateway",
+        "!status       - Show gateway status",
+        "!help         - Show this help"
+    ]
+    gw.send_text_message("\n".join(help_text))
+
+
+# Mumble text command -> handler(gw, args).
+_TEXT_COMMANDS = {
+    '!speak': _cmd_speak,
+    '!play': _cmd_play,
+    '!cw': _cmd_cw,
+    '!status': _cmd_status,
+    '!files': _cmd_files,
+    '!stop': _cmd_stop,
+    '!restart': _cmd_restart,
+    '!mute': _cmd_mute,
+    '!unmute': _cmd_unmute,
+    '!id': _cmd_id,
+    '!smart': _cmd_smart,
+    '!endpoints': _cmd_endpoints,
+    '!ep': _cmd_endpoints,
+    '!loop': _cmd_loop,
+    '!help': _cmd_help,
+}
+
+
 def on_text_message(gw, text_message):
     """
     Handle incoming text messages from Mumble users
@@ -353,288 +667,11 @@ def on_text_message(gw, text_message):
         args = parts[1] if len(parts) > 1 else ""
 
         # Handle commands
-        if command == '!speak':
-            if args:
-                voice = None
-                speak_txt = args
-                speak_parts = args.split(None, 1)
-                if len(speak_parts) == 2:
-                    tok = speak_parts[0]
-                    if gw._tts_backend == 'kokoro' and tok in gw.KOKORO_VOICES:
-                        voice = tok
-                        speak_txt = speak_parts[1]
-                    elif tok.isdigit():
-                        v = int(tok)
-                        # Validate against the ACTIVE backend's table. This used
-                        # to always check TTS_VOICES (gTTS), so on edge any
-                        # number above the gTTS table size was rejected and
-                        # silently spoken in the default voice instead.
-                        _tbl = gw.EDGE_TTS_VOICES if gw._tts_backend == 'edge' else gw.TTS_VOICES
-                        if v in _tbl:
-                            voice = v
-                            speak_txt = speak_parts[1]
-                if speak_text(gw, speak_txt, voice=voice):
-                    v_info = f" (voice {voice})" if voice else ""
-                    gw.send_text_message(f"Speaking{v_info}: {speak_txt[:50]}...")
-                else:
-                    gw.send_text_message("TTS not available")
-            else:
-                if gw._tts_backend == 'kokoro':
-                    voices = " | ".join(f"{k}={v}" for k, v in list(gw.KOKORO_VOICES.items())[:6])
-                    gw.send_text_message(f"Usage: !speak [voice_id] <text>\nVoices (first 6): {voices}")
-                elif gw._tts_backend == 'edge':
-                    # Label is index 1 in the edge tuple, 2 in the gTTS tuple.
-                    voices = " | ".join(f"{k}={v[1]}" for k, v in list(gw.EDGE_TTS_VOICES.items())[:8])
-                    gw.send_text_message(f"Usage: !speak [voice#] <text>\n"
-                                         f"Voices (first 8 of {len(gw.EDGE_TTS_VOICES)}): {voices}")
-                else:
-                    voices = " | ".join(f"{k}={v[2]}" for k, v in gw.TTS_VOICES.items())
-                    gw.send_text_message(f"Usage: !speak [voice#] <text> — Voices: {voices}")
-
-        elif command == '!play':
-            # Multi-digit now that slots run past 9. `args in '0123456789'`
-            # was a substring test, so it also matched '' and '123' — the
-            # latter would have raised a KeyError below.
-            if args and args.strip().isdigit() and \
-                    args.strip() in gw.playback_source.file_status:
-                key = args.strip()
-                if gw.playback_source:
-                    path = gw.playback_source.file_status[key]['path']
-                    filename = gw.playback_source.file_status[key].get('filename', '')
-                    if path:
-                        gw.playback_source.queue_file(path)
-                        gw.send_text_message(f"Playing: {filename}")
-                    else:
-                        gw.send_text_message(f"No file on key {key}")
-                else:
-                    gw.send_text_message("Playback not available")
-            else:
-                gw.send_text_message("Usage: !play <0-9>")
-
-        elif command == '!cw':
-            if not args:
-                gw.send_text_message("Usage: !cw &lt;text&gt;")
-            else:
-                pcm = generate_cw_pcm(args, gw.config.CW_WPM,
-                                      gw.config.CW_FREQUENCY, 48000)
-                if gw.config.CW_VOLUME != 1.0:
-                    pcm = np.clip(pcm.astype(np.float32) * gw.config.CW_VOLUME,
-                                  -32768, 32767).astype(np.int16)
-                import wave
-                tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False, prefix='cw_')
-                tmp.close()
-                with wave.open(tmp.name, 'wb') as wf:
-                    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(48000)
-                    wf.writeframes(pcm.tobytes())
-                if gw.playback_source and gw.playback_source.queue_file(tmp.name):
-                    gw.send_text_message(f"CW: {args}")
-                else:
-                    gw.send_text_message("CW: playback unavailable")
-                    os.unlink(tmp.name)
-
-        elif command == '!status':
-            import psutil
-
-            s = []
-            s.append("━━━ GATEWAY STATUS ━━━")
-
-            # Uptime
-            uptime_s = int(time.time() - gw.start_time)
-            days, rem = divmod(uptime_s, 86400)
-            hours, rem = divmod(rem, 3600)
-            mins, _ = divmod(rem, 60)
-            uptime_str = f"{days}d {hours}h {mins}m" if days else f"{hours}h {mins}m"
-            s.append(f"Uptime: {uptime_str}")
-
-            # Host — CPU, RAM, Disk
-            cpu = psutil.cpu_percent(interval=0.1)
-            mem = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            load1, load5, load15 = os.getloadavg()
-            s.append(f"\n📊 HOST:")
-            s.append(f"  CPU: {cpu:.0f}%  Load: {load1:.1f} / {load5:.1f} / {load15:.1f}")
-            try:
-                temps = psutil.sensors_temperatures()
-                cpu_temp = temps.get('cpu_thermal', temps.get('coretemp', [{}]))[0]
-                s.append(f"  Temp: {cpu_temp.current:.0f}°C")
-            except Exception:
-                log_exc()
-            s.append(f"  RAM: {mem.used // (1024**2)}M / {mem.total // (1024**2)}M ({mem.percent:.0f}%)")
-            s.append(f"  Disk: {disk.used // (1024**3)}G / {disk.total // (1024**3)}G ({disk.percent:.0f}%)")
-
-            # Radio
-            mutes = []
-            if gw.tx_muted: mutes.append("TX")
-            if gw.rx_muted: mutes.append("RX")
-            if gw.tx_muted and gw.rx_muted: mutes.append("ALL")
-            ptt = "TX" if gw.ptt_active else "Idle"
-            if gw.manual_ptt_mode: ptt += " (manual)"
-            s.append(f"\n📻 RADIO:")
-            s.append(f"  PTT: {ptt}  Muted: {', '.join(mutes) if mutes else 'None'}")
-
-            # Sources
-            sources = []
-            if gw.radio_source:
-                sources.append(f"AIOC ({'muted' if gw.tx_muted else 'active'})")
-            if gw.sdr_plugin:
-                sources.append(f"SDR1 ({'muted' if gw.sdr_muted else 'active'})")
-            if gw.sdr_plugin:
-                sources.append(f"SDR2 ({'muted' if gw.sdr2_muted else 'active'})")
-            if gw.remote_audio_source:
-                sources.append(f"Remote ({'muted' if gw.remote_audio_muted else 'active'})")
-            if hasattr(gw, 'announce_source') and gw.announce_source:
-                ann_muted = getattr(gw, 'announce_muted', False)
-                sources.append(f"Announce ({'muted' if ann_muted else 'active'})")
-            if sources:
-                s.append(f"  Sources: {', '.join(sources)}")
-
-            # Mumble
-            ch = gw.config.MUMBLE_CHANNEL if gw.config.MUMBLE_CHANNEL else "Root"
-            users = len(gw.mumble.users) if gw.mumble else 0
-            s.append(f"\n💬 MUMBLE:")
-            s.append(f"  Channel: {ch}  Users: {users}")
-
-            # Processing — compact, per-source
-            proc = []
-            if gw.config.ENABLE_VAD: proc.append("VAD")
-            radio_active = gw.radio_processor.get_active_list()
-            if radio_active:
-                proc.append(f"Radio[{','.join(radio_active)}]")
-            sdr_active = gw.sdr_processor.get_active_list()
-            if sdr_active:
-                proc.append(f"SDR[{','.join(sdr_active)}]")
-            if proc:
-                s.append(f"\n🎛️ Processing: {' | '.join(proc)}")
-
-            # Network
-            s.append(f"\n🌐 NETWORK:")
-            for iface_name, addrs in psutil.net_if_addrs().items():
-                for addr in addrs:
-                    if addr.family.name == 'AF_INET' and addr.address != '127.0.0.1':
-                        s.append(f"  {iface_name}: {addr.address}")
-
-            s.append("━━━━━━━━━━━━━━━━━━━━━━")
-            gw.send_text_message("\n".join(s))
-
-        elif command == '!files':
-            if gw.playback_source:
-                lines = ["=== Announcement Files ==="]
-                found = False
-                for key in gw.playback_source.slot_keys(include_station_id=True):
-                    info = gw.playback_source.file_status[key]
-                    if info['exists']:
-                        label = "Station ID" if key == '0' else f"Slot {key}"
-                        playing = " [PLAYING]" if info['playing'] else ""
-                        lines.append(f"  {label}: {info['filename']}{playing}")
-                        found = True
-                if not found:
-                    lines.append("  No files loaded")
-                gw.send_text_message("\n".join(lines))
-            else:
-                gw.send_text_message("Playback not available")
-
-        elif command == '!stop':
-            if gw.playback_source:
-                gw.playback_source.stop_playback()
-                gw.send_text_message("Playback stopped")
-            else:
-                gw.send_text_message("Playback not available")
-
-        elif command == '!restart':
-            gw.send_text_message("Gateway restarting...")
-            gw.restart_requested = True
-            gw.running = False
-
-        elif command == '!mute':
-            gw.tx_muted = True
-            gw.send_text_message("TX muted (Mumble → Radio)")
-
-        elif command == '!unmute':
-            gw.tx_muted = False
-            gw.send_text_message("TX unmuted")
-
-        elif command == '!id':
-            if gw.playback_source:
-                info = gw.playback_source.file_status['0']
-                if info['path']:
-                    gw.playback_source.queue_file(info['path'])
-                    gw.send_text_message(f"Playing station ID: {info['filename']}")
-                else:
-                    gw.send_text_message("No station ID file on slot 0")
-            else:
-                gw.send_text_message("Playback not available")
-
-        elif command == '!smart':
-            if not gw.smart_announce or not gw.smart_announce._claude_bin:
-                gw.send_text_message("Smart announcements not configured")
-            elif args and args.isdigit():
-                entry_id = int(args)
-                if gw.smart_announce.trigger(entry_id):
-                    gw.send_text_message(f"Triggering smart announcement #{entry_id}...")
-                else:
-                    gw.send_text_message(f"No smart announcement #{entry_id}")
-            else:
-                entries = gw.smart_announce.get_entries()
-                if entries:
-                    lines = [f"#{e['id']}: every {e['interval']}s, voice {e['voice']}, "
-                             f"~{e['target_secs']}s — {e['prompt'][:50]}" for e in entries]
-                    gw.send_text_message("Smart announcements:\n" + "\n".join(lines)
-                                           + "\n\nUsage: !smart <N> to trigger")
-                else:
-                    gw.send_text_message("No smart announcements configured")
-
-        elif command == '!endpoints' or command == '!ep':
-            eps = getattr(gw, 'link_endpoints', {})
-            if not eps:
-                gw.send_text_message("No link endpoints connected")
-            else:
-                lines = ["=== Link Endpoints ==="]
-                for name, src in eps.items():
-                    sid = getattr(src, 'source_id', '?')
-                    plugin = getattr(src, 'plugin_type', '?')
-                    status = gw._link_last_status.get(name, {})
-                    cpu = status.get('cpu_pct', '?')
-                    ram = status.get('ram_pct', '?')
-                    temp = status.get('cpu_temp_c', '?')
-                    ver = status.get('code_version', '?')[:8]
-                    uptime = status.get('uptime', 0)
-                    h, m = int(uptime) // 3600, (int(uptime) % 3600) // 60
-                    lines.append(f"  {name} [{plugin}] sid={sid} "
-                                 f"CPU:{cpu}% RAM:{ram}% {temp}C "
-                                 f"Up:{h}h{m:02d}m v={ver}")
-                gw.send_text_message("\n".join(lines))
-
-        elif command == '!loop':
-            if hasattr(gw, 'loop_recorder') and gw.loop_recorder:
-                lr = gw.loop_recorder
-                buses = lr.get_active_buses() if hasattr(lr, 'get_active_buses') else []
-                total = sum(lr.get_segment_count(b) for b in buses) if hasattr(lr, 'get_segment_count') else 0
-                gw.send_text_message(f"Loop recorder: {len(buses)} buses, {total} segments")
-            else:
-                gw.send_text_message("Loop recorder not active")
-
-        elif command == '!help':
-            help_text = [
-                "=== Gateway Commands ===",
-                "!speak [voice#] <text> - TTS broadcast (voices 1-9)",
-                "!smart [N]    - List or trigger smart announcement",
-                "!cw <text>    - Send Morse code on radio",
-                "!play <0-9>   - Play announcement by slot",
-                "!files        - List loaded announcement files",
-                "!stop         - Stop playback and clear queue",
-                "!mute         - Mute TX (Mumble → Radio)",
-                "!unmute       - Unmute TX",
-                "!id           - Play station ID (slot 0)",
-                "!endpoints    - Show connected link endpoints",
-                "!loop         - Loop recorder status",
-                "!restart      - Restart the gateway",
-                "!status       - Show gateway status",
-                "!help         - Show this help"
-            ]
-            gw.send_text_message("\n".join(help_text))
-
-        else:
+        handler = _TEXT_COMMANDS.get(command)
+        if handler is None:
             gw.send_text_message(f"Unknown command. Try !help")
+        else:
+            handler(gw, args)
 
     except Exception as e:
         if gw.config.VERBOSE_LOGGING:
