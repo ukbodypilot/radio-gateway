@@ -134,7 +134,7 @@ class _AudioProcMixin:
     def _sync_sdr_plugin_processors(self):
         """Sync SDR processing config into the SDRPlugin's processor instances."""
         if self.sdr_plugin:
-            from sdr_plugin import SDRPlugin
+            from plugins.sdr import SDRPlugin
             SDRPlugin._sync_processor(self.sdr_plugin._processor1, self.config)
             SDRPlugin._sync_processor(self.sdr_plugin._processor2, self.config)
 

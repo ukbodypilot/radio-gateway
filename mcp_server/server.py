@@ -6,6 +6,7 @@ so all the decorator-based registration paths land on the same server.
 """
 
 import base64
+import http.client
 import json
 import os
 import urllib.error
@@ -27,6 +28,19 @@ GW_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _load_config():
+    """Read the web UI port, password and HTTPS mode from gateway_config.txt.
+
+    Values go through the gateway's own parse_config_value, so inline
+    comments and quoting mean the same thing here as in the gateway. The
+    old hand parser kept inline comments and quotes as part of the password
+    (auth failed) and treated only true/1/yes as HTTPS, so the documented
+    'self-signed' and 'letsencrypt' modes made every tool talk plain http to
+    a TLS socket.
+    """
+    import sys
+    if GW_ROOT not in sys.path:
+        sys.path.insert(0, GW_ROOT)
+    from config_format import parse_config_value
     cfg_path = os.path.join(GW_ROOT, 'gateway_config.txt')
     port = 8080
     password = ''
@@ -35,11 +49,11 @@ def _load_config():
         with open(cfg_path) as f:
             for line in f:
                 line = line.strip()
-                if '=' not in line or line.startswith('#'):
+                if '=' not in line or line.startswith('#') or line.startswith('['):
                     continue
                 k, _, v = line.partition('=')
                 k = k.strip()
-                v = v.strip()
+                v = parse_config_value(v)
                 if k == 'WEB_CONFIG_PORT':
                     try:
                         port = int(v)
@@ -48,12 +62,36 @@ def _load_config():
                 elif k == 'WEB_CONFIG_PASSWORD':
                     password = v
                 elif k == 'WEB_CONFIG_HTTPS':
-                    https = v.lower() in ('true', '1', 'yes')
+                    https = v.lower() in ('true', '1', 'yes', 'self-signed',
+                                          'letsencrypt', 'lets-encrypt', 'le')
     scheme = 'https' if https else 'http'
     return f'{scheme}://127.0.0.1:{port}', password
 
 
+class _LoopbackHTTPSHandler(urllib.request.HTTPSHandler):
+    """HTTPS handler that skips certificate checks for 127.0.0.1 only.
+
+    The gateway's cert is self-signed, or a Let's Encrypt cert for the DDNS
+    name -- neither verifies against 127.0.0.1, so every tool failed when
+    HTTPS was on. Traffic to any other host keeps full verification.
+    """
+
+    def __init__(self):
+        import ssl
+        super().__init__()
+        self._loopback_ctx = ssl.create_default_context()
+        self._loopback_ctx.check_hostname = False
+        self._loopback_ctx.verify_mode = ssl.CERT_NONE
+
+    def https_open(self, req):
+        if req.host.split(':')[0] == '127.0.0.1':
+            return self.do_open(http.client.HTTPSConnection, req,
+                                context=self._loopback_ctx)
+        return super().https_open(req)
+
+
 GW_BASE_URL, GW_PASSWORD = _load_config()
+urllib.request.install_opener(urllib.request.build_opener(_LoopbackHTTPSHandler()))
 
 
 # ---------------------------------------------------------------------------

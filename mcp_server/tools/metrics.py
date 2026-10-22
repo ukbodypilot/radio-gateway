@@ -12,7 +12,7 @@ import json
 import urllib.parse
 import urllib.request
 
-from mcp_server.server import mcp, GW_BASE_URL
+from mcp_server.server import mcp, GW_BASE_URL, _auth_headers
 
 
 PROM_BASE = 'http://127.0.0.1:9090/prometheus'
@@ -28,7 +28,8 @@ def metrics_list() -> str:
     Use this to discover what metrics_query can ask about.
     """
     try:
-        with urllib.request.urlopen(GW_BASE_URL + '/metrics', timeout=5) as resp:
+        req = urllib.request.Request(GW_BASE_URL + '/metrics', headers=_auth_headers())
+        with urllib.request.urlopen(req, timeout=5) as resp:
             body = resp.read().decode('utf-8', errors='replace')
     except Exception as e:
         return f"Error fetching /metrics: {e}"
