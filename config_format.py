@@ -75,3 +75,44 @@ def format_config_value(val):
         if quote not in text:
             return f'{quote}{text}{quote}'
     return text
+
+
+def split_inline_comment(raw):
+    """Split the value half of a config line into (value_text, comment).
+
+    *comment* is the inline comment exactly as written, including the
+    whitespace before its '#', or '' when there is none. The split follows the
+    same three rules as `parse_config_value`, so `_save_config` can replace a
+    value in place and keep the note the user wrote after it.
+    """
+    text = raw.rstrip('\n')
+    stripped = text.strip()
+    lead = len(text) - len(text.lstrip())
+
+    # Quoted value: the comment (if any) is whatever follows the closing quote.
+    if len(stripped) >= 2 and stripped[0] in ('"', "'"):
+        close = stripped.find(stripped[0], 1)
+        if close != -1:
+            rest = stripped[close + 1:]
+            idx = rest.find('#')
+            if idx != -1:
+                cut = lead + close + 1 + idx
+                # keep the whitespace that separated value and comment
+                while cut > lead + close + 1 and text[cut - 1].isspace():
+                    cut -= 1
+                return text[:cut].strip(), text[cut:]
+            return text.strip(), ''
+
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            if depth:
+                depth -= 1
+        elif ch == '#' and depth == 0 and (i == lead or (i > 0 and text[i - 1].isspace())):
+            cut = i
+            while cut > lead and text[cut - 1].isspace():
+                cut -= 1
+            return text[:cut].strip(), text[cut:]
+    return text.strip(), ''

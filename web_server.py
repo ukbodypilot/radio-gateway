@@ -969,9 +969,20 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                     return
                 if self._dispatch_plugin_route():
                     return
-                # Config form submission (fallback for /config POST)
-                import web_routes_post as _rp
-                _rp.handle_config_form(self, parent)
+                # Config form submission. Only /config: this used to be the
+                # fallback for EVERY unmatched POST, so a typo'd fetch or a
+                # page for a disabled plugin rewrote gateway_config.txt.
+                if self.path.split('?', 1)[0] == '/config':
+                    import web_routes_post as _rp
+                    _rp.handle_config_form(self, parent)
+                    return
+                try:
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(b'Not Found')
+                except Exception:
+                    pass
 
 
         class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -1237,44 +1248,132 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         return section_map
 
     def _save_config(self, new_values):
-        """Write ALL parameters to config file using _CONFIG_LAYOUT as the master structure.
+        """Write every _CONFIG_LAYOUT parameter to the config file, in place.
 
-        The gateway controls what's in the file — every known parameter is written,
-        organized by the canonical section ordering."""
+        The file is edited, not regenerated. Lines for layout keys get their
+        value replaced (keeping any inline comment); every other line --
+        comments, keys the layout does not know, and [plugin.instance]
+        sections such as [kv4p.vhf] -- is kept exactly as written. Layout keys
+        missing from the file are appended under their section header.
+
+        Regenerating the file from the layout alone used to delete all of
+        those: any save (config form, TTS engine switch, soundboard
+        categories) dropped the [kv4p.*] sections that spawn the kv4p
+        endpoints, plus a dozen keys that have defaults but no layout entry.
+        """
+        from config_format import parse_config_value, split_inline_comment
         print(f"  [Config] Saving {len(new_values)} keys")
         config_path = self.config.config_file
 
-        lines = []
+        # Resolve the value to write for every layout key, as before:
+        # submitted value, else current config value, else default.
+        wanted = {}          # key -> formatted value text
+        key_section = {}     # key -> layout section name
+        section_order = []
         for section, display_name, keys in self._CONFIG_LAYOUT:
-            lines.append(f'\n[{section}]\n\n')
+            section_order.append(section)
             for key in keys:
-                # Use submitted value if present, else current config value, else default
                 if key in new_values:
                     val = new_values[key]
                 elif hasattr(self.config, key):
                     val = getattr(self.config, key)
                 else:
                     val = self._defaults.get(key, '')
-                # Format hex keys
                 if key in self._HEX_KEYS:
                     try:
                         val = hex(int(val))
                     except (ValueError, TypeError):
                         pass
-                # Format booleans consistently
                 if isinstance(val, bool):
                     val = str(val).lower()
                 # Quote anything the reader would not give back unchanged --
                 # a value containing ' #' would otherwise be truncated at the
-                # next load, silently losing whatever followed. See
-                # config_format.format_config_value.
-                lines.append(f'{key} = {format_config_value(val)}\n')
+                # next load. See config_format.format_config_value.
+                wanted[key] = format_config_value(val)
+                key_section[key] = section
+
+        try:
+            with open(config_path, 'r') as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+
+        seen = set()
+        section_end = {}     # section -> index just past its last line
+        cur = None
+        out = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('[') and stripped.endswith(']'):
+                cur = stripped[1:-1].strip()
+                out.append(line)
+                section_end[cur] = len(out)
+                continue
+            # Keys inside [plugin.instance] sections belong to that plugin,
+            # never to the flat layout -- leave them alone.
+            in_plugin_section = cur is not None and '.' in cur
+            if (not in_plugin_section and '=' in stripped
+                    and not stripped.startswith('#')):
+                key, _, rest = line.partition('=')
+                key = key.strip()
+                if key in wanted:
+                    seen.add(key)
+                    old_val = parse_config_value(rest)
+                    if not self._same_config_value(key, old_val, parse_config_value(wanted[key])):
+                        _val_text, comment = split_inline_comment(rest)
+                        if comment and not comment[0].isspace():
+                            comment = '  ' + comment
+                        line = f'{key} = {wanted[key]}{comment}\n'
+            out.append(line)
+            if cur is not None:
+                section_end[cur] = len(out)
+
+        # Append layout keys the file does not have yet, grouped under their
+        # section (created at the end of the file if it is missing).
+        missing = {}
+        for key, section in key_section.items():
+            if key not in seen:
+                missing.setdefault(section, []).append(key)
+        if out and not out[-1].endswith('\n'):
+            out[-1] += '\n'
+        # Insert into existing sections from the bottom up so earlier
+        # insertion points stay valid.
+        existing = [s for s in section_order if s in missing and s in section_end]
+        for section in sorted(existing, key=lambda s: section_end[s], reverse=True):
+            at = section_end[section]
+            out[at:at] = [f'{k} = {wanted[k]}\n' for k in missing[section]]
+        for section in section_order:
+            if section in missing and section not in section_end:
+                out.append(f'\n[{section}]\n\n')
+                out.extend(f'{k} = {wanted[k]}\n' for k in missing[section])
 
         # Write atomically via temp file
         tmp_path = config_path + '.tmp'
         with open(tmp_path, 'w') as f:
-            f.writelines(lines)
+            f.writelines(out)
         os.replace(tmp_path, config_path)
+
+    def _same_config_value(self, key, old, new):
+        """True when rewriting *old* as *new* would not change what loads.
+
+        Keeps a save from churning lines that only differ in spelling
+        ('1' vs '1.0', 'False' vs 'false'), and leaves a blank line alone
+        when the value being written is just the key's default.
+        """
+        if old == new:
+            return True
+        if old == '' and key in self._defaults:
+            default = self._defaults[key]
+            if isinstance(default, bool):
+                default = str(default).lower()
+            if str(default) == new:
+                return True
+        if old.lower() in ('true', 'false') and new.lower() in ('true', 'false'):
+            return old.lower() == new.lower()
+        try:
+            return float(old) == float(new)
+        except ValueError:
+            return False
 
     def _radio_nav_links(self, style='inline'):
         """Build conditional radio nav links based on enabled radios."""

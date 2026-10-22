@@ -488,7 +488,7 @@ class Config:
             'ENABLE_WEB_CONFIG': True,
             'WEB_CONFIG_PORT': 8080,
             'WEB_CONFIG_PASSWORD': '',    # Basic auth password (user: admin), blank = no auth
-            'WEB_CONFIG_HTTPS': False,    # false, self-signed, or letsencrypt
+            'WEB_CONFIG_HTTPS': 'false',  # false, self-signed, or letsencrypt (a string: a bool default coerced 'self-signed' to False)
             'GATEWAY_NAME': '',           # Display name shown at top of dashboard (blank = none)
             'WEB_THEME': 'grey',          # Dashboard color theme: grey, blue, red, green, purple, amber, teal, pink
             # Cloudflare Tunnel (free public HTTPS access, no port forwarding needed)
