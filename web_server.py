@@ -452,7 +452,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
             'PTT_TTS_DELAY', 'PTT_ANNOUNCEMENT_DELAY',
             'LINK_AUTO_PTT_THRESHOLD', 'LINK_AUTO_PTT_HOLD', 'PTT_PREKEY_BUFFER_MS',
             'LINK_JITTER_PREFILL', 'REMOTE_AUDIO_JITTER_PREFILL',
-            'TX_TALKBACK',
+            'TX_TALKBACK', 'PTT_TIMEOUT_SECONDS',
         ]),
         ('radio', 'Radio Interface (AIOC)', [
             'AIOC_VID', 'AIOC_PID', 'AIOC_INPUT_DEVICE', 'AIOC_OUTPUT_DEVICE',

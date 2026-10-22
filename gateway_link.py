@@ -303,6 +303,65 @@ def _set_keepalive(sock, idle=8, interval=4, count=3):
         pass  # not supported on all platforms
 
 
+class PttTimeOutTimer:
+    """Transmit time-out timer (TOT) for one or more keyed radios.
+
+    allow_key(key) is called on every key-on request. The first one arms a
+    timer; when it expires, on_expire(key) must unkey the radio. After that
+    the key stays locked out while key-on requests keep arriving (a bus that
+    is still pushing audio re-requests every tick) and unlocks once they
+    have paused for `relock_gap` seconds -- a fresh press, not a held one.
+    released(key) is called on every key-off and clears both timer and lock.
+    A limit of 0 disables the timer entirely.
+    """
+
+    def __init__(self, limit, on_expire, relock_gap=5.0):
+        try:
+            self.limit = float(limit or 0)
+        except (TypeError, ValueError):
+            self.limit = 0.0
+        self._on_expire = on_expire
+        self._relock_gap = relock_gap
+        self._timers = {}       # key -> threading.Timer
+        self._locked = {}       # key -> monotonic time of the last refused key-on
+        self._lock = threading.Lock()
+
+    def allow_key(self, key):
+        if self.limit <= 0:
+            return True
+        now = time.monotonic()
+        with self._lock:
+            last = self._locked.get(key)
+            if last is not None:
+                if now - last < self._relock_gap:
+                    self._locked[key] = now
+                    return False
+                del self._locked[key]
+            timer = self._timers.get(key)
+            if timer is None or not timer.is_alive():
+                timer = threading.Timer(self.limit, self._expired, args=(key,))
+                timer.daemon = True
+                timer.name = f'PttTOT-{key}'
+                self._timers[key] = timer
+                timer.start()
+        return True
+
+    def released(self, key):
+        with self._lock:
+            timer = self._timers.pop(key, None)
+            self._locked.pop(key, None)
+        if timer:
+            timer.cancel()
+
+    def _expired(self, key):
+        with self._lock:
+            if self._timers.get(key) is not threading.current_thread():
+                return  # released or re-armed meanwhile
+            self._timers.pop(key, None)
+            self._locked[key] = time.monotonic()
+        self._on_expire(key)
+
+
 class GatewayLinkServer:
     """Listens for multiple simultaneous endpoint connections and exchanges
     framed messages.
@@ -320,7 +379,7 @@ class GatewayLinkServer:
     def __init__(self, port=9700, on_command=None,
                  on_register=None, on_disconnect=None, on_ack=None,
                  on_endpoint_status=None, on_log_lines=None,
-                 supervisor=None):
+                 supervisor=None, ptt_timeout=0, on_ptt_timeout=None):
         self._port = port
         self._on_command = on_command
         self._on_register = on_register
@@ -355,6 +414,14 @@ class GatewayLinkServer:
         self._cmd_id_counter = _it.count(1)
         self._pending_acks = {}      # cmd_id -> (threading.Event, result_holder)
         self._pending_acks_lock = threading.Lock()
+
+        # Transmit time-out timer for every endpoint-hosted radio. Every PTT
+        # command to an endpoint (web toggles, MCP tools, bus auto-PTT) goes
+        # through send_command_to, so one timer per endpoint here covers all
+        # of them. on_ptt_timeout(name) lets the gateway clear its own PTT
+        # bookkeeping after a forced unkey. ptt_timeout=0 disables.
+        self._on_ptt_timeout = on_ptt_timeout
+        self._ptt_tot = PttTimeOutTimer(ptt_timeout, self._ptt_timeout_fired)
 
     # -- public API ---------------------------------------------------------
 
@@ -436,8 +503,27 @@ class GatewayLinkServer:
 
     def send_command_to(self, name, cmd):
         """Send a command dict to a specific endpoint by name (fire-and-forget)."""
+        if isinstance(cmd, dict) and cmd.get('cmd') == 'ptt' and 'state' in cmd:
+            if cmd.get('state'):
+                if not self._ptt_tot.allow_key(name):
+                    return  # timed out and still being held: stay unkeyed
+            else:
+                self._ptt_tot.released(name)
         self._send_to(name, GatewayLinkProtocol.COMMAND,
                       json.dumps(cmd).encode('utf-8'))
+
+    def _ptt_timeout_fired(self, name):
+        print(f"  [Link] {name}: PTT time-out ({self._ptt_tot.limit:g}s) -- forcing unkey")
+        try:
+            self._send_to(name, GatewayLinkProtocol.COMMAND,
+                          json.dumps({'cmd': 'ptt', 'state': False}).encode('utf-8'))
+        except Exception as e:
+            print(f"  [Link] {name}: time-out unkey failed: {e}")
+        if self._on_ptt_timeout:
+            try:
+                self._on_ptt_timeout(name)
+            except Exception as e:
+                print(f"  [Link] {name}: on_ptt_timeout callback error: {e}")
 
     def send_command_to_and_wait(self, name, cmd, timeout=5.0):
         """Send a command and wait up to *timeout* seconds for the endpoint's
@@ -523,6 +609,7 @@ class GatewayLinkServer:
         """Remove an endpoint from the dict, close socket, notify callback."""
         with self._endpoints_lock:
             ep = self._endpoints.pop(name, None)
+        self._ptt_tot.released(name)
         if ep:
             ep.stop_sender()
             try:

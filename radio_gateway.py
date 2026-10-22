@@ -143,6 +143,7 @@ class Config:
             'PTT_RELAY_BAUD': 9600,
             'AIOC_PTT_CHANNEL': 3,
             'PTT_RELEASE_DELAY': 0.5,
+            'PTT_TIMEOUT_SECONDS': 180,      # Transmit time-out: force unkey after this long keyed (0 = off)
             'LINK_AUTO_PTT_THRESHOLD': 10,   # Bus level (0-100) that keys a link endpoint's TX
             'LINK_AUTO_PTT_HOLD': 0.5,       # Seconds to hold a link endpoint keyed after the last chunk
             'PTT_PREKEY_BUFFER_MS': 500,     # ms of TX audio held while a bus PTT key is still being applied (0=off)

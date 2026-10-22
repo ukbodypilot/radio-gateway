@@ -645,6 +645,8 @@ def setup_gateway_link(gw):
             on_endpoint_status=on_endpoint_status,
             on_log_lines=gw.endpoint_log_store.append,
             supervisor=gw.process_supervisor,
+            ptt_timeout=getattr(gw.config, 'PTT_TIMEOUT_SECONDS', 180),
+            on_ptt_timeout=lambda name: gw._link_ptt_active.__setitem__(name, False),
         )
         gw.link_server.start()
         print(f"  Gateway Link listening on port {link_port}")

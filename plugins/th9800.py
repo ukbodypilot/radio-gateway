@@ -121,6 +121,9 @@ class TH9800Plugin:
         # with the CAT drain paused (CAT dead until the next cycle) or apply
         # the OFF before a slow ON completed — a stuck transmitter.
         self._ptt_lock = threading.RLock()
+        # Transmit time-out timer (PTT_TIMEOUT_SECONDS), built in setup().
+        # Covers every keying path because they all end in _set_ptt.
+        self._tot = None
         # Did the last applied PTT state actually reach the radio? Only the
         # software (CAT) path can currently tell; relay/AIOC report nothing.
         self._ptt_ok = True
@@ -155,6 +158,9 @@ class TH9800Plugin:
 
         self._config = config
         self._gateway = gateway
+        from gateway_link import PttTimeOutTimer
+        self._tot = PttTimeOutTimer(getattr(config, 'PTT_TIMEOUT_SECONDS', 180),
+                                    self._tot_expired)
         self._ptt_method = str(getattr(config, 'PTT_METHOD', 'aioc')).lower()
         self._ptt_channel = int(getattr(config, 'AIOC_PTT_CHANNEL', 3))
 
@@ -740,7 +746,11 @@ class TH9800Plugin:
 
     # -- Internal: PTT --
 
-    def _set_ptt(self, state_on):
+    def _tot_expired(self, _key):
+        print(f"  [TH9800] PTT time-out ({self._tot.limit:g}s) -- forcing unkey")
+        self._set_ptt(False, _from_tot=True)
+
+    def _set_ptt(self, state_on, _from_tot=False):
         """Key/unkey using configured PTT method.
 
         Serialised on _ptt_lock: the check-then-act on _ptt_active plus the
@@ -748,6 +758,13 @@ class TH9800Plugin:
         threads that key this radio (see _ptt_lock in __init__). Callers are
         all off-tick or already tolerant of the 150-600ms this can take.
         """
+        _tot = getattr(self, '_tot', None)
+        if _tot is not None:
+            if state_on:
+                if not _tot.allow_key('th9800'):
+                    return False  # timed out and still held: stay unkeyed
+            elif not _from_tot:
+                _tot.released('th9800')
         with self._ptt_lock:
             # Skip the no-op only when the state we are already in actually
             # REACHED the radio. After a failure, repeating the same request

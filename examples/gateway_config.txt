@@ -158,6 +158,11 @@ PTT_RELAY_DEVICE = /dev/relay_ptt
 PTT_RELAY_BAUD = 9600
 
 PTT_ACTIVATION_DELAY = 0.1   # Seconds before keying PTT after audio detected
+
+# Transmit time-out timer. Any radio keyed this long (TH-9800 or a link
+# endpoint: D75, KV4P, IC-7100, AIOC) is force-unkeyed and stays unkeyed
+# until the key-on requests pause for 5 s. 0 disables.
+PTT_TIMEOUT_SECONDS = 180
 PTT_RELEASE_DELAY = 0.5      # Seconds to hold PTT after audio stops
 
 # TX Talkback — route TX audio (TTS/CW/announcements) to local outputs
