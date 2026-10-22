@@ -10,7 +10,10 @@ import os
 import time
 
 import numpy as np
-import pyaudio
+try:
+    import pyaudio
+except ImportError:   # off the box; hw_deps.require() stops the service
+    pyaudio = None
 from audio_util import pcm_level
 
 

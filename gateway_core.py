@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Core gateway services and main RadioGateway class."""
 
-import sys
 import os
 
 def _get_version():
@@ -20,72 +19,11 @@ import time
 import threading
 import collections
 
-import ssl as _ssl
-if not hasattr(_ssl, 'wrap_socket'):
-    def _ssl_wrap_compat(sock, keyfile=None, certfile=None, server_side=False,
-                         cert_reqs=None, ssl_version=None, ca_certs=None,
-                         do_handshake_on_connect=True, suppress_ragged_eofs=True,
-                         ciphers=None, **_):
-        ctx = _ssl.SSLContext(
-            _ssl.PROTOCOL_TLS_SERVER if server_side else _ssl.PROTOCOL_TLS_CLIENT
-        )
-        ctx.check_hostname = False
-        ctx.verify_mode = _ssl.CERT_NONE
-        ctx.minimum_version = _ssl.TLSVersion.MINIMUM_SUPPORTED
-        ctx.set_ciphers('DEFAULT:@SECLEVEL=0')
-        if certfile:
-            ctx.load_cert_chain(certfile, keyfile)
-        if ca_certs:
-            ctx.load_verify_locations(ca_certs)
-        if ciphers:
-            ctx.set_ciphers(ciphers)
-        return ctx.wrap_socket(sock, server_side=server_side,
-                               do_handshake_on_connect=do_handshake_on_connect,
-                               suppress_ragged_eofs=suppress_ragged_eofs)
-    _ssl.wrap_socket = _ssl_wrap_compat
-if not hasattr(_ssl, 'PROTOCOL_TLSv1_2'):
-    _ssl.PROTOCOL_TLSv1_2 = _ssl.PROTOCOL_TLS_CLIENT
-
-try:
-    from pymumble_py3 import Mumble
-    from pymumble_py3.callbacks import PYMUMBLE_CLBK_SOUNDRECEIVED, PYMUMBLE_CLBK_TEXTMESSAGERECEIVED
-    import pymumble_py3.constants as mumble_constants
-    import pymumble_py3.mumble as _pymumble_mod
-except ImportError:
-    try:
-        from pymumble import Mumble
-        from pymumble.callbacks import PYMUMBLE_CLBK_SOUNDRECEIVED, PYMUMBLE_CLBK_TEXTMESSAGERECEIVED
-        import pymumble.constants as mumble_constants
-        import pymumble.mumble as _pymumble_mod
-    except ImportError:
-        print("ERROR: pymumble library not found!")
-        sys.exit(1)
-
-def _wrap_socket_compat(sock, keyfile=None, certfile=None,
-                        verify_mode=_ssl.CERT_NONE, server_hostname=None):
-    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
-    ctx.check_hostname = False
-    ctx.verify_mode = _ssl.CERT_NONE
-    ctx.minimum_version = _ssl.TLSVersion.MINIMUM_SUPPORTED
-    ctx.set_ciphers('DEFAULT:@SECLEVEL=0')
-    if certfile:
-        ctx.load_cert_chain(certfile, keyfile)
-    return ctx.wrap_socket(sock, server_hostname=server_hostname)
-_pymumble_mod._wrap_socket = _wrap_socket_compat
-
-try:
-    import pyaudio
-except ImportError:
-    print("ERROR: pyaudio library not found!")
-    print("Install it with: sudo apt-get install python3-pyaudio")
-    sys.exit(1)
-
-try:
-    import hid
-except ImportError:
-    print("ERROR: hidapi library not found!")
-    print("Install it with: pip3 install hidapi --break-system-packages")
-    sys.exit(1)
+# Hardware/Mumble libraries are imported optionally; main() refuses to
+# start without them (hw_deps.require). The SSL shims pymumble needs are
+# applied here, before anything opens a Mumble connection.
+import hw_deps
+hw_deps.patch_ssl()
 
 from audio_util import AudioProcessor
 # ListenBus now created by BusManager (bus_manager.py)

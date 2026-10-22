@@ -15,11 +15,15 @@ try:
         PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
     )
 except ImportError:
-    from pymumble import Mumble
-    from pymumble.callbacks import (
-        PYMUMBLE_CLBK_SOUNDRECEIVED,
-        PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
-    )
+    try:
+        from pymumble import Mumble
+        from pymumble.callbacks import (
+            PYMUMBLE_CLBK_SOUNDRECEIVED,
+            PYMUMBLE_CLBK_TEXTMESSAGERECEIVED,
+        )
+    except ImportError:   # off the box; hw_deps.require() stops the service
+        Mumble = None
+        PYMUMBLE_CLBK_SOUNDRECEIVED = PYMUMBLE_CLBK_TEXTMESSAGERECEIVED = None
 
 
 class _SetupAudioMumbleMixin:

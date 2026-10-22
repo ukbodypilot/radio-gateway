@@ -15,7 +15,10 @@ and write ``self.*`` attributes owned by ``RadioGateway``.
 import sys
 import time
 
-import pyaudio
+try:
+    import pyaudio
+except ImportError:   # off the box; hw_deps.require() stops the service
+    pyaudio = None
 
 
 class _AudioRestartMixin:

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Audio source and mixer classes for radio-gateway."""
 
-import sys
 import os
 import time
 import threading
@@ -17,20 +16,6 @@ import numpy as np
 from audio_util import (
     pcm_rms, pcm_level, pcm_db, apply_gain,
 )
-
-try:
-    import hid
-except ImportError:
-    print("ERROR: hidapi library not found!")
-    print("Install it with: pip3 install hidapi --break-system-packages")
-    sys.exit(1)
-
-try:
-    import pyaudio
-except ImportError:
-    print("ERROR: pyaudio library not found!")
-    print("Install it with: sudo apt-get install python3-pyaudio")
-    sys.exit(1)
 
 def bgm_files(config):
     """[(slot, name_or_path), ...] from BGM_FILES. 1-based.
