@@ -6,6 +6,13 @@ import socket
 import threading as _thr
 import queue as _q_mod
 
+from gateway_link import ws_mask
+
+# Largest WebSocket message any handler here accepts. Audio frames are a
+# few KB; without a cap a single 64-bit length header made the server try
+# to buffer that many bytes.
+_WS_MAX_PAYLOAD = 1 << 20
+
 
 def _enable_ws_keepalive(sock):
     """TCP keepalive + user-timeout so silently-dead WS clients get reaped.
@@ -109,6 +116,8 @@ def handle_ws_audio(handler, parent):
                 elif payload_len == 127:
                     ext = _sock.recv(8)
                     payload_len = int.from_bytes(ext, 'big')
+                if payload_len > _WS_MAX_PAYLOAD:
+                    break  # oversize frame: drop the connection
                 mask_key = _sock.recv(4) if masked else b''
                 payload = b''
                 while len(payload) < payload_len:
@@ -122,7 +131,7 @@ def handle_ws_audio(handler, parent):
                     break
                 elif opcode == 0x9:  # Ping -> Pong
                     if masked and mask_key:
-                        payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+                        payload = ws_mask(payload, mask_key)
                     pong = bytearray()
                     pong.append(0x8A)  # FIN + Pong
                     if len(payload) < 126:
@@ -226,6 +235,8 @@ def handle_ws_mic(handler, parent):
                 elif payload_len == 127:
                     ext = _sock.recv(8)
                     payload_len = int.from_bytes(ext, 'big')
+                if payload_len > _WS_MAX_PAYLOAD:
+                    break  # oversize frame: drop the connection
                 mask_key = _sock.recv(4) if masked else b''
                 payload = b''
                 while len(payload) < payload_len:
@@ -234,7 +245,7 @@ def handle_ws_mic(handler, parent):
                         break
                     payload += chunk
                 if masked and mask_key:
-                    payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+                    payload = ws_mask(payload, mask_key)
                 if opcode == 0x8:  # Close
                     _sock.sendall(b'\x88\x00')
                     break
@@ -338,6 +349,8 @@ def handle_ws_monitor(handler, parent):
                 elif payload_len == 127:
                     ext = _sock.recv(8)
                     payload_len = int.from_bytes(ext, 'big')
+                if payload_len > _WS_MAX_PAYLOAD:
+                    break  # oversize frame: drop the connection
                 mask_key = _sock.recv(4) if masked else b''
                 payload = b''
                 while len(payload) < payload_len:
@@ -346,7 +359,7 @@ def handle_ws_monitor(handler, parent):
                         break
                     payload += chunk
                 if masked and mask_key:
-                    payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+                    payload = ws_mask(payload, mask_key)
                 if opcode == 0x8:  # Close
                     _sock.sendall(b'\x88\x00')
                     break
@@ -616,6 +629,8 @@ def _ws_recv_message(sock):
         if not ext:
             return None
         payload_len = int.from_bytes(ext, 'big')
+    if payload_len > _WS_MAX_PAYLOAD:
+        return None  # treat as a protocol error: caller closes the socket
     mask_key = _recv_exact(sock, 4) if masked else None
     if masked and mask_key is None:
         return None
@@ -623,7 +638,7 @@ def _ws_recv_message(sock):
     if payload is None and payload_len > 0:
         return None
     if masked and mask_key and payload:
-        payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+        payload = ws_mask(payload, mask_key)
     if opcode == 0x08:  # Close
         try:
             sock.sendall(b'\x88\x00')
