@@ -1,0 +1,30 @@
+# Lint and the off-box tests on every push and pull request.
+# Hardware libraries (hidapi, pyaudio, pymumble, opuslib) are not installed
+# here; tests/_hwstubs.py stands in for them. Nothing in this job talks to a
+# radio, a Mumble server or the network beyond package installs.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: System tools the stream tests use
+        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg lame
+      - name: Python packages the tests import
+        run: pip install numpy "mcp<2" edge-tts gtts ruff
+      - name: Lint (syntax errors, undefined names, unused imports)
+        run: ruff check .
+      - name: Tests
+        run: python3 tests/run_all.py

@@ -89,6 +89,7 @@ class CIVSimulator:
         self.squelch  = 0      # 0..255 squelch level
         self.rf_power = 0      # 0..255 TX RF output power
         self.mic_gain = 128    # 0..255 TX mic gain (~50%)
+        self.af_level = 128    # 0..255 AF (volume) level
         self.po       = 0      # 0..255 TX power meter
         self.swr      = 0      # 0..255 SWR meter
         self.alc      = 0      # 0..255 ALC meter
@@ -374,7 +375,13 @@ class CIVSimulator:
             if not payload:
                 return None
             sub = payload[0]
-            if sub == 0x03:           # Squelch level
+            if sub == 0x01:           # AF level (read on every connect)
+                if len(payload) == 1:
+                    return self._make_resp(bytes([0x14, 0x01]) + _pct_to_bcd3(self.af_level))
+                elif len(payload) >= 3:
+                    self.af_level = _bcd3_to_pct(payload[1:3])
+                    return self._ok()
+            elif sub == 0x03:         # Squelch level
                 if len(payload) == 1:
                     return self._make_resp(bytes([0x14, 0x03]) + _pct_to_bcd3(self.squelch))
                 elif len(payload) >= 3:

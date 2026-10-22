@@ -162,16 +162,20 @@ def apply_tts_engine(gw, backend):
     engine = None
     try:
         if backend == 'kokoro':
-            import os as _os
-            from kokoro_onnx import Kokoro
-            _base = _os.path.join(_os.path.dirname(__file__), 'tools', 'models', 'kokoro')
-            _model = _os.path.join(_base, 'kokoro-v1.0.onnx')
-            _voices = _os.path.join(_base, 'voices-v1.0.bin')
-            if not _os.path.exists(_model) or not _os.path.exists(_voices):
-                return False, f"Kokoro model files missing in {_base}"
             # Reuse an already-loaded Kokoro rather than paying the model load
             # again on every switch back to it.
-            engine = getattr(gw, '_kokoro_instance', None) or Kokoro(_model, _voices)
+            engine = getattr(gw, '_kokoro_instance', None)
+            if engine is None:
+                import os as _os
+                _base = _os.path.join(_os.path.dirname(__file__), 'tools', 'models', 'kokoro')
+                _model = _os.path.join(_base, 'kokoro-v1.0.onnx')
+                _voices = _os.path.join(_base, 'voices-v1.0.bin')
+                # Files first: a missing model is the likelier, more useful
+                # answer than an import error, and needs no onnxruntime.
+                if not _os.path.exists(_model) or not _os.path.exists(_voices):
+                    return False, f"Kokoro model files missing in {_base}"
+                from kokoro_onnx import Kokoro
+                engine = Kokoro(_model, _voices)
             gw._kokoro_instance = engine
         elif backend == 'edge':
             import edge_tts

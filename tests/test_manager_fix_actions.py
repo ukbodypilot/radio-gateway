@@ -68,9 +68,28 @@ ok, detail = e._fix_restart_stream()
 check("returns a clean failure", ok is False and 'no stream_output' in detail, detail)
 
 print("\n4. unit fixes use sudo -n and surface stderr")
-e = new_engine()
-ok, detail = e._fix_restart_unit('definitely-not-a-real-unit.service')
+# systemctl's reply is faked so this runs the same on and off the box
+# (CI has no systemd). What matters is what the engine does with it.
+import subprocess as _sp
+_seen = []
+_real_run = _sp.run
+
+
+def _fake_run(argv, **kw):
+    _seen.append(argv)
+    return _sp.CompletedProcess(
+        argv, 5, '', 'Failed to restart definitely-not-a-real-unit.service: '
+                     'Unit definitely-not-a-real-unit.service not found.\n')
+
+
+_sp.run = _fake_run
+try:
+    e = new_engine()
+    ok, detail = e._fix_restart_unit('definitely-not-a-real-unit.service')
+finally:
+    _sp.run = _real_run
 check("fails for a nonexistent unit", ok is False)
+check("runs sudo non-interactively", _seen and _seen[0][:2] == ['sudo', '-n'], str(_seen))
 check("stderr is surfaced, not swallowed",
       'not found' in detail.lower(), detail)
 check("no longer an auth failure",
