@@ -13,7 +13,6 @@ Case "bare hash symbol" is the regression. Cases "spaced comment" and
 other, because a rule that fixes one by breaking the other is not a fix.
 """
 
-import ast
 import os
 import sys
 
@@ -61,19 +60,10 @@ def main():
     # End-to-end: the real loader must produce '/#' from the example template,
     # where the key is commented out, AND from a file that sets it explicitly.
     print("\n  end-to-end through Config.load_config:")
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src = open(os.path.join(root, 'radio_gateway.py')).read()
-    # Locate the class by content, not by line number: importing
-    # radio_gateway outright needs pyaudio/pymumble, and a hardcoded line
-    # range silently execs the wrong region the moment anything above it
-    # moves -- which is exactly what this change did.
-    tree = ast.parse(src)
-    node = next(n for n in tree.body
-                if isinstance(n, ast.ClassDef) and n.name == 'Config')
-    body = '\n'.join(src.split('\n')[node.lineno - 1:node.end_lineno])
-    ns = {}
-    exec("import os\nfrom config_format import parse_config_value\n" + body, ns)
-    Config = ns['Config']
+    # radio_gateway imports without the hardware libraries now (hw_deps),
+    # so the real class is used rather than a copy exec'd out of the file.
+    import _hwstubs  # noqa: F401
+    from radio_gateway import Config
 
     d = mkdtemp(prefix='cfgparse-')
     path = os.path.join(d, 'gateway_config.txt')

@@ -34,6 +34,7 @@ import hw_deps
 hw_deps.patch_ssl()
 
 from config_format import parse_config_value
+import config_schema
 
 
 class Config:
@@ -43,533 +44,54 @@ class Config:
         self.load_config()
     
     def load_config(self):
-        """Load configuration from file"""
-        # Default values
-        defaults = {
-            'MUMBLE_SERVER': '192.168.2.126',
-            'MUMBLE_PORT': 64738,
-            'MUMBLE_USERNAME': 'RadioGateway',
-            'MUMBLE_PASSWORD': '',
-            'MUMBLE_CHANNEL': '',
-            'AUDIO_RATE': 48000,
-            'AUDIO_CHUNK_SIZE': 2400,
-            'AUDIO_CHANNELS': 1,
-            'AUDIO_BITS': 16,
-            'MUMBLE_BITRATE': 72000,
-            'MUMBLE_VBR': True,
-            'MUMBLE_JITTER_BUFFER': 10,
-            'TX_RADIO': 'th9800',              # 'th9800', 'd75', or 'kv4p' — which radio for playback/TTS/announce TX
-            'TX_TALKBACK': False,              # When True, TX audio (TTS/CW/announce) is also sent to local outputs (speaker/Mumble/stream/PCM)
-            'PTT_METHOD': 'aioc',              # 'aioc', 'relay', or 'software'
-            'PTT_RELAY_DEVICE': '/dev/relay_ptt',
-            'PTT_RELAY_BAUD': 9600,
-            'AIOC_PTT_CHANNEL': 3,
-            'PTT_RELEASE_DELAY': 0.5,
-            'PTT_TIMEOUT_SECONDS': 180,      # Transmit time-out: force unkey after this long keyed (0 = off)
-            'LINK_AUTO_PTT_THRESHOLD': 10,   # Bus level (0-100) that keys a link endpoint's TX
-            'LINK_AUTO_PTT_HOLD': 0.5,       # Seconds to hold a link endpoint keyed after the last chunk
-            'PTT_PREKEY_BUFFER_MS': 500,     # ms of TX audio held while a bus PTT key is still being applied (0=off)
-            'LINK_JITTER_PREFILL': 4,        # 50ms chunks buffered before a link endpoint starts playing (latency vs dropout)
-            'REMOTE_AUDIO_JITTER_PREFILL': 8, # same for the Windows remote-audio client (burstier, needs more)
-            'PTT_ACTIVATION_DELAY': 0.1,
-            'AIOC_VID': 0x1209,
-            'AIOC_PID': 0x7388,
-            'AIOC_INPUT_DEVICE': -1,
-            'AIOC_OUTPUT_DEVICE': -1,
-            'ENABLE_AGC': False,
-            'ENABLE_NOISE_GATE': False,
-            'NOISE_GATE_THRESHOLD': -40,
-            'NOISE_GATE_ATTACK': 0.01,  # float (seconds)
-            'NOISE_GATE_RELEASE': 0.1,  # float (seconds)
-            'ENABLE_HIGHPASS_FILTER': True,
-            'HIGHPASS_CUTOFF_FREQ': 300,
-            'ENABLE_ECHO_CANCELLATION': False,
-            'ENABLE_LOWPASS_FILTER': False,
-            'LOWPASS_CUTOFF_FREQ': 3000,
-            'ENABLE_NOTCH_FILTER': False,
-            'NOTCH_FREQ': 1000,
-            'NOTCH_Q': 30.0,
-            # Per-source processing overrides (SDR).
-            # When set, SDR sources use these instead of the global settings.
-            # When not set (empty string / default), SDR processing is disabled
-            # to preserve backwards compatibility.
-            'SDR_PROC_ENABLE_NOISE_GATE': False,
-            'SDR_PROC_NOISE_GATE_THRESHOLD': -40,
-            'SDR_PROC_NOISE_GATE_ATTACK': 0.01,
-            'SDR_PROC_NOISE_GATE_RELEASE': 0.1,
-            'SDR_PROC_ENABLE_HPF': True,
-            'SDR_PROC_HPF_CUTOFF': 300,
-            'SDR_PROC_ENABLE_LPF': False,
-            'SDR_PROC_LPF_CUTOFF': 3000,
-            'SDR_PROC_ENABLE_NOTCH': False,
-            'SDR_PROC_NOTCH_FREQ': 1000,
-            'SDR_PROC_NOTCH_Q': 30.0,
-            'INPUT_VOLUME': 1.0,
-            'OUTPUT_VOLUME': 1.0,
-            'MUMBLE_LOOP_RATE': 0.01,
-            'MUMBLE_STEREO': False,
-            'MUMBLE_RECONNECT': True,
-            'MUMBLE_DEBUG': False,
-            'NETWORK_TIMEOUT': 10,
-            'HEADLESS_MODE': True,          # No console status bar, log to file + web UI
-            'LOG_BUFFER_LINES': 2000,      # Lines kept in memory for web /logs viewer
-            'LOG_FILE_DAYS': 30,           # Days to keep rolling log files
-            'VERBOSE_LOGGING': False,
-            'STATUS_UPDATE_INTERVAL': 1.0,  # seconds
-            'LOOP_RECORD_KBPS': 48,  # Loop-recorder MP3 bitrate (CBR mono); 128 was ~1.3 GiB/day per bus
-            'MAX_MUMBLE_BUFFER_SECONDS': 1.0,
-            'BUFFER_MANAGEMENT_VERBOSE': False,
-            'ENABLE_VAD': True,
-            'VAD_THRESHOLD': -45,
-            'VAD_ATTACK': 0.02,  # float (seconds)
-            'VAD_RELEASE': 1.0,  # float (seconds)
-            'VAD_MIN_DURATION': 0.1,  # float (seconds)
-            'ENABLE_STREAM_HEALTH': False,
-            'STREAM_RESTART_INTERVAL': 60,
-            'STREAM_RESTART_IDLE_TIME': 3,
-            'ENABLE_VOX': False,
-            'VOX_THRESHOLD': -30,
-            'VOX_ATTACK_TIME': 0.05,  # float (seconds)
-            'VOX_RELEASE_TIME': 0.5,  # float (seconds)
-            # File Playback
-            'ENABLE_PLAYBACK': True,
-            'PLAYBACK_DIRECTORY': './audio/',
-            'PLAYBACK_ANNOUNCEMENT_FILE': '',
-            'PLAYBACK_ANNOUNCEMENT_INTERVAL': 0,  # seconds, 0 = disabled
-            'PLAYBACK_VOLUME': 1.0,               # float (multiplier; >1.0 boosts, audio is clipped to int16 range)
-            # Morse Code (CW)
-            'CW_WPM': 20,          # Morse code words per minute
-            'CW_FREQUENCY': 600,   # Tone frequency in Hz
-            'CW_VOLUME': 1.0,      # Volume multiplier (applied before WAV write; PLAYBACK_VOLUME also applies)
-            # Text-to-Speech and Text Commands (Phase 4)
-            'ENABLE_TTS': True,
-            'ENABLE_TEXT_COMMANDS': True,
-            'TTS_ENGINE': 'kokoro',  # kokoro (offline ONNX, default) | edge (Microsoft Neural) | gtts (Google)
-            'KOKORO_DEFAULT_VOICE': 'af_heart',  # Kokoro voice ID — see docs/TTS_TEXT_COMMANDS_GUIDE.md
-            'TTS_VOLUME': 1.0,  # Volume multiplier for TTS audio (1.0 = normal, 2.0 = double, 3.0 = triple)
-            'TTS_TARGET_RMS_DB': -16.0,  # Loudness-normalise synthesised TTS to this RMS (all 3 engines land quieter); tanh soft-clip, one-way
-            'TTS_SPEED': 1.0,   # Speech speed (1.0 = normal, 1.3 = 30% faster, 0.8 = slower, requires ffmpeg)
-            'TTS_DEFAULT_VOICE': 1, # gTTS/Edge voice (1=US, 2=British, 3=Australian, 4=Indian, 5=SA, 6=Canadian, 7=Irish, 8=French, 9=German)
-            'PTT_TTS_DELAY': 0.5,   # Silence padding before TTS (seconds) to prevent cutoff
-            'PTT_ANNOUNCEMENT_DELAY': 0.5,  # Seconds after PTT key-up before announcement audio starts
-            # SDR Integration
-            'SDR_MODE': 'dual',             # 'dual' (master+slave) or 'single' (one tuner, multi-channel)
-            'ENABLE_SDR': True,
-            'SDR_DEVICE_NAME': 'pw:sdr_capture',  # PipeWire sink (recommended) or ALSA device (e.g., 'hw:6,1')
-            'SDR_DUCK': True,             # Duck SDR: silence SDR when higher priority source is active
-            'SDR_MIX_RATIO': 1.0,        # Volume/mix ratio when ducking is disabled (1.0 = full volume)
-            'SDR_DISPLAY_GAIN': 1.0,     # Display sensitivity multiplier (1.0 = normal, higher = more sensitive bar)
-            'SDR_AUDIO_BOOST': 1.0,      # Actual audio volume boost (1.0 = no change, 2.0 = 2x louder)
-            'SDR_BUFFER_MULTIPLIER': 4,  # Buffer size multiplier (4 = 4x normal buffer, ~200ms per ALSA read)
-            'SDR_WATCHDOG_TIMEOUT': 10,        # seconds with no successful read before recovery
-            'SDR_WATCHDOG_MAX_RESTARTS': 5,    # max recovery attempts before giving up
-            'SDR_WATCHDOG_MODPROBE': False,    # enable kernel module reload (requires sudoers entry)
-            # SDR2 Integration (second SDR receiver)
-            'ENABLE_SDR2': False,
-            'SDR2_DEVICE_NAME': 'pw:sdr_capture2',
-            'SDR2_DUCK': True,
-            'SDR2_MIX_RATIO': 1.0,
-            'SDR2_DISPLAY_GAIN': 1.0,
-            'SDR2_AUDIO_BOOST': 1.5,
-            'SDR2_BUFFER_MULTIPLIER': 4,
-            'SDR2_WATCHDOG_TIMEOUT': 10,
-            'SDR2_WATCHDOG_MAX_RESTARTS': 5,
-            'SDR2_WATCHDOG_MODPROBE': False,
-            'SDR_PRIORITY_ORDER': 'sdr1',    # which SDR ducks the other: sdr1 / sdr2 / equal
-            # Signal Detection Hysteresis (prevents stuttering from rapid on/off)
-            'SIGNAL_ATTACK_TIME': 0.25,  # Seconds of CONTINUOUS signal required before a source switch is allowed
-            'SIGNAL_RELEASE_TIME': 3.0,  # Seconds of continuous silence required before switching back
-            'SWITCH_PADDING_TIME': 1.0,  # Seconds of silence inserted at each transition (duck-out and duck-in)
-            'SDR_DUCK_COOLDOWN': 3.0,   # After lower-priority SDR unducks, seconds before higher-priority SDR can re-duck it
-            'SDR_SIGNAL_THRESHOLD': -70.0,  # dBFS threshold for SDR signal detection (inclusion + ducking); lower = more sensitive
-            # EchoLink Integration (Phase 3B)
-            'ENABLE_ECHOLINK': False,
-            'ECHOLINK_RX_PIPE': '/tmp/echolink_rx',
-            'ECHOLINK_TX_PIPE': '/tmp/echolink_tx',
-            'ECHOLINK_TO_MUMBLE': True,
-            'ECHOLINK_TO_RADIO': True,
-            'RADIO_TO_ECHOLINK': True,
-            'MUMBLE_TO_ECHOLINK': True,
-            # AllStarLink bridge via USRP (DVSwitch) channel — see plugins/usrp.py.
-            # The gateway listens on USRP_LISTEN_PORT and sends to the bridge
-            # node's USRP_REMOTE_HOST:USRP_REMOTE_PORT. On the ASL3 bridge node:
-            #   rxchannel = USRP/<gateway_ip>:34001:32001  (and enable chan_usrp)
-            'ENABLE_USRP': False,
-            'USRP_REMOTE_HOST': '127.0.0.1',  # bridge node (ASL3) address
-            'USRP_REMOTE_PORT': 32001,        # port the bridge node listens on
-            'USRP_LISTEN_PORT': 34001,        # port the gateway listens on
-            # Runtime node control via the bridge node's Asterisk Manager
-            # Interface — drives the /usrp control panel (connect/disconnect).
-            'USRP_NODE': '0',                 # our local node number, e.g. 68397
-            'USRP_AMI_HOST': '',              # blank = same host as USRP_REMOTE_HOST
-            'USRP_AMI_PORT': 5038,
-            'USRP_AMI_USER': '',              # AMI user (manager.conf on the node)
-            'USRP_AMI_SECRET': '',            # AMI secret — gateway_config.txt only
-            # Second AllStar USRP instance (usrp2 plugin — CM5 node)
-            'ENABLE_USRP2': False,
-            'USRP2_REMOTE_HOST': '127.0.0.1',
-            'USRP2_REMOTE_PORT': 32002,
-            'USRP2_LISTEN_PORT': 34002,
-            'USRP2_NODE': '0',
-            'USRP2_AMI_HOST': '',             # blank = same host as USRP2_REMOTE_HOST
-            'USRP2_AMI_PORT': 5038,
-            'USRP2_AMI_USER': '',
-            'USRP2_AMI_SECRET': '',
-            # Streaming Output (Phase 3A)
-            'ENABLE_STREAM_OUTPUT': False,
-            'STREAM_SERVER': 'localhost',
-            'STREAM_PORT': 8000,
-            'STREAM_PASSWORD': 'hackme',
-            'STREAM_MOUNT': '/radio',
-            'STREAM_NAME': 'Radio Gateway',
-            'STREAM_DESCRIPTION': 'Radio to Mumble Gateway',
-            'STREAM_BITRATE': 16,
-            'STREAM_FORMAT': 'mp3',
-            # Speaker Output (local monitoring)
-            'ENABLE_SPEAKER_OUTPUT': True,
-            'SPEAKER_OUTPUT_DEVICE': '',   # '' = system default; or partial name e.g. 'USB Audio', 'hw:2,0'
-            'SPEAKER_MODE': 'virtual',     # 'virtual' = metering only (no audio device), 'auto' = try device then fallback, 'real' = require device
-            'SPEAKER_VOLUME': 1.0,         # float multiplier
-            'SPEAKER_START_MUTED': False,  # Start with speaker unmuted
-            # Remote Audio Link (server sends mixed audio to client over TCP)
-            'REMOTE_AUDIO_ROLE': 'disabled',       # 'server', 'client', or 'disabled'
-            'REMOTE_AUDIO_HOST': '',               # Server: bind addr; Client: server IP
-            'REMOTE_AUDIO_PORT': 9600,
-            'REMOTE_AUDIO_DUCK': True,
-            'REMOTE_AUDIO_PRIORITY': 0,            # sdr_priority for ducking (0 = ducks all local SDRs)
-            'REMOTE_AUDIO_DISPLAY_GAIN': 1.0,
-            'REMOTE_AUDIO_AUDIO_BOOST': 1.0,
-            'REMOTE_AUDIO_RECONNECT_INTERVAL': 5.0,
-            # Announcement Input (port 9601 — inbound PCM stream, PTT to radio)
-            'ENABLE_ANNOUNCE_INPUT': True,
-            'ANNOUNCE_INPUT_PORT': 9601,
-            'ANNOUNCE_INPUT_HOST': '',
-            'ANNOUNCE_INPUT_THRESHOLD': -45.0,  # dBFS — below this is treated as silence
-            'ANNOUNCE_INPUT_VOLUME': 4.0,       # volume multiplier for announcement audio
-            # Web Microphone PTT (browser mic → radio TX via WebSocket)
-            'ENABLE_WEB_MIC': True,
-            'WEB_MIC_VOLUME': 4.0,              # volume multiplier for browser mic audio
-            # Hold-to-talk watchdogs, both enforced on the bus thread so a
-            # dead browser cannot strand a keyed transmitter.
-            'WEB_MIC_KEY_TIMEOUT': 2.0,         # s without a key refresh → unkey
-            'WEB_MIC_MAX_TX': 120.0,            # s max single over (TOT), then release to reset
-            # Web Monitor (browser mic → mixer via WebSocket, no PTT)
-            'ENABLE_WEB_MONITOR': True,
-            # How far the BGM bed drops while the announcer speaks, in dB.
-            # Broadcast-style: attenuated, not muted, so the bed stays audible.
-            # Only BGM uses this — every other source keeps hard-mute ducking.
-            'BGM_DUCK_DB': -12.0,
-            # BGM duck envelope. Down fast, hold across gaps, back up slowly —
-            # the broadcast/DJ feel. Seconds for the FULL transition.
-            'BGM_DUCK_ATTACK': 0.25,
-            'BGM_DUCK_HOLD': 0.4,
-            'BGM_DUCK_RELEASE': 1.2,
-            # Stop a BGM bed automatically after this many seconds so an
-            # unattended loop cannot run for ever. 0 = no cap.
-            'BGM_MAX_SECONDS': 120.0,
-            # Seconds between repeats of the announcer message (min 2).
-            'ANNOUNCER_INTERVAL': 10.0,
-            # Background music beds, comma-separated. Relative names resolve
-            # against PLAYBACK_DIRECTORY; absolute paths are used as-is. These
-            # play looped through the System Sounds node, so they follow
-            # whatever that node is wired to in the routing graph. They are
-            # excluded from the numbered soundboard slots.
-            'BGM_FILES': 'bgm1.mp3, bgm2.mp3, bgm3.mp3',
-            # Number of soundboard slots (1..N). Slot 0 is always the station ID.
-            # NOTE only 1-9 are reachable from the physical keyboard — a keypress
-            # is a single character. Higher slots work from the web UI, `!play <n>`
-            # and MCP.
-            'PLAYBACK_SLOTS': 20,
-            # Soundboard — auto-fill empty playback slots with random sound effects
-            'ENABLE_SOUNDBOARD': True,
-            # Restrict which categories the soundboard draws from. Comma-separated;
-            # prefix a name with '-' to exclude it. Blank = all categories.
-            #   e.g.  boing, fart, scream, wrong     (only these)
-            #   e.g.  -animals, -applause            (everything except these)
-            # Applies on the next /refreshsounds — no gateway restart needed.
-            'SOUNDBOARD_CATEGORIES': '',
-            # Reject soundboard clips longer than this many seconds. The pool
-            # contains some full-length music tracks (id 2474 is 72s) that are
-            # useless as effects. 0 disables the cap.
-            'SOUNDBOARD_MAX_SECONDS': 15,
-            # Relay Control — Radio Power
-            'ENABLE_RELAY_RADIO': False,
-            'RELAY_RADIO_DEVICE': '/dev/relay_radio',
-            'RELAY_RADIO_BAUD': 9600,
-            # Relay Control — Charger Schedule
-            'ENABLE_RELAY_CHARGER': False,
-            'RELAY_CHARGER_CONTROL': 'gpio',   # 'gpio' or 'serial'
-            'CHARGER_RELAY_GPIO': 23,           # BCM pin when RELAY_CHARGER_CONTROL = gpio
-            'RELAY_CHARGER_DEVICE': '/dev/relay_charger',
-            'RELAY_CHARGER_BAUD': 9600,
-            'RELAY_CHARGER_ON_TIME': '23:00',
-            'RELAY_CHARGER_OFF_TIME': '06:00',
-            # Smart Announcements (AI-powered via Claude CLI)
-            'ENABLE_SMART_ANNOUNCE': True,
-            'SMART_ANNOUNCE_TOP_TEXT': '',           # Global top text (used if slot has none)
-            'SMART_ANNOUNCE_TAIL_TEXT': '',          # Global tail text (used if slot has none)
-            'SMART_ANNOUNCE_START_TIME': '08:00',   # HH:MM — empty = no restriction
-            'SMART_ANNOUNCE_END_TIME': '22:00',     # HH:MM — empty = no restriction
-            # Smart Announcement Slots (1-3, match dashboard buttons)
-            'SMART_ANNOUNCE_1_PROMPT': '',           # prompt/search text
-            'SMART_ANNOUNCE_1_INTERVAL': 3600,       # seconds between announcements
-            'SMART_ANNOUNCE_1_VOICE': 1,             # TTS voice (1-9)
-            'SMART_ANNOUNCE_1_TARGET_SECS': 15,      # max speech length in seconds
-            'SMART_ANNOUNCE_1_MODE': 'auto',         # auto = scheduled, manual = web UI only
-            'SMART_ANNOUNCE_1_TOP_TEXT': '',          # text spoken before (blank = use global)
-            'SMART_ANNOUNCE_1_TAIL_TEXT': '',         # text spoken after (blank = use global)
-            'SMART_ANNOUNCE_2_PROMPT': '',
-            'SMART_ANNOUNCE_2_INTERVAL': 3600,
-            'SMART_ANNOUNCE_2_VOICE': 1,
-            'SMART_ANNOUNCE_2_TARGET_SECS': 15,
-            'SMART_ANNOUNCE_2_MODE': 'auto',
-            'SMART_ANNOUNCE_2_TOP_TEXT': '',
-            'SMART_ANNOUNCE_2_TAIL_TEXT': '',
-            'SMART_ANNOUNCE_3_PROMPT': '',
-            'SMART_ANNOUNCE_3_INTERVAL': 3600,
-            'SMART_ANNOUNCE_3_VOICE': 1,
-            'SMART_ANNOUNCE_3_TARGET_SECS': 15,
-            'SMART_ANNOUNCE_3_MODE': 'auto',
-            'SMART_ANNOUNCE_3_TOP_TEXT': '',
-            'SMART_ANNOUNCE_3_TAIL_TEXT': '',
-            # TH-9800 CAT Control
-            'ENABLE_TH9800': False,       # Alias for ENABLE_CAT_CONTROL
-            'ENABLE_CAT_CONTROL': False,
-            'CAT_STARTUP_COMMANDS': True,
-            'CAT_HOST': '127.0.0.1',
-            'CAT_PORT': 9800,
-            'CAT_PASSWORD': '',
-            'CAT_LEFT_CHANNEL': -1,     # -1 = don't change
-            'CAT_RIGHT_CHANNEL': -1,    # -1 = don't change
-            'CAT_LEFT_VOLUME': -1,      # 0-100, -1 = don't change
-            'CAT_RIGHT_VOLUME': -1,     # 0-100, -1 = don't change
-            'CAT_LEFT_POWER': '',       # L/M/H or blank = don't change
-            'CAT_RIGHT_POWER': '',      # L/M/H or blank = don't change
-            # D75 (link endpoint — legacy plugin config removed)
-            'ENABLE_D75': False,
-            # D75 audio processing
-            'D75_PROC_ENABLE_NOISE_GATE': False,
-            'D75_PROC_NOISE_GATE_THRESHOLD': -40,
-            'D75_PROC_NOISE_GATE_ATTACK': 0.01,
-            'D75_PROC_NOISE_GATE_RELEASE': 0.1,
-            'D75_PROC_ENABLE_HPF': True,
-            'D75_PROC_HPF_CUTOFF': 300,
-            'D75_PROC_ENABLE_LPF': False,
-            'D75_PROC_LPF_CUTOFF': 3000,
-            'D75_PROC_ENABLE_NOTCH': False,
-            'D75_PROC_NOTCH_FREQ': 1000,
-            'D75_PROC_NOTCH_Q': 30.0,
-            # KV4P HT Radio (USB serial, Opus audio)
-            'ENABLE_KV4P': False,
-            'KV4P_PORT': '/dev/ttyUSB0',       # Serial port for KV4P HT
-            'KV4P_FREQ': 146.520,               # Default frequency (MHz)
-            'KV4P_TX_FREQ': 0.0,                # TX frequency (0 = same as RX)
-            'KV4P_SQUELCH': 4,                   # Squelch level 0-8
-            'KV4P_CTCSS_TX': 0,                  # TX CTCSS tone code (0 = none)
-            'KV4P_CTCSS_RX': 0,                  # RX CTCSS tone code (0 = none)
-            'KV4P_BANDWIDTH': 1,                  # 0 = narrow (12.5 kHz), 1 = wide (25 kHz)
-            'KV4P_HIGH_POWER': True,             # True = high power, False = low power
-            'KV4P_AUDIO_DUCK': True,             # Duck KV4P when higher priority source active
-            'KV4P_AUDIO_PRIORITY': 2,            # Priority for ducking
-            'KV4P_AUDIO_DISPLAY_GAIN': 1.0,      # Display level sensitivity
-            'KV4P_AUDIO_BOOST': 1.0,             # RX volume multiplier
-            'KV4P_RECONNECT_INTERVAL': 5.0,      # Seconds between reconnect attempts
-            'KV4P_SMETER': True,                  # Enable S-meter reporting
-            # KV4P audio processing
-            'KV4P_PROC_ENABLE_NOISE_GATE': False,
-            'KV4P_PROC_NOISE_GATE_THRESHOLD': -40,
-            'KV4P_PROC_NOISE_GATE_ATTACK': 0.01,
-            'KV4P_PROC_NOISE_GATE_RELEASE': 0.1,
-            'KV4P_PROC_ENABLE_HPF': True,
-            'KV4P_PROC_HPF_CUTOFF': 300,
-            'KV4P_PROC_ENABLE_LPF': False,
-            'KV4P_PROC_LPF_CUTOFF': 3000,
-            'KV4P_PROC_ENABLE_NOTCH': False,
-            'KV4P_PROC_NOTCH_FREQ': 1000,
-            'KV4P_PROC_NOTCH_Q': 30.0,
-            # Packet Radio (Direwolf TNC)
-            'ENABLE_PACKET': False,
-            'PACKET_CALLSIGN': 'N0CALL',
-            'PACKET_SSID': 0,
-            'PACKET_MODEM': 1200,
-            'PACKET_DIREWOLF_PATH': '/usr/bin/direwolf',
-            'PACKET_REMOTE_TNC': '',
-            'PACKET_RADIO_ENDPOINT': '',     # Link-endpoint name to use for packet; blank = first capable
-            'PACKET_UDP_RX_PORT': 7355,
-            'PACKET_KISS_PORT': 8001,
-            'PACKET_AGW_PORT': 8000,
-            'PACKET_PAT_PORT': 8082,
-            'PACKET_LOOPBACK_CARD': 'Loopback_1',
-            'PACKET_APRS_COMMENT': 'Radio Gateway',
-            'PACKET_APRS_SYMBOL': '/#',
-            'PACKET_APRS_BEACON_INTERVAL': 600,
-            'PACKET_DIGIPEAT': True,
-            'PACKET_APRS_IS': False,
-            'PACKET_APRS_IS_SERVER': 'noam.aprs2.net',
-            'PACKET_APRS_IS_PASSCODE': '',
-            # Dynamic DNS (No-IP compatible)
-            # Web Configuration UI
-            'ENABLE_WEB_CONFIG': True,
-            'WEB_CONFIG_PORT': 8080,
-            'WEB_CONFIG_PASSWORD': '',    # Basic auth password (user: admin), blank = no auth
-            'WEB_CONFIG_HTTPS': 'false',  # false, self-signed, or letsencrypt (a string: a bool default coerced 'self-signed' to False)
-            'GATEWAY_NAME': '',           # Display name shown at top of dashboard (blank = none)
-            'WEB_THEME': 'grey',          # Dashboard color theme: grey, blue, red, green, purple, amber, teal, pink
-            # Cloudflare Tunnel (free public HTTPS access, no port forwarding needed)
-            'SDR_INTERNAL_AUTOSTART': True,    # Auto-start internal SDR (rtl_airband) on gateway startup
-            'SDR_INTERNAL_AUTOSTART_CHANNEL': 1,   # Channel slot to recall on autostart (-1 = use last settings)
-            'ENABLE_CLOUDFLARE_TUNNEL': False,
-            # ProcessSupervisor opt-ins. Default false → existing systemd /
-            # manual handling stays in charge. Setting true makes the gateway
-            # supervise the service: respawn on death, status in /processes.
-            'SUPERVISE_MUMBLE': False,
-            # Email notifications (Gmail SMTP)
-            'ENABLE_EMAIL': False,
-            'ENABLE_ALERT_ENGINE': False,   # raw-threshold Prometheus alerts, emailed; the Fleet Manager is the calibrated path
-            'EMAIL_ADDRESS': '',          # Gmail address (sender)
-            'EMAIL_APP_PASSWORD': '',     # Gmail app password (not regular password)
-            'EMAIL_RECIPIENT': '',        # Where to send notifications (blank = same as EMAIL_ADDRESS)
-            'EMAIL_ON_STARTUP': True,     # Send status email on startup
-            # Dynamic DNS (No-IP compatible)
-            'ENABLE_DDNS': True,
-            'DDNS_USERNAME': '',
-            'DDNS_PASSWORD': '',
-            'DDNS_HOSTNAME': '',
-            'DDNS_UPDATE_INTERVAL': 300,   # seconds between public-IP checks (default 5 min)
-            'DDNS_UPDATE_URL': 'https://dynupdate.no-ip.com/nic/update',  # No-IP protocol
-            # Public-IP lookup used to skip no-op updates. No-IP treats repeated
-            # updates with an unchanged IP as abuse, so we only call them on change.
-            'DDNS_CHECKIP_URL': 'https://api.ipify.org',
-            'DDNS_FORCE_INTERVAL': 86400,  # send an update anyway this often (safety net)
-            # Independent verification: resolve the hostname and compare to our
-            # public IP. Catches expiry, which a DDNS Key reports as success.
-            'DDNS_VERIFY_DNS': True,
-            'DDNS_MISMATCH_GRACE': 3,      # bad cycles before alerting (DNS propagation)
-            'DDNS_ALERT_INTERVAL': 86400,  # min seconds between alert emails
-            # Mumble Server 1 (local mumble-server instance)
-            'ENABLE_MUMBLE_SERVER_1': False,
-            'MUMBLE_SERVER_1_PORT': 64738,
-            'MUMBLE_SERVER_1_PASSWORD': '',
-            'MUMBLE_SERVER_1_MAX_USERS': 10,
-            'MUMBLE_SERVER_1_MAX_BANDWIDTH': 72000,
-            'MUMBLE_SERVER_1_WELCOME': 'Welcome to Radio Gateway Server 1',
-            'MUMBLE_SERVER_1_REGISTER_NAME': '',
-            'MUMBLE_SERVER_1_ALLOW_HTML': True,
-            'MUMBLE_SERVER_1_OPUS_THRESHOLD': 0,
-            'MUMBLE_SERVER_1_AUTOSTART': True,
-            # Mumble Server 2 (second local mumble-server instance)
-            'ENABLE_MUMBLE_SERVER_2': False,
-            'MUMBLE_SERVER_2_PORT': 64739,
-            'MUMBLE_SERVER_2_PASSWORD': '',
-            'MUMBLE_SERVER_2_MAX_USERS': 10,
-            'MUMBLE_SERVER_2_MAX_BANDWIDTH': 72000,
-            'MUMBLE_SERVER_2_WELCOME': 'Welcome to Radio Gateway Server 2',
-            'MUMBLE_SERVER_2_REGISTER_NAME': '',
-            'MUMBLE_SERVER_2_ALLOW_HTML': True,
-            'MUMBLE_SERVER_2_OPUS_THRESHOLD': 0,
-            'MUMBLE_SERVER_2_AUTOSTART': False,
-            # USB/IP — share USB devices from a remote machine over TCP
-            'ENABLE_USBIP': True,
-            'USBIP_SERVER': '',              # IP or hostname of the USB/IP server
-            'USBIP_DEVICES': '',             # Comma-separated bus IDs to attach, e.g. "1-1.4,1-1.3"
-            # ADS-B aircraft tracking (RTL-SDR via dump1090-fa + FlightRadar24)
-            'ENABLE_ADSB': True,
-            'ADSB_PORT': 30080,          # dump1090-fa HTTP port (30080 avoids conflict with gateway on 8080)
-            # Automation Engine
-            'ENABLE_AUTOMATION': False,
-            'AUTOMATION_SCHEME_FILE': 'automation_scheme.txt',
-            'AUTOMATION_REPEATER_FILE': '',       # RepeaterBook CSV path
-            'AUTOMATION_REPEATER_LAT': 0.0,       # Home latitude for distance calc
-            'AUTOMATION_REPEATER_LON': 0.0,       # Home longitude for distance calc
-            'AUTOMATION_RECORDINGS_DIR': 'recordings',
-            'AUTOMATION_START_TIME': '06:00',      # Daily start time (HH:MM)
-            'AUTOMATION_END_TIME': '23:00',        # Daily end time (HH:MM)
-            'AUTOMATION_MAX_TASK_DURATION': 600,   # Max seconds per task
+        """Load configuration from file.
 
-            # Gateway Link (duplex audio + command protocol for remote endpoints)
-            'ENABLE_GATEWAY_LINK': False,
-            'LINK_PORT': 9700,
-            'LINK_AUDIO_DUCK': False,
-            'LINK_AUDIO_PRIORITY': 3,
-            'LINK_AUDIO_BOOST': 1.0,
-            'LINK_AUDIO_DISPLAY_GAIN': 1.0,
-
-            # Fleet Manager runs spawn a fresh `claude -p` per run so context
-            # cannot accumulate across runs.
-            'MANAGER_CLAUDE_BIN': '',        # blank -> $CLAUDE_BIN, then ~/.local/bin/claude
-            'MANAGER_CLAUDE_MODEL': 'sonnet',
-            'MANAGER_MAX_TURNS': 40,
-
-            # Advanced
-            'START_CLAUDE_CODE': False,
-        }
-        
+        Defaults and types come from config_schema. Keys inside a dotted
+        [plugin.instance] section (e.g. [kv4p.vhf]) belong to that plugin and
+        are read by endpoints_state.read_sections; they used to leak in here
+        as lowercase attributes (config.port, config.enable).
+        """
         # Store defaults for type inference (used by WebConfigServer)
-        self._defaults = dict(defaults)
+        self._defaults = dict(config_schema.DEFAULTS)
 
         # Set defaults
-        for key, value in defaults.items():
+        for key, value in self._defaults.items():
             setattr(self, key, value)
-        
+
         # Try to load from file
         if not os.path.exists(self.config_file):
             print(f"WARNING: Config file '{self.config_file}' not found, using defaults")
             return
-        
-        try:
-            with open(self.config_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    # Skip comments, empty lines, and INI section headers
-                    if not line or line.startswith('#') or line.startswith('['):
-                        continue
-                    
-                    # Parse key = value
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        value = parse_config_value(value)
 
-                        # Skip if value is empty after stripping comments
-                        if not value:
-                            continue
-                        
-                        # Convert to appropriate type
-                        if key in defaults:
-                            default_type = type(defaults[key])
-                            
-                            if default_type == bool:
-                                value = value.lower() in ('true', 'yes', '1', 'on')
-                            elif default_type == int:
-                                # Handle hex values for VID/PID
-                                if value.startswith('0x'):
-                                    value = int(value, 16)
-                                else:
-                                    try:
-                                        value = int(value)
-                                    except ValueError:
-                                        value = float(value)  # allow decimal values for int-defaulted settings
-                            elif default_type == float:
-                                value = float(value)
-                            # else keep as string
-                            
-                            setattr(self, key, value)
-                        else:
-                            # Key not in defaults - try to infer type
-                            # Try float first (works for both int and float strings)
-                            try:
-                                if '.' in value:
-                                    value = float(value)
-                                else:
-                                    value = int(value)
-                            except ValueError:
-                                # Not a number, check for boolean
-                                if value.lower() in ('true', 'false', 'yes', 'no', 'on', 'off'):
-                                    value = value.lower() in ('true', 'yes', 'on')
-                                # else keep as string
-                            
-                            setattr(self, key, value)
-            
+        try:
+            in_plugin_section = False
+            with open(self.config_file, 'r') as f:
+                for lineno, line in enumerate(f, 1):
+                    line = line.strip()
+                    # Skip comments and empty lines
+                    if not line or line.startswith('#'):
+                        continue
+                    if line.startswith('['):
+                        in_plugin_section = '.' in line.split(']', 1)[0]
+                        continue
+                    if in_plugin_section or '=' not in line:
+                        continue
+
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = parse_config_value(value)
+                    # Skip if value is empty after stripping comments
+                    if not value:
+                        continue
+                    try:
+                        setattr(self, key, config_schema.coerce(key, value))
+                    except ValueError:
+                        # One bad value used to abort the whole load, leaving
+                        # every later key at its default without saying so.
+                        print(f"WARNING: {self.config_file}:{lineno}: {key} = {value!r} "
+                              f"is not a valid {type(self._defaults[key]).__name__}; "
+                              f"keeping {self._defaults[key]!r}")
+
             print(f"✓ Configuration loaded from '{self.config_file}'")
 
         except Exception as e:

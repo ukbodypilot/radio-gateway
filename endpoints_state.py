@@ -19,6 +19,9 @@ import re
 import threading
 import time
 
+from config_format import parse_config_value
+from config_schema import infer
+
 
 _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 _STATE_PATH = os.path.join(_REPO_ROOT, 'endpoints_state.json')
@@ -33,7 +36,8 @@ _SECTION_RE = re.compile(r'^\[([^\]]+)\]\s*$')
 def read_sections(prefix, config_path=_CONFIG_PATH):
     """Return {instance_name: {key: value}} for all [<prefix>.<instance>] sections.
 
-    Values get the same type coercion as the flat loader (bool/int/float/str).
+    Values are read with the flat loader's rules (config_format: quoting and
+    inline comments) and typed by config_schema.infer (bool/int/float/str).
     Keys are lowercased so plugins read them with familiar names (e.g. 'port',
     'default_freq'). The bare [<prefix>] section (legacy single-instance) is
     *not* returned here — call migrate_legacy_block() first if you want it
@@ -63,44 +67,11 @@ def read_sections(prefix, config_path=_CONFIG_PATH):
                 continue
             key, value = line.split('=', 1)
             key = key.strip().lower()
-            value = _strip_inline_comment(value.strip())
+            value = parse_config_value(value)
             if not value:
                 continue
-            out[current][key] = _coerce(value)
+            out[current][key] = infer(value, hex_ok=True)
     return out
-
-
-def _strip_inline_comment(value):
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-        return value[1:-1]
-    if '#' in value:
-        brace = value.find('{')
-        if brace != -1 and value.rfind('}') > brace:
-            before = value[:brace]
-            if '#' in before:
-                return before.split('#')[0].strip()
-            return value
-        return value.split('#')[0].strip()
-    return value
-
-
-def _coerce(s):
-    low = s.lower()
-    if low in ('true', 'yes', 'on'):
-        return True
-    if low in ('false', 'no', 'off'):
-        return False
-    if s.startswith('0x'):
-        try:
-            return int(s, 16)
-        except ValueError:
-            pass
-    try:
-        if '.' in s:
-            return float(s)
-        return int(s)
-    except ValueError:
-        return s
 
 
 # ── Legacy [kv4p] → [kv4p.vhf] one-shot migration ───────────────────

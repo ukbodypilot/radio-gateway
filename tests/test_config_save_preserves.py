@@ -85,9 +85,18 @@ def main():
     check("inline comment on a changed line kept",
           any(l.startswith('TTS_ENGINE = edge') for l in after.splitlines()))
     changed = [l for l in after.splitlines() if l not in before.splitlines()]
+    import re
+    before_keys = set(re.findall(r'^\s*([A-Z][A-Z0-9_]*)\s*=', before, re.M))
+
+    def _appended(line):
+        # A layout key the file didn't have is appended under its section,
+        # with its default (config_schema gives every layout key one).
+        m = re.match(r'([A-Z][A-Z0-9_]*)\s*=', line)
+        return bool(m) and m.group(1) not in before_keys
     check("only the saved key's line changed (plus appended layout keys)",
-          all(l.startswith('TTS_ENGINE') or l.endswith('= ') or l.startswith('[') or not l
-              for l in changed), str(changed[:5]))
+          all(l.startswith('TTS_ENGINE') or _appended(l) or l.startswith('[') or not l
+              for l in changed), str([l for l in changed if not l.startswith('TTS_ENGINE')
+                                      and not _appended(l)][:5]))
 
     print("\n2. a second identical save changes nothing")
     save(path, {'TTS_ENGINE': 'edge'})
