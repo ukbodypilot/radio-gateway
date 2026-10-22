@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-from audio_util import pcm_level, pcm_rms
+from audio_util import pcm_level
 
 
 class ExampleRadioPlugin:

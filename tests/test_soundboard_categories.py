@@ -152,7 +152,6 @@ check("narrow filter fills what it can", 0 < len(names) <= 7, f"{len(names)} slo
 
 print("\n11. duration cap rejects long clips and remembers them")
 import json  # noqa: E402
-import subprocess  # noqa: E402
 
 
 def cap_src(max_secs, durations, tmpdir=None):
@@ -209,7 +208,6 @@ check("memo written outside .cache",
 meta = json.load(open(meta_path))
 check("memo recorded long clips", any(v > 15 for v in meta.values()), f"{len(meta)} entries")
 # A refresh deletes .cache but must NOT delete the memo.
-import shutil  # noqa: E402
 shutil.rmtree(os.path.join(s.announcement_directory, '.cache'))
 check("memo survives a cache wipe", os.path.exists(meta_path))
 s2 = cap_src(15, durs, tmpdir=s.announcement_directory)

@@ -10,7 +10,7 @@ For new code that genuinely needs per-instance data, call ``list_endpoints``
 or read ``gw._link_last_status[name]`` directly.
 """
 
-from typing import Iterator, Optional
+from typing import Optional
 
 
 _KV4P_PREFIX = 'kv4p-'

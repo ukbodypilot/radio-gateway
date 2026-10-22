@@ -4,13 +4,8 @@
 
 import json
 import os
-import subprocess
-import sys
-import time
-import urllib.parse
-import urllib.request
 
-from mcp_server.server import mcp, _get, _post, GW_BASE_URL, GW_ROOT
+from mcp_server.server import mcp, _get, _post, GW_ROOT
 
 
 # ---------------------------------------------------------------------------

@@ -4,25 +4,18 @@
 import sys
 import os
 import time
-import signal
 import threading
 import threading as _thr
 import subprocess
-import json as json_mod
-import collections
 import queue as _queue_mod
-from struct import Struct
 import socket
 import select
-import array as _array_mod
 import math as _math_mod
-import re
 import numpy as np
 
 # Shared audio utilities — level metering, AudioProcessor, CW generation
 from audio_util import (
-    pcm_rms, rms_to_level, update_level, pcm_level, pcm_db, apply_gain,
-    AudioProcessor, generate_cw_pcm,
+    pcm_rms, pcm_level, pcm_db, apply_gain,
 )
 
 try:
@@ -736,34 +729,6 @@ class FilePlaybackSource(AudioSource):
         
         return "\n".join(lines)
     
-    def print_file_mapping(self):
-        """Print the file mapping (call this just before status bar starts)"""
-        if hasattr(self, 'file_mapping_display'):
-            print(self.file_mapping_display)
-    
-    def get_file_status_string(self):
-        """Get status indicator string for display"""
-        # ANSI color codes
-        WHITE = '\033[97m'
-        GREEN = '\033[92m'
-        RED = '\033[91m'
-        RESET = '\033[0m'
-        
-        status_str = ""
-        # Show all 10 slots: 1-9 then 0 (station_id at end) - no brackets to save space
-        for key in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']:
-            if self.file_status[key]['playing']:
-                # Red when playing
-                status_str += f"{RED}{key}{RESET}"
-            elif self.file_status[key]['exists']:
-                # Green when file exists
-                status_str += f"{GREEN}{key}{RESET}"
-            else:
-                # White when no file
-                status_str += f"{WHITE}{key}{RESET}"
-        
-        return status_str
-        
     def queue_file(self, filepath, target_rms_db=None):
         """Pre-decode an audio file and add it to the playback queue.
         Decoding happens here (caller's thread) so the audio transmit loop
@@ -1845,7 +1810,6 @@ class RemoteAudioServer:
 
     def _connect_loop(self):
         """Connect to the client, reconnect on failure."""
-        import socket
         while self._running:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2011,7 +1975,6 @@ class RemoteAudioSource(AudioSource):
 
     def setup_audio(self, port_override=None):
         """Bind listen socket and start the reader/accept thread."""
-        import socket
         bind_host = '0.0.0.0'
         port = int(port_override) if port_override else int(self.config.REMOTE_AUDIO_PORT)
         self._listen_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2031,7 +1994,7 @@ class RemoteAudioSource(AudioSource):
 
     def _reader_thread_func(self):
         """Accept connections from the server and read length-prefixed PCM."""
-        import socket, struct
+        import struct
 
         while self._reader_running:
             # Wait for the server to connect in
@@ -2462,7 +2425,6 @@ class NetworkAnnouncementSource(AudioSource):
 
     def setup_audio(self):
         """Bind listen socket and start accept/reader thread."""
-        import socket
         bind_host = self.config.ANNOUNCE_INPUT_HOST or '0.0.0.0'
         port = int(self.config.ANNOUNCE_INPUT_PORT)
         self._listen_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2482,7 +2444,7 @@ class NetworkAnnouncementSource(AudioSource):
 
     def _reader_thread_func(self):
         """Accept one client at a time and read length-prefixed PCM."""
-        import socket, struct
+        import struct
 
         while self._reader_running:
             conn = None
@@ -3152,7 +3114,7 @@ class StreamOutputSource:
 
     def _connect(self):
         """Connect to Icecast and start the MP3 encoder pipeline."""
-        import socket, base64
+        import base64
 
         server = getattr(self.config, 'STREAM_SERVER', '')
         port = int(getattr(self.config, 'STREAM_PORT', 8000))

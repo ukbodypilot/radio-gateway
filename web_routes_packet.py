@@ -87,7 +87,7 @@ def _winlink_gateways():
 
 def handle_winlink_api(handler, parent):
     """GET /packet/winlink/* — Winlink mailbox API."""
-    import json as _json, email, glob as _glob
+    import email, glob as _glob
     path = handler.path.split('?')[0]
     params = {}
     if '?' in handler.path:

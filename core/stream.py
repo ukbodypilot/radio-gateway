@@ -6,18 +6,7 @@ back via inheritance keeps the runtime semantics identical without
 threading attribute references through arguments.
 """
 
-import collections
-import json as json_mod
-import math as _math_mod
-import os
-import queue as _queue_mod
-import re
-import socket
-import struct
-import subprocess
-import sys
 import threading
-import time
 
 
 class _StreamMixin:

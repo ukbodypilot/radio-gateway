@@ -15,7 +15,6 @@ def loop_recorder_status() -> str:
     Get loop recorder status: which buses are recording, segment counts,
     disk usage, write rate, and retention settings.
     """
-    import json
     result = _get('/loop/buses')
     if not result:
         return "Loop recorder: no buses recording"

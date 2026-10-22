@@ -4,8 +4,7 @@ import json
 import os
 import subprocess
 import threading
-import time
-from datetime import datetime, date
+from datetime import datetime
 
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
@@ -451,13 +450,6 @@ class ManagerEngine:
                 print(f"  [Manager] Salvage write failed: {exc}")
                 return False
         return False
-
-    def _report_count(self) -> int:
-        try:
-            with open(_REPORTS_FILE) as f:
-                return sum(1 for l in f if l.strip())
-        except FileNotFoundError:
-            return 0
 
     def _find_report(self, run_id: str):
         try:

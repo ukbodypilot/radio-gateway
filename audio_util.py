@@ -343,19 +343,6 @@ def _dfn3_bundled_path():
                         'tools', 'models', 'dfn3', 'denoiser_model.onnx')
 
 
-def _dfn3_model_path():
-    """Path to the cached ONNX; does NOT download (see _dfn3_ensure_model).
-
-    Returns the bundled copy if it exists, otherwise the user cache path
-    (which may or may not exist yet).
-    """
-    import os
-    bundled = _dfn3_bundled_path()
-    if os.path.exists(bundled) and os.path.getsize(bundled) == _DFN3_MODEL_SIZE:
-        return bundled
-    cache_dir = os.path.expanduser('~/.cache/radio-gateway/dfn3')
-    return os.path.join(cache_dir, 'denoiser_model.onnx')
-
 
 def _dfn3_ensure_model():
     """Return a path to a usable DFN3 ONNX.

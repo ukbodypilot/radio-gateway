@@ -1,24 +1,6 @@
 #!/usr/bin/env python3
 """PTT / relay controller classes for radio-gateway."""
 
-import sys
-import os
-import time
-import signal
-import threading
-import threading as _thr
-import subprocess
-import shutil
-import json as json_mod
-import collections
-import queue as _queue_mod
-from struct import Struct
-import socket
-import select
-import array as _array_mod
-import math as _math_mod
-import re
-import numpy as np
 
 class RelayController:
     """Controls a CH340 USB relay module via serial (4-byte commands)."""

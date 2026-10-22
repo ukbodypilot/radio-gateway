@@ -3,9 +3,7 @@
 """
 
 import json
-import os
 import subprocess
-import sys
 import time
 import urllib.parse
 import urllib.request
@@ -526,7 +524,6 @@ def gateway_restart() -> str:
     """
     Restart the radio gateway service via systemd.
     """
-    import subprocess
     try:
         r = subprocess.run(['sudo', '-n', 'systemctl', 'restart', 'radio-gateway.service'],
                           capture_output=True, text=True, timeout=30)

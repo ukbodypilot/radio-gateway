@@ -209,10 +209,6 @@ class SmartAnnouncementManager:
         """Update live activity status for web UI."""
         self._activity[entry_id] = {'step': step, 'time': time.time()}
 
-    def _clear_activity(self, entry_id):
-        """Clear activity status after completion."""
-        self._activity.pop(entry_id, None)
-
     def get_activity(self):
         """Return current activity dict for all entries. Auto-expires after 120s."""
         now = time.time()

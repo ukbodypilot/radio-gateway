@@ -10,10 +10,6 @@ commands.  Mode switching is triggered by the /packet page.
 """
 
 import collections
-import math
-import re
-import socket
-import threading
 import time
 
 

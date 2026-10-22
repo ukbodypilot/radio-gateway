@@ -3,7 +3,6 @@
 Extracted from gateway_core.py.
 """
 
-import time
 
 
 def get_stream_stats(gw):

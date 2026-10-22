@@ -1,24 +1,9 @@
 #!/usr/bin/env python3
 """CAT control clients for TH-9800 and D75."""
 
-import sys
-import os
 import time
-import signal
 import threading
-import threading as _thr
-import subprocess
-import shutil
-import json as json_mod
-import collections
-import queue as _queue_mod
-from struct import Struct
 import socket
-import select
-import array as _array_mod
-import math as _math_mod
-import re
-import numpy as np
 
 class RadioCATClient:
     """TCP client for TH-9800 CAT control via TH9800_CAT.py server.
@@ -722,31 +707,6 @@ class RadioCATClient:
         """Send button release (DEFAULT_PAYLOAD)."""
         hex_str = self._build_packet(self.DEFAULT_PAYLOAD)
         return self._send_cmd(f"!data {hex_str}")
-
-    def _send_button_checked(self, cmd_bytes, start, end, label='button'):
-        """Send button press + release and verify radio responded.
-        Returns True if _channel_text changed, False if no response detected."""
-        pre_state = dict(self._channel_text)
-        self._cmd_sent += 1
-        self._send_button(cmd_bytes, start, end)
-        time.sleep(0.15)
-        self._send_button_release()
-        time.sleep(0.3)
-        self._drain(0.5)
-        post_state = dict(self._channel_text)
-        if post_state == pre_state:
-            self._cmd_no_response += 1
-            self._last_no_response = f"{label} @ {time.strftime('%H:%M:%S')}"
-            self._logmsg(f"    {label}: no radio response (sent={self._cmd_sent} missed={self._cmd_no_response})", console=True)
-            return False
-        return True
-
-    def _channel_matches(self, target_int):
-        """Compare current channel to target as integers, tolerant of padding/spaces."""
-        try:
-            return int(self._channel) == target_int
-        except (ValueError, TypeError):
-            return False
 
     def set_channel(self, vfo, target_channel):
         """Set channel on specified VFO by stepping the dial. Returns True on success.

@@ -23,18 +23,8 @@ def _get_version():
 __version__ = _get_version()
 import time
 import signal
-import threading
 import subprocess
-import shutil
-import json as json_mod
-import collections
-import queue as _queue_mod
-from struct import Struct
 import socket
-import select  # For non-blocking keyboard input
-import array as _array_mod
-import math as _math_mod
-import numpy as np
 
 # Check for required libraries
 try:

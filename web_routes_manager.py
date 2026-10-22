@@ -3,18 +3,11 @@
 """POST route handlers extracted from web_server.py."""
 
 import json as json_mod
-import os
-import time
-import subprocess
-import threading as _thr
 
-from audio_sources import generate_cw_pcm
-from cat_client import RadioCATClient
 
 
 def handle_manager_toggle(handler, parent):
     """POST /manager/toggle  — {enabled: true/false}"""
-    import json as json_mod
     gw = parent.gateway if parent else None
     eng = getattr(gw, 'manager_engine', None) if gw else None
     try:
@@ -34,7 +27,6 @@ def handle_manager_toggle(handler, parent):
 
 def handle_manager_config(handler, parent):
     """POST /manager/config  — {daily_time: "HH:MM"}"""
-    import json as json_mod
     gw = parent.gateway if parent else None
     eng = getattr(gw, 'manager_engine', None) if gw else None
     try:
@@ -55,7 +47,6 @@ def handle_manager_config(handler, parent):
 
 def handle_manager_save(handler, parent):
     """POST /manager/save  — {doc: "hourly", content: "..."}"""
-    import json as json_mod
     gw = parent.gateway if parent else None
     eng = getattr(gw, 'manager_engine', None) if gw else None
     try:
@@ -77,7 +68,6 @@ def handle_manager_save(handler, parent):
 
 def handle_manager_run(handler, parent):
     """POST /manager/run  — {task: "hourly"|"daily"}"""
-    import json as json_mod
     gw = parent.gateway if parent else None
     eng = getattr(gw, 'manager_engine', None) if gw else None
     try:
@@ -99,7 +89,6 @@ def handle_manager_run(handler, parent):
 
 def handle_manager_ack(handler, parent):
     """POST /manager/ack  — clear unread alerts"""
-    import json as json_mod
     gw = parent.gateway if parent else None
     eng = getattr(gw, 'manager_engine', None) if gw else None
     if eng:

@@ -12,17 +12,15 @@ and delivers audio to sinks.
 See docs/mixer-v2-design.md for architecture.
 """
 
-import os
 import struct
 import subprocess
-import sys
 import threading
 import time
 import queue as _queue_mod
 
 import numpy as np
 
-from audio_util import AudioProcessor, pcm_level, pcm_rms
+from audio_util import AudioProcessor, pcm_level
 from cat_client import RadioCATClient
 from ptt import RelayController, GPIORelayController
 from plugins._base import (
@@ -507,7 +505,6 @@ class TH9800Plugin:
         This thread owns the subprocess lifecycle: start, read stdout, kill,
         restart.  The only interface to the rest of the system is self._rx_queue.
         """
-        import subprocess
 
         chunk_size = self._config.AUDIO_CHUNK_SIZE
         chunk_bytes = chunk_size * 2  # 16-bit mono

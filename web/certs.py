@@ -7,8 +7,6 @@ further.
 """
 
 import os
-import socket
-import socketserver
 import subprocess
 import threading
 import time
@@ -60,7 +58,6 @@ class _CertsMixin:
 
     def _run_certbot(self, domain, cert_dir):
         """Run certbot standalone to obtain/renew a certificate."""
-        import subprocess
         email = str(getattr(self.config, 'DDNS_USERNAME', '') or '').strip()
         email_args = ['--email', email, '--no-eff-email'] if email and '@' in email else ['--register-unsafely-without-email']
         port = int(getattr(self.config, 'WEB_CONFIG_PORT', 8080))
@@ -125,8 +122,6 @@ class _CertsMixin:
                 return True
             # Parse "notAfter=Mar  8 12:00:00 2026 GMT"
             date_str = result.stdout.strip().split('=', 1)[1]
-            from email.utils import parsedate_to_datetime
-            import datetime
             # openssl format: "Mar  8 12:00:00 2026 GMT"
             from datetime import datetime as dt, timedelta, timezone
             expiry = dt.strptime(date_str.strip(), '%b %d %H:%M:%S %Y %Z').replace(tzinfo=timezone.utc)
@@ -138,7 +133,6 @@ class _CertsMixin:
     def _start_renewal_thread(self, cert_path):
         """Background thread to check/renew Let's Encrypt cert every 12 hours."""
         def _renewal_loop():
-            import time
             while True:
                 time.sleep(12 * 3600)  # 12 hours
                 try:

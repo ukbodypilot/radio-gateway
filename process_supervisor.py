@@ -13,11 +13,10 @@ Pure stdlib so the same module can run inside link_endpoint.py if needed.
 """
 
 import os
-import signal
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 

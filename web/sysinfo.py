@@ -7,17 +7,12 @@ further.
 """
 
 import os
-import socket
-import socketserver
-import subprocess
-import threading
 import time
 
 
 class _SysinfoMixin:
     def _get_sysinfo(self):
         """Gather system status: CPU, memory, disk I/O, network, temps, IPs."""
-        import os
         info = {}
         try:
             # CPU usage — average across cores from /proc/stat delta

@@ -10,7 +10,6 @@ master/slave ducking ensures the master tuner's audio takes priority.
 See docs/mixer-v2-design.md for architecture.
 """
 
-import collections
 import json
 import os
 import queue as _queue_mod
@@ -21,7 +20,7 @@ import time
 import numpy as np
 
 from audio_bus import DuckGroup, check_signal_instant, mix_audio_streams
-from audio_util import AudioProcessor, pcm_level, pcm_rms, rms_to_level, update_level
+from audio_util import AudioProcessor, rms_to_level, update_level
 from plugins._base import (
     CAPABILITY_AUDIO_RX, CAPABILITY_FREQUENCY, CAPABILITY_STATUS,
 )

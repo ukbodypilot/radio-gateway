@@ -5,7 +5,6 @@ Press 'T' to key PTT, any other key to unkey
 """
 
 import sys
-import time
 import os
 from struct import Struct
 

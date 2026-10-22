@@ -5,8 +5,6 @@ Class-bound mixin. The original code freely reads ``self.*`` state set in
 preserves the runtime semantics without threading state through arguments.
 """
 
-import collections
-import math
 import re
 import socket
 import threading

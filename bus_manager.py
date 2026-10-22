@@ -9,7 +9,6 @@ import collections
 import dataclasses
 import gc
 import json
-import math
 import os
 import threading
 import time
@@ -543,18 +542,6 @@ class BusManager:
     def is_bus_muted(self, bus_id):
         """Check if a bus is muted."""
         return self._bus_config.get(bus_id, {}).get('muted', False)
-
-    def get_bus_processing(self, bus_id):
-        """Return processing config dict for a bus from the routing JSON."""
-        try:
-            with open(self._config_path) as f:
-                data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-        for bus_cfg in data.get('busses', []):
-            if bus_cfg.get('id') == bus_id:
-                return bus_cfg.get('processing', {})
-        return {}
 
     def get_bus_stream_flags(self):
         """Return per-bus stream flags from routing config.
@@ -1133,15 +1120,6 @@ class BusManager:
             if getattr(src, 'source_id', None) == source_id:
                 return src
         return None
-
-    def _apply_processing(self, audio, bus_id):
-        """Apply audio processing (gate/HPF/LPF/notch) based on bus config."""
-        if audio is None:
-            return None
-        proc = self._bus_processors.get(bus_id)
-        if proc:
-            return proc.process(audio)
-        return audio
 
     def _deliver_audio(self, bus_output, bus_id, ctx):
         """Deliver a bus's audio output to connected sinks + PCM/MP3 streams.

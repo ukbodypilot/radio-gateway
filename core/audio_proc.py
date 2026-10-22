@@ -6,21 +6,10 @@ back via inheritance keeps the runtime semantics identical without
 threading attribute references through arguments.
 """
 
-import collections
-import json as json_mod
-import math as _math_mod
 import os
-import queue as _queue_mod
-import re
-import socket
-import struct
-import subprocess
-import sys
-import threading
 import time
 
-import numpy as np
-from audio_util import pcm_level, pcm_rms, rms_to_level, pcm_db
+from audio_util import pcm_rms, rms_to_level, pcm_db
 
 
 class _AudioProcMixin:
@@ -71,7 +60,6 @@ class _AudioProcMixin:
 
     def _save_link_settings(self):
         """Persist per-endpoint settings to JSON."""
-        import json as _json
         try:
             os.makedirs(os.path.dirname(self._link_settings_path), exist_ok=True)
             from atomic_json import save_json
@@ -186,51 +174,3 @@ class _AudioProcMixin:
                 print(f"\n[VAD] Error: {e}")
             return True  # On error, allow transmission
     
-    def check_vox(self, pcm_data):
-        """Check if audio level exceeds VOX threshold (indicates radio is receiving)"""
-        if not self.config.ENABLE_VOX:
-            return True  # VOX disabled, always transmit
-        
-        try:
-            if not pcm_data:
-                return False
-
-            db = pcm_db(pcm_data)
-
-            # Attack and release timing
-            attack_time = self.config.VOX_ATTACK_TIME / 1000.0  # ms to seconds
-            release_time = self.config.VOX_RELEASE_TIME / 1000.0
-            
-            # Update VOX level with attack/release envelope
-            if db > self.vox_level:
-                # Attack: fast rise
-                self.vox_level = db
-            else:
-                # Release: slow decay
-                # Calculate decay rate to reach threshold in release_time
-                decay_rate = abs(self.config.VOX_THRESHOLD - db) / (release_time * (self.config.AUDIO_RATE / self.config.AUDIO_CHUNK_SIZE))
-                self.vox_level = max(db, self.vox_level - decay_rate)
-            
-            # Check if above threshold
-            if self.vox_level > self.config.VOX_THRESHOLD:
-                if not self.vox_active:
-                    if self.config.VERBOSE_LOGGING:
-                        print(f"\n[VOX] Radio receiving (level: {self.vox_level:.1f} dB)")
-                self.vox_active = True
-                self.last_vox_active_time = time.time()
-                return True
-            else:
-                # Check if we're still in release period
-                time_since_active = time.time() - self.last_vox_active_time
-                if time_since_active < release_time:
-                    return True  # Still in tail
-                else:
-                    if self.vox_active:
-                        if self.config.VERBOSE_LOGGING:
-                            print(f"\n[VOX] Radio silent (level: {self.vox_level:.1f} dB)")
-                    self.vox_active = False
-                    return False
-                    
-        except Exception:
-            return True  # On error, allow transmission
-        

@@ -22,7 +22,6 @@ class _AudioRestartMixin:
     def restart_audio_input(self):
         """Attempt to restart the audio input stream"""
         # Suppress ALL stderr during restart (ALSA is very noisy)
-        import sys
         import os as restart_os
 
         # Use the original stderr fd (may have been redirected by LogWriter)

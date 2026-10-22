@@ -11,7 +11,6 @@ import math
 import os
 import random
 import re
-import struct
 import subprocess
 import threading
 import time

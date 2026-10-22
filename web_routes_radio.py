@@ -3,12 +3,9 @@
 """POST route handlers extracted from web_server.py."""
 
 import json as json_mod
-import os
 import time
 import subprocess
-import threading as _thr
 
-from audio_sources import generate_cw_pcm
 from cat_client import RadioCATClient
 
 
@@ -635,7 +632,7 @@ def handle_packet_cmd(handler, parent):
 
 def _winlink_compose(data):
     """Queue a Winlink message via Pat CLI."""
-    import subprocess, shutil
+    import shutil
     pat = shutil.which('pat')
     if not pat:
         return {"ok": False, "error": "pat not installed"}
@@ -783,7 +780,7 @@ def _winlink_connect(data, gw=None):
     shadowing.
     """
     global _winlink_log
-    import subprocess, shutil, threading
+    import shutil, threading
     pat = shutil.which('pat')
     if not pat:
         return {"ok": False, "error": "pat not installed"}

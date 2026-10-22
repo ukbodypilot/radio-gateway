@@ -1,0 +1,16 @@
+# Lint config for CI (see .github/workflows/ci.yml). Kept to checks that
+# catch real bugs: syntax errors, undefined names, unused imports.
+extend-exclude = ["ftm150-re", "tools/room-monitor-app"]
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811"]
+
+[lint.per-file-ignores]
+# Route hubs: web_server.py dispatches 'g:handle_x' / 'p:handle_x' by name,
+# so these imports are used through getattr, not directly.
+"web_routes_get.py" = ["F401"]
+"web_routes_post.py" = ["F401"]
+"web_routes_stream.py" = ["F401"]
+"web_routes_loop.py" = ["F401"]
+# Template code with a placeholder variable.
+"examples/**" = ["F821"]

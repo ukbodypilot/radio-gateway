@@ -37,7 +37,6 @@ import collections
 import json
 import os
 import socket
-import struct
 import threading
 import time
 from struct import Struct

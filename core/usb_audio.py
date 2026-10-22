@@ -6,156 +6,18 @@ back via inheritance keeps the runtime semantics identical without
 threading attribute references through arguments.
 """
 
-import collections
-import json as json_mod
-import math as _math_mod
 import os
-import queue as _queue_mod
-import re
-import socket
-import struct
-import subprocess
-import sys
-import threading
 import time
 
 import numpy as np
 import pyaudio
-import hid
 from audio_util import pcm_level
 
 
 class _USBAudioMixin:
-    def find_usb_device_path(self):
-        """Find the USB device path for the AIOC"""
-        try:
-            import subprocess
-            # Find USB device using VID:PID
-            result = subprocess.run(
-                ['lsusb', '-d', f'{self.config.AIOC_VID:04x}:{self.config.AIOC_PID:04x}'],
-                capture_output=True, text=True
-            )
-            
-            if result.returncode == 0 and result.stdout:
-                # Parse output like: "Bus 001 Device 003: ID 1209:7388"
-                parts = result.stdout.split()
-                if len(parts) >= 4:
-                    bus = parts[1]
-                    device = parts[3].rstrip(':')
-                    return f"/sys/bus/usb/devices/{bus}-*"
-            return None
-        except Exception as e:
-            if self.config.VERBOSE_LOGGING:
-                print(f"  [Diagnostic] Could not find USB device path: {e}")
-            return None
-    
-    def reset_usb_device(self):
-        """Attempt to reset the AIOC USB device by power cycling"""
-        if self.config.VERBOSE_LOGGING:
-            print("  [Diagnostic] Attempting USB device reset...")
-        
-        try:
-            import subprocess
-            import glob
-            
-            # Method 1: Try using usbreset if available
-            try:
-                result = subprocess.run(
-                    ['which', 'usbreset'],
-                    capture_output=True, text=True
-                )
-                if result.returncode == 0:
-                    # usbreset is available
-                    result = subprocess.run(
-                        ['sudo', 'usbreset', f'{self.config.AIOC_VID:04x}:{self.config.AIOC_PID:04x}'],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if result.returncode == 0:
-                        if self.config.VERBOSE_LOGGING:
-                            print("  ✓ USB device reset via usbreset")
-                        time.sleep(2)  # Wait for device to re-enumerate
-                        return True
-            except:
-                pass
-            
-            # Method 2: Try sysfs unbind/bind
-            try:
-                # Find the device in sysfs
-                usb_devices = glob.glob(f'/sys/bus/usb/devices/*')
-                for dev_path in usb_devices:
-                    try:
-                        # Read vendor and product IDs
-                        with open(f'{dev_path}/idVendor', 'r') as f:
-                            vid = f.read().strip()
-                        with open(f'{dev_path}/idProduct', 'r') as f:
-                            pid = f.read().strip()
-                        
-                        if vid == f'{self.config.AIOC_VID:04x}' and pid == f'{self.config.AIOC_PID:04x}':
-                            # Found our device
-                            device_name = os.path.basename(dev_path)
-                            
-                            # Try to unbind
-                            with open('/sys/bus/usb/drivers/usb/unbind', 'w') as f:
-                                f.write(device_name)
-                            
-                            time.sleep(1)
-                            
-                            # Rebind
-                            with open('/sys/bus/usb/drivers/usb/bind', 'w') as f:
-                                f.write(device_name)
-                            
-                            if self.config.VERBOSE_LOGGING:
-                                print("  ✓ USB device reset via sysfs unbind/bind")
-                            time.sleep(2)
-                            return True
-                            
-                    except (IOError, PermissionError):
-                        continue
-            except Exception as e:
-                if self.config.VERBOSE_LOGGING:
-                    print(f"  [Diagnostic] sysfs method failed: {e}")
-            
-            # Method 3: Try autoreset (no sudo needed)
-            try:
-                result = subprocess.run(
-                    ['lsusb', '-d', f'{self.config.AIOC_VID:04x}:{self.config.AIOC_PID:04x}', '-v'],
-                    capture_output=True, text=True, timeout=5
-                )
-                # Sometimes just querying the device helps
-                time.sleep(1)
-            except:
-                pass
-                
-            if self.config.VERBOSE_LOGGING:
-                print("  ⚠ USB reset methods require sudo permissions")
-                print("  Please run: sudo chmod 666 /sys/bus/usb/drivers/usb/unbind")
-                print("             sudo chmod 666 /sys/bus/usb/drivers/usb/bind")
-                print("  Or manually unplug and replug the AIOC device")
-            
-            return False
-            
-        except Exception as e:
-            if self.config.VERBOSE_LOGGING:
-                print(f"  ✗ USB reset failed: {type(e).__name__}: {e}")
-            return False
-    
-    def setup_aioc(self):
-        """Initialize AIOC device"""
-        if self.config.VERBOSE_LOGGING:
-            print("Initializing AIOC device...")
-        try:
-            # Use hid.Device (capital D) - this is what's available
-            self.aioc_device = hid.Device(vid=self.config.AIOC_VID, pid=self.config.AIOC_PID)
-            print(f"✓ AIOC: {self.aioc_device.product}")
-            return True
-        except Exception as e:
-            print(f"✗ Could not open AIOC: {e}")
-            return False
-    
     def find_aioc_audio_device(self):
         """Find AIOC audio device index"""
         # Suppress ALSA warnings if not in verbose mode
-        import os
 
         # Only suppress if not verbose
         if not self.config.VERBOSE_LOGGING:

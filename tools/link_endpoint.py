@@ -41,7 +41,7 @@ sys.path.insert(0, _PARENT_DIR)      # parent — fallback for legacy imports
 sys.path.insert(0, _RUN_DIR)         # run dir — wins (deploys go here)
 
 try:
-    from gateway_link import GatewayLinkClient, AudioPlugin, AIOCPlugin, RadioPlugin, discover_gateway
+    from gateway_link import GatewayLinkClient, AudioPlugin, AIOCPlugin, discover_gateway
 except ImportError as e:
     print(f"[Endpoint] Failed to import gateway_link: {e}")
     print("[Endpoint] Make sure gateway_link.py is in the parent directory.")

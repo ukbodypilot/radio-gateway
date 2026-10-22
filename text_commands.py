@@ -16,7 +16,7 @@ from html import unescape
 
 import numpy as np
 
-from audio_sources import generate_cw_pcm
+from audio_util import generate_cw_pcm
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,6 @@ def speak_text(gw, text, voice=None):
                 print(f"[TTS] Kokoro voice={voice_id} lang={lang}")
             try:
                 import soundfile as sf
-                import numpy as np
                 samples, sample_rate = _engine.create(text, voice=voice_id, speed=1.0, lang=lang)
                 tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False, prefix='tts_')
                 tmp.close()

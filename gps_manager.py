@@ -1,10 +1,6 @@
 """GPS receiver manager — USB serial NMEA or simulated."""
 
-import json
-import math
-import os
 import threading
-import time
 
 class GPSManager:
     """USB serial GPS receiver (VK-162 or similar NMEA device).

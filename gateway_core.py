@@ -17,18 +17,8 @@ def _get_version():
 
 __version__ = _get_version()
 import time
-import signal
 import threading
-import subprocess
-import json as json_mod
 import collections
-import queue as _queue_mod
-from struct import Struct
-import socket
-import array as _array_mod
-import math as _math_mod
-import re
-import numpy as np
 
 import ssl as _ssl
 if not hasattr(_ssl, 'wrap_socket'):
@@ -97,21 +87,8 @@ except ImportError:
     print("Install it with: pip3 install hidapi --break-system-packages")
     sys.exit(1)
 
-from audio_sources import (
-    AudioSource, AudioProcessor, FilePlaybackSource, LoopPlaybackSource,
-    EchoLinkSource,
-    RemoteAudioServer, RemoteAudioSource,
-    NetworkAnnouncementSource,
-    WebMicSource, WebMonitorSource, LinkAudioSource, StreamOutputSource, generate_cw_pcm,
-)
-from audio_util import pcm_level, pcm_rms, rms_to_level, update_level, pcm_db
+from audio_util import AudioProcessor
 # ListenBus now created by BusManager (bus_manager.py)
-from gateway_utils import DDNSUpdater, EmailNotifier, CloudflareTunnel, MumbleServerManager, USBIPManager, GPSManager
-from repeater_manager import RepeaterManager
-from ptt import RelayController, GPIORelayController
-from cat_client import RadioCATClient
-from smart_announce import SmartAnnouncementManager
-from web_server import WebConfigServer
 
 class LogWriter:
     """Wraps sys.stdout to capture all output into a ring buffer for the web log viewer.
@@ -129,7 +106,6 @@ class LogWriter:
         # can arrive in several write() calls (print with several args,
         # print(..., end='')); it is logged whole once its newline arrives.
         self._pending_line = None
-        import collections
         self._log_buffer = collections.deque(maxlen=buffer_lines)
         self._log_seq = 0
         self._log_file = log_file
@@ -521,7 +497,6 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
 
     def get_status_dict(self):
         """Return current gateway status as a dict for the web UI."""
-        import json
         uptime_s = time.time() - self.start_time if hasattr(self, 'start_time') else 0
         d, rem = divmod(int(uptime_s), 86400)
         h, rem2 = divmod(rem, 3600)

@@ -25,7 +25,7 @@ import numpy as np
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-from audio_util import AudioProcessor, pcm_level, pcm_rms  # noqa: E402
+from audio_util import AudioProcessor, pcm_level  # noqa: E402
 from gateway_link import RadioPlugin                       # noqa: E402
 
 

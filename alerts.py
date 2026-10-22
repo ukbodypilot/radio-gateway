@@ -19,7 +19,6 @@ Design notes:
 import json
 import threading
 import time
-import urllib.request
 
 
 DEFAULT_RULES = [

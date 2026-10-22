@@ -1,11 +1,9 @@
-import json
 import os
 import shutil
 import sqlite3
 import subprocess
 import threading
 import time
-import urllib.request
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcriptions (

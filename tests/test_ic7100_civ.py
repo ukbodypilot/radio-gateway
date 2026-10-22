@@ -16,7 +16,6 @@ Run:
 
 import sys
 import os
-import struct
 import threading
 import time
 import socket

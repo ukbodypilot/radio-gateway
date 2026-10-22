@@ -962,7 +962,6 @@ class WebSocketTransport:
     def connect(self, ws_url, timeout=10):
         """Connect to a WebSocket URL (ws:// or wss://).  Returns True on success."""
         import ssl
-        import hashlib
         import base64
 
         # Parse URL
@@ -2098,34 +2097,6 @@ class AudioPlugin(RadioPlugin):
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return None
-
-    def _find_device(self, name):
-        """Find a PyAudio device index by name substring.
-
-        Returns the index (int) or ``None`` to use the default device.
-        """
-        if not name:
-            return None
-        # Try as integer index first
-        try:
-            idx = int(name)
-            return idx
-        except ValueError:
-            pass
-        # Search by name substring (case-insensitive)
-        if not self._pa:
-            return None
-        name_lower = name.lower()
-        for i in range(self._pa.get_device_count()):
-            try:
-                info = self._pa.get_device_info_by_index(i)
-                if name_lower in info.get('name', '').lower():
-                    print(f"  [Link] AudioPlugin: matched device {i}: {info['name']}")
-                    return i
-            except Exception:
-                continue
-        print(f"  [Link] AudioPlugin: device '{name}' not found, using default")
-        return None
 
 
 # ---------------------------------------------------------------------------

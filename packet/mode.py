@@ -5,12 +5,7 @@ Class-bound mixin. The original code freely reads ``self.*`` state set in
 preserves the runtime semantics without threading state through arguments.
 """
 
-import collections
-import math
-import re
-import socket
 import threading
-import time
 
 
 class _ModeMixin:
@@ -46,8 +41,7 @@ class _ModeMixin:
         from packet.state import (
             TARGET_IDLE, PHASE_STARTING, PHASE_STOPPING,
             STEP_SEND_ENDPOINT_MODE, STEP_START_LOCAL_TNC,
-            STEP_CONNECT_KISS, STEP_START_PAT,
-            STEP_STOP_PAT, STEP_STOP_LOCAL_TNC,
+            STEP_CONNECT_KISS, STEP_STOP_PAT, STEP_STOP_LOCAL_TNC,
         )
 
         if mode not in ('idle', 'aprs', 'winlink', 'bbs'):

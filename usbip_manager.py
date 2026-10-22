@@ -120,7 +120,6 @@ class USBIPManager:
         return False
 
     def _run(self):
-        import time
         server = str(getattr(self.config, 'USBIP_SERVER', '')).strip()
         wanted_raw = str(getattr(self.config, 'USBIP_DEVICES', '')).strip()
         wanted = {b.strip() for b in wanted_raw.split(',') if b.strip()} if wanted_raw else set()
@@ -167,7 +166,6 @@ class USBIPManager:
 
     def get_status(self):
         """Return dict for /usbipstatus JSON endpoint."""
-        import time
         with self._lock:
             return {
                 'enabled':          getattr(self.config, 'ENABLE_USBIP', False),

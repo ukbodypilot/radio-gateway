@@ -4,25 +4,9 @@
 import sys
 import os
 import time
-import signal
-import threading
 import threading as _thr
-import subprocess
-import shutil
-import json as json_mod
-import collections
-import queue as _queue_mod
-from struct import Struct
-import socket
-import array as _array_mod
-import math as _math_mod
-import re
-import numpy as np
 
 from config_format import format_config_value
-from audio_sources import generate_cw_pcm, AudioProcessor
-from smart_announce import SmartAnnouncementManager
-from cat_client import RadioCATClient
 
 # ============================================================================
 # WEB CONFIGURATION UI
@@ -997,7 +981,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                 # browser closes the tab mid-response — benign, but
                 # unreadable noise. Swallow that one; defer everything
                 # else to the base implementation.
-                import sys
                 _et, _ev, _ = sys.exc_info()
                 if isinstance(_ev, (BrokenPipeError, ConnectionResetError)):
                     return
@@ -1233,26 +1216,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         if last:
             self._stop_encoder()
 
-    def _build_section_map(self):
-        """Parse config file to map KEY -> section_name."""
-        section_map = {}
-        current_section = 'default'
-        config_path = self.config.config_file
-        if not os.path.exists(config_path):
-            return section_map
-        try:
-            with open(config_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith('[') and ']' in line:
-                        current_section = line[1:line.index(']')].strip()
-                    elif '=' in line and not line.startswith('#'):
-                        key = line.split('=', 1)[0].strip()
-                        section_map[key] = current_section
-        except Exception:
-            pass
-        return section_map
-
     def _save_config(self, new_values):
         """Write every _CONFIG_LAYOUT parameter to the config file, in place.
 
@@ -1381,28 +1344,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         except ValueError:
             return False
 
-    def _radio_nav_links(self, style='inline'):
-        """Build conditional radio nav links based on enabled radios."""
-        links = []
-        if getattr(self.config, 'ENABLE_CAT_CONTROL', False) or getattr(self.config, 'ENABLE_TH9800', False):
-            links.append('<a href="/radio">TH-9800</a>')
-        if getattr(self.config, 'ENABLE_D75', False):
-            links.append('<a href="/d75">TH-D75</a>')
-        if getattr(self.config, 'ENABLE_KV4P', False):
-            links.append('<a href="/kv4p">KV4P HT</a>')
-        return ' | '.join(links)
-
-    def _radio_nav_buttons(self):
-        """Build conditional radio nav buttons for logs page."""
-        html = ''
-        if getattr(self.config, 'ENABLE_CAT_CONTROL', False) or getattr(self.config, 'ENABLE_TH9800', False):
-            html += '    <a href="/radio" class="rb rb-sm" style="text-decoration:none;">TH-9800</a>\n'
-        if getattr(self.config, 'ENABLE_D75', False):
-            html += '    <a href="/d75" class="rb rb-sm" style="text-decoration:none;">D75</a>\n'
-        if getattr(self.config, 'ENABLE_KV4P', False):
-            html += '    <a href="/kv4p" class="rb rb-sm" style="text-decoration:none;">KV4P</a>\n'
-        return html
-
 
     def _wrap_html(self, title, body):
         """Wrap body content in the standard HTML shell."""
@@ -1475,7 +1416,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
 
     def _get_routing_status(self):
         """Return current routing state for the web UI."""
-        import json as _json
         gw = self.gateway
 
         # Build source list from available plugins/sources

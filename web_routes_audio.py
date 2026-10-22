@@ -5,11 +5,8 @@
 import json as json_mod
 import os
 import time
-import subprocess
 import threading as _thr
 
-from audio_sources import generate_cw_pcm
-from cat_client import RadioCATClient
 
 
 def _resolve_source(gw, source_id):

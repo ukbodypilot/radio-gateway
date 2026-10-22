@@ -17,7 +17,7 @@ import tempfile
 import zipfile
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import numpy as np
 

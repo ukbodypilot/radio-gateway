@@ -5,8 +5,6 @@
 import json
 import os
 import subprocess
-import sys
-import time
 import urllib.parse
 import urllib.request
 
@@ -18,7 +16,6 @@ from mcp_server.server import mcp, _get, _post, GW_BASE_URL, GW_ROOT, _auth_head
 # ---------------------------------------------------------------------------
 def _ssh_cmd(host: str, user: str, password: str, cmd: str, timeout: int = 15) -> str:
     """Run a command on a remote host via sshpass + SSH."""
-    import subprocess
     try:
         r = subprocess.run(
             ['sshpass', '-p', password, 'ssh',
@@ -103,7 +100,6 @@ def endpoint_ping(endpoint: str) -> str:
     Args:
         endpoint: Endpoint name (e.g. 'd75-pi', 'ftm-150', 'celeron-aioc').
     """
-    import subprocess
     try:
         host, _, _ = _resolve_endpoint_host(endpoint)
     except ValueError as e:

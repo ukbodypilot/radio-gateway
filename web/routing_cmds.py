@@ -7,11 +7,6 @@ further.
 """
 
 import os
-import socket
-import socketserver
-import subprocess
-import threading
-import time
 
 from audio_util import AudioProcessor
 from routing_rules import find_sink_conflicts, describe_conflicts
@@ -505,7 +500,7 @@ class _RoutingCmdsMixin:
 
     def _load_routing_config(self):
         """Load bus config from JSON file. Returns (busses, connections, layout)."""
-        import json, os
+        import json
         path = self._routing_config_path()
         if os.path.exists(path):
             try:
