@@ -250,20 +250,27 @@ class _SysinfoMixin:
         try:
             # IP addresses
             import socket
-            ips = []
-            # Get all interface addresses via /proc/net/if_inet6 and ip command
-            import subprocess
-            result = subprocess.run(['ip', '-4', '-o', 'addr', 'show'], capture_output=True, text=True, timeout=2)
-            for line in result.stdout.strip().split('\n'):
-                if not line:
-                    continue
-                parts = line.split()
-                # Format: idx iface inet addr/prefix ...
-                iface = parts[1]
-                if iface == 'lo':
-                    continue
-                addr = parts[3].split('/')[0]
-                ips.append({'iface': iface, 'addr': addr})
+            # `ip -4 -o addr show` used to be spawned on every /sysinfo
+            # poll; addresses rarely change, so cache them for 30 s.
+            _now = time.monotonic()
+            _cached = getattr(self, '_sysinfo_ips_cache', None)
+            if _cached and _now - _cached[0] < 30.0:
+                ips = _cached[1]
+            else:
+                ips = []
+                import subprocess
+                result = subprocess.run(['ip', '-4', '-o', 'addr', 'show'], capture_output=True, text=True, timeout=2)
+                for line in result.stdout.strip().split('\n'):
+                    if not line:
+                        continue
+                    parts = line.split()
+                    # Format: idx iface inet addr/prefix ...
+                    iface = parts[1]
+                    if iface == 'lo':
+                        continue
+                    addr = parts[3].split('/')[0]
+                    ips.append({'iface': iface, 'addr': addr})
+                self._sysinfo_ips_cache = (_now, ips)
             info['ips'] = ips
 
             # Hostname

@@ -33,89 +33,6 @@ class _AudioProcMixin:
         except Exception:
             return 0
 
-    def _update_sv_level(self, pcm_data):
-        """Update sv_audio_level from PCM data sent to remote client."""
-        self.sv_audio_level = pcm_level(pcm_data, self.sv_audio_level)
-
-    def apply_highpass_filter(self, pcm_data):
-        """Apply high-pass filter to remove low-frequency rumble"""
-        try:
-            import math
-            from scipy.signal import lfilter, lfilter_zi
-
-            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(samples) == 0:
-                return pcm_data
-
-            # First-order IIR high-pass: H(z) = alpha*(1 - z^-1) / (1 - alpha*z^-1)
-            cutoff = self.config.HIGHPASS_CUTOFF_FREQ
-            sample_rate = self.config.AUDIO_RATE
-            rc = 1.0 / (2.0 * math.pi * cutoff)
-            dt = 1.0 / sample_rate
-            alpha = rc / (rc + dt)
-
-            b = np.array([alpha, -alpha], dtype=np.float64)
-            a = np.array([1.0, -alpha], dtype=np.float64)
-
-            # Initialize state on first call (zi shape: (1,))
-            if self.highpass_state is None:
-                self.highpass_state = lfilter_zi(b, a) * 0.0
-
-            filtered, self.highpass_state = lfilter(b, a, samples, zi=self.highpass_state)
-            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
-
-        except Exception:
-            return pcm_data
-    
-    def apply_noise_gate(self, pcm_data):
-        """Apply noise gate with attack/release to reduce background hiss"""
-        try:
-            import array
-            import math
-            
-            samples = array.array('h', pcm_data)
-            if len(samples) == 0:
-                return pcm_data
-            
-            # Convert threshold from dB to linear
-            threshold_db = self.config.NOISE_GATE_THRESHOLD
-            threshold = 32767.0 * pow(10.0, threshold_db / 20.0)
-            
-            # Attack and release times in samples
-            attack_samples = (self.config.NOISE_GATE_ATTACK / 1000.0) * self.config.AUDIO_RATE
-            release_samples = (self.config.NOISE_GATE_RELEASE / 1000.0) * self.config.AUDIO_RATE
-            
-            # Attack and release coefficients
-            attack_coef = 1.0 / attack_samples if attack_samples > 0 else 1.0
-            release_coef = 1.0 / release_samples if release_samples > 0 else 0.1
-            
-            # Apply gate with envelope follower
-            gated = []
-            for sample in samples:
-                # Calculate signal level (absolute value)
-                level = abs(sample)
-                
-                # Update envelope with attack/release
-                if level > self.gate_envelope:
-                    self.gate_envelope += (level - self.gate_envelope) * attack_coef
-                else:
-                    self.gate_envelope += (level - self.gate_envelope) * release_coef
-                
-                # Calculate gain based on envelope vs threshold
-                if self.gate_envelope > threshold:
-                    gain = 1.0
-                else:
-                    # Smooth transition below threshold
-                    ratio = self.gate_envelope / threshold if threshold > 0 else 0
-                    gain = ratio * ratio  # Quadratic for smooth fade
-                
-                gated.append(int(sample * gain))
-            
-            return array.array('h', gated).tobytes()
-            
-        except Exception:
-            return pcm_data
-    
     def _sync_radio_processor(self):
         """Sync global config flags into the radio AudioProcessor instance."""
         p = self.radio_processor
@@ -142,17 +59,6 @@ class _AudioProcMixin:
 
     # KV4P processor sync: gone. The endpoint plugin reads its own
     # processing flags from the [kv4p.<instance>] section at startup.
-
-    def process_audio_for_mumble(self, pcm_data):
-        """Apply all enabled audio processing to clean up radio audio before sending to Mumble.
-        Now delegates to the radio AudioProcessor instance.
-        """
-        # Keep legacy state in sync (old code may read self.gate_envelope etc.)
-        self._sync_radio_processor()
-        result = self.radio_processor.process(pcm_data)
-        self.gate_envelope = self.radio_processor.gate_envelope
-        self.highpass_state = self.radio_processor.highpass_state
-        return result
 
     def _load_link_settings(self):
         """Load saved per-endpoint settings (rx_muted, tx_muted) from JSON."""
