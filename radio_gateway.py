@@ -194,6 +194,7 @@ class Config:
             'LOG_FILE_DAYS': 30,           # Days to keep rolling log files
             'VERBOSE_LOGGING': False,
             'STATUS_UPDATE_INTERVAL': 1.0,  # seconds
+            'LOOP_RECORD_KBPS': 48,  # Loop-recorder MP3 bitrate (CBR mono); 128 was ~1.3 GiB/day per bus
             'MAX_MUMBLE_BUFFER_SECONDS': 1.0,
             'BUFFER_MANAGEMENT_VERBOSE': False,
             'ENABLE_VAD': True,

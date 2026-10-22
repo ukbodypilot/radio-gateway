@@ -36,7 +36,7 @@ class LoopSegment:
     waveform data — never touches the pipe.
     """
 
-    def __init__(self, bus_id, segment_start, bus_dir, sample_rate=48000):
+    def __init__(self, bus_id, segment_start, bus_dir, sample_rate=48000, kbps=48):
         self.bus_id = bus_id
         self.segment_start = segment_start  # datetime, wall-clock aligned
         self._sample_rate = sample_rate
@@ -57,8 +57,13 @@ class LoopSegment:
         import queue as _q
         self._write_queue = _q.Queue(maxsize=500)
         self._encoder = subprocess.Popen(
+            # --resample keeps every segment at the input rate: at low
+            # bitrates lame would otherwise drop to 24 kHz, and the export
+            # concat demuxer needs all segments to share one sample rate.
             ['lame', '-r', '-s', str(sample_rate), '--bitwidth', '16',
-             '-m', 'm', '-b', '128', '--signed', '--little-endian',
+             '-m', 'm', '-b', str(int(kbps)), '--cbr',
+             '--resample', f'{sample_rate / 1000:g}',
+             '--signed', '--little-endian',
              '-', self.mp3_path],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
@@ -187,7 +192,7 @@ class LoopRecorder:
     """Continuous loop recorder with per-bus segmented MP3 + waveform."""
 
     def __init__(self, base_dir=None, segment_seconds=300, retention_hours=24,
-                 sample_rate=48000):
+                 sample_rate=48000, kbps=48):
         if base_dir is None:
             base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                     'recordings', 'loop')
@@ -196,6 +201,7 @@ class LoopRecorder:
         self._default_retention_hours = retention_hours
         self._retention = {}     # bus_id → hours (per-bus override)
         self._sample_rate = sample_rate
+        self._kbps = kbps
         self._active = {}        # bus_id → LoopSegment (published, feed-owned)
         self._lock = threading.Lock()
         os.makedirs(self._base_dir, exist_ok=True)
@@ -301,7 +307,7 @@ class LoopRecorder:
                 # with no lock held, off the audio thread.
                 os.makedirs(bus_dir, exist_ok=True)
                 new_seg = LoopSegment(bus_id, seg_start, bus_dir,
-                                      self._sample_rate)
+                                      self._sample_rate, self._kbps)
             except Exception as e:
                 print(f"  [LoopRec] failed to open segment for {bus_id}: {e}")
                 with self._lock:

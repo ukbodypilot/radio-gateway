@@ -1029,6 +1029,11 @@ MUMBLE_SERVER_2_AUTOSTART = true
 [advanced]
 # Stream health and diagnostics
 
+# Loop-recorder MP3 bitrate in kbps (constant bitrate, mono, 48 kHz). Each
+# loop-enabled bus writes this continuously, silence included: 48 kbps is
+# ~0.5 GiB/day per bus, 128 kbps ~1.3 GiB/day. Plenty for FM voice.
+LOOP_RECORD_KBPS = 48
+
 # Auto-restart audio input stream on errors (may cause brief dropouts)
 ENABLE_STREAM_HEALTH = false
 

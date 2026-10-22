@@ -225,7 +225,8 @@ class _LifecycleMixin:
         # Initialize Loop Recorder (per-bus continuous recording)
         try:
             from loop_recorder import LoopRecorder
-            self.loop_recorder = LoopRecorder()
+            self.loop_recorder = LoopRecorder(
+                kbps=int(getattr(self.config, 'LOOP_RECORD_KBPS', 48) or 48))
             print("✓ Loop Recorder initialized")
         except Exception as e:
             print(f"  [LoopRec] Failed to initialize: {e}")

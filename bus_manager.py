@@ -1511,6 +1511,32 @@ class BusManager:
         """Return tick trace data for analysis.  Called by audio_trace dump."""
         return list(self._tick_trace)
 
+    def _log_tick_error(self, bus_id, exc):
+        """Log a per-bus tick exception without flooding the log.
+
+        This runs at 20 Hz: a persistent error used to print a full
+        traceback every tick (~1.7M a day, to both the journal and the log
+        file). Now: a traceback the first time an error message is seen for
+        a bus, then one summary line a minute while it keeps happening.
+        """
+        if not hasattr(self, '_tick_err_state'):
+            self._tick_err_state = {}
+        if len(self._tick_err_state) > 200:
+            self._tick_err_state.clear()  # messages that embed changing values
+        key = (bus_id, f'{type(exc).__name__}: {exc}')
+        now = time.monotonic()
+        st = self._tick_err_state.get(key)
+        if st is None:
+            self._tick_err_state[key] = [now, 0]
+            print(f"  [BusManager] {bus_id} tick error: {exc}")
+            import traceback; traceback.print_exc()
+            return
+        st[1] += 1
+        if now - st[0] >= 60.0:
+            print(f"  [BusManager] {bus_id} tick error repeated {st[1]}x "
+                  f"in the last {now - st[0]:.0f}s: {exc}")
+            st[0], st[1] = now, 0
+
     def _tick_loop_owning_gc(self):
         """Run the tick loop, and hand GC back to the interpreter when it ends.
 
@@ -1643,8 +1669,7 @@ class BusManager:
                                    f'tick={_t_tick:.1f}ms deliver={_t_deliver:.1f}ms')
 
                 except Exception as e:
-                    print(f"  [BusManager] {bus_id} tick error: {e}")
-                    import traceback; traceback.print_exc()
+                    self._log_tick_error(bus_id, e)
 
             # ── Dual-channel Broadcastify: combine L/R for THIS tick ────────
             # Must run after every bus has delivered, so both channels cover

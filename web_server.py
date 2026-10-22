@@ -589,7 +589,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         ('advanced', 'Advanced / Diagnostics', [
             'HEADLESS_MODE', 'START_CLAUDE_CODE', 'LOG_BUFFER_LINES', 'LOG_FILE_DAYS',
             'VERBOSE_LOGGING', 'STATUS_UPDATE_INTERVAL',
-            'NETWORK_TIMEOUT', 'BUFFER_MANAGEMENT_VERBOSE',
+            'NETWORK_TIMEOUT', 'BUFFER_MANAGEMENT_VERBOSE', 'LOOP_RECORD_KBPS',
         ]),
     ]
 
