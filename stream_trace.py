@@ -5,6 +5,11 @@ Toggled by the same 'i' key / web button as the main audio trace.
 Dumped alongside the main trace to tools/stream_trace.txt.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import collections
 import time
 import numpy as np
@@ -46,7 +51,7 @@ class StreamTrace:
                 arr = np.frombuffer(chunk[:min(_len, 9600)], dtype=np.int16)
                 _rms = float(np.sqrt(np.dot(arr.astype(np.float64), arr) / len(arr)))
             except Exception:
-                pass
+                log_exc()
         self._buf.append((_t - self._t0, stream, point, _len, _rms, qd, extra))
 
     def dump(self, path):

@@ -1,5 +1,6 @@
 """WebSocket and streaming route handlers extracted from web_server.py."""
 
+from log_util import log_exc
 import base64
 import hashlib
 import socket
@@ -506,7 +507,7 @@ def handle_ws_link(handler, parent):
         try:
             ws_sock.sendall(b'\x88\x00')  # WS close
         except Exception:
-            pass
+            log_exc()
         return
 
     print(f"[WS-Link] Bridge connected from {_client_ip}")
@@ -562,7 +563,7 @@ def handle_ws_link(handler, parent):
         try:
             ws_sock.sendall(b'\x88\x00')
         except Exception:
-            pass
+            log_exc()
         tcp_thread.join(timeout=5)
         print(f"[WS-Link] Bridge disconnected {_client_ip}")
 
@@ -643,7 +644,7 @@ def _ws_recv_message(sock):
         try:
             sock.sendall(b'\x88\x00')
         except Exception:
-            pass
+            log_exc()
         return None
     if opcode == 0x09:  # Ping → Pong
         pong = bytearray([0x8A, len(payload) if len(payload) < 126 else 0])
@@ -651,6 +652,6 @@ def _ws_recv_message(sock):
         try:
             sock.sendall(bytes(pong))
         except Exception:
-            pass
+            log_exc()
         return _ws_recv_message(sock)  # recurse for next real message
     return payload

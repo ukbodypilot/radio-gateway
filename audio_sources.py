@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Audio source and mixer classes for radio-gateway."""
 
+from log_util import log_exc
 import os
 import time
 import threading
@@ -560,7 +561,7 @@ class FilePlaybackSource(AudioSource):
             if r.returncode == 0 and r.stdout.strip():
                 return float(r.stdout.strip())
         except Exception:
-            pass
+            log_exc()
         return None
 
     def _fill_soundboard_slots(self, file_map):
@@ -1185,7 +1186,7 @@ class FilePlaybackSource(AudioSource):
         try:
             self.audio_level = pcm_level(chunk, self.audio_level)
         except Exception:
-            pass
+            log_exc()
 
         # File playback triggers PTT - ALWAYS
         return chunk, True
@@ -1225,7 +1226,7 @@ class FilePlaybackSource(AudioSource):
                         finally:
                             _cat._drain_paused = False
                     except Exception:
-                        pass
+                        log_exc()
                 import threading
                 threading.Thread(target=_do_restore, daemon=True, name="RTS-Restore").start()
 
@@ -1481,7 +1482,7 @@ class LoopPlaybackSource(AudioSource):
                 try:
                     self.audio_level = pcm_level(data, self.audio_level)
                 except Exception:
-                    pass
+                    log_exc()
 
                 if _st and _st.active:
                     _extra = ''
@@ -1824,7 +1825,7 @@ class RemoteAudioServer:
                     except Exception:
                         break  # error = dead
             except Exception:
-                pass
+                log_exc()
             finally:
                 self.connected = False
                 self.client_address = None
@@ -2009,7 +2010,7 @@ class RemoteAudioSource(AudioSource):
                     try:
                         self.audio_level = pcm_level(payload, self.audio_level)
                     except Exception:
-                        pass
+                        log_exc()
 
                     try:
                         self._chunk_queue.put_nowait(payload)
@@ -2258,7 +2259,7 @@ class LinkAudioSource(AudioSource):
             self._audio_level_last_mono = time.monotonic()
             self._last_push_mono = time.monotonic()
         except Exception:
-            pass
+            log_exc()
 
     def meter_level(self):
         # When this source is a sink-only endpoint (not a member of any bus),
@@ -2304,7 +2305,7 @@ class LinkAudioSource(AudioSource):
                     import metrics as _m
                     _m.link_audio_underruns_total.labels(endpoint=self.endpoint_name).inc()
                 except Exception:
-                    pass
+                    log_exc()
                 return None, False
 
         raw = self._sub_buffer[:cb]
@@ -2331,7 +2332,7 @@ class LinkAudioSource(AudioSource):
             try:
                 self._link_server.send_audio(pcm)
             except Exception:
-                pass
+                log_exc()
 
     def put_audio(self, pcm):
         """Send TX audio to the remote endpoint (SoloBus radio interface)."""
@@ -2346,7 +2347,7 @@ class LinkAudioSource(AudioSource):
                 if _st and _st.active:
                     _st.record(f'{self.endpoint_name}_tx', 'put_audio', pcm)
             except Exception:
-                pass
+                log_exc()
 
     def execute(self, cmd):
         """Route commands to the remote endpoint via link server (SoloBus radio interface)."""
@@ -2596,7 +2597,7 @@ class MumbleSource(AudioSource):
         try:
             self.audio_level = pcm_level(pcm_bytes, self.audio_level)
         except Exception:
-            pass
+            log_exc()
         try:
             self._chunk_queue.put_nowait(pcm_bytes)
         except _queue_mod.Full:
@@ -2797,7 +2798,7 @@ class WebMicSource(AudioSource):
         try:
             self.audio_level = pcm_level(pcm_bytes, self.audio_level)
         except Exception:
-            pass
+            log_exc()
         try:
             self._chunk_queue.put_nowait(pcm_bytes)
         except _queue_mod.Full:
@@ -2899,7 +2900,7 @@ class WebMonitorSource(AudioSource):
         try:
             self.audio_level = pcm_level(pcm_bytes, self.audio_level)
         except Exception:
-            pass
+            log_exc()
         try:
             self._chunk_queue.put_nowait(pcm_bytes)
         except _queue_mod.Full:
@@ -3304,7 +3305,7 @@ class StreamOutputSource:
                                 _m.stream_bytes_sent_total.labels(
                                     stream=_metric_stream).inc(len(data))
                             except Exception:
-                                pass  # metrics must never break the stream
+                                log_exc()  # metrics must never break the stream
                 except (BrokenPipeError, OSError, ConnectionError) as e:
                     uptime_s = int(time.time() - self._connect_time) if self._connect_time else 0
                     print(f"  [Broadcastify] Connection lost after {uptime_s}s: {e}")
@@ -3446,7 +3447,7 @@ class StreamOutputSource:
             try:
                 step()
             except Exception:
-                pass
+                log_exc()
         try:
             enc.wait(timeout=3)
         except Exception:
@@ -3510,7 +3511,7 @@ class StreamOutputSource:
             import metrics as _m
             _m.stream_reconnects_total.labels(stream='broadcastify').inc()
         except Exception:
-            pass
+            log_exc()
 
         def _auto_reconnect():
             try:
@@ -3745,7 +3746,7 @@ class StreamOutputSource:
                     print(f"  [Broadcastify] ffmpeg: {line}")
                     self._note_error(f"ffmpeg: {line}")
             except Exception:
-                pass          # pipe closed under us during shutdown
+                log_exc()          # pipe closed under us during shutdown
             finally:
                 try:
                     pipe.close()
@@ -3761,7 +3762,7 @@ class StreamOutputSource:
             self._last_error = str(msg)[:200]
             self._last_error_time = time.time()
         except Exception:
-            pass   # diagnostics must never break the stream
+            log_exc()   # diagnostics must never break the stream
 
     def _keepalive_loop(self):
         """Feed silence to the encoder when no real audio is arriving.
@@ -3803,7 +3804,7 @@ class StreamOutputSource:
                 finally:
                     self._encoder_lock.release()
             except Exception:
-                pass
+                log_exc()
             if not ok:
                 self._on_encoder_wedged()
 

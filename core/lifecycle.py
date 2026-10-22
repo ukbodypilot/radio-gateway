@@ -6,6 +6,7 @@ back via inheritance keeps the runtime semantics identical without
 threading attribute references through arguments.
 """
 
+from log_util import log_exc
 import os
 import sys
 import threading
@@ -113,7 +114,7 @@ class _LifecycleMixin:
                     if sz > 10 * 1024 * 1024:  # >10MB, truncate
                         open(tmp_log, 'w').close()
             except Exception:
-                pass
+                log_exc()
 
         # Install stdout/stderr wrapper early so ALL messages get timestamps.
         # Deferred import: LogWriter and __version__ live in gateway_core
@@ -139,7 +140,7 @@ class _LifecycleMixin:
                         if line:
                             self._status_writer._append_log(line)
         except Exception:
-            pass
+            log_exc()
 
         print("=" * 60)
         print("Radio Gateway")
@@ -187,7 +188,7 @@ class _LifecycleMixin:
             self._stderr_thread = threading.Thread(target=_stderr_reader, daemon=True)
             self._stderr_thread.start()
         except Exception:
-            pass  # Non-fatal — stderr just won't be captured
+            log_exc()  # Non-fatal — stderr just won't be captured
 
         # Start audio transmit thread
         self._tx_thread = threading.Thread(target=self.audio_transmit_loop, daemon=True)
@@ -321,7 +322,7 @@ class _LifecycleMixin:
                 import termios
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._terminal_settings)
             except Exception:
-                pass
+                log_exc()
 
         # Restore original stdout/stderr before cleanup prints
         if hasattr(self, '_orig_stderr') and self._orig_stderr:
@@ -330,7 +331,7 @@ class _LifecycleMixin:
             try:
                 os.dup2(self._orig_stderr.fileno(), 2)
             except Exception:
-                pass
+                log_exc()
             # Close the pipe read end to unblock the reader thread
             if hasattr(self, '_stderr_pipe_r'):
                 try:
@@ -378,7 +379,7 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  Stream output closed")
             except:
-                pass
+                log_exc()
         
         # Release PTT
         if self.ptt_active:
@@ -401,7 +402,7 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  SDR audio closed")
             except Exception:
-                pass  # Suppress ALSA errors during shutdown
+                log_exc()  # Suppress ALSA errors during shutdown
 
         if self.remote_audio_source:
             try:
@@ -409,7 +410,7 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  Remote audio source closed")
             except Exception:
-                pass
+                log_exc()
 
         if self.remote_audio_server:
             try:
@@ -417,7 +418,7 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  Remote audio server closed")
             except Exception:
-                pass
+                log_exc()
 
         if self.announce_input_source:
             try:
@@ -425,7 +426,7 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  Announcement input closed")
             except Exception:
-                pass
+                log_exc()
 
         # Close relay serial ports (leave relays in current state — don't power-cycle on restart)
         if self.relay_radio:
@@ -434,14 +435,14 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  Radio relay port closed")
             except Exception:
-                pass
+                log_exc()
         if self.relay_charger:
             try:
                 self.relay_charger.close()
                 if self.config.VERBOSE_LOGGING:
                     print("  Charger relay port closed")
             except Exception:
-                pass
+                log_exc()
 
         if self.automation_engine:
             try:
@@ -514,7 +515,7 @@ class _LifecycleMixin:
                 self.relay_ptt.set_state(False)
                 self.relay_ptt.close()
             except Exception:
-                pass
+                log_exc()
 
         if self.cat_client:
             try:
@@ -522,7 +523,7 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  CAT client closed")
             except Exception:
-                pass
+                log_exc()
 
         # D75 cleanup removed — D75 is now a link endpoint
 
@@ -533,14 +534,14 @@ class _LifecycleMixin:
                 if self.config.VERBOSE_LOGGING:
                     print("  Mumble Server 1 stopped")
             except Exception:
-                pass
+                log_exc()
         if self.mumble_server_2:
             try:
                 self.mumble_server_2.stop()
                 if self.config.VERBOSE_LOGGING:
                     print("  Mumble Server 2 stopped")
             except Exception:
-                pass
+                log_exc()
 
         if self.input_stream:
             try:
@@ -550,7 +551,7 @@ class _LifecycleMixin:
                 time.sleep(0.05)  # Give ALSA time to clean up
                 self.input_stream.close()
             except Exception as e:
-                pass  # Suppress ALSA errors during shutdown
+                log_exc()  # Suppress ALSA errors during shutdown
         
         if self.speaker_stream:
             try:
@@ -558,7 +559,7 @@ class _LifecycleMixin:
                     self.speaker_stream.stop_stream()
                 self.speaker_stream.close()
             except Exception:
-                pass
+                log_exc()
 
         if self.output_stream:
             try:
@@ -568,7 +569,7 @@ class _LifecycleMixin:
                 time.sleep(0.05)  # Give ALSA time to clean up
                 self.output_stream.close()
             except Exception as e:
-                pass  # Suppress ALSA errors during shutdown
+                log_exc()  # Suppress ALSA errors during shutdown
         
         if self.pyaudio_instance:
             try:

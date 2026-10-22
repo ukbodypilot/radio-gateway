@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """CAT control clients for TH-9800 and D75."""
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import time
 import threading
 import socket
@@ -128,7 +133,7 @@ class RadioCATClient:
             try:
                 self._sock.sendall(b'!exit\n')
             except Exception:
-                pass
+                log_exc()
             # Brief pause to let the server process the exit command
             time.sleep(0.1)
             # Shut down socket (signals EOF to server even if !exit was lost)
@@ -569,7 +574,7 @@ class RadioCATClient:
                         self._channel_text[self._channel_vfo] = self._channel
                     self._logmsg(f"    [pkt] CHANNEL_TEXT vfo_byte=0x{vfo_byte:02X} -> {self._channel_vfo} ch='{ch}'", console=False)
                 except Exception:
-                    pass
+                    log_exc()
 
         elif pkt_type == 0x01:  # DISPLAY_TEXT
             if len(data) >= 9:
@@ -588,7 +593,7 @@ class RadioCATClient:
                         self._vfo_text[dt_vfo] = text
                     self._logmsg(f"    [pkt] DISPLAY_TEXT vfo_byte=0x{vfo_byte:02X} vfo={dt_vfo} text='{text}'", console=False)
                 except Exception:
-                    pass
+                    log_exc()
 
         elif pkt_type == 0x04:  # DISPLAY_ICONS (full icon state)
             if vfo_byte == 0x40:

@@ -19,6 +19,11 @@ KISS / AGW ports stay on the gateway, where packet_radio.py and `pat`
 already expect them, so the rest of the packet stack is untouched.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import os
 import re
 import threading
@@ -179,7 +184,7 @@ class PacketTNC:
                     if 'AllInOneCable' in line or 'All-In-One' in line:
                         return f'hw:{line.strip().split()[0]},0'
         except Exception:
-            pass
+            log_exc()
         return None
 
     def _ptt_line(self, ptt_channel):
@@ -194,5 +199,5 @@ class PacketTNC:
                         path = f'/dev/{hid}'
                         return f'PTT CM108 {path} {int(ptt_channel)}\n'
         except Exception:
-            pass
+            log_exc()
         return ''

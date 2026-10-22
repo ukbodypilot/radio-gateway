@@ -2,6 +2,7 @@
 
 """POST route handlers extracted from web_server.py."""
 
+from log_util import log_exc
 import json as json_mod
 import os
 
@@ -218,7 +219,7 @@ def handle_refreshsounds(handler, parent):
                 if _note:
                     result['note'] = _note
             except Exception:
-                pass  # discovery info is a nicety; never fail the refresh over it
+                log_exc()  # discovery info is a nicety; never fail the refresh over it
         except Exception as _e:
             result = {'ok': False, 'error': str(_e)}
     handler.send_response(200)

@@ -33,6 +33,11 @@ One chunk = 2400 samples = 4800 bytes = 50 ms.
 
 from __future__ import annotations
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import collections
 import json
 import os
@@ -915,7 +920,7 @@ class UsrpPlugin:
         try:
             self.tx_audio_level = pcm_level(pcm, self.tx_audio_level)
         except Exception:
-            pass
+            log_exc()
         if n < 3 * PAD:
             return                              # not enough context yet
         y = resample_poly(self._tx_in48k, 1, RATE_RATIO)

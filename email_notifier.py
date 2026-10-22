@@ -1,5 +1,6 @@
 """Email notification sender (Gmail SMTP)."""
 
+from log_util import log_exc
 import threading
 import time
 
@@ -84,7 +85,7 @@ class EmailNotifier:
             lines.append(f"LAN:       http://{lan_ip}:{port}")
             lines.append(f"LAN App:   http://{lan_ip}:{port}/ws_monitor")
         except Exception:
-            pass
+            log_exc()
         lines.append(f"Local:     http://localhost:{port}")
         lines.append("")
 
@@ -128,7 +129,7 @@ class EmailNotifier:
             import socket
             hostname = socket.gethostname()
         except Exception:
-            pass
+            log_exc()
 
         subject = f"Gateway Online{' — ' + hostname if hostname else ''}"
         self.send(subject, '\n'.join(lines))
@@ -159,7 +160,7 @@ class EmailNotifier:
             lines.append(f"LAN:       http://{lan_ip}:{port}")
             lines.append(f"LAN App:   http://{lan_ip}:{port}/ws_monitor")
         except Exception:
-            pass
+            log_exc()
         lines.append(f"Local:     http://localhost:{port}")
         lines.append("")
 
@@ -198,7 +199,7 @@ class EmailNotifier:
             import socket
             hostname = socket.gethostname()
         except Exception:
-            pass
+            log_exc()
 
         subject = f"Gateway Daily Status{' — ' + hostname if hostname else ''}"
         self.send(subject, '\n'.join(lines))
@@ -341,7 +342,7 @@ class EmailNotifier:
                 parts = f.read().split()
             lines.append(f"Load (1/5/15): {parts[0]} / {parts[1]} / {parts[2]}")
         except Exception:
-            pass
+            log_exc()
 
         try:
             mem = {}
@@ -363,7 +364,7 @@ class EmailNotifier:
                 swap_used = (swap_total - swap_free) // 1024
                 lines.append(f"Swap:          {swap_used} MB / {swap_total // 1024} MB")
         except Exception:
-            pass
+            log_exc()
 
         try:
             import shutil as _shutil
@@ -372,7 +373,7 @@ class EmailNotifier:
             pct = round(100.0 * used / total) if total else 0
             lines.append(f"Disk (/):      {used // gb} GB / {total // gb} GB ({pct}%)")
         except Exception:
-            pass
+            log_exc()
 
         try:
             import glob as _glob
@@ -385,11 +386,11 @@ class EmailNotifier:
                     if t > 0:
                         temps.append(f"{t:.0f}°C")
                 except Exception:
-                    pass
+                    log_exc()
             if temps:
                 lines.append(f"Temps:         {', '.join(temps)}")
         except Exception:
-            pass
+            log_exc()
 
         try:
             import socket as _socket
@@ -399,7 +400,7 @@ class EmailNotifier:
             s.close()
             lines.append(f"LAN IP:        {lan_ip}")
         except Exception:
-            pass
+            log_exc()
 
         return lines
 
@@ -426,7 +427,7 @@ class EmailNotifier:
             import socket
             hostname = socket.gethostname()
         except Exception:
-            pass
+            log_exc()
 
         subject = f"Tunnel URL Changed{' — ' + hostname if hostname else ''}"
         self.send(subject, '\n'.join(lines))

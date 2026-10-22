@@ -5,6 +5,7 @@ BusManager in a dedicated daemon thread.  The main audio loop in
 gateway_core drains the PCM/MP3 queues for WebSocket and stream push.
 """
 
+from log_util import log_exc
 import collections
 import dataclasses
 import gc
@@ -776,7 +777,7 @@ class BusManager:
             try:
                 _proc._dn_stop_worker()
             except Exception:
-                pass
+                log_exc()
         self._bus_processors.clear()
         self._busses.clear()
         self.start()
@@ -793,7 +794,7 @@ class BusManager:
                         _ep, {"cmd": "ptt", "state": False})
                     gw._link_ptt_active[_ep] = False
                 except Exception:
-                    pass
+                    log_exc()
             self._sink_ptt_hold[_ep] = 0
 
     def update_radio_reference(self, source_id):
@@ -1309,7 +1310,7 @@ class BusManager:
                         _prev = self._meters['remote_audio_tx']
                         self._meters['remote_audio_tx'] = update_level(_prev, _audio_level)
                     except Exception:
-                        pass
+                        log_exc()
 
             # Radio TX sinks — SoloBus Phase 3 already calls put_audio(),
             # so here we only track TX level for the routing page display.
@@ -1330,7 +1331,7 @@ class BusManager:
                                     if _st and _st.active:
                                         _st.record(f'{bus_id}_deliver', f'link_tx:{_eln}', audio)
                                 except Exception:
-                                    pass
+                                    log_exc()
                                 # Auto-PTT: track hold timer (actual send deferred to tick loop)
                                 if not hasattr(self, '_sink_ptt_hold'):
                                     self._sink_ptt_hold = {}
@@ -1483,7 +1484,7 @@ class BusManager:
                           f"exceeded the {self._tick_interval*1000:.0f}ms tick "
                           f"interval — a tick was delayed")
             except Exception:
-                pass
+                log_exc()
 
     def dump_tick_trace(self):
         """Return tick trace data for analysis.  Called by audio_trace dump."""
@@ -1683,7 +1684,7 @@ class BusManager:
                 for _eln, _lv in self._link_tx_meters.items():
                     _m.bus_audio_level.labels(bus=f'link_{_eln}').set(_lv / 100.0)
             except Exception:
-                pass
+                log_exc()
             # Reuse the dict in-place so anything holding a reference still works.
             _gw_link_tx = getattr(gw, '_link_tx_levels', None)
             if _gw_link_tx is not None:
@@ -1738,7 +1739,7 @@ class BusManager:
                             _ptt_ep, {"cmd": "ptt", "state": True})
                         gw._link_ptt_active[_ptt_ep] = True
                     except Exception:
-                        pass
+                        log_exc()
             _PTT_SAFETY_TIMEOUT = 180.0
             if hasattr(self, '_sink_ptt_hold'):
                 _now_ptt = time.monotonic()
@@ -1753,7 +1754,7 @@ class BusManager:
                                     _ptt_ep, {"cmd": "ptt", "state": False})
                                 gw._link_ptt_active[_ptt_ep] = False
                             except Exception:
-                                pass
+                                log_exc()
                         self._sink_ptt_hold[_ptt_ep] = 0
                         self._sink_ptt_start[_ptt_ep] = 0
                         continue
@@ -1765,7 +1766,7 @@ class BusManager:
                                     _ptt_ep, {"cmd": "ptt", "state": False})
                                 gw._link_ptt_active[_ptt_ep] = False
                             except Exception:
-                                pass
+                                log_exc()
                         self._sink_ptt_hold[_ptt_ep] = 0
                         self._sink_ptt_start[_ptt_ep] = 0
 

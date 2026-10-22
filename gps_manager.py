@@ -1,5 +1,10 @@
 """GPS receiver manager — USB serial NMEA or simulated."""
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import threading
 
 class GPSManager:
@@ -165,7 +170,7 @@ class GPSManager:
                         elif sid.endswith('GSV'):
                             self._parse_gsv(fields)
                     except Exception:
-                        pass
+                        log_exc()
 
             except Exception as e:
                 with self._lock:

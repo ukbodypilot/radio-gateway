@@ -23,6 +23,7 @@ The 15-minute health-check loop is unchanged — it stays here because tunnel
 liveness (URL still routes) is a tunnel concern, not a generic process concern.
 """
 
+from log_util import log_exc
 import os
 import re
 import threading
@@ -201,7 +202,7 @@ class CloudflareTunnel:
             with open(self.URL_FILE, 'w') as f:
                 f.write(url)
         except Exception:
-            pass
+            log_exc()
         print(f"  [Tunnel] Public URL: {url}")
         if old_url and self._on_url_changed:
             try:
@@ -229,10 +230,10 @@ class CloudflareTunnel:
                     with open(self.URL_FILE, 'w') as f:
                         f.write(url)
                 except Exception:
-                    pass
+                    log_exc()
                 return url
         except Exception:
-            pass
+            log_exc()
         return None
 
     # ── Health check (tunnel liveness, not process liveness) ───────
@@ -309,4 +310,4 @@ class CloudflareTunnel:
                         pass
             time.sleep(2)
         except Exception:
-            pass
+            log_exc()

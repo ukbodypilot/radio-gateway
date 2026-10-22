@@ -8,6 +8,7 @@ callbacks. Labels stay low-cardinality (bus/engine/endpoint), never
 per-utterance.
 """
 
+from log_util import log_exc
 from prometheus_client import (
     CollectorRegistry,
     Counter,
@@ -143,7 +144,7 @@ def _refresh_host_telemetry():
         if rpm is not None:
             fan_rpm.labels(fan='primary').set(rpm)
     except Exception:
-        pass
+        log_exc()
 
 
 def render() -> tuple[bytes, str]:

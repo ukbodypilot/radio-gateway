@@ -5,6 +5,7 @@ Extracted from audio_sources.py to eliminate duplicate level-metering code
 across plugins and sources.
 """
 
+from log_util import log_exc
 import math as _math
 import time as _time
 import numpy as np
@@ -90,7 +91,7 @@ def _warmup_gate_loop():
             _samples = np.zeros(48, dtype=np.int16)
             _gate_loop(_samples, 327.0, 0.01, 0.001, 0.0)
         except Exception:
-            pass
+            log_exc()
     threading.Thread(
         target=_go, name='numba-jit-warmup', daemon=True,
     ).start()
@@ -144,7 +145,7 @@ def _load_rnnoise():
             candidates.append(os.path.join(
                 spec.submodule_search_locations[0], 'librnnoise.so'))
     except Exception:
-        pass
+        log_exc()
     for path in candidates:
         if not os.path.exists(path):
             continue
@@ -205,7 +206,7 @@ class _RNNoiseStream:
             try:
                 self._lib.rnnoise_destroy(self._state)
             except Exception:
-                pass
+                log_exc()
             self._state = None
 
     def __del__(self):
@@ -965,7 +966,7 @@ class AudioProcessor:
                             return self._dn_queue_out.popleft()
                 return pcm_data
         except Exception:
-            pass
+            log_exc()
 
         self._dn_ensure_worker()
         # Snapshot params — mix, engine, atten can all change mid-flight
@@ -1058,7 +1059,7 @@ class AudioProcessor:
                         engine=engine or 'unknown',
                     ).observe((_time.monotonic() - _t0) * 1000.0)
                 except Exception:
-                    pass
+                    log_exc()
                 with self._dn_lock:
                     self._dn_queue_out.append(out_bytes)
         # Shutdown — release the stream.

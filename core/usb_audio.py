@@ -6,6 +6,7 @@ back via inheritance keeps the runtime semantics identical without
 threading attribute references through arguments.
 """
 
+from log_util import log_exc
 import os
 import time
 
@@ -143,7 +144,7 @@ class _USBAudioMixin:
                 self._spk_drop_total += _dropped
             self.speaker_queue.put_nowait(spk)
         except Exception:
-            pass
+            log_exc()
 
     def _speaker_callback(self, in_data, frame_count, time_info, status):
         """PortAudio callback for speaker output.  Runs on PortAudio's own

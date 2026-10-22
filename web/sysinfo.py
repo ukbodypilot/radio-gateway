@@ -6,6 +6,11 @@ Module-level helpers can land here too as the surface gets carved up
 further.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import os
 import time
 
@@ -216,7 +221,7 @@ class _SysinfoMixin:
                     if val > 0:
                         temps.append({'label': label, 'temp': round(val, 1)})
                 except Exception:
-                    pass
+                    log_exc()
             # hwmon sensors (for GPU, NVMe, etc.)
             for hwmon in sorted(_glob.glob('/sys/class/hwmon/hwmon*')):
                 try:
@@ -237,7 +242,7 @@ class _SysinfoMixin:
                         if val > 0 and not any(t['label'] == lbl and t['temp'] == round(val, 1) for t in temps):
                             temps.append({'label': lbl, 'temp': round(val, 1)})
                 except Exception:
-                    pass
+                    log_exc()
             info['temps'] = temps
         except Exception:
             info['temps'] = []

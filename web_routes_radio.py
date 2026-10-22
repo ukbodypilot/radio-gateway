@@ -2,6 +2,7 @@
 
 """POST route handlers extracted from web_server.py."""
 
+from log_util import log_exc
 import json as json_mod
 import time
 import subprocess
@@ -467,7 +468,7 @@ def handle_catcmd(handler, parent):
                 try:
                     cat.set_rts(True)
                 except Exception:
-                    pass
+                    log_exc()
 
             print(f"\n  [CAT] Serial connect: {resp}")
             result = {'ok': ok, 'status': resp or ''}
@@ -748,7 +749,7 @@ def _winlink_tune_endpoint(freq_mhz: float, gw) -> dict:
             if cfg is not None:
                 power_pct = int(getattr(cfg, 'PACKET_TX_POWER_PCT', 25))
         except Exception:
-            pass
+            log_exc()
         p = link_server.send_command_to_and_wait(
             endpoint_name, {'cmd': 'power', 'pct': power_pct},
             timeout=5.0)

@@ -2,6 +2,7 @@
 
 """POST route handlers extracted from web_server.py."""
 
+from log_util import log_exc
 import json as json_mod
 
 
@@ -188,7 +189,7 @@ def handle_transcribe_config(handler, parent):
                                 headers={'Content-Type': 'application/json'}, method='POST')
                             _ur.urlopen(_req, timeout=10)
                         except Exception:
-                            pass
+                            log_exc()
                     with tx._stats_lock:
                         tx._stats.clear()
                     result = {'ok': True}

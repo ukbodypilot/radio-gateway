@@ -9,6 +9,11 @@ RemoteEngine          — POSTs VAD-gated utterances to a transcribe_worker HTTP
                         can show remote worker health without blocking audio.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import json
 import numpy as np
 import threading
@@ -44,7 +49,7 @@ def _host_rss_mb():
                 if line.startswith('VmRSS:'):
                     return round(int(line.split()[1]) / 1024, 1)
     except Exception:
-        pass
+        log_exc()
     return None
 
 

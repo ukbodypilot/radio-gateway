@@ -12,6 +12,7 @@ and delivers audio to sinks.
 See docs/mixer-v2-design.md for architecture.
 """
 
+from log_util import log_exc
 import struct
 import subprocess
 import threading
@@ -274,7 +275,7 @@ class TH9800Plugin:
         try:
             self.audio_level = pcm_level(data, self.audio_level)
         except Exception:
-            pass
+            log_exc()
 
         _st = self._stream_trace
         if _st:
@@ -412,7 +413,7 @@ class TH9800Plugin:
             try:
                 d.update(self._cat_client.get_radio_state())
             except Exception:
-                pass
+                log_exc()
         return d
 
     # -- Backward compat --
@@ -564,7 +565,7 @@ class TH9800Plugin:
                     try:
                         self.audio_level = pcm_level(chunk, self.audio_level)
                     except Exception:
-                        pass
+                        log_exc()
 
                     if _st:
                         _st.record('aioc_rx', 'post_proc', chunk)
@@ -675,7 +676,7 @@ class TH9800Plugin:
                         if card_num.isdigit():
                             return int(card_num)
         except Exception:
-            pass
+            log_exc()
         return None
 
     # -- Internal: CAT client --

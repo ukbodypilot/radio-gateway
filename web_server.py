@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Web configuration and dashboard server for radio-gateway."""
 
+from log_util import log_exc
 import sys
 import os
 import time
@@ -701,7 +702,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                             and hmac.compare_digest(pw, password)):
                         return True
                 except Exception:
-                    pass
+                    log_exc()
                 self._send_auth_required()
                 return False
 
@@ -893,7 +894,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                     self.end_headers()
                     self.wfile.write(b'Not Found')
                 except Exception:
-                    pass
+                    log_exc()
 
             _POST_EXACT = {
                 '/key':                        'p:handle_key',
@@ -966,7 +967,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                     self.end_headers()
                     self.wfile.write(b'Not Found')
                 except Exception:
-                    pass
+                    log_exc()
 
 
         class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

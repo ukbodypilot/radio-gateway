@@ -9,6 +9,7 @@ Storage layout:
     recordings/loop/<bus_id>/YYYYMMDD_HHMM.wfm   (binary: [peak,rms] per second)
 """
 
+from log_util import log_exc
 import os
 import shutil
 import struct
@@ -362,7 +363,7 @@ class LoopRecorder:
             try:
                 self._service_pending()
             except Exception:
-                pass
+                log_exc()
         with self._lock:
             if bus_id:
                 self._wanted.pop(bus_id, None)
@@ -639,7 +640,7 @@ class LoopRecorder:
                             os.unlink(os.path.join(bus_dir, fname))
                             count += 1
                         except Exception:
-                            pass
+                            log_exc()
                 # Remove empty bus dir
                 try:
                     os.rmdir(bus_dir)

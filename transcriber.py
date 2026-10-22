@@ -10,6 +10,7 @@ Results are served via HTTP for the web UI and optionally forwarded to
 Mumble, and keyword hits are emailed.
 """
 
+from log_util import log_exc
 import collections
 import json
 import logging
@@ -89,7 +90,7 @@ def _inference_worker_init():
         import os as _os
         _os.nice(15)
     except Exception:
-        pass
+        log_exc()
 
 
 def _is_hallucination(text):
@@ -105,7 +106,7 @@ def _get_rss_mb():
                 if line.startswith('VmRSS:'):
                     return round(int(line.split()[1]) / 1024, 1)
     except Exception:
-        pass
+        log_exc()
     return 0.0
 
 
@@ -202,7 +203,7 @@ def _resolve_freq_tag(gateway, source_id):
                     except (TypeError, ValueError):
                         return str(freq)
     except Exception:
-        pass
+        log_exc()
     return ''
 
 
@@ -221,7 +222,7 @@ def _save_settings(settings):
         from atomic_json import save_json
         save_json(_SETTINGS_FILE, settings)
     except Exception:
-        pass
+        log_exc()
 
 
 def _resample_48k_to_16k(audio_48k_f32):
@@ -646,7 +647,7 @@ class RadioTranscriber:
             import ctypes
             ctypes.CDLL('libc.so.6').malloc_trim(0)
         except Exception:
-            pass
+            log_exc()
         # Wake every per-stream worker so they can notice _running=False.
         with self._streams_lock:
             streams = list(self._streams.values())
@@ -885,7 +886,7 @@ class RadioTranscriber:
             import metrics as _m
             _m.vad_speech_events_total.labels(bus=source_id).inc()
         except Exception:
-            pass
+            log_exc()
         duration = stream.audio_buf_samples / _SILERO_SR
         if duration >= self._min_duration and stream.audio_buf_16k:
             audio_16k = np.concatenate(stream.audio_buf_16k)
@@ -1079,7 +1080,7 @@ class RadioTranscriber:
             _libc = ctypes.CDLL(_cu.find_library('c'), use_errno=True)
             _libc.setpriority(0, 0, 15)
         except Exception:
-            pass
+            log_exc()
         try:
             # Prime the shared Silero ONNX session so per-bus streams don't
             # each pay the load cost on first feed().
@@ -1198,7 +1199,7 @@ class RadioTranscriber:
                         _eng_label = getattr(_eng, 'engine', None) or getattr(_eng, 'url', 'remote')
                         _m.transcription_inflight.labels(engine=_eng_label).set(_eng._inflight)
                     except Exception:
-                        pass
+                        log_exc()
                     _fut = _executor.submit(self._run_inference, _eng, _item)
                     _in_flight[_fut] = None
 
@@ -1265,7 +1266,7 @@ class RadioTranscriber:
                 if '_proc_time' in locals():
                     _m.transcription_seconds.labels(engine=_eng_label).observe(_proc_time)
             except Exception:
-                pass
+                log_exc()
 
     def _handle_result(self, stat, result):
         """Store stat, log, forward result. Called from dispatcher thread."""
@@ -1282,11 +1283,11 @@ class RadioTranscriber:
             try:
                 _tl.insert(result)
             except Exception:
-                pass
+                log_exc()
             try:
                 self._email_keyword_hit(_tl.check_keywords(result, self._alert_keywords), result)
             except Exception:
-                pass
+                log_exc()
         _freq_prefix = f'[{result["freq"]}] ' if result.get('freq') else ''
         if self._log_results:
             print(f"  [Transcribe] [{result['time_str']}] "
@@ -1296,7 +1297,7 @@ class RadioTranscriber:
                 self._gateway.send_text_message(
                     f"[{result['time_str']}] {_freq_prefix}{result['text']}")
             except Exception:
-                pass
+                log_exc()
 
     _KEYWORD_EMAIL_COOLDOWN = 300.0   # seconds between emails for the same keyword
 

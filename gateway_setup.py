@@ -19,6 +19,7 @@ Add a new phase by writing a new top-level function here and adding a call
 in RadioGateway.setup_audio().
 """
 
+from log_util import log_exc
 import re
 import signal
 import threading
@@ -202,7 +203,7 @@ def switch_tts_engine(gw, backend, persist=True):
         try:
             gw.config.TTS_ENGINE = gw._tts_backend
         except Exception:
-            pass
+            log_exc()
     return ok, msg
 
 
@@ -949,7 +950,7 @@ def setup_cat_connect(gw):
             try:
                 gw.cat_client.set_rts(True)
             except Exception:
-                pass
+                log_exc()
         else:
             print(f"  Serial connect failed: {connect_resp}")
     except Exception as e:

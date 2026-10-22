@@ -10,6 +10,7 @@ master/slave ducking ensures the master tuner's audio takes priority.
 See docs/mixer-v2-design.md for architecture.
 """
 
+from log_util import log_exc
 import json
 import os
 import queue as _queue_mod
@@ -168,7 +169,7 @@ class _TunerCapture:
                     _lv = rms_to_level(rms, gain=dg)
                     self.audio_level = update_level(self.audio_level, _lv)
                 except Exception:
-                    pass
+                    log_exc()
                 _qd = self._chunk_queue.qsize()
                 _overflow = False
                 try:
@@ -607,11 +608,11 @@ class SDRPlugin:
                                     print(f"  [SDR] rtl_airband started on retry {attempt+1}")
                                     return
                             except Exception:
-                                pass
+                                log_exc()
                         print("  [SDR] rtl_airband failed after 6 retries")
                     threading.Thread(target=_retry, daemon=True, name="SDR-retry").start()
             except Exception:
-                pass
+                log_exc()
 
         # Create tuner captures
         enable_sdr1 = getattr(config, 'ENABLE_SDR', True)
@@ -653,7 +654,7 @@ class SDRPlugin:
                 try:
                     self._guard_sdr_links()
                 except Exception:
-                    pass
+                    log_exc()
         threading.Thread(target=_link_guard_loop, daemon=True, name="SDR-LinkGuard").start()
 
         return success
@@ -699,7 +700,7 @@ class SDRPlugin:
                                capture_output=True, timeout=5)
                 print(f"  [SDR LinkGuard] Removed unauthorized link: {src} → {dst}")
             except Exception:
-                pass
+                log_exc()
 
     def teardown(self):
         """Stop rtl_airband and clean up audio captures."""
@@ -825,7 +826,7 @@ class SDRPlugin:
             result = subprocess.run(['pgrep', 'rtl_airband'], capture_output=True, timeout=2)
             alive = result.returncode == 0
         except Exception:
-            pass
+            log_exc()
 
         d = {key: getattr(self, key) for key in self._SETTING_KEYS}
         d['process_alive'] = alive
@@ -1041,7 +1042,7 @@ class SDRPlugin:
                         if attr in single:
                             setattr(self, f'_single_{attr}', bool(single[attr]))
         except Exception:
-            pass
+            log_exc()
 
     def _save_settings(self):
         """Persist current tuning state to JSON (both dual and single sections)."""
@@ -1305,7 +1306,7 @@ devices:
             try:
                 _err = _sdr1_proc.stderr.read(2048).decode(errors='replace') if _sdr1_proc.stderr else ''
             except Exception:
-                pass
+                log_exc()
             print(f"  Warning: rtl_airband (SDR1) failed to start")
             if _err:
                 print(f"  SDR1 stderr: {_err[:500]}")

@@ -7,6 +7,7 @@ threading attribute references through arguments.
 """
 
 
+from log_util import log_exc
 from struct import Struct
 
 
@@ -29,7 +30,7 @@ class _PTTMixin:
             import metrics as _m
             _m.bus_ptt_active.labels(bus=tx_radio).set(1 if state_on else 0)
         except Exception:
-            pass
+            log_exc()
 
     def _ptt_aioc(self, state_on):
         """PTT via AIOC HID GPIO.

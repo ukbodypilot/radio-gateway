@@ -12,6 +12,11 @@ Kept class-bound for the same reason as the rest of ``core/``: the methods read
 and write ``self.*`` attributes owned by ``RadioGateway``.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import sys
 import time
 
@@ -126,7 +131,7 @@ class _AudioRestartMixin:
                 try:
                     restart_os.dup2(saved_stderr_fd, stderr_fd)
                 except:
-                    pass
+                    log_exc()
                 print(f"  ✗ Failed to restart audio input: {type(e).__name__}: {e}")
         finally:
             # Always restore stderr and cleanup
@@ -135,7 +140,7 @@ class _AudioRestartMixin:
                 restart_os.close(saved_stderr_fd)
                 restart_os.close(devnull_fd)
             except:
-                pass
+                log_exc()
             # Always re-enable audio loop
             self.restarting_stream = False
 

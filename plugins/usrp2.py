@@ -17,6 +17,11 @@ Enable with:
     USRP2_AMI_SECRET = <secret>
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import os
 import sys
 
@@ -47,7 +52,7 @@ class Usrp2Plugin(UsrpPlugin):
                 try:
                     setattr(cfg, k, getattr(config, k))
                 except Exception:
-                    pass
+                    log_exc()
         for suffix in _SUFFIXES:
             v = getattr(config, f'USRP2_{suffix}', None)
             if v is not None:

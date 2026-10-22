@@ -1,5 +1,6 @@
 """GET/POST route handlers for Loop Recorder API."""
 
+from log_util import log_exc
 import json as json_mod
 import os
 import subprocess
@@ -44,7 +45,7 @@ def handle_loop_api(handler, parent):
                     _bus_names[_b['id']] = _b.get('name', _b['id'])
                     _bus_sources[_b['id']] = _b.get('sources', []) or []
         except Exception:
-            pass
+            log_exc()
         try:
             from transcriber import _resolve_freq_tag
         except Exception:

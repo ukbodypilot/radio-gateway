@@ -5,6 +5,7 @@ Class-bound mixin. The original code freely reads ``self.*`` state set in
 preserves the runtime semantics without threading state through arguments.
 """
 
+from log_util import log_exc
 import re
 import socket
 import threading
@@ -200,7 +201,7 @@ class _KISSMixin:
                     if lat is not None:
                         ptype = 'mic-e'
                 except Exception:
-                    pass
+                    log_exc()
             elif dtype in '!/=@':
                 lat, lon, symbol, comment, ptype = self._parse_position(info_str)
             elif dtype == '>':
@@ -256,7 +257,7 @@ class _KISSMixin:
                 else:
                     self._aprs_stations[digi_call]['last_heard'] = time.time()
         except Exception:
-            pass
+            log_exc()
 
     @staticmethod
     def _parse_position(info_str):
@@ -493,7 +494,7 @@ class _KISSMixin:
         try:
             self._bbs_buffer.append(info.decode('ascii', errors='replace'))
         except Exception:
-            pass
+            log_exc()
 
     @staticmethod
     def _agw_frame(port, kind, call_from, call_to, data=b''):
@@ -598,7 +599,7 @@ class _KISSMixin:
                 self._bbs_agw_sock.sendall(
                     self._agw_frame(0, 'd', mycall, self._bbs_callsign))
             except Exception:
-                pass
+                log_exc()
         # Close socket to break reader loop
         s = self._bbs_agw_sock
         self._bbs_agw_sock = None

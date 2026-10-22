@@ -2,6 +2,7 @@
 
 """POST route handlers extracted from web_server.py."""
 
+from log_util import log_exc
 import json as json_mod
 import os
 import time
@@ -60,7 +61,7 @@ def handle_bgm(handler, parent):
             slot = d.get('slot')
             action = str(d.get('action', 'toggle'))
     except Exception:
-        pass
+        log_exc()
     src = parent.gateway.bgm_source if parent.gateway else None
     if src is not None:
         if slot is None:
@@ -439,7 +440,7 @@ def handle_proc_toggle(handler, parent):
         if source and filt and parent.gateway:
             parent.gateway.handle_proc_toggle(source, filt)
     except Exception:
-        pass
+        log_exc()
     handler.send_response(200)
     handler.send_header('Content-Type', 'application/json')
     handler.end_headers()
@@ -592,7 +593,7 @@ def handle_loop_export(handler, parent):
             handler.end_headers()
             handler.wfile.write(json_mod.dumps({"ok": False, "error": str(e)}).encode('utf-8'))
         except Exception:
-            pass
+            log_exc()
     finally:
         if temp_path and os.path.exists(temp_path):
             try:

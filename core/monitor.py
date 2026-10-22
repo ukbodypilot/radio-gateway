@@ -14,6 +14,11 @@ freely read and write ``self.*`` attributes initialised in
 semantics identical without threading references through arguments.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import threading
 import time
 
@@ -225,5 +230,5 @@ class _MonitorMixin:
             try:
                 self._trace_events.append((time.monotonic(), 'STATUS_CRASH', str(_status_err)))
             except Exception:
-                pass  # trace deque itself failed — don't let that kill us
+                log_exc()  # trace deque itself failed — don't let that kill us
             time.sleep(1)

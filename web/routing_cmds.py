@@ -6,6 +6,7 @@ Module-level helpers can land here too as the surface gets carved up
 further.
 """
 
+from log_util import log_exc
 import os
 
 from audio_util import AudioProcessor
@@ -424,7 +425,7 @@ class _RoutingCmdsMixin:
                         gw.speaker_stream.stop_stream()
                     gw.speaker_stream.close()
                 except Exception:
-                    pass
+                    log_exc()
                 gw.speaker_stream = None
                 gw.speaker_queue = None
                 print(f"  [Speaker] Switched to virtual (metering only)")
@@ -529,7 +530,7 @@ class _RoutingCmdsMixin:
                     if 'layout' in old:
                         data['layout'] = old['layout']
                 except Exception:
-                    pass
+                    log_exc()
             # Atomic write — a crash mid-save (or a reader hitting the file
             # between truncate and write) would otherwise corrupt the config
             # and BusManager would boot with zero buses.

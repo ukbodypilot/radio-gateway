@@ -11,6 +11,7 @@ and cached per bed, so the repeat cycle costs nothing and switching beds does
 not re-render text that has not changed.
 """
 
+from log_util import log_exc
 import json
 import os
 import tempfile
@@ -193,7 +194,7 @@ def on_bgm_changed(gw, state=None):
         gw.config.ANNOUNCER_INTERVAL = float(st['interval'])
         gw.config.BGM_MAX_SECONDS = float(st['max_seconds'])
     except Exception:
-        pass
+        log_exc()
 
     slot = getattr(bgm, 'playing_slot', None) if bgm else None
     text = st['messages'].get(str(slot), '') if slot is not None else ''

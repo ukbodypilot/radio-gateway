@@ -1,5 +1,6 @@
 """GET route handlers for Packet Radio and Winlink API."""
 
+from log_util import log_exc
 import json as json_mod
 import os
 
@@ -119,7 +120,7 @@ def handle_winlink_api(handler, parent):
                         'date': msg.get('Date', ''),
                     })
                 except Exception:
-                    pass
+                    log_exc()
         _pkt_json(handler, {"ok": True, "messages": messages})
 
     elif path == '/packet/winlink/read':

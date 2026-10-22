@@ -1,5 +1,6 @@
 """Fleet Manager Engine — scheduled Claude-driven fleet health checks."""
 
+from log_util import log_exc
 import json
 import os
 import subprocess
@@ -84,7 +85,7 @@ class ManagerEngine:
                         try:
                             reports.append(json.loads(line))
                         except Exception:
-                            pass
+                            log_exc()
         except FileNotFoundError:
             pass
         return reports[-limit:]
@@ -463,7 +464,7 @@ class ManagerEngine:
                         if e.get('run_id') == run_id:
                             return e
                     except Exception:
-                        pass
+                        log_exc()
         except FileNotFoundError:
             pass
         return None
@@ -578,7 +579,7 @@ class ManagerEngine:
                     self._state['unread_alerts'] = True
                     self._save_state()
             except Exception:
-                pass
+                log_exc()
 
     def _notify_email(self, subject: str, body: str, log_note: str) -> bool:
         """Email an alert via the gateway's EmailNotifier; True only if it went.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Core gateway services and main RadioGateway class."""
 
+from log_util import log_exc
 import os
 
 def _get_version():
@@ -79,7 +80,7 @@ class LogWriter:
                 self._log_file.write(timestamped_line + '\n')
                 self._log_file.flush()
             except Exception:
-                pass
+                log_exc()
 
     def _maybe_roll_log(self):
         """Roll to a new dated log file when the calendar day changes."""
@@ -114,7 +115,7 @@ class LogWriter:
                 except (ValueError, OSError):
                     pass
         except Exception:
-            pass
+            log_exc()
 
     def get_log_lines(self, after_seq=0, limit=200):
         """Return log lines with seq > after_seq. For web polling."""

@@ -4,6 +4,7 @@ Extracted from gateway_core.py. These are diagnostic tools, not part
 of the normal audio path.
 """
 
+from log_util import log_exc
 import time
 import os
 import statistics
@@ -42,7 +43,7 @@ def watchdog_trace_loop(gw):
                     f"  py{platform.python_version()}\n")
             f.write(hdr)
     except Exception:
-        pass
+        log_exc()
 
     while gw._watchdog_active and gw.running:
         time.sleep(SAMPLE_INTERVAL)
@@ -76,7 +77,7 @@ def watchdog_trace_loop(gw):
             if gw.mumble and gw.mumble.is_alive():
                 mumble_ok = 1
         except Exception:
-            pass
+            log_exc()
 
         # Source enabled flags
         en_aioc = 1 if (gw.radio_source and gw.radio_source.enabled) else 0
@@ -109,7 +110,7 @@ def watchdog_trace_loop(gw):
                     if q is not None:
                         return q.qsize()
             except Exception:
-                pass
+                log_exc()
             return -1
 
         q_aioc = _qsize(gw.radio_source)
@@ -145,7 +146,7 @@ def watchdog_trace_loop(gw):
                 buffer.clear()
                 last_flush = now_mono
             except Exception:
-                pass
+                log_exc()
 
     # Final flush on stop
     if buffer:
@@ -154,7 +155,7 @@ def watchdog_trace_loop(gw):
                 f.write(f"# Watchdog stopped {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.writelines(buffer)
         except Exception:
-            pass
+            log_exc()
 
 
 def dump_audio_trace(gw, out_path=None):
@@ -172,7 +173,7 @@ def dump_audio_trace(gw, out_path=None):
     try:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
     except Exception:
-        pass
+        log_exc()
 
     # Column indices
     T, DT, SQ, SSB, AQ, ASB, MGOT, MSRC, MMS, SBLK, ABLK, \

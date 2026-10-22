@@ -2,6 +2,11 @@
 
 """POST route handlers extracted from web_server.py."""
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import json as json_mod
 import threading as _thr
 
@@ -17,7 +22,7 @@ def handle_key(handler, parent):
         if key_char and parent.gateway:
             parent.gateway.handle_key(key_char)
     except Exception:
-        pass
+        log_exc()
     handler.send_response(200)
     handler.send_header('Content-Type', 'application/json')
     handler.end_headers()

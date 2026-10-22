@@ -7,6 +7,7 @@ Each function takes ``gw`` (the RadioGateway instance) as its first
 parameter instead of ``self``.
 """
 
+from log_util import log_exc
 import os
 import re
 import tempfile
@@ -457,7 +458,7 @@ def on_text_message(gw, text_message):
                 cpu_temp = temps.get('cpu_thermal', temps.get('coretemp', [{}]))[0]
                 s.append(f"  Temp: {cpu_temp.current:.0f}°C")
             except Exception:
-                pass
+                log_exc()
             s.append(f"  RAM: {mem.used // (1024**2)}M / {mem.total // (1024**2)}M ({mem.percent:.0f}%)")
             s.append(f"  Disk: {disk.used // (1024**3)}G / {disk.total // (1024**3)}G ({disk.percent:.0f}%)")
 
@@ -677,7 +678,7 @@ def trigger_playback(gw, queue_fn, label="playback", volume=None):
                         _cat._drain_paused = False
                     print(f"\n[Playback] RTS → Radio Controlled")
                 except Exception:
-                    pass
+                    log_exc()
 
     # Stop current playback immediately, then enqueue in a background thread so
     # the HTTP/keyboard caller returns fast. The lock serializes concurrent
@@ -804,7 +805,7 @@ def handle_key(gw, char):
                     gw.cat_client._stop = False
                     gw.cat_client.setup_radio(gw.config)
                 except Exception:
-                    pass
+                    log_exc()
             threading.Thread(target=_send_cat_config, daemon=True, name="CAT-ManualConfig").start()
     elif char.isdigit():
         # A physical keypress is one character, so the keyboard can only reach

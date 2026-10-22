@@ -12,6 +12,11 @@ Features used across the codebase:
 Pure stdlib so the same module can run inside link_endpoint.py if needed.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import os
 import subprocess
 import threading
@@ -303,14 +308,14 @@ class ProcessSupervisor:
                         log_f.write(line)
                         log_f.flush()
                     except Exception:
-                        pass
+                        log_exc()
                     try:
                         e.stdout_handler(line.rstrip('\n'))
                     except Exception as ex:
                         print(f"  [Sup:{e.name}] stdout_handler error: {ex}",
                               flush=True)
             except Exception:
-                pass
+                log_exc()
         rc = proc.wait()
         with e.lock:
             e.last_exit = rc
@@ -348,7 +353,7 @@ def _open_log(path):
             except OSError:
                 pass
     except Exception:
-        pass
+        log_exc()
     return open(path, 'a', buffering=1)
 
 
@@ -389,5 +394,5 @@ def pgrep_first(name):
             if pids:
                 return int(pids[0])
     except Exception:
-        pass
+        log_exc()
     return None

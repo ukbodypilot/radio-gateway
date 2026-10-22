@@ -1,5 +1,10 @@
 """Dynamic DNS updater (No-IP compatible)."""
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import threading
 import time
 
@@ -84,7 +89,7 @@ class DDNSUpdater:
             if ':' in ip and len(ip) <= 45:   # IPv6
                 return ip
         except Exception:
-            pass
+            log_exc()
         return None
 
     def _resolve_hostname(self, hostname):

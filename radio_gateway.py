@@ -5,6 +5,7 @@ Reads configuration from gateway_config.txt
 Optimized for low latency and high quality audio
 """
 
+from log_util import log_exc
 import sys
 import os
 
@@ -651,7 +652,7 @@ def _pre_flight(config):
             except OSError:
                 pass
     except Exception:
-        pass
+        log_exc()
     # Stop leftover mumble-server instances
     for svc in ['mumble-server-gw1', 'mumble-server-gw2']:
         try:
@@ -660,7 +661,7 @@ def _pre_flight(config):
                 _sudo(['systemctl', 'stop', f'{svc}.service'])
                 print(f"  Stopped {svc}")
         except Exception:
-            pass
+            log_exc()
 
     # 2. Start TH-9800 CAT service
     print(f"[{time.strftime('%H:%M:%S')}] [2/4] Checking TH-9800 CAT control...")
@@ -697,7 +698,7 @@ def _pre_flight(config):
             subprocess.run(['sudo', '-n', 'tee', gov_path], input='schedutil',
                            text=True, capture_output=True, timeout=5)
         except Exception:
-            pass
+            log_exc()
     print("  CPU governor set (or unsupported)")
 
     # 4. AIOC USB reset
@@ -710,7 +711,7 @@ def _pre_flight(config):
                     aioc_path = os.path.dirname(product_file)
                     break
         except Exception:
-            pass
+            log_exc()
     if aioc_path:
         auth_file = os.path.join(aioc_path, 'authorized')
         if os.path.exists(auth_file):
@@ -738,13 +739,13 @@ def _cleanup_services(config):
             subprocess.run(['sudo', '-n', 'systemctl', 'stop', 'th9800-cat.service'],
                            capture_output=True, timeout=10)
     except Exception:
-        pass
+        log_exc()
     # Kill any rtl_airband processes (SDR plugin children)
     try:
         subprocess.run(['sudo', '-n', 'killall', '-9', 'rtl_airband'],
                        capture_output=True, timeout=5)
     except Exception:
-        pass
+        log_exc()
 
 def _acquire_lock():
     """Write PID lockfile. Exit if another instance is already running."""
@@ -769,7 +770,7 @@ def _release_lock():
         if open(_GATEWAY_LOCK).read().strip() == str(os.getpid()):
             os.unlink(_GATEWAY_LOCK)
     except Exception:
-        pass
+        log_exc()
 
 def main():
     hw_deps.require()

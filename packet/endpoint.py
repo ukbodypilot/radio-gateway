@@ -5,6 +5,12 @@ Class-bound mixin. The original code freely reads ``self.*`` state set in
 preserves the runtime semantics without threading state through arguments.
 """
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
+
 
 
 class _EndpointMixin:
@@ -55,7 +61,7 @@ class _EndpointMixin:
                             self._cached_endpoint = name
                             return name
                     except Exception:
-                        pass
+                        log_exc()
         return None
 
     def list_packet_endpoints(self):
@@ -85,7 +91,7 @@ class _EndpointMixin:
             try:
                 setattr(self._config, 'PACKET_RADIO_ENDPOINT', self._endpoint_pref)
             except Exception:
-                pass
+                log_exc()
         return self._find_endpoint(force=True)
 
     def _get_endpoint_ip(self):
@@ -98,7 +104,7 @@ class _EndpointMixin:
             try:
                 return ep.sock.getpeername()[0]
             except Exception:
-                pass
+                log_exc()
         return self._remote_tnc
 
     def _endpoint_has_local_tnc(self):

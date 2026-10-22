@@ -1,5 +1,6 @@
 """GET route handlers extracted from web_server.py."""
 
+from log_util import log_exc
 import json as json_mod
 import os
 import time
@@ -54,7 +55,7 @@ def handle_metrics(handler, parent):
             handler.end_headers()
             handler.wfile.write(f'metrics error: {e}'.encode())
         except Exception:
-            pass
+            log_exc()
 
 
 def handle_sourcestats(handler, parent):
@@ -207,7 +208,7 @@ def handle_transcription_log(handler, parent):
             elif part.startswith('offset='):
                 offset = max(0, int(part[7:]))
     except Exception:
-        pass
+        log_exc()
     rows = []
     tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
     if tl:
@@ -363,7 +364,7 @@ def handle_transcriptions(handler, parent):
             if part.startswith('since='):
                 since = float(part[6:])
     except Exception:
-        pass
+        log_exc()
     data = {'results': [], 'status': {}}
     if parent.gateway and parent.gateway.transcriber:
         data['results'] = parent.gateway.transcriber.get_results(since=since)
@@ -685,7 +686,7 @@ def handle_adsbstatus(handler, parent):
             parent._adsb_prev_msgs = _msgs
             parent._adsb_prev_t = _now_t
         except Exception:
-            pass
+            log_exc()
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')

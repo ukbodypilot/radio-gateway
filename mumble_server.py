@@ -1,5 +1,10 @@
 """Local Mumble server (murmurd) lifecycle manager."""
 
+try:
+    from log_util import log_exc
+except ImportError:   # file used on its own (worker copy, self-test run)
+    def log_exc(*_a, **_k):
+        pass
 import time
 
 class MumbleServerManager:
@@ -107,7 +112,7 @@ class MumbleServerManager:
                     murmurd_bin = candidate
                     break
             except Exception:
-                pass
+                log_exc()
 
         if not murmurd_bin:
             # Try 'which' as fallback
@@ -117,7 +122,7 @@ class MumbleServerManager:
                 if result.returncode == 0:
                     murmurd_bin = result.stdout.strip()
             except Exception:
-                pass
+                log_exc()
             if not murmurd_bin:
                 try:
                     result = subprocess.run(['which', 'mumble-server'],
@@ -125,7 +130,7 @@ class MumbleServerManager:
                     if result.returncode == 0:
                         murmurd_bin = result.stdout.strip()
                 except Exception:
-                    pass
+                    log_exc()
 
         if not murmurd_bin:
             self.state = self.STATE_ERROR
@@ -218,7 +223,7 @@ class MumbleServerManager:
                 capture_output=True, timeout=10
             )
         except Exception:
-            pass
+            log_exc()
 
         # Ensure directories exist
         for d in ['/var/lib/mumble-server', '/var/log/mumble-server',
@@ -227,7 +232,7 @@ class MumbleServerManager:
                 subprocess.run(['sudo', 'mkdir', '-p', d],
                                capture_output=True, timeout=3)
             except Exception:
-                pass
+                log_exc()
 
         # Write config file
         if not self.write_config():
@@ -269,7 +274,7 @@ class MumbleServerManager:
                 capture_output=True, timeout=10
             )
         except Exception:
-            pass
+            log_exc()
         self.state = self.STATE_CONFIGURED if self.is_enabled() else self.STATE_DISABLED
 
     def _check_running(self):
