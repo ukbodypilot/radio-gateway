@@ -7,7 +7,6 @@ threading attribute references through arguments.
 """
 
 import collections
-import os
 import time
 
 
@@ -30,19 +29,11 @@ class _TransmitMixin:
 
     def audio_transmit_loop(self):
         """Continuously capture audio from sources and send to Mumble via mixer"""
-        # Elevate this thread to realtime scheduling so the 50ms tick isn't
-        # delayed when the terminal window loses desktop focus. This loop
-        # handles SDR-rebroadcast TX + queue drains; the BusManager tick
-        # thread (which does the actual mixing) elevates itself the same way.
-        try:
-            os.sched_setscheduler(0, os.SCHED_RR, os.sched_param(10))
-            print("  Audio thread: SCHED_RR (realtime, priority 10)")
-        except (PermissionError, OSError):
-            try:
-                os.nice(-10)
-                print("  Audio thread: nice -10")
-            except (PermissionError, OSError):
-                pass  # best-effort
+        # Normal priority on purpose. All mixing, source reads and sink
+        # delivery moved to the BusManager tick thread, which runs SCHED_RR
+        # itself. What is left here (queued PTT, MP3 stream handoff, trace)
+        # can wait a few ms, and at equal realtime priority this loop could
+        # delay the tick doing the real audio work.
         if self.config.VERBOSE_LOGGING:
             print("✓ Audio transmit thread started (with mixer)")
 

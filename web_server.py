@@ -802,7 +802,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         """Non-blocking write to the encoder stdin via the raw fd.
 
         A wedged ffmpeg must never block the calling audio thread (this
-        runs on the SCHED_RR main loop). Partial writes park the remainder
+        runs on the audio transmit loop). Partial writes park the remainder
         in a bounded backlog that is flushed FIRST on the next call — the
         remainder must be resumed, never dropped: s16le samples are 2
         bytes, so an odd-length drop would byte-shift every subsequent

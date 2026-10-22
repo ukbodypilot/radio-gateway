@@ -1539,8 +1539,8 @@ class BusManager:
 
         # ── Thread priority ─────────────────────────────────────────────
         # v2.0 moved ALL mixing, source reads and sink delivery onto this
-        # thread, but the SCHED_RR elevation stayed on audio_transmit_loop,
-        # which now only drains queues. Elevate here so the thread doing
+        # thread, and the SCHED_RR elevation with it; audio_transmit_loop,
+        # which now only drains queues, runs at normal priority, so the thread doing
         # the actual audio work isn't starved by transcription / denoise /
         # web threads under load.
         try:
