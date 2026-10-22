@@ -142,12 +142,14 @@ class LoopSegment:
             self._compute_waveform_sample(bytes(self._sample_buf))
             self._sample_buf.clear()
 
-        # Stop writer thread, drain remaining queue into pipe
-        self._writer_running = False
+        # Stop writer thread, drain remaining queue into pipe. Only the
+        # sentinel stops it: clearing _writer_running first made the writer
+        # exit on its next loop check and drop whatever was still queued,
+        # truncating the segment's tail whenever lame lagged.
         try:
-            self._write_queue.put_nowait(None)  # sentinel
+            self._write_queue.put(None, timeout=2.0)  # sentinel, after the backlog
         except Exception:
-            pass
+            self._writer_running = False  # queue wedged full: give up on the tail
         if self._writer_thread and self._writer_thread.is_alive():
             self._writer_thread.join(timeout=5)
 

@@ -891,6 +891,15 @@ class AutomationEngine:
 
             # Tune
             tune_result = self.radio.tune(task.radio, freq, mode='FM', pl_tone=pl)
+            if not (isinstance(tune_result, dict) and tune_result.get('ok', True)):
+                # A failed tune would otherwise "listen" to (and record) the
+                # previous frequency under this repeater's name.
+                _err = tune_result.get('error', '?') if isinstance(tune_result, dict) else tune_result
+                print(f"[Automation]   {freq:.4f} {callsign} — tune failed ({_err}), skipped")
+                results.append({'frequency': freq, 'callsign': callsign, 'city': city,
+                                'has_signal': False, 'recording': None,
+                                'error': f'tune failed: {_err}'})
+                continue
             time.sleep(2)  # settle
 
             # Listen and check signal

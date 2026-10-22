@@ -125,15 +125,38 @@ class LogShipper:
                     continue
                 batch = list(self._buf)
                 self._buf.clear()
+            # Link frames carry at most 64 KB. One oversize batch (a backlog
+            # built up while disconnected) used to fail on every flush and be
+            # re-queued forever, so the endpoint's logs never shipped again.
+            # Send it as several frames, and cap any single huge line.
+            import json as _json
+            sent = 0
             try:
-                payload = {'type': 'log', 'lines': batch}
-                import json as _json
-                client._send(P.LOG, _json.dumps(payload).encode('utf-8'))
+                for chunk in self._chunks(batch, P.MAX_PAYLOAD - 1024, _json):
+                    client._send(P.LOG, _json.dumps({'type': 'log', 'lines': chunk}).encode('utf-8'))
+                    sent += len(chunk)
             except Exception:
-                # Re-queue at the front of the deque, oldest first.
+                # Re-queue what didn't go, at the front, oldest first.
                 with self._buf_lock:
-                    for line in reversed(batch):
+                    for line in reversed(batch[sent:]):
                         self._buf.appendleft(line)
+
+    @staticmethod
+    def _chunks(batch, limit, json_mod):
+        """Yield sub-lists of *batch* whose JSON stays under *limit* bytes."""
+        chunk, size = [], 40
+        for line in batch:
+            text = line.get('text', '')
+            if len(text) > 8192:
+                line = dict(line, text=text[:8192] + ' [truncated]')
+            n = len(json_mod.dumps(line).encode('utf-8')) + 2
+            if chunk and size + n > limit:
+                yield chunk
+                chunk, size = [], 40
+            chunk.append(line)
+            size += n
+        if chunk:
+            yield chunk
 
     # -- public API --------------------------------------------------------
 

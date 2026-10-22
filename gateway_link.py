@@ -124,6 +124,7 @@ class GatewayLinkProtocol:
     LOG      = 0x06
 
     _HEADER = struct.Struct('>BH')  # type (1) + length (2) = 3 bytes
+    MAX_PAYLOAD = 0xFFFF            # the 16-bit length field's limit
 
     @staticmethod
     def _recv_exact(sock, n):
@@ -142,6 +143,9 @@ class GatewayLinkProtocol:
     @classmethod
     def send_frame(cls, sock, frame_type, payload):
         """Send a single framed message.  *payload* must be bytes."""
+        if len(payload) > cls.MAX_PAYLOAD:
+            raise ValueError(f"link frame payload {len(payload)} bytes exceeds "
+                             f"{cls.MAX_PAYLOAD}; split it")
         header = cls._HEADER.pack(frame_type, len(payload))
         sock.sendall(header + payload)
 
@@ -599,6 +603,10 @@ class GatewayLinkServer:
         with self._endpoints_lock:
             ep = self._endpoints.get(name)
         if ep is None:
+            return
+        if len(payload) > GatewayLinkProtocol.MAX_PAYLOAD:
+            print(f"  [Link] {name}: dropped {len(payload)}-byte frame (type {frame_type}); "
+                  f"link frames are limited to {GatewayLinkProtocol.MAX_PAYLOAD} bytes")
             return
         header = GatewayLinkProtocol._HEADER.pack(frame_type, len(payload))
         frame_data = header + payload
