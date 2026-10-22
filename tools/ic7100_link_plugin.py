@@ -1892,365 +1892,410 @@ class IC7100Plugin(RadioPlugin):
 
     def _execute_inner(self, cmd):
         action = cmd.get('cmd', '')
+        # isinstance: a JSON list or dict here would be unhashable
+        handler = self._COMMANDS.get(action) if isinstance(action, str) else None
+        if handler is None:
+            return {"ok": False, "error": f"unknown command: {action}"}
+        return handler(self, cmd)
 
-        if action == 'ptt':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            # Explicit state if provided; otherwise toggle current TX state.
-            # The web GUI button sends a bare {cmd:'ptt'} and expects toggle.
-            if 'state' in cmd:
-                state = bool(cmd['state'])
-            else:
-                state = not bool(self._civ.transmitting)
-            if state:
-                # Safety interlock — refuse TX if the antenna port for the
-                # current frequency has not been enabled by the operator.
-                port = _antenna_port(self._civ.freq_hz)
-                if not self._tx_allow[port]:
-                    label = 'HF' if port == 'hf' else 'VHF/UHF'
-                    return {"ok": False,
-                            "error": f"TX blocked — {label} antenna not "
-                                     f"enabled (safety interlock)"}
-            ok = self._civ.set_ptt(state)
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "ptt": state}
-
-        elif action == 'tx_interlock':
-            # Enable/disable TX per antenna port. Keys: 'hf', 'vu' (bool).
-            if 'hf' in cmd:
-                self._tx_allow['hf'] = bool(cmd['hf'])
-            if 'vu' in cmd:
-                self._tx_allow['vu'] = bool(cmd['vu'])
-            # If the operator disables the port we are currently keyed on,
-            # drop PTT immediately — the interlock must act, not just warn.
-            if (self._civ and self._civ.connected and self._civ.transmitting
-                    and not self._tx_allow[_antenna_port(self._civ.freq_hz)]):
-                self._civ.set_ptt(False)
+    def _cmd_ptt(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        # Explicit state if provided; otherwise toggle current TX state.
+        # The web GUI button sends a bare {cmd:'ptt'} and expects toggle.
+        if 'state' in cmd:
+            state = bool(cmd['state'])
+        else:
+            state = not bool(self._civ.transmitting)
+        if state:
+            # Safety interlock — refuse TX if the antenna port for the
+            # current frequency has not been enabled by the operator.
+            port = _antenna_port(self._civ.freq_hz)
+            if not self._tx_allow[port]:
+                label = 'HF' if port == 'hf' else 'VHF/UHF'
+                return {"ok": False,
+                        "error": f"TX blocked — {label} antenna not "
+                                 f"enabled (safety interlock)"}
+        ok = self._civ.set_ptt(state)
+        if ok:
             self._status_dirty = True
-            self._save_settings()    # persist so it survives endpoint restart
-            return {"ok": True,
-                    "tx_allow_hf": self._tx_allow['hf'],
-                    "tx_allow_vu": self._tx_allow['vu']}
+        return {"ok": ok, "ptt": state}
 
-        elif action == 'frequency':
-            freq = cmd.get('freq')
-            if freq is None:
-                return {"ok": False, "error": "missing freq"}
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = self._civ.set_freq(float(freq))
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "freq": freq}
+    def _cmd_tx_interlock(self, cmd):
+        # Enable/disable TX per antenna port. Keys: 'hf', 'vu' (bool).
+        if 'hf' in cmd:
+            self._tx_allow['hf'] = bool(cmd['hf'])
+        if 'vu' in cmd:
+            self._tx_allow['vu'] = bool(cmd['vu'])
+        # If the operator disables the port we are currently keyed on,
+        # drop PTT immediately — the interlock must act, not just warn.
+        if (self._civ and self._civ.connected and self._civ.transmitting
+                and not self._tx_allow[_antenna_port(self._civ.freq_hz)]):
+            self._civ.set_ptt(False)
+        self._status_dirty = True
+        self._save_settings()    # persist so it survives endpoint restart
+        return {"ok": True,
+                "tx_allow_hf": self._tx_allow['hf'],
+                "tx_allow_vu": self._tx_allow['vu']}
 
-        elif action == 'mode':
-            mode = cmd.get('mode', '')
-            # 'audio'/'data' is the packet-TNC switch from packet_radio.py;
-            # any other value is a radio operating-mode change (LSB/USB/FM…).
-            # Disambiguating by value avoids breaking the existing op-mode
-            # command path while reusing the same 'cmd: mode' wire format
-            # that AIOCPlugin already speaks.
-            if mode in ('audio', 'data'):
-                return self._set_tnc_mode(cmd)
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = self._civ.set_mode(mode, int(cmd.get('filter', 1)))
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "mode": mode}
+    def _cmd_frequency(self, cmd):
+        freq = cmd.get('freq')
+        if freq is None:
+            return {"ok": False, "error": "missing freq"}
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = self._civ.set_freq(float(freq))
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "freq": freq}
 
-        elif action == 'ctcss':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            tx_hz  = float(cmd['tx_hz'])  if 'tx_hz'  in cmd else None
-            rx_hz  = float(cmd['rx_hz'])  if 'rx_hz'  in cmd else None
-            tx_on  = bool(cmd['tx_on'])   if 'tx_on'  in cmd else None
-            rx_on  = bool(cmd['rx_on'])   if 'rx_on'  in cmd else None
-            ok = self._civ.set_ctcss(tx_hz=tx_hz, rx_hz=rx_hz,
-                                     tx_on=tx_on, rx_on=rx_on)
-            if ok:
-                self._status_dirty = True
-            return {
-                "ok": ok,
-                "ctcss_tx_hz":  self._civ.ctcss_tx_hz,
-                "ctcss_rx_hz":  self._civ.ctcss_rx_hz,
-                "ctcss_tx_on":  self._civ.ctcss_tx_on,
-                "ctcss_rx_on":  self._civ.ctcss_rx_on,
-            }
+    def _cmd_mode(self, cmd):
+        mode = cmd.get('mode', '')
+        # 'audio'/'data' is the packet-TNC switch from packet_radio.py;
+        # any other value is a radio operating-mode change (LSB/USB/FM…).
+        # Disambiguating by value avoids breaking the existing op-mode
+        # command path while reusing the same 'cmd: mode' wire format
+        # that AIOCPlugin already speaks.
+        if mode in ('audio', 'data'):
+            return self._set_tnc_mode(cmd)
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = self._civ.set_mode(mode, int(cmd.get('filter', 1)))
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "mode": mode}
 
-        elif action == 'cat':
-            raw = cmd.get('raw', b'')
-            if isinstance(raw, str):
-                raw = bytes.fromhex(raw.replace(' ', ''))
-            if not raw:
-                return {"ok": False, "error": "missing raw bytes"}
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            resp = self._civ.send_raw(raw)
-            # CAT is opcode-probing only — caller already gets the response
-            # in the ACK. Don't dump every byte to the journal (was useful
-            # during initial bring-up; noise otherwise).
-            return {"ok": True, "response": resp.hex() if resp else None}
+    def _cmd_ctcss(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        tx_hz  = float(cmd['tx_hz'])  if 'tx_hz'  in cmd else None
+        rx_hz  = float(cmd['rx_hz'])  if 'rx_hz'  in cmd else None
+        tx_on  = bool(cmd['tx_on'])   if 'tx_on'  in cmd else None
+        rx_on  = bool(cmd['rx_on'])   if 'rx_on'  in cmd else None
+        ok = self._civ.set_ctcss(tx_hz=tx_hz, rx_hz=rx_hz,
+                                 tx_on=tx_on, rx_on=rx_on)
+        if ok:
+            self._status_dirty = True
+        return {
+            "ok": ok,
+            "ctcss_tx_hz":  self._civ.ctcss_tx_hz,
+            "ctcss_rx_hz":  self._civ.ctcss_rx_hz,
+            "ctcss_tx_on":  self._civ.ctcss_tx_on,
+            "ctcss_rx_on":  self._civ.ctcss_rx_on,
+        }
 
-        elif action == 'rx_gain':
-            self._rx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
-            self._save_settings()
-            return {"ok": True, "rx_gain_db": self._rx_gain_db}
+    def _cmd_cat(self, cmd):
+        raw = cmd.get('raw', b'')
+        if isinstance(raw, str):
+            raw = bytes.fromhex(raw.replace(' ', ''))
+        if not raw:
+            return {"ok": False, "error": "missing raw bytes"}
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        resp = self._civ.send_raw(raw)
+        # CAT is opcode-probing only — caller already gets the response
+        # in the ACK. Don't dump every byte to the journal (was useful
+        # during initial bring-up; noise otherwise).
+        return {"ok": True, "response": resp.hex() if resp else None}
 
-        elif action == 'tx_gain':
-            self._tx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
-            self._save_settings()
-            return {"ok": True, "tx_gain_db": self._tx_gain_db}
+    def _cmd_rx_gain(self, cmd):
+        self._rx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
+        self._save_settings()
+        return {"ok": True, "rx_gain_db": self._rx_gain_db}
 
-        elif action == 'status':
-            return {"ok": True, "status": self.get_status()}
+    def _cmd_tx_gain(self, cmd):
+        self._tx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
+        self._save_settings()
+        return {"ok": True, "tx_gain_db": self._tx_gain_db}
 
-        # -- VFO / memory commands -----------------------------------------
-        elif action == 'vfo':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            which = cmd.get('vfo', cmd.get('which', ''))
-            ok = self._civ.select_vfo(which)
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "active_vfo": self._civ.active_vfo,
-                    "memory_mode": self._civ.memory_mode}
+    def _cmd_status(self, cmd):
+        return {"ok": True, "status": self.get_status()}
 
-        elif action == 'vfo_swap':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = self._civ.swap_vfo()
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "active_vfo": self._civ.active_vfo}
+    # -- VFO / memory commands -----------------------------------------
 
-        elif action == 'vfo_equalize':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = self._civ.equalize_vfo()
-            return {"ok": ok}
+    def _cmd_vfo(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        which = cmd.get('vfo', cmd.get('which', ''))
+        ok = self._civ.select_vfo(which)
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "active_vfo": self._civ.active_vfo,
+                "memory_mode": self._civ.memory_mode}
 
-        elif action == 'memory_mode':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            on = bool(cmd.get('on', True))
-            ok = (self._civ.enter_memory_mode() if on
-                  else self._civ.enter_vfo_mode())
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "memory_mode": self._civ.memory_mode}
+    def _cmd_vfo_swap(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = self._civ.swap_vfo()
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "active_vfo": self._civ.active_vfo}
 
-        elif action == 'memory_select':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            try:
-                ch = int(cmd.get('channel', cmd.get('ch', 0)))
-            except (TypeError, ValueError):
-                return {"ok": False, "error": "channel must be int"}
-            ok = self._civ.select_memory(ch)
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "memory_channel": self._civ.memory_channel,
-                    "memory_mode": self._civ.memory_mode}
+    def _cmd_vfo_equalize(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = self._civ.equalize_vfo()
+        return {"ok": ok}
 
-        elif action == 'call_channel':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            which = str(cmd.get('which', '') or '')
-            ok = self._civ.select_call_channel(which)
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "memory_mode": self._civ.memory_mode,
-                    "memory_channel": self._civ.memory_channel}
+    def _cmd_memory_mode(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        on = bool(cmd.get('on', True))
+        ok = (self._civ.enter_memory_mode() if on
+              else self._civ.enter_vfo_mode())
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "memory_mode": self._civ.memory_mode}
 
-        elif action == 'memory_write':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            return {"ok": self._civ.write_memory()}
+    def _cmd_memory_select(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        try:
+            ch = int(cmd.get('channel', cmd.get('ch', 0)))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "channel must be int"}
+        ok = self._civ.select_memory(ch)
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "memory_channel": self._civ.memory_channel,
+                "memory_mode": self._civ.memory_mode}
 
-        elif action == 'memory_clear':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            return {"ok": self._civ.clear_memory()}
+    def _cmd_call_channel(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        which = str(cmd.get('which', '') or '')
+        ok = self._civ.select_call_channel(which)
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "memory_mode": self._civ.memory_mode,
+                "memory_channel": self._civ.memory_channel}
 
-        elif action == 'memory_to_vfo':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            return {"ok": self._civ.memory_to_vfo()}
+    def _cmd_memory_write(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        return {"ok": self._civ.write_memory()}
 
-        elif action == 'memory_read':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            try:
-                ch = int(cmd.get('channel', cmd.get('ch', 0)))
-            except (TypeError, ValueError):
-                return {"ok": False, "error": "channel must be int"}
-            raw = self._civ.read_memory(ch)
-            return {"ok": raw is not None, "channel": ch,
-                    "raw_hex": raw.hex() if raw else None}
+    def _cmd_memory_clear(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        return {"ok": self._civ.clear_memory()}
 
-        # -- HF feature commands (Phase C) ---------------------------------
-        elif action == 'split':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            on = bool(cmd.get('on', False))
-            ok = self._civ.set_split(on)
-            return {"ok": ok, "split": self._civ.split}
+    def _cmd_memory_to_vfo(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        return {"ok": self._civ.memory_to_vfo()}
 
-        elif action == 'rit':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = True
-            if 'hz' in cmd:
-                ok &= self._civ.set_rit_offset(int(cmd['hz']))
-                # Auto-engage RIT when the GUI sets an offset — treats the
-                # knob/display as a "use RIT" intent so the user doesn't
-                # have to click the RIT checkbox first. Explicit on=False
-                # below still wins.
-                if 'on' not in cmd and not self._civ.rit_on:
-                    ok &= self._civ.set_rit_on(True)
-            if 'on' in cmd:
-                ok &= self._civ.set_rit_on(bool(cmd['on']))
-            return {"ok": ok, "rit_hz": self._civ.rit_hz, "rit_on": self._civ.rit_on}
+    def _cmd_memory_read(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        try:
+            ch = int(cmd.get('channel', cmd.get('ch', 0)))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "channel must be int"}
+        raw = self._civ.read_memory(ch)
+        return {"ok": raw is not None, "channel": ch,
+                "raw_hex": raw.hex() if raw else None}
 
-        elif action == 'xit':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            on = bool(cmd.get('on', False))
-            ok = self._civ.set_xit_on(on)
-            return {"ok": ok, "xit_on": self._civ.xit_on}
+    # -- HF feature commands (Phase C) ---------------------------------
 
-        elif action == 'agc':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            mode = str(cmd.get('mode', 'mid')).lower()
-            ok = self._civ.set_agc(mode)
-            return {"ok": ok, "agc": self._civ.agc}
+    def _cmd_split(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        on = bool(cmd.get('on', False))
+        ok = self._civ.set_split(on)
+        return {"ok": ok, "split": self._civ.split}
 
-        elif action == 'nb':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = True
-            if 'on'    in cmd: ok &= self._civ.set_nb_on(bool(cmd['on']))
-            if 'level' in cmd: ok &= self._civ.set_nb_level(int(cmd['level']))
-            return {"ok": ok, "nb_on": self._civ.nb_on, "nb_level": self._civ.nb_level}
+    def _cmd_rit(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = True
+        if 'hz' in cmd:
+            ok &= self._civ.set_rit_offset(int(cmd['hz']))
+            # Auto-engage RIT when the GUI sets an offset — treats the
+            # knob/display as a "use RIT" intent so the user doesn't
+            # have to click the RIT checkbox first. Explicit on=False
+            # below still wins.
+            if 'on' not in cmd and not self._civ.rit_on:
+                ok &= self._civ.set_rit_on(True)
+        if 'on' in cmd:
+            ok &= self._civ.set_rit_on(bool(cmd['on']))
+        return {"ok": ok, "rit_hz": self._civ.rit_hz, "rit_on": self._civ.rit_on}
 
-        elif action == 'nr':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = True
-            if 'on'    in cmd: ok &= self._civ.set_nr_on(bool(cmd['on']))
-            if 'level' in cmd: ok &= self._civ.set_nr_level(int(cmd['level']))
-            return {"ok": ok, "nr_on": self._civ.nr_on, "nr_level": self._civ.nr_level}
+    def _cmd_xit(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        on = bool(cmd.get('on', False))
+        ok = self._civ.set_xit_on(on)
+        return {"ok": ok, "xit_on": self._civ.xit_on}
 
-        elif action == 'preamp':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            stage = int(cmd.get('stage', 0))
-            ok = self._civ.set_preamp(stage)
-            return {"ok": ok, "preamp": self._civ.preamp}
+    def _cmd_agc(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        mode = str(cmd.get('mode', 'mid')).lower()
+        ok = self._civ.set_agc(mode)
+        return {"ok": ok, "agc": self._civ.agc}
 
-        elif action == 'atten':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            on = bool(cmd.get('on', False))
-            ok = self._civ.set_atten(on)
-            return {"ok": ok, "atten": self._civ.atten}
+    def _cmd_nb(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = True
+        if 'on'    in cmd: ok &= self._civ.set_nb_on(bool(cmd['on']))
+        if 'level' in cmd: ok &= self._civ.set_nb_level(int(cmd['level']))
+        return {"ok": ok, "nb_on": self._civ.nb_on, "nb_level": self._civ.nb_level}
 
-        elif action == 'if_shift':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            pct = int(cmd.get('pct', 50))
-            ok = self._civ.set_if_shift(pct)
-            return {"ok": ok, "if_shift": self._civ.if_shift}
+    def _cmd_nr(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = True
+        if 'on'    in cmd: ok &= self._civ.set_nr_on(bool(cmd['on']))
+        if 'level' in cmd: ok &= self._civ.set_nr_level(int(cmd['level']))
+        return {"ok": ok, "nr_on": self._civ.nr_on, "nr_level": self._civ.nr_level}
 
-        elif action == 'filter':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            idx = int(cmd.get('idx', 1))
-            ok = self._civ.set_filter(idx)
-            return {"ok": ok, "filter": self._civ.filter_idx}
+    def _cmd_preamp(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        stage = int(cmd.get('stage', 0))
+        ok = self._civ.set_preamp(stage)
+        return {"ok": ok, "preamp": self._civ.preamp}
 
-        elif action == 'squelch':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            pct = int(cmd.get('pct', 0))
-            ok = self._civ.set_squelch(pct)
-            return {"ok": ok, "squelch": self._civ.squelch}
+    def _cmd_atten(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        on = bool(cmd.get('on', False))
+        ok = self._civ.set_atten(on)
+        return {"ok": ok, "atten": self._civ.atten}
 
-        elif action == 'power':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            pct = int(cmd.get('pct', 0))
-            ok = self._civ.set_rf_power(pct)
-            return {"ok": ok, "rf_power": self._civ.rf_power}
+    def _cmd_if_shift(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        pct = int(cmd.get('pct', 50))
+        ok = self._civ.set_if_shift(pct)
+        return {"ok": ok, "if_shift": self._civ.if_shift}
 
-        elif action == 'mic_gain':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            pct = int(cmd.get('pct', 0))
-            ok = self._civ.set_mic_gain(pct)
-            return {"ok": ok, "mic_gain": self._civ.mic_gain}
+    def _cmd_filter(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        idx = int(cmd.get('idx', 1))
+        ok = self._civ.set_filter(idx)
+        return {"ok": ok, "filter": self._civ.filter_idx}
 
-        elif action == 'af_level':
-            # Radio front-panel AF (volume) knob. Separate from the
-            # gateway-side audio_boost slider.
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            pct = int(cmd.get('pct', 0))
-            ok = self._civ.set_af_level(pct)
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "af_level": self._civ.af_level}
+    def _cmd_squelch(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        pct = int(cmd.get('pct', 0))
+        ok = self._civ.set_squelch(pct)
+        return {"ok": ok, "squelch": self._civ.squelch}
 
-        elif action == 'data_mode':
-            # Toggle the radio's DATA mode (USB-D / FM-D / ...) so the
-            # MOD INPUT chain swaps audio source per the operator's menu
-            # configuration. Typical use: DATA OFF MOD = MIC for the
-            # operator's hand mic, DATA MOD = USB for gateway-fed audio.
-            # Caller: {cmd:'data_mode', on: true|false} (filt optional).
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            on = bool(cmd.get('on', not self._civ.data_mode))   # toggle if absent
-            filt = int(cmd.get('filt', self._civ.data_mode_filter))
-            ok = self._civ.set_data_mode(on, filt)
-            if ok:
-                self._status_dirty = True
-            return {"ok": ok, "data_mode": self._civ.data_mode}
+    def _cmd_power(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        pct = int(cmd.get('pct', 0))
+        ok = self._civ.set_rf_power(pct)
+        return {"ok": ok, "rf_power": self._civ.rf_power}
 
-        elif action == 'squelch_type':
-            # FM squelch gating: 'noise' (carrier), 'tsql' (CTCSS tone),
-            # or 'dtcs' (digital code). Orchestrates the RX-tone and
-            # DTCS enables so only one gating mode is active at a time.
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            stype = str(cmd.get('type', 'noise')).lower()
-            if stype not in ('noise', 'tsql', 'dtcs'):
-                return {"ok": False, "error": f"bad squelch type: {stype}"}
-            ok = True
-            ok &= self._civ.set_ctcss(rx_on=(stype == 'tsql'))
-            ok &= self._civ.set_dtcs_on(stype == 'dtcs')
-            return {"ok": ok, "squelch_type": stype}
+    def _cmd_mic_gain(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        pct = int(cmd.get('pct', 0))
+        ok = self._civ.set_mic_gain(pct)
+        return {"ok": ok, "mic_gain": self._civ.mic_gain}
 
-        elif action == 'dtcs':
-            if not self._civ or not self._civ.connected:
-                return {"ok": False, "error": "CI-V not connected"}
-            ok = True
-            if 'on' in cmd:
-                ok &= self._civ.set_dtcs_on(bool(cmd['on']))
-            if 'code' in cmd or 'polarity' in cmd:
-                code = int(cmd.get('code', self._civ.dtcs_code))
-                pol  = int(cmd.get('polarity', self._civ.dtcs_polarity))
-                ok &= self._civ.set_dtcs_code(code, pol)
-            return {
-                "ok": ok,
-                "dtcs_on":       self._civ.dtcs_on,
-                "dtcs_code":     self._civ.dtcs_code,
-                "dtcs_polarity": self._civ.dtcs_polarity,
-            }
+    def _cmd_af_level(self, cmd):
+        # Radio front-panel AF (volume) knob. Separate from the
+        # gateway-side audio_boost slider.
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        pct = int(cmd.get('pct', 0))
+        ok = self._civ.set_af_level(pct)
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "af_level": self._civ.af_level}
 
-        return {"ok": False, "error": f"unknown command: {action}"}
+    def _cmd_data_mode(self, cmd):
+        # Toggle the radio's DATA mode (USB-D / FM-D / ...) so the
+        # MOD INPUT chain swaps audio source per the operator's menu
+        # configuration. Typical use: DATA OFF MOD = MIC for the
+        # operator's hand mic, DATA MOD = USB for gateway-fed audio.
+        # Caller: {cmd:'data_mode', on: true|false} (filt optional).
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        on = bool(cmd.get('on', not self._civ.data_mode))   # toggle if absent
+        filt = int(cmd.get('filt', self._civ.data_mode_filter))
+        ok = self._civ.set_data_mode(on, filt)
+        if ok:
+            self._status_dirty = True
+        return {"ok": ok, "data_mode": self._civ.data_mode}
+
+    def _cmd_squelch_type(self, cmd):
+        # FM squelch gating: 'noise' (carrier), 'tsql' (CTCSS tone),
+        # or 'dtcs' (digital code). Orchestrates the RX-tone and
+        # DTCS enables so only one gating mode is active at a time.
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        stype = str(cmd.get('type', 'noise')).lower()
+        if stype not in ('noise', 'tsql', 'dtcs'):
+            return {"ok": False, "error": f"bad squelch type: {stype}"}
+        ok = True
+        ok &= self._civ.set_ctcss(rx_on=(stype == 'tsql'))
+        ok &= self._civ.set_dtcs_on(stype == 'dtcs')
+        return {"ok": ok, "squelch_type": stype}
+
+    def _cmd_dtcs(self, cmd):
+        if not self._civ or not self._civ.connected:
+            return {"ok": False, "error": "CI-V not connected"}
+        ok = True
+        if 'on' in cmd:
+            ok &= self._civ.set_dtcs_on(bool(cmd['on']))
+        if 'code' in cmd or 'polarity' in cmd:
+            code = int(cmd.get('code', self._civ.dtcs_code))
+            pol  = int(cmd.get('polarity', self._civ.dtcs_polarity))
+            ok &= self._civ.set_dtcs_code(code, pol)
+        return {
+            "ok": ok,
+            "dtcs_on":       self._civ.dtcs_on,
+            "dtcs_code":     self._civ.dtcs_code,
+            "dtcs_polarity": self._civ.dtcs_polarity,
+        }
+
+    # cmd -> handler. Each takes the command dict and returns the reply.
+    _COMMANDS = {
+        'ptt': _cmd_ptt,
+        'tx_interlock': _cmd_tx_interlock,
+        'frequency': _cmd_frequency,
+        'mode': _cmd_mode,
+        'ctcss': _cmd_ctcss,
+        'cat': _cmd_cat,
+        'rx_gain': _cmd_rx_gain,
+        'tx_gain': _cmd_tx_gain,
+        'status': _cmd_status,
+        'vfo': _cmd_vfo,
+        'vfo_swap': _cmd_vfo_swap,
+        'vfo_equalize': _cmd_vfo_equalize,
+        'memory_mode': _cmd_memory_mode,
+        'memory_select': _cmd_memory_select,
+        'call_channel': _cmd_call_channel,
+        'memory_write': _cmd_memory_write,
+        'memory_clear': _cmd_memory_clear,
+        'memory_to_vfo': _cmd_memory_to_vfo,
+        'memory_read': _cmd_memory_read,
+        'split': _cmd_split,
+        'rit': _cmd_rit,
+        'xit': _cmd_xit,
+        'agc': _cmd_agc,
+        'nb': _cmd_nb,
+        'nr': _cmd_nr,
+        'preamp': _cmd_preamp,
+        'atten': _cmd_atten,
+        'if_shift': _cmd_if_shift,
+        'filter': _cmd_filter,
+        'squelch': _cmd_squelch,
+        'power': _cmd_power,
+        'mic_gain': _cmd_mic_gain,
+        'af_level': _cmd_af_level,
+        'data_mode': _cmd_data_mode,
+        'squelch_type': _cmd_squelch_type,
+        'dtcs': _cmd_dtcs,
+    }
 
     # -- Packet TNC mode ----------------------------------------------------
 
