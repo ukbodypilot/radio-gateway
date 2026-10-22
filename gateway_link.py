@@ -52,6 +52,143 @@ def ws_mask(data, mask_key):
     return (int.from_bytes(data, 'big') ^ int.from_bytes(key, 'big')).to_bytes(n, 'big')
 
 
+# ---------------------------------------------------------------------------
+# WebSocket framing (RFC 6455), shared by the gateway's browser and link
+# handlers (web_routes_stream.py, web_server.py) and by WebSocketTransport
+# below. It lives here, not in its own module, because endpoints ship this
+# file on its own.
+# ---------------------------------------------------------------------------
+
+WS_OP_CONT, WS_OP_TEXT, WS_OP_BINARY = 0x0, 0x1, 0x2
+WS_OP_CLOSE, WS_OP_PING, WS_OP_PONG = 0x8, 0x9, 0xA
+
+# Largest message accepted. Audio frames are a few KB; without a cap one
+# 64-bit length header made the reader try to buffer that many bytes.
+WS_MAX_PAYLOAD = 1 << 20
+
+# A socket timeout while a frame is half read is retried this many times
+# before the connection is treated as dead. Between messages a timeout is
+# just idleness and goes to the caller.
+_WS_MID_FRAME_TIMEOUTS = 2
+
+
+class WsClosed(Exception):
+    """The peer closed the connection, or broke the protocol."""
+
+
+def ws_encode(opcode, payload=b'', mask=False):
+    """One complete (FIN) frame. Clients must mask; servers must not."""
+    n = len(payload)
+    b0 = 0x80 | opcode
+    mbit = 0x80 if mask else 0
+    if n < 126:
+        hdr = bytes((b0, mbit | n))
+    elif n < 65536:
+        hdr = bytes((b0, mbit | 126)) + n.to_bytes(2, 'big')
+    else:
+        hdr = bytes((b0, mbit | 127)) + n.to_bytes(8, 'big')
+    if mask:
+        key = os.urandom(4)
+        return hdr + key + ws_mask(payload, key)
+    return hdr + bytes(payload)
+
+
+def _ws_recv_exact(sock, n, idle=False):
+    """Exactly n bytes. With idle=True a timeout before the first byte is
+    re-raised (nothing is lost); any other short read raises WsClosed."""
+    buf = bytearray()
+    timeouts = 0
+    while len(buf) < n:
+        try:
+            chunk = sock.recv(n - len(buf))
+        except socket.timeout:
+            if idle and not buf:
+                raise
+            timeouts += 1
+            if timeouts > _WS_MID_FRAME_TIMEOUTS:
+                raise WsClosed('timed out mid-frame')
+            continue
+        except OSError as e:
+            raise WsClosed(str(e)) from e
+        if not chunk:
+            raise WsClosed('peer closed')
+        buf += chunk
+    return bytes(buf)
+
+
+def ws_read_frame(sock, max_payload=WS_MAX_PAYLOAD, idle=True):
+    """(fin, opcode, unmasked payload) for the next frame."""
+    hdr = _ws_recv_exact(sock, 2, idle=idle)
+    fin = bool(hdr[0] & 0x80)
+    opcode = hdr[0] & 0x0F
+    masked = bool(hdr[1] & 0x80)
+    n = hdr[1] & 0x7F
+    if n == 126:
+        n = int.from_bytes(_ws_recv_exact(sock, 2), 'big')
+    elif n == 127:
+        n = int.from_bytes(_ws_recv_exact(sock, 8), 'big')
+    if n > max_payload:
+        raise WsClosed(f'{n}-byte frame exceeds {max_payload}')
+    key = _ws_recv_exact(sock, 4) if masked else None
+    data = _ws_recv_exact(sock, n) if n else b''
+    if key:
+        data = ws_mask(data, key)
+    return fin, opcode, data
+
+
+def ws_read_message(sock, max_payload=WS_MAX_PAYLOAD, mask_replies=False):
+    """Next data message as (opcode, payload), or None once the peer closes.
+
+    Answers pings and close frames itself (masked when mask_replies, i.e. on
+    the client side) and reassembles fragmented messages. socket.timeout is
+    raised only when idle between messages; every other failure, including
+    a malformed or oversize frame, raises WsClosed.
+    """
+    parts = []
+    first_op = None
+    total = 0
+    mid_timeouts = 0
+    while True:
+        try:
+            fin, op, data = ws_read_frame(sock, max_payload)
+        except socket.timeout:
+            if first_op is None:
+                raise
+            mid_timeouts += 1     # idle between fragments of one message
+            if mid_timeouts > _WS_MID_FRAME_TIMEOUTS:
+                raise WsClosed('timed out mid-message')
+            continue
+        if op == WS_OP_CLOSE:
+            try:
+                sock.sendall(ws_encode(WS_OP_CLOSE, data[:2], mask=mask_replies))
+            except OSError:
+                pass
+            return None
+        if op == WS_OP_PING:
+            try:
+                sock.sendall(ws_encode(WS_OP_PONG, data, mask=mask_replies))
+            except OSError as e:
+                raise WsClosed(str(e)) from e
+            continue
+        if op == WS_OP_PONG:
+            continue
+        if op == WS_OP_CONT:
+            if first_op is None:
+                raise WsClosed('continuation frame with no message to continue')
+        elif op in (WS_OP_TEXT, WS_OP_BINARY):
+            if first_op is not None:
+                raise WsClosed('new message started inside a fragmented one')
+            first_op = op
+        else:
+            raise WsClosed(f'unknown opcode 0x{op:x}')
+        total += len(data)
+        if total > max_payload:
+            raise WsClosed(f'{total}-byte message exceeds {max_payload}')
+        parts.append(data)
+        if fin:
+            return first_op, b''.join(parts)
+
+
 def pcm_rms(data):
     """RMS of signed 16-bit little-endian PCM. 0.0 for an empty buffer."""
     n = len(data) // 2
@@ -1058,7 +1195,7 @@ class WebSocketTransport:
         self._sock = None
         if sock:
             try:
-                sock.sendall(b'\x88\x02\x03\xe8')  # WS close frame
+                sock.sendall(ws_encode(WS_OP_CLOSE, b'\x03\xe8', mask=True))  # 1000 normal
             except Exception:
                 pass
             try:
@@ -1068,80 +1205,22 @@ class WebSocketTransport:
 
     def _ws_send(self, data):
         """Send a masked WS binary frame (clients MUST mask)."""
-        import os as _os
-        frame = bytearray()
-        frame.append(0x82)  # FIN + binary
-        mask_key = _os.urandom(4)
-        length = len(data)
-        if length < 126:
-            frame.append(0x80 | length)  # masked
-        elif length < 65536:
-            frame.append(0x80 | 126)
-            frame.extend(length.to_bytes(2, 'big'))
-        else:
-            frame.append(0x80 | 127)
-            frame.extend(length.to_bytes(8, 'big'))
-        frame.extend(mask_key)
-        masked = ws_mask(data, mask_key)
-        frame.extend(masked)
-        self._sock.sendall(bytes(frame))
+        self._sock.sendall(ws_encode(WS_OP_BINARY, data, mask=True))
 
     def _ws_recv(self):
-        """Receive one WS message. Returns payload bytes or None."""
+        """Receive one WS message. Returns payload bytes or None.
+
+        A socket timeout counts as a disconnect here, as it did before the
+        shared framing code.
+        """
         sock = self._sock
         if not sock:
             return None
         try:
-            hdr = self._recv_exact(2)
-            if not hdr:
-                return None
-            opcode = hdr[0] & 0x0F
-            masked = (hdr[1] & 0x80) != 0
-            plen = hdr[1] & 0x7F
-            if plen == 126:
-                ext = self._recv_exact(2)
-                if not ext:
-                    return None
-                plen = int.from_bytes(ext, 'big')
-            elif plen == 127:
-                ext = self._recv_exact(8)
-                if not ext:
-                    return None
-                plen = int.from_bytes(ext, 'big')
-            if plen > (1 << 20):
-                return None  # oversize frame: treat as a dropped connection
-            mask_key = self._recv_exact(4) if masked else None
-            payload = self._recv_exact(plen) if plen else b''
-            if payload is None and plen > 0:
-                return None
-            if masked and mask_key and payload:
-                payload = ws_mask(payload, mask_key)
-            if opcode == 0x08:  # Close
-                return None
-            if opcode == 0x09:  # Ping → Pong
-                pong = bytearray([0x8A, len(payload) if len(payload) < 126 else 0])
-                pong.extend(payload)
-                try:
-                    sock.sendall(bytes(pong))
-                except Exception:
-                    pass
-                return self._ws_recv()
-            return payload
-        except (OSError, ConnectionError):
+            msg = ws_read_message(sock, mask_replies=True)
+        except (WsClosed, OSError):
             return None
-
-    def _recv_exact(self, n):
-        """Read exactly n bytes."""
-        buf = bytearray()
-        while len(buf) < n:
-            try:
-                chunk = self._sock.recv(n - len(buf))
-            except (OSError, ConnectionError):
-                return None
-            if not chunk:
-                return None
-            buf.extend(chunk)
-        return bytes(buf)
+        return msg[1] if msg else None
 
 
 class GatewayLinkClient:

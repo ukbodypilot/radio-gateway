@@ -7,12 +7,70 @@ import socket
 import threading as _thr
 import queue as _q_mod
 
-from gateway_link import ws_mask
+from gateway_link import (
+    GatewayLinkProtocol, WsClosed, ws_encode, ws_read_message,
+    WS_MAX_PAYLOAD as _WS_MAX_PAYLOAD, WS_OP_BINARY, WS_OP_CLOSE, WS_OP_TEXT,
+)
 
-# Largest WebSocket message any handler here accepts. Audio frames are a
-# few KB; without a cap a single 64-bit length header made the server try
-# to buffer that many bytes.
-_WS_MAX_PAYLOAD = 1 << 20
+_WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+
+
+def _ws_key(handler):
+    """The client's Sec-WebSocket-Key, or None after answering 400."""
+    handler._upgrading_ws = True
+    ws_key = handler.headers.get('Sec-WebSocket-Key', '')
+    if not ws_key or handler.headers.get('Upgrade', '').lower() != 'websocket':
+        _ws_refuse(handler, 400)
+        return None
+    return ws_key
+
+
+def _ws_refuse(handler, code):
+    handler._upgrading_ws = False
+    handler.send_response(code)
+    handler.end_headers()
+
+
+def _ws_handshake(handler, ws_key):
+    """Send the 101 and return the raw socket.
+
+    Written straight to the socket: BaseHTTPRequestHandler's send_response
+    adds Server/Date headers that can confuse strict WS clients, and the
+    BufferedWriter is flushed first so nothing is left behind it.
+    """
+    accept = base64.b64encode(
+        hashlib.sha1((ws_key + _WS_MAGIC).encode()).digest()
+    ).decode()
+    handler.wfile.flush()
+    handshake = (
+        'HTTP/1.1 101 Switching Protocols\r\n'
+        'Upgrade: websocket\r\n'
+        'Connection: Upgrade\r\n'
+        f'Sec-WebSocket-Accept: {accept}\r\n'
+        '\r\n'
+    )
+    handler.request.sendall(handshake.encode('ascii'))
+    handler.close_connection = True  # prevent handler loop after do_GET returns
+    return handler.request
+
+
+def _ws_read_loop(sock, on_message):
+    """Hand each client message to on_message(opcode, payload) until the
+    client closes, the socket dies, or on_message returns False.
+
+    Pings and close frames are answered by ws_read_message. A recv timeout
+    between messages is normal (browsers don't ping); keepalive reaps peers
+    that vanish.
+    """
+    while True:
+        try:
+            msg = ws_read_message(sock, _WS_MAX_PAYLOAD)
+        except socket.timeout:
+            continue
+        except (WsClosed, OSError):
+            return
+        if msg is None or on_message(*msg) is False:
+            return
 
 
 def _enable_ws_keepalive(sock):
@@ -44,33 +102,10 @@ def handle_ws_audio(handler, parent):
     Blocks the handler thread for the lifetime of the connection.
     """
     # WebSocket upgrade for low-latency PCM audio streaming
-    handler._upgrading_ws = True
-    ws_key = handler.headers.get('Sec-WebSocket-Key', '')
-    if not ws_key or handler.headers.get('Upgrade', '').lower() != 'websocket':
-        handler._upgrading_ws = False
-        handler.send_response(400)
-        handler.end_headers()
+    ws_key = _ws_key(handler)
+    if not ws_key:
         return
-    # WebSocket handshake -- write raw bytes to bypass
-    # BaseHTTPRequestHandler's send_response which adds
-    # Server/Date headers that can confuse strict WS clients
-    _WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-    accept = base64.b64encode(
-        hashlib.sha1((ws_key + _WS_MAGIC).encode()).digest()
-    ).decode()
-    # Flush any buffered wfile data, then write handshake
-    # directly to raw socket to avoid BufferedWriter issues
-    handler.wfile.flush()
-    handshake = (
-        'HTTP/1.1 101 Switching Protocols\r\n'
-        'Upgrade: websocket\r\n'
-        'Connection: Upgrade\r\n'
-        f'Sec-WebSocket-Accept: {accept}\r\n'
-        '\r\n'
-    )
-    handler.request.sendall(handshake.encode('ascii'))
-    handler.close_connection = True  # prevent handler loop after do_GET returns
-    _sock = handler.request  # raw TCP socket for binary frames
+    _sock = _ws_handshake(handler, ws_key)  # raw TCP socket for binary frames
     _client_ip = handler.client_address[0]
     print(f"\n[WS-Audio] Low-latency client connected from {_client_ip}")
     _sock.settimeout(30)  # 30s recv timeout
@@ -101,48 +136,8 @@ def handle_ws_audio(handler, parent):
     with parent._ws_lock:
         parent._ws_clients.append(_ws_entry)
     try:
-        # Keep connection alive -- read and discard client frames
-        # (we only send, but must handle pings/close)
-        while True:
-            try:
-                hdr = _sock.recv(2)
-                if not hdr or len(hdr) < 2:
-                    break
-                opcode = hdr[0] & 0x0F
-                masked = (hdr[1] & 0x80) != 0
-                payload_len = hdr[1] & 0x7F
-                if payload_len == 126:
-                    ext = _sock.recv(2)
-                    payload_len = int.from_bytes(ext, 'big')
-                elif payload_len == 127:
-                    ext = _sock.recv(8)
-                    payload_len = int.from_bytes(ext, 'big')
-                if payload_len > _WS_MAX_PAYLOAD:
-                    break  # oversize frame: drop the connection
-                mask_key = _sock.recv(4) if masked else b''
-                payload = b''
-                while len(payload) < payload_len:
-                    chunk = _sock.recv(payload_len - len(payload))
-                    if not chunk:
-                        break
-                    payload += chunk
-                if opcode == 0x8:  # Close
-                    # Send close frame back
-                    _sock.sendall(b'\x88\x00')
-                    break
-                elif opcode == 0x9:  # Ping -> Pong
-                    if masked and mask_key:
-                        payload = ws_mask(payload, mask_key)
-                    pong = bytearray()
-                    pong.append(0x8A)  # FIN + Pong
-                    if len(payload) < 126:
-                        pong.append(len(payload))
-                    pong.extend(payload)
-                    _sock.sendall(bytes(pong))
-            except socket.timeout:
-                continue  # recv timeout is normal, keep waiting
-            except (ConnectionResetError, BrokenPipeError, OSError):
-                break
+        # We only send, but must keep reading to answer pings and close.
+        _ws_read_loop(_sock, lambda _op, _data: None)
     finally:
         # Signal sender thread to exit. put_nowait, never put: if the
         # sender already died with the queue full, a blocking put() would
@@ -171,42 +166,19 @@ def handle_ws_mic(handler, parent):
     radio TX.  Blocks the handler thread for the lifetime of the connection.
     """
     # WebSocket endpoint for browser microphone -> radio TX
-    handler._upgrading_ws = True
-    ws_key = handler.headers.get('Sec-WebSocket-Key', '')
-    if not ws_key or handler.headers.get('Upgrade', '').lower() != 'websocket':
-        handler._upgrading_ws = False
-        handler.send_response(400)
-        handler.end_headers()
+    ws_key = _ws_key(handler)
+    if not ws_key:
         return
     # Check if web mic source is available
     _mic_src = parent.gateway.web_mic_source if parent.gateway else None
     if not _mic_src:
-        handler._upgrading_ws = False
-        handler.send_response(503)
-        handler.end_headers()
+        _ws_refuse(handler, 503)
         return
     # Reject if another mic client is already connected
     if _mic_src.client_connected:
-        handler._upgrading_ws = False
-        handler.send_response(409)  # Conflict
-        handler.end_headers()
+        _ws_refuse(handler, 409)  # Conflict
         return
-    # WebSocket handshake
-    _WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-    accept = base64.b64encode(
-        hashlib.sha1((ws_key + _WS_MAGIC).encode()).digest()
-    ).decode()
-    handler.wfile.flush()
-    handshake = (
-        'HTTP/1.1 101 Switching Protocols\r\n'
-        'Upgrade: websocket\r\n'
-        'Connection: Upgrade\r\n'
-        f'Sec-WebSocket-Accept: {accept}\r\n'
-        '\r\n'
-    )
-    handler.request.sendall(handshake.encode('ascii'))
-    handler.close_connection = True
-    _sock = handler.request
+    _sock = _ws_handshake(handler, ws_key)
     _client_ip = handler.client_address[0]
     _sock.settimeout(30)
     _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -221,62 +193,24 @@ def handle_ws_mic(handler, parent):
     # a SoloBus with webmic as a TX source keys its radio while the source
     # asks for PTT -- which it only does while keyed and inside both
     # watchdogs (see WebMicSource).
-    try:
-        while True:
-            try:
-                hdr = _sock.recv(2)
-                if not hdr or len(hdr) < 2:
-                    break
-                opcode = hdr[0] & 0x0F
-                masked = (hdr[1] & 0x80) != 0
-                payload_len = hdr[1] & 0x7F
-                if payload_len == 126:
-                    ext = _sock.recv(2)
-                    payload_len = int.from_bytes(ext, 'big')
-                elif payload_len == 127:
-                    ext = _sock.recv(8)
-                    payload_len = int.from_bytes(ext, 'big')
-                if payload_len > _WS_MAX_PAYLOAD:
-                    break  # oversize frame: drop the connection
-                mask_key = _sock.recv(4) if masked else b''
-                payload = b''
-                while len(payload) < payload_len:
-                    chunk = _sock.recv(payload_len - len(payload))
-                    if not chunk:
-                        break
-                    payload += chunk
-                if masked and mask_key:
-                    payload = ws_mask(payload, mask_key)
-                if opcode == 0x8:  # Close
-                    _sock.sendall(b'\x88\x00')
-                    break
-                elif opcode == 0x9:  # Ping -> Pong
-                    pong = bytearray([0x8A, len(payload) if len(payload) < 126 else 0])
-                    if len(payload) < 126:
-                        pong[1] = len(payload)
-                    pong.extend(payload)
-                    _sock.sendall(bytes(pong))
-                elif opcode == 0x1:  # Text -- PTT control
+    def _on_message(opcode, payload):
+        if opcode == WS_OP_TEXT:  # PTT control
+            cmd = payload.decode('utf-8', 'replace').strip().upper()
+            if cmd == 'KEY':
+                # Sent on press and repeated ~2x/sec while held.
+                # Refused once the TOT has tripped, until release.
+                if not _mic_src.key():
                     try:
-                        cmd = payload.decode('utf-8', 'replace').strip().upper()
-                    except Exception:
-                        continue
-                    if cmd == 'KEY':
-                        # Sent on press and repeated ~2x/sec while held.
-                        # Refused once the TOT has tripped, until release.
-                        if not _mic_src.key():
-                            try:
-                                _ws_send_text(_sock, 'TOT')
-                            except OSError:
-                                break
-                    elif cmd == 'UNKEY':
-                        _mic_src.unkey('release')
-                elif opcode == 0x2:  # Binary -- PCM audio data
-                    _mic_src.push_audio(payload)
-            except socket.timeout:
-                continue
-            except (ConnectionResetError, BrokenPipeError, OSError):
-                break
+                        _sock.sendall(ws_encode(WS_OP_TEXT, b'TOT'))
+                    except OSError:
+                        return False
+            elif cmd == 'UNKEY':
+                _mic_src.unkey('release')
+        elif opcode == WS_OP_BINARY:  # PCM audio data
+            _mic_src.push_audio(payload)
+
+    try:
+        _ws_read_loop(_sock, _on_message)
     finally:
         # Order matters: unkey BEFORE clearing client_connected, so the
         # unkey is logged and counted rather than silently masked by the
@@ -296,86 +230,29 @@ def handle_ws_monitor(handler, parent):
     connection.
     """
     # WebSocket endpoint for room monitor -- audio into mixer, NO PTT
-    handler._upgrading_ws = True
-    ws_key = handler.headers.get('Sec-WebSocket-Key', '')
-    if not ws_key or handler.headers.get('Upgrade', '').lower() != 'websocket':
-        handler._upgrading_ws = False
-        handler.send_response(400)
-        handler.end_headers()
+    ws_key = _ws_key(handler)
+    if not ws_key:
         return
     _mon_src = parent.gateway.web_monitor_source if parent.gateway else None
     if not _mon_src:
-        handler._upgrading_ws = False
-        handler.send_response(503)
-        handler.end_headers()
+        _ws_refuse(handler, 503)
         return
     if _mon_src.client_connected:
-        handler._upgrading_ws = False
-        handler.send_response(409)
-        handler.end_headers()
+        _ws_refuse(handler, 409)
         return
-    _WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-    accept = base64.b64encode(
-        hashlib.sha1((ws_key + _WS_MAGIC).encode()).digest()
-    ).decode()
-    handler.wfile.flush()
-    handshake = (
-        'HTTP/1.1 101 Switching Protocols\r\n'
-        'Upgrade: websocket\r\n'
-        'Connection: Upgrade\r\n'
-        f'Sec-WebSocket-Accept: {accept}\r\n'
-        '\r\n'
-    )
-    handler.request.sendall(handshake.encode('ascii'))
-    handler.close_connection = True
-    _sock = handler.request
+    _sock = _ws_handshake(handler, ws_key)
     _client_ip = handler.client_address[0]
     _sock.settimeout(30)
     _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     _enable_ws_keepalive(_sock)
     _mon_src.client_connected = True
     print(f"\n[WS-Monitor] Room monitor connected from {_client_ip}")
+    def _on_message(opcode, payload):
+        if opcode == WS_OP_BINARY:  # PCM audio data
+            _mon_src.push_audio(payload)
+
     try:
-        while True:
-            try:
-                hdr = _sock.recv(2)
-                if not hdr or len(hdr) < 2:
-                    break
-                opcode = hdr[0] & 0x0F
-                masked = (hdr[1] & 0x80) != 0
-                payload_len = hdr[1] & 0x7F
-                if payload_len == 126:
-                    ext = _sock.recv(2)
-                    payload_len = int.from_bytes(ext, 'big')
-                elif payload_len == 127:
-                    ext = _sock.recv(8)
-                    payload_len = int.from_bytes(ext, 'big')
-                if payload_len > _WS_MAX_PAYLOAD:
-                    break  # oversize frame: drop the connection
-                mask_key = _sock.recv(4) if masked else b''
-                payload = b''
-                while len(payload) < payload_len:
-                    chunk = _sock.recv(payload_len - len(payload))
-                    if not chunk:
-                        break
-                    payload += chunk
-                if masked and mask_key:
-                    payload = ws_mask(payload, mask_key)
-                if opcode == 0x8:  # Close
-                    _sock.sendall(b'\x88\x00')
-                    break
-                elif opcode == 0x9:  # Ping -> Pong
-                    pong = bytearray([0x8A, len(payload) if len(payload) < 126 else 0])
-                    if len(payload) < 126:
-                        pong[1] = len(payload)
-                    pong.extend(payload)
-                    _sock.sendall(bytes(pong))
-                elif opcode == 0x2:  # Binary -- PCM audio data
-                    _mon_src.push_audio(payload)
-            except socket.timeout:
-                continue
-            except (ConnectionResetError, BrokenPipeError, OSError):
-                break
+        _ws_read_loop(_sock, _on_message)
     finally:
         _mon_src.client_connected = False
         _mon_src._sub_buffer = b''
@@ -390,7 +267,6 @@ def handle_stream(handler, parent):
     client as ``audio/mpeg``.  Blocks the handler thread for the lifetime
     of the connection.
     """
-    import os
     # MP3 audio stream from shared encoder
     _client_ip = handler.client_address[0]
     print(f"\n[Stream] Connection from {_client_ip}")
@@ -463,34 +339,14 @@ def handle_ws_link(handler, parent):
     The bridge opens a local TCP connection to the link server and
     bidirectionally forwards frames between WS and TCP.
     """
-    handler._upgrading_ws = True
-    ws_key = handler.headers.get('Sec-WebSocket-Key', '')
-    if not ws_key or handler.headers.get('Upgrade', '').lower() != 'websocket':
-        handler._upgrading_ws = False
-        handler.send_response(400)
-        handler.end_headers()
+    ws_key = _ws_key(handler)
+    if not ws_key:
         return
 
     gw = parent.gateway if parent else None
     link_port = int(getattr(gw.config, 'LINK_PORT', 9700)) if gw else 9700
 
-    # WebSocket handshake
-    _WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-    accept = base64.b64encode(
-        hashlib.sha1((ws_key + _WS_MAGIC).encode()).digest()
-    ).decode()
-    handler.wfile.flush()
-    handshake = (
-        'HTTP/1.1 101 Switching Protocols\r\n'
-        'Upgrade: websocket\r\n'
-        'Connection: Upgrade\r\n'
-        f'Sec-WebSocket-Accept: {accept}\r\n'
-        '\r\n'
-    )
-    handler.request.sendall(handshake.encode('ascii'))
-    handler.close_connection = True
-
-    ws_sock = handler.request
+    ws_sock = _ws_handshake(handler, ws_key)
     _client_ip = handler.client_address[0]
     ws_sock.settimeout(15)
     ws_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -505,7 +361,7 @@ def handle_ws_link(handler, parent):
     except Exception as e:
         print(f"[WS-Link] Failed to connect to link server: {e}")
         try:
-            ws_sock.sendall(b'\x88\x00')  # WS close
+            ws_sock.sendall(ws_encode(WS_OP_CLOSE))
         except Exception:
             log_exc()
         return
@@ -528,8 +384,7 @@ def handle_ws_link(handler, parent):
                 if payload is None and _length > 0:
                     break
                 # Send complete frame as one WS binary message
-                frame_data = hdr + (payload or b'')
-                _ws_send_binary(ws_sock, frame_data)
+                ws_sock.sendall(ws_encode(WS_OP_BINARY, hdr + (payload or b'')))
         except (OSError, ConnectionError):
             pass
         finally:
@@ -539,11 +394,12 @@ def handle_ws_link(handler, parent):
         """Read WS binary messages, write raw bytes to TCP."""
         try:
             while not _stop.is_set():
-                data = _ws_recv_message(ws_sock)
-                if data is None:
+                # A recv timeout (15 s) ends the bridge, as it always has.
+                msg = ws_read_message(ws_sock, _WS_MAX_PAYLOAD)
+                if msg is None:
                     break
-                tcp_sock.sendall(data)
-        except (OSError, ConnectionError):
+                tcp_sock.sendall(msg[1])
+        except (OSError, ConnectionError, WsClosed):
             pass
         finally:
             _stop.set()
@@ -561,97 +417,13 @@ def handle_ws_link(handler, parent):
         except Exception:
             pass
         try:
-            ws_sock.sendall(b'\x88\x00')
-        except Exception:
-            log_exc()
+            ws_sock.sendall(ws_encode(WS_OP_CLOSE))
+        except OSError:
+            pass  # client already gone
         tcp_thread.join(timeout=5)
         print(f"[WS-Link] Bridge disconnected {_client_ip}")
 
 
-# -- WS frame helpers for link bridge --------------------------------------
+# -- Link bridge helper -----------------------------------------------------
 
-def _recv_exact(sock, n):
-    """Read exactly n bytes from a socket.  Returns bytes or None."""
-    buf = bytearray()
-    while len(buf) < n:
-        try:
-            chunk = sock.recv(n - len(buf))
-        except (OSError, ConnectionError):
-            return None
-        if not chunk:
-            return None
-        buf.extend(chunk)
-    return bytes(buf)
-
-
-def _ws_send_binary(sock, data):
-    """Send a binary WS frame."""
-    frame = bytearray()
-    frame.append(0x82)  # FIN + binary opcode
-    length = len(data)
-    if length < 126:
-        frame.append(length)
-    elif length < 65536:
-        frame.append(126)
-        frame.extend(length.to_bytes(2, 'big'))
-    else:
-        frame.append(127)
-        frame.extend(length.to_bytes(8, 'big'))
-    frame.extend(data)
-    sock.sendall(bytes(frame))
-
-
-def _ws_send_text(sock, text):
-    """Send a short (<126 byte) text WS frame."""
-    payload = text.encode('utf-8')
-    frame = bytearray([0x81, len(payload)])  # FIN + text opcode
-    frame.extend(payload)
-    sock.sendall(bytes(frame))
-
-
-def _ws_recv_message(sock):
-    """Read one complete WS message.  Returns payload bytes or None.
-
-    Handles masked frames (from clients), ping/pong, and close.
-    """
-    hdr = _recv_exact(sock, 2)
-    if not hdr:
-        return None
-    opcode = hdr[0] & 0x0F
-    masked = (hdr[1] & 0x80) != 0
-    payload_len = hdr[1] & 0x7F
-    if payload_len == 126:
-        ext = _recv_exact(sock, 2)
-        if not ext:
-            return None
-        payload_len = int.from_bytes(ext, 'big')
-    elif payload_len == 127:
-        ext = _recv_exact(sock, 8)
-        if not ext:
-            return None
-        payload_len = int.from_bytes(ext, 'big')
-    if payload_len > _WS_MAX_PAYLOAD:
-        return None  # treat as a protocol error: caller closes the socket
-    mask_key = _recv_exact(sock, 4) if masked else None
-    if masked and mask_key is None:
-        return None
-    payload = _recv_exact(sock, payload_len) if payload_len else b''
-    if payload is None and payload_len > 0:
-        return None
-    if masked and mask_key and payload:
-        payload = ws_mask(payload, mask_key)
-    if opcode == 0x08:  # Close
-        try:
-            sock.sendall(b'\x88\x00')
-        except Exception:
-            log_exc()
-        return None
-    if opcode == 0x09:  # Ping → Pong
-        pong = bytearray([0x8A, len(payload) if len(payload) < 126 else 0])
-        pong.extend(payload)
-        try:
-            sock.sendall(bytes(pong))
-        except Exception:
-            log_exc()
-        return _ws_recv_message(sock)  # recurse for next real message
-    return payload
+_recv_exact = GatewayLinkProtocol._recv_exact

@@ -8,6 +8,7 @@ import time
 import threading as _thr
 
 from config_format import format_config_value
+from gateway_link import ws_encode, WS_OP_BINARY
 
 # ============================================================================
 # WEB CONFIGURATION UI
@@ -1036,25 +1037,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
             except Exception:
                 pass
 
-    def _ws_build_frame(self, data):
-        """Build a WebSocket binary frame (opcode 0x02). Returns bytes."""
-        header = bytearray()
-        header.append(0x82)  # FIN + binary opcode
-        dlen = len(data)
-        if dlen < 126:
-            header.append(dlen)
-        elif dlen < 65536:
-            header.append(126)
-            header.extend(dlen.to_bytes(2, 'big'))
-        else:
-            header.append(127)
-            header.extend(dlen.to_bytes(8, 'big'))
-        return bytes(header) + data
-
-    def _ws_send_binary(self, sock, data):
-        """Send a WebSocket binary frame directly (used for pong responses)."""
-        sock.sendall(self._ws_build_frame(data))
-
     def push_audio(self, pcm_data):
         """Push PCM audio to the shared MP3 encoder (called after VAD gate)."""
         if self._encoder_stdin:
@@ -1102,7 +1084,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
     def push_ws_audio(self, pcm_data):
         """Push raw PCM to WebSocket clients via per-client send queues (non-blocking)."""
         # Pre-build the WebSocket binary frame once for all clients
-        frame = self._ws_build_frame(pcm_data)
+        frame = ws_encode(WS_OP_BINARY, pcm_data)
         with self._ws_lock:
             for sock, send_q in self._ws_clients:
                 try:
