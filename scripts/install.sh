@@ -353,9 +353,9 @@ fi
 
 # MCP Python package — required for gateway_mcp.py (AI control interface)
 set +e
-_pip mcp 2>/dev/null \
+_pip "mcp<2" 2>/dev/null \
     && echo "  ✓ mcp installed (MCP server for AI control)" \
-    || echo "  ⚠ Could not pip install mcp — gateway_mcp.py will not work (run: pip install mcp)"
+    || echo "  ⚠ Could not pip install mcp — gateway_mcp.py will not work (run: pip install 'mcp<2')"
 set -e
 
 # sounddevice — CFFI-based audio I/O (used as fallback for direct ALSA access)

@@ -260,6 +260,26 @@ All of the above are gitignored and will be recreated at runtime if missing.
 
 ---
 
+### Pinned packages in a virtualenv (optional)
+
+By default the service runs `/usr/bin/python3` with packages installed
+system-wide and unpinned, so an OS update or another `pip install` can change
+them. `scripts/venv.sh` moves the service onto its own virtualenv built from
+exact versions:
+
+```bash
+scripts/venv.sh freeze   # once, on a working gateway: writes requirements.lock
+scripts/venv.sh build    # ~/.radio-gateway-venv from the lock (--no-deps)
+scripts/venv.sh check    # libraries, versions and the test suite, in the venv
+scripts/venv.sh use      # systemd drop-in; takes effect on the next restart
+sudo systemctl restart radio-gateway
+```
+
+`scripts/venv.sh unuse` removes the drop-in and the next restart is back on
+the system Python. The venv sees system site-packages (SoapySDR and other
+apt modules), but its locked copies win. The MCP server started from
+`.mcp.json` still runs the system `python3`.
+
 ## 7. Troubleshooting
 
 ### `modprobe snd-aloop` fails

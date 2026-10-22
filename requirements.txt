@@ -68,7 +68,7 @@ psutil
 prometheus-client
 
 # ── MCP server (Claude AI control) ───────────────────────────
-mcp
+mcp<2                   # mcp_server uses mcp.server.fastmcp, which 2.x removed
 
 # ── Speech transcription (Moonshine + Whisper + Silero VAD) ──
 # Moonshine runs on onnxruntime (no torch); Silero VAD ships a bundled
