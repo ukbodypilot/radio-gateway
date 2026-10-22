@@ -150,6 +150,6 @@ class _CertsMixin:
                 except Exception as e:
                     print(f"\n[WebConfig] Renewal check error: {e}")
 
-        t = _thr.Thread(target=_renewal_loop, name='CertRenewal', daemon=True)
+        t = threading.Thread(target=_renewal_loop, name='CertRenewal', daemon=True)
         t.start()
 

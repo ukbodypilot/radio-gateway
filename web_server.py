@@ -1025,8 +1025,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                     self._server.socket = ctx.wrap_socket(self._server.socket, server_side=True)
                     scheme = 'https'
                     self._https_mode = https_mode
-                    if https_mode == 'letsencrypt':
-                        self._start_renewal_thread(cert_file)
                 else:
                     print(f"  [WebConfig] HTTPS failed, falling back to HTTP")
 
@@ -1034,6 +1032,14 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                                             name='WebConfig', daemon=True)
             self._thread.start()
             print(f"  [WebConfig] Listening on {scheme}://0.0.0.0:{port}/")
+            # Optional extras start AFTER the server is serving, each in its
+            # own try: a NameError in the cert-renewal starter once took the
+            # whole web UI down via the except below.
+            if scheme == 'https' and https_mode == 'letsencrypt':
+                try:
+                    self._start_renewal_thread(cert_file)
+                except Exception as e:
+                    print(f"  [WebConfig] Cert renewal thread failed to start: {e}")
         except Exception as e:
             print(f"  [WebConfig] Failed to start: {e}")
 
