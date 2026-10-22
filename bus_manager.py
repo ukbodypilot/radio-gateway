@@ -719,7 +719,7 @@ class BusManager:
             print("  [BusManager] No busses configured")
             return
         self._running = True
-        self._thread = threading.Thread(target=self._tick_loop, daemon=True,
+        self._thread = threading.Thread(target=self._tick_loop_owning_gc, daemon=True,
                                         name="BusManager")
         self._thread.start()
         _types = ', '.join(f'{b.bus_type}:{bid}' for bid, b in self._busses.items())
@@ -1510,6 +1510,18 @@ class BusManager:
     def dump_tick_trace(self):
         """Return tick trace data for analysis.  Called by audio_trace dump."""
         return list(self._tick_trace)
+
+    def _tick_loop_owning_gc(self):
+        """Run the tick loop, and hand GC back to the interpreter when it ends.
+
+        The tick loop disables automatic collection process-wide and runs it
+        manually. If the loop stops -- a reload, stop(), or an exception --
+        nothing else collects, so automatic GC must come back on here.
+        """
+        try:
+            self._tick_loop()
+        finally:
+            gc.enable()
 
     def _tick_loop(self):
         """Main bus tick loop — runs all non-primary busses.

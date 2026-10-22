@@ -55,9 +55,12 @@ class _TransmitMixin:
         if self.config.VERBOSE_LOGGING:
             print("✓ Audio transmit thread started (with mixer)")
 
-        # ── GC control: disable automatic collection in this hot path ──
+        # ── GC: BusManager's tick thread owns collection ──
+        # gc.disable() is process-wide. It is NOT called here: BusManager
+        # disables it while its tick loop runs and re-enables it when the loop
+        # ends. Disabling it here too meant that with no busses configured
+        # (tick loop never started) nothing ever collected.
         import gc as _gc
-        _gc.disable()
         # Bounded — the callback fires on every manual collect (~every 5s
         # forever); a plain list grew without limit.
         self._gc_events_main = collections.deque(maxlen=200)
@@ -68,7 +71,7 @@ class _TransmitMixin:
                 dur_ms = (time.monotonic() - _gc_cb._t0) * 1000
                 self._gc_events_main.append((time.monotonic(), info.get('generation', -1), dur_ms))
         _gc.callbacks.append(_gc_cb)
-        print("  Audio thread: GC disabled (BusManager owns collection)")
+        print("  Audio thread: GC owned by BusManager tick loop")
 
         consecutive_errors = 0
         max_consecutive_errors = 10

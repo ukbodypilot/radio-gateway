@@ -125,6 +125,10 @@ class LogWriter:
         self._orig = original
         self._lock = threading.Lock()
         self._at_line_start = True
+        # The line being assembled for the ring buffer / log file. A line
+        # can arrive in several write() calls (print with several args,
+        # print(..., end='')); it is logged whole once its newline arrives.
+        self._pending_line = None
         import collections
         self._log_buffer = collections.deque(maxlen=buffer_lines)
         self._log_seq = 0
@@ -200,8 +204,12 @@ class LogWriter:
 
     def get_log_lines(self, after_seq=0, limit=200):
         """Return log lines with seq > after_seq. For web polling."""
+        # Copy under the writer lock: iterating the deque while another
+        # thread's print() appends raises "deque mutated during iteration".
+        with self._lock:
+            items = list(self._log_buffer)
         result = []
-        for seq, line in self._log_buffer:
+        for seq, line in items:
             if seq > after_seq:
                 result.append((seq, line))
                 if len(result) >= limit:
@@ -210,7 +218,8 @@ class LogWriter:
 
     def get_recent_lines(self, count=200):
         """Return the most recent N log lines."""
-        items = list(self._log_buffer)
+        with self._lock:
+            items = list(self._log_buffer)
         return items[-count:] if len(items) > count else items
 
     def write(self, text):
@@ -223,14 +232,18 @@ class LogWriter:
                     if i > 0:
                         out_parts.append('\n')
                         self._at_line_start = True
+                        if self._pending_line is not None:
+                            self._append_log(self._pending_line)
+                            self._pending_line = None
                     if line:
                         if self._at_line_start:
                             _ts = _dt.datetime.now().strftime("%H:%M:%S")
                             stamped = f"[{_ts}] {line}"
                             out_parts.append(stamped)
-                            self._append_log(stamped)
+                            self._pending_line = stamped
                         else:
                             out_parts.append(line)
+                            self._pending_line = (self._pending_line or '') + line
                         self._at_line_start = False
                 if text.endswith('\n'):
                     self._at_line_start = True
