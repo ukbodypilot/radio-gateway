@@ -665,6 +665,29 @@ _GATEWAY_LOCK = '/tmp/gateway.lock'
 _STARTUP_LOG = '/tmp/gateway_startup.log'
 
 
+def _stale_gateway_pids(script_path):
+    """PIDs (other than ours) of python processes running *script_path*."""
+    me = os.getpid()
+    script_path = os.path.realpath(script_path)
+    pids = []
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit() or int(entry) == me:
+            continue
+        try:
+            with open(f'/proc/{entry}/cmdline', 'rb') as f:
+                argv = [a.decode('utf-8', 'replace') for a in f.read().split(b'\0') if a]
+            cwd = os.readlink(f'/proc/{entry}/cwd')
+        except OSError:
+            continue
+        if len(argv) < 2 or not os.path.basename(argv[0]).startswith('python'):
+            continue
+        # First non-option argument is the script python was asked to run.
+        script = next((a for a in argv[1:] if not a.startswith('-')), None)
+        if script and os.path.realpath(os.path.join(cwd, script)) == script_path:
+            pids.append(int(entry))
+    return pids
+
+
 def _pre_flight(config):
     """Pre-flight checks absorbed from start.sh.
 
@@ -694,17 +717,17 @@ def _pre_flight(config):
     # 1. Kill stale processes
     print(f"[{time.strftime('%H:%M:%S')}] [1/4] Checking for stale processes...")
     # Kill stale gateway (but not us)
+    # Match only python processes running THIS script. `pgrep -f
+    # radio_gateway.py` also matched editors, tail/less, a grep, a test
+    # run from another checkout and a sudo wrapper around this process,
+    # and SIGKILLed all of them.
     try:
-        result = _run(['pgrep', '-f', 'radio_gateway.py'])
-        if result.returncode == 0:
-            for pid_str in result.stdout.strip().split('\n'):
-                pid = int(pid_str.strip())
-                if pid != os.getpid():
-                    try:
-                        os.kill(pid, 9)
-                        print(f"  Killed stale gateway PID {pid}")
-                    except OSError:
-                        pass
+        for pid in _stale_gateway_pids(os.path.abspath(__file__)):
+            try:
+                os.kill(pid, 9)
+                print(f"  Killed stale gateway PID {pid}")
+            except OSError:
+                pass
     except Exception:
         pass
     # Stop leftover mumble-server instances
@@ -749,10 +772,8 @@ def _pre_flight(config):
     print(f"[{time.strftime('%H:%M:%S')}] [3/4] Setting CPU governor to schedutil...")
     for gov_path in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'):
         try:
-            _sudo(['tee', gov_path]).input = 'schedutil'
-            # Use shell for tee stdin
-            subprocess.run(f'echo schedutil | sudo -n tee {gov_path} > /dev/null 2>&1',
-                           shell=True, timeout=5)
+            subprocess.run(['sudo', '-n', 'tee', gov_path], input='schedutil',
+                           text=True, capture_output=True, timeout=5)
         except Exception:
             pass
     print("  CPU governor set (or unsupported)")
