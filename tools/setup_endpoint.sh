@@ -274,7 +274,7 @@ if [[ "$PLUGIN" == "d75" ]]; then
     for f in d75_link_plugin.py remote_bt_proxy.py; do
         SRC=""
         [[ -f "$SCRIPT_DIR/$f" ]] && SRC="$SCRIPT_DIR/$f"
-        [[ -f "$REPO_DIR/scripts/$f" ]] && SRC="$REPO_DIR/scripts/$f"
+        [[ -f "$REPO_DIR/tools/$f" ]] && SRC="$REPO_DIR/tools/$f"
         if [[ -n "$SRC" ]]; then
             $DRY_RUN || cp "$SRC" "$LINK_DIR/"
             info "Deployed $f"

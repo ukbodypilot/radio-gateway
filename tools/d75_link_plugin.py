@@ -21,10 +21,10 @@ import threading
 import time
 import queue as _queue_mod
 
-# Add scripts/ to path for remote_bt_proxy imports
+# remote_bt_proxy sits next to this file, in tools/ and on the endpoint alike
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _project_dir = os.path.dirname(_script_dir)
-sys.path.insert(0, os.path.join(_project_dir, 'scripts'))
+sys.path.insert(0, _script_dir)
 sys.path.insert(0, _project_dir)
 
 from gateway_link import RadioPlugin
@@ -32,7 +32,7 @@ from gateway_link import RadioPlugin
 # Import BT classes from remote_bt_proxy
 from remote_bt_proxy import (
     SerialManager, AudioManager, ensure_paired,
-    AUDIO_FRAME_SIZE, D75_MAC,
+    D75_MAC,
 )
 
 # SCO runs at 8kHz, link protocol at 48kHz
@@ -498,7 +498,6 @@ class D75Plugin(RadioPlugin):
     @classmethod
     def _get_system_stats(cls):
         """Get CPU, RAM, disk, temp for the endpoint machine."""
-        import os, time
         stats = {}
         try:
             with open('/proc/stat') as f:
