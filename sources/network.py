@@ -163,6 +163,8 @@ class RemoteAudioServer:
     The server initiates the TCP connection and pushes length-prefixed PCM.
     Reconnects automatically if the link drops.
     """
+    _RECONNECT_MAX = 60.0  # backoff ceiling (s) while the client is unreachable
+
     def __init__(self, config):
         self.config = config
         self.host = config.REMOTE_AUDIO_HOST
@@ -193,12 +195,14 @@ class RemoteAudioServer:
         print(f"✓ Remote audio server will connect to {self.host}:{self.port}")
 
     def _connect_loop(self):
-        """Connect to the client, reconnect on failure."""
+        """Connect to the client, reconnect on failure (backoff while it is down)."""
+        delay = self._reconnect_interval
         while self._running:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2.0)
                 sock.connect((self.host, self.port))
+                delay = self._reconnect_interval  # connected: next outage starts fast again
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 sock.setblocking(False)  # non-blocking so send_audio never stalls audio loop
                 self._tx_backlog = b''   # stale partial frame belongs to the old connection
@@ -234,7 +238,8 @@ class RemoteAudioServer:
                         pass
                     self._socket = None
             if self._running:
-                time.sleep(self._reconnect_interval)
+                time.sleep(delay)
+                delay = min(delay * 2, self._RECONNECT_MAX)
 
     def send_audio(self, pcm_data):
         """Send length-prefixed PCM to connected client.

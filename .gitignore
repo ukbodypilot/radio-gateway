@@ -102,8 +102,8 @@ gateway_mcp.py.legacy
 # Real fart samples — fetched by fart_player.py / setup (not committed)
 audio/farts/
 
-# Project memory — synced via a separate PRIVATE repo, never in this public one
-.claude/memory/
+# Claude Code per-project config, memory and worktrees — memory is synced via a separate PRIVATE repo
+.claude/
 
 # AllStar USRP recent-nodes list (runtime state)
 usrp_recent.json
