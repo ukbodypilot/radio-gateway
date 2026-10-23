@@ -4,10 +4,17 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.1.0] -- 2026-10-23
+
+The security half of the 2026-10-22 review. The web UI has a login and
+refuses cross-site requests, the tunnel needs a password, link endpoints
+authenticate with their own keys, and endpoint updates are signed. Plus the
+SDR priority setting finally does something, and the docs catch up with 5.0.
+
 ### Security — web UI, link port and endpoint updates
 
 Fixes H1, H3, H4, H5 and M3 from the 2026-10-22 review. Two of these change
-behaviour on upgrade; see *Upgrading* below.
+behaviour on upgrade; see *Upgrading to 5.1.0* below.
 
 - **Cross-site requests are refused.** POSTs and WebSocket upgrades whose
   `Origin` isn't the gateway, and cross-site sub-resource GETs, get a 403.
@@ -46,7 +53,7 @@ behaviour on upgrade; see *Upgrading* below.
 - The fleet manager's localhost snapshot sends the web password when one is
   set (it got 401s before).
 
-#### Upgrading
+### Upgrading to 5.1.0
 
 - The web UI now asks for **user / user** unless you set your own
   `WEB_CONFIG_USERNAME` / `WEB_CONFIG_PASSWORD` (do). Saved browser logins
@@ -59,6 +66,9 @@ behaviour on upgrade; see *Upgrading* below.
   clear on the LAN, so once the gateway log shows "stored its key — enrolled"
   for every endpoint, set `LINK_ENROLL_NEW = false`. See
   [gateway_link.md](docs/gateway_link.md#authentication).
+- Endpoints that share a host now keep their keys in separate
+  `link_secret.<name>` files. An existing shared `link_secret` is still read,
+  so nothing needs re-enrolling.
 
 ### Fixed
 
@@ -68,6 +78,24 @@ behaviour on upgrade; see *Upgrading* below.
   signal, and `equal` mixes both. Needs a gateway restart to change.
   (With `REMOTE_AUDIO_PRIORITY = 1`, remote audio now also ducks the
   lower-priority tuner, as it would any lower-priority source.)
+
+- Endpoints sharing a host overwrote each other's link key in one shared
+  `link_secret` file, so after a restart all but the last to enroll were
+  refused ("enrolled name, bad key"). Each key now has its own file.
+- RemoteAudioServer retried an unreachable client every few seconds; the
+  delay now doubles up to 60 s and resets on connect (about 12 log lines a
+  minute down to 1).
+
+### Changed — code layout
+
+- `audio_sources.py` (4,200 lines, 14 classes) is split into a `sources/`
+  package, one family per module. `audio_sources.py` re-exports every class,
+  so existing imports and plugins are unchanged.
+- The HTTP request handler and server classes moved out of
+  `WebConfigServer.start()` (381 lines) into `web/handler.py`. Routes, auth
+  and dispatch are unchanged.
+- Docstrings for `text_commands`, the IC-7100 plugin and the Windows client.
+  `MEGA_PLAN.md` moved to `docs/history/mega-plan.md`.
 
 ### Docs — brought up to date with 5.0.0
 
