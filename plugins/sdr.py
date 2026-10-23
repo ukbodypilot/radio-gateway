@@ -475,6 +475,8 @@ class SDRPlugin:
         self.duck = True  # can be ducked by higher-priority sources
         self.sdr_priority = 1
         self.audio_level = 0
+        self._sdr_order = 'sdr1'
+        self._master_name = 'SDR1'
 
         # Set defaults for all tuning settings
         for key, (typ, default) in self._SETTING_KEYS.items():
@@ -544,8 +546,12 @@ class SDRPlugin:
         sink1 = sdr1_device.split(':', 1)[1] if ':' in sdr1_device else sdr1_device
         sink2 = sdr2_device.split(':', 1)[1] if ':' in sdr2_device else sdr2_device
 
-        # SDR priority order
-        sdr_order = getattr(config, 'SDR_PRIORITY_ORDER', 'sdr1')
+        # SDR priority order: 'sdr1' / 'sdr2' pick which tuner ducks the other,
+        # 'equal' mixes both. Unknown values fall back to 'sdr1'.
+        sdr_order = str(getattr(config, 'SDR_PRIORITY_ORDER', 'sdr1')).strip().lower()
+        if sdr_order not in ('sdr1', 'sdr2', 'equal'):
+            sdr_order = 'sdr1'
+        self._sdr_order = sdr_order
         if sdr_order == 'sdr2':
             self._master_name, self._slave_name = 'SDR2', 'SDR1'
             self._master_sink, self._slave_sink = sink2, sink1
@@ -639,6 +645,8 @@ class SDRPlugin:
                 print("  SDR2: audio capture failed")
                 self._tuner2 = None
 
+        self._apply_tuner_priorities()
+
         # Set initial mute state
         if self._tuner1:
             self._tuner1.muted = getattr(config, 'SDR_MUTE_DEFAULT', False)
@@ -702,6 +710,20 @@ class SDRPlugin:
             except Exception:
                 log_exc()
 
+    def _apply_tuner_priorities(self):
+        """Set each tuner's sdr_priority from SDR_PRIORITY_ORDER.
+
+        The bus registers the tuners as separate sources and ducks the one
+        with the higher sdr_priority while the other has signal. The slave
+        gets 1.5 rather than 2 so it still sorts ahead of sources that sit
+        at 2 (kv4p, remote audio at priority 2), as both tuners did before.
+        'equal' leaves both at 1, so neither ducks the other.
+        """
+        slave_prio = 1 if self._sdr_order == 'equal' else 1.5
+        for name, tuner in (('SDR1', self._tuner1), ('SDR2', self._tuner2)):
+            if tuner is not None:
+                tuner.sdr_priority = 1 if name == self._master_name else slave_prio
+
     def teardown(self):
         """Stop rtl_airband and clean up audio captures."""
         if self._tuner1:
@@ -751,7 +773,7 @@ class SDRPlugin:
 
         if master_audio is not None and slave_audio is not None:
             # Both have audio — duck slave if master has signal
-            if master_has_signal_hyst:
+            if master_has_signal_hyst and self._sdr_order != 'equal':
                 # Master active — use master only
                 output = master_audio
             else:

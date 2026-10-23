@@ -582,12 +582,16 @@ class BusManager:
         if gw.sdr_plugin:
             _sdr = gw.sdr_plugin
             _has_tuners = False
-            # Register tuner captures as separate source nodes for independent routing
+            # Register tuner captures as separate source nodes for independent routing.
+            # Each tuner's sdr_priority comes from SDR_PRIORITY_ORDER (1 for the
+            # tuner that wins, 1.5 for the one it ducks, 1 for both on 'equal').
             if getattr(_sdr, '_tuner1', None):
-                source_map['sdr1'] = (_sdr._tuner1, 11, getattr(gw.config, 'SDR_DUCK', True))
+                source_map['sdr1'] = (_sdr._tuner1, 10 + getattr(_sdr._tuner1, 'sdr_priority', 1),
+                                      getattr(gw.config, 'SDR_DUCK', True))
                 _has_tuners = True
             if getattr(_sdr, '_tuner2', None):
-                source_map['sdr2'] = (_sdr._tuner2, 11, getattr(gw.config, 'SDR_DUCK', True))
+                source_map['sdr2'] = (_sdr._tuner2, 10 + getattr(_sdr._tuner2, 'sdr_priority', 1),
+                                      getattr(gw.config, 'SDR_DUCK', True))
                 _has_tuners = True
             # Only register combined 'sdr' if no individual tuners (backward compat)
             if not _has_tuners:

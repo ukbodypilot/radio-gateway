@@ -4,6 +4,15 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Fixed
+
+- `SDR_PRIORITY_ORDER` now takes effect. Both tuners were added to the listen
+  bus at the same priority, so they always played together whatever the
+  setting said. `sdr1` / `sdr2` now let that tuner duck the other while it has
+  signal, and `equal` mixes both. Needs a gateway restart to change.
+  (With `REMOTE_AUDIO_PRIORITY = 1`, remote audio now also ducks the
+  lower-priority tuner, as it would any lower-priority source.)
+
 ### Docs — brought up to date with 5.0.0
 
 - `docs/gateway_link.md` rewritten: it still described the v1 single-endpoint
