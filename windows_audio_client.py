@@ -435,6 +435,32 @@ def _local_version():
     return h.hexdigest()[:16]
 
 
+def _link_secret(here):
+    """The gateway's LINK_SECRET, from %RADIO_GATEWAY_LINK_SECRET% or a
+    link_secret file next to this script. '' if neither is set."""
+    secret = os.environ.get("RADIO_GATEWAY_LINK_SECRET", "").strip()
+    if secret:
+        return secret
+    try:
+        with open(os.path.join(here, "link_secret")) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _bundle_signature_ok(secret, files, signature):
+    """Same check as gateway_link.verify_bundle (this script ships alone,
+    so it can't import it). Keep the two in step."""
+    import hashlib
+    import hmac
+    parts = ["radio-gateway-bundle-v1"]
+    for name in sorted(files):
+        parts.append(f"{name}:{hashlib.sha256(files[name]).hexdigest()}")
+    want = hmac.new(secret.encode("utf-8"), "\n".join(parts).encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+    return bool(signature) and hmac.compare_digest(want, signature.strip().lower())
+
+
 def check_for_update(gateway_host, web_port):
     """Ask the gateway for newer client code; write it if there is any.
 
@@ -463,14 +489,19 @@ def check_for_update(gateway_host, web_port):
         print(f"  [update] new version available: local={local} remote={remote_ver}")
         with urllib.request.urlopen(f"{base}/api/winclient/files", timeout=60) as r:
             bundle = json.loads(r.read())
+            sig = r.headers.get("X-Bundle-Signature", "")
 
         here = os.path.dirname(os.path.abspath(__file__))
+        files = {f: base64.b64decode(bundle[f]) for f in UPDATE_FILES if bundle.get(f)}
+        secret = _link_secret(here)
+        if secret and not _bundle_signature_ok(secret, files, sig):
+            print("  [update] REFUSED: bundle signature "
+                  f"{'invalid' if sig else 'missing'} — check link_secret matches "
+                  "the gateway's LINK_SECRET")
+            UPDATE_STATE.update(status="failed", detail="bad bundle signature")
+            return False
         updated = 0
-        for fname in UPDATE_FILES:
-            b64 = bundle.get(fname)
-            if not b64:
-                continue
-            content = base64.b64decode(b64)
+        for fname, content in files.items():
             path = os.path.join(here, fname)
             # Compare content, not just the version hash: this is what actually
             # gates the write, so a stale hash can't cause a pointless relaunch.

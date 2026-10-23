@@ -42,6 +42,39 @@ annunciator on the landing page so everything is visible at one glance.
   `dash.css`/`dash.js` add the dashboard-family layer (toasts, panel tabs,
   annunciator chips, the status-poller wrapper).
 
+## Access control
+
+Every request goes through `GatewayRequestHandler._check_access`
+(`web/handler.py`), in this order:
+
+1. **Cross-site requests are refused (403).** A POST or WebSocket upgrade
+   whose `Origin` isn't this server, and a cross-site GET that isn't a
+   top-level visit to a page (`Sec-Fetch-Site`/`Sec-Fetch-Mode`). Browsers
+   send Basic auth credentials with cross-site requests, so without this any
+   web page you opened could POST to `/manager/save` and `/manager/run`
+   (Claude with every permission), `/reboothost`, or open `/ws_mic` and
+   transmit. Requests with no `Origin` (curl, MCP, endpoints) aren't from a
+   web page and pass. The tunnel hostname counts as this server.
+2. **Endpoint routes.** `/api/endpoint/*` and `/api/winclient/*` (public
+   repo code, signed when `LINK_SECRET` is set) need no password.
+   `/ws/link` needs none when `LINK_SECRET` is set, because the link server
+   authenticates REGISTER. See [gateway_link.md](gateway_link.md#authentication).
+3. **No password set:** open on the LAN, but through the Cloudflare tunnel
+   (requests carrying Cloudflare's `Cf-Ray`/`Cf-Connecting-Ip`) everything
+   except the endpoint routes and `/ws/link` gets a 403 asking for
+   `WEB_CONFIG_PASSWORD`. `WEB_TUNNEL_ALLOW_NO_PASSWORD = true` turns that
+   off.
+4. **Password set:** HTTP Basic auth, user `admin`.
+
+Secrets (any string key whose name contains `PASSWORD`, `SECRET`,
+`PASSCODE` or `TOKEN`, from `config_schema.secret_keys()`) are never sent to
+the browser; a blank field on save keeps the stored value.
+
+The fleet manager's own snapshot requests to localhost send the password
+(via curl's config on stdin, so it isn't visible in `ps`). The room-monitor
+Android app doesn't send credentials, so it works only while no password is
+set, and through the tunnel only with `WEB_TUNNEL_ALLOW_NO_PASSWORD`.
+
 ## The four dashboard pages
 
 | Page | Job |

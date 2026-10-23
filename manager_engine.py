@@ -244,11 +244,19 @@ class ManagerEngine:
             except Exception as e:
                 return f'error: {e}'
 
+        # With WEB_CONFIG_PASSWORD set, the web UI wants Basic auth from us
+        # too. Pass it as a curl config on stdin so it never shows in `ps`.
+        _pw = str(getattr(self.config, 'WEB_CONFIG_PASSWORD', '') or '')
+        _auth_in = ('user = "admin:' + _pw.replace('\\', '\\\\').replace('"', '\\"')
+                    + '"\n') if _pw else ''
+        _auth_args = ['-K', '-'] if _pw else []
+
         def _curl(url, timeout=5):
             try:
                 r = subprocess.run(
-                    ['curl', '-s', '--max-time', str(timeout), url],
-                    capture_output=True, text=True, timeout=timeout + 2)
+                    ['curl', '-s', '--max-time', str(timeout), *_auth_args, url],
+                    input=_auth_in, capture_output=True, text=True,
+                    timeout=timeout + 2)
                 return r.stdout.strip()
             except Exception as e:
                 return f'error: {e}'
@@ -256,10 +264,11 @@ class ManagerEngine:
         def _prom(query, timeout=5):
             try:
                 r = subprocess.run(
-                    ['curl', '-s', '--max-time', str(timeout),
+                    ['curl', '-s', '--max-time', str(timeout), *_auth_args,
                      '--data-urlencode', f'query={query}',
                      'http://localhost:8080/prometheus/api/v1/query'],
-                    capture_output=True, text=True, timeout=timeout + 2)
+                    input=_auth_in, capture_output=True, text=True,
+                    timeout=timeout + 2)
                 d = json.loads(r.stdout)
                 return [(x['metric'], x['value'][1]) for x in d['data']['result']]
             except Exception as e:

@@ -273,6 +273,7 @@ class GatewayLinkProtocol:
     REGISTER = 0x04
     ACK      = 0x05
     LOG      = 0x06
+    CHALLENGE = 0x07  # server -> endpoint, before REGISTER, only with LINK_SECRET
 
     _HEADER = struct.Struct('>BH')  # type (1) + length (2) = 3 bytes
     MAX_PAYLOAD = 0xFFFF            # the 16-bit length field's limit
@@ -356,6 +357,67 @@ class GatewayLinkProtocol:
         """
         payload = {'type': 'log', 'lines': lines}
         cls.send_frame(sock, cls.LOG, json.dumps(payload).encode('utf-8'))
+
+
+# ---------------------------------------------------------------------------
+# Link authentication (LINK_SECRET)
+# ---------------------------------------------------------------------------
+# With a shared secret set, the server opens each connection with a
+# CHALLENGE frame carrying a random nonce, and the endpoint's REGISTER must
+# carry auth = HMAC-SHA256(secret, "radio-gateway-link-v1|<nonce>|<name>").
+# The nonce is fresh per connection, so a captured REGISTER can't be
+# replayed, and no clock sync is needed (Pis without an RTC boot with the
+# wrong time). The same secret signs the endpoint code-update bundle.
+#
+# Endpoints read the secret from $RADIO_GATEWAY_LINK_SECRET or from a file
+# named link_secret next to link_endpoint.py. Older endpoints ignore the
+# CHALLENGE frame; a gateway with a secret refuses them until they have one.
+
+LINK_SECRET_ENV = 'RADIO_GATEWAY_LINK_SECRET'
+LINK_SECRET_FILE = 'link_secret'
+BUNDLE_SIG_HEADER = 'X-Bundle-Signature'
+
+
+def load_link_secret(directory=None):
+    """The endpoint-side secret: env var first, then <directory>/link_secret.
+    Returns '' when neither is set."""
+    secret = os.environ.get(LINK_SECRET_ENV, '').strip()
+    if secret or not directory:
+        return secret
+    try:
+        with open(os.path.join(directory, LINK_SECRET_FILE)) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def link_register_mac(secret, nonce, name):
+    """HMAC a REGISTER for *name* answers the server's *nonce* with."""
+    import hmac
+    import hashlib
+    msg = f"radio-gateway-link-v1|{nonce}|{name}".encode('utf-8')
+    return hmac.new(secret.encode('utf-8'), msg, hashlib.sha256).hexdigest()
+
+
+def bundle_signature(secret, files):
+    """HMAC over a code-update bundle. *files* is {name: bytes}. Each file
+    is hashed, so the signature covers names and contents."""
+    import hmac
+    import hashlib
+    parts = ['radio-gateway-bundle-v1']
+    for name in sorted(files):
+        parts.append(f"{name}:{hashlib.sha256(files[name]).hexdigest()}")
+    return hmac.new(secret.encode('utf-8'), '\n'.join(parts).encode('utf-8'),
+                    hashlib.sha256).hexdigest()
+
+
+def verify_bundle(secret, files, signature):
+    """True if *signature* (hex, from BUNDLE_SIG_HEADER) matches *files*."""
+    import hmac
+    if not signature:
+        return False
+    return hmac.compare_digest(bundle_signature(secret, files),
+                               signature.strip().lower())
 
 
 # ---------------------------------------------------------------------------
@@ -534,8 +596,12 @@ class GatewayLinkServer:
     def __init__(self, port=9700, on_command=None,
                  on_register=None, on_disconnect=None, on_ack=None,
                  on_endpoint_status=None, on_log_lines=None,
-                 supervisor=None, ptt_timeout=0, on_ptt_timeout=None):
+                 supervisor=None, ptt_timeout=0, on_ptt_timeout=None,
+                 bind='', secret=''):
         self._port = port
+        self._bind = bind or ''
+        # LINK_SECRET. Blank: any client may REGISTER (pre-5.1 behaviour).
+        self._secret = secret or ''
         self._on_command = on_command
         self._on_register = on_register
         self._on_disconnect = on_disconnect
@@ -585,9 +651,12 @@ class GatewayLinkServer:
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_sock.settimeout(1.0)
-        self._server_sock.bind(('', self._port))
+        self._server_sock.bind((self._bind, self._port))
         self._server_sock.listen(8)
-        print(f"  [Link] Server listening on port {self._port}")
+        print(f"  [Link] Server listening on {self._bind or '*'}:{self._port}")
+        if not self._secret:
+            print("  [Link] WARNING: LINK_SECRET is blank — any host that can "
+                  "reach this port can register as any endpoint")
 
         self._stop.clear()
         self._accept_thread = threading.Thread(target=self._accept_loop,
@@ -812,8 +881,13 @@ class GatewayLinkServer:
         P = GatewayLinkProtocol
         ep_name = None
         try:
-            # --- Wait for REGISTER as first frame ---
+            # --- Challenge, then wait for REGISTER as first frame ---
             sock.settimeout(self._REGISTER_TIMEOUT)
+            nonce = None
+            if self._secret:
+                nonce = os.urandom(16).hex()
+                P.send_frame(sock, P.CHALLENGE,
+                             json.dumps({'nonce': nonce, 'v': 1}).encode('utf-8'))
             result = P.recv_frame(sock)
             if result is None:
                 print(f"  [Link] {addr[0]}:{addr[1]} disconnected before REGISTER")
@@ -844,6 +918,25 @@ class GatewayLinkServer:
                 except (OSError, ConnectionError):
                     pass
                 return
+
+            # Authenticate before anything else, so a client without the
+            # secret can't evict the real endpoint below.
+            if nonce is not None:
+                import hmac as _hmac
+                _mac = str(info.get('auth') or '')
+                _want = link_register_mac(self._secret, nonce, ep_name)
+                if not (_mac and _hmac.compare_digest(_mac, _want)):
+                    print(f"  [Link] {addr[0]}:{addr[1]} REGISTER as '{ep_name}' "
+                          f"refused: {'bad' if _mac else 'no'} LINK_SECRET auth")
+                    try:
+                        P.send_frame(sock, P.COMMAND, json.dumps(
+                            {"error": "link auth failed: set the gateway's "
+                                      "LINK_SECRET in this endpoint's link_secret file"}
+                        ).encode('utf-8'))
+                    except (OSError, ConnectionError):
+                        pass
+                    ep_name = None  # nothing registered; finally has nothing to remove
+                    return
 
             # Check for duplicate name — evict the stale entry and accept the new one
             with self._endpoints_lock:
@@ -1153,10 +1246,13 @@ class WebSocketTransport:
         )
         sock.sendall(handshake.encode())
 
-        # Read response (look for 101)
+        # Read response (look for 101). One byte at a time so nothing after
+        # the blank line is consumed: the gateway's first link frame (the
+        # LINK_SECRET CHALLENGE) can follow in the same segment, and a
+        # bigger recv here used to throw it away.
         resp = b''
         while b'\r\n\r\n' not in resp:
-            chunk = sock.recv(1024)
+            chunk = sock.recv(1)
             if not chunk:
                 sock.close()
                 return False
@@ -1238,8 +1334,9 @@ class GatewayLinkClient:
     def __init__(self, host, port, name, capabilities, plugin_name="audio",
                  on_audio=None, on_command=None, on_status=None,
                  on_connect=None, on_disconnect=None,
-                 ws_url=None, url_resolver=None):
+                 ws_url=None, url_resolver=None, secret=''):
         self._host = host
+        self._secret = secret or ''      # LINK_SECRET, to answer CHALLENGE
         self._port = port
         self._name = name
         self._capabilities = capabilities
@@ -1453,6 +1550,11 @@ class GatewayLinkClient:
                 "capabilities": self._capabilities,
                 "version": "1.0",
             }
+            if self._secret:
+                _nonce = self._await_challenge(connected_via)
+                if _nonce:
+                    reg_info["auth"] = link_register_mac(
+                        self._secret, _nonce, self._name)
             try:
                 if connected_via == 'ws':
                     self._ws_transport.send_frame(
@@ -1539,6 +1641,36 @@ class GatewayLinkClient:
                 if self._stop.wait(2.0):
                     break
 
+    def _await_challenge(self, connected_via, timeout=3.0):
+        """Wait briefly for the server's CHALLENGE and return its nonce.
+
+        A gateway without LINK_SECRET sends nothing before REGISTER, so a
+        timeout means "register without auth", not an error."""
+        import select
+        P = GatewayLinkProtocol
+        raw = self._ws_transport._sock if connected_via == 'ws' else self._sock
+        try:
+            # A TLS socket may already hold the frame decrypted in its own
+            # buffer, which select() on the fd can't see.
+            pending = raw.pending() if hasattr(raw, 'pending') else 0
+            ready = [raw] if pending else select.select([raw], [], [], timeout)[0]
+            if not ready:
+                print("  [Link] No CHALLENGE from server (gateway has no "
+                      "LINK_SECRET) — registering without auth")
+                return None
+            if connected_via == 'ws':
+                result = self._ws_transport.recv_frame()
+            else:
+                result = P.recv_frame(raw)
+        except (OSError, ValueError):
+            return None
+        if result and result[0] == P.CHALLENGE:
+            try:
+                return str(json.loads(result[1]).get('nonce') or '') or None
+            except (ValueError, AttributeError):
+                return None
+        return None
+
     def _reader_loop(self, sock):
         """Read frames from the server until disconnect."""
         P = GatewayLinkProtocol
@@ -1572,6 +1704,8 @@ class GatewayLinkClient:
                         cmd = json.loads(payload)
                         if cmd.get('cmd') == 'ping':
                             self.send_ack('ping', {'ok': True})
+                        elif 'error' in cmd and 'cmd' not in cmd:
+                            print(f"  [Link] Server refused us: {cmd['error']}")
                         elif self._on_command:
                             self._on_command(cmd)
                     elif ftype == P.STATUS:
@@ -1616,6 +1750,8 @@ class GatewayLinkClient:
                         cmd = json.loads(payload)
                         if cmd.get('cmd') == 'ping':
                             self.send_ack('ping', {'ok': True})
+                        elif 'error' in cmd and 'cmd' not in cmd:
+                            print(f"  [Link] Server refused us: {cmd['error']}")
                         elif self._on_command:
                             self._on_command(cmd)
                     elif ftype == P.STATUS:

@@ -430,6 +430,15 @@ REMOTE_AUDIO_RECONNECT_INTERVAL = 5.0  # Server: seconds between reconnect attem
 
 # ─── Link endpoints (docs/gateway_link.md) ───
 LINK_PORT = 9700                # TCP port remote endpoints connect in on
+LINK_BIND =                     # interface IP to listen on, blank = all interfaces
+# Shared secret for link endpoints. When set: endpoints must prove they know
+# it to REGISTER (HMAC over a per-connection challenge), code updates are
+# signed with it, and /ws/link no longer needs the web password. Put the
+# same value in a file named link_secret next to link_endpoint.py on each
+# endpoint (and next to windows_audio_client.py). Blank = any host that can
+# reach the port can register as any endpoint.
+# Generate one with: python3 -c "import secrets; print(secrets.token_hex(24))"
+LINK_SECRET =
 LINK_AUDIO_BOOST = 1.0          # RX volume multiplier for link audio
 LINK_AUDIO_DISPLAY_GAIN = 1.0   # meter sensitivity only, does not affect audio
 LINK_AUDIO_DUCK = false         # duck link audio under higher-priority sources
@@ -899,6 +908,7 @@ MANAGER_MAX_TURNS = 40                   # hard cap on tool-use turns per run
 # Config editor: http(s)://<gateway-ip>:<port>/
 # Live dashboard: http(s)://<gateway-ip>:<port>/dashboard
 # If WEB_CONFIG_PASSWORD is set, HTTP Basic Auth is required (user: admin).
+# POSTs and WebSockets from other web sites are refused either way (CSRF).
 # HTTPS uses a self-signed certificate (auto-generated on first run).
 
 ENABLE_WEB_CONFIG = true
@@ -906,6 +916,10 @@ WEB_CONFIG_PORT = 8080
 WEB_CONFIG_PASSWORD =
 WEB_CONFIG_HTTPS = false           # false, self-signed, or letsencrypt (uses DDNS_HOSTNAME)
 ENABLE_CLOUDFLARE_TUNNEL = false   # free public HTTPS via *.trycloudflare.com (no port fwd needed)
+# Through the tunnel the web UI needs WEB_CONFIG_PASSWORD: without one it
+# answers 403 there (link endpoints and code updates still work). true serves
+# the whole UI, manager included, to anyone who has the URL.
+WEB_TUNNEL_ALLOW_NO_PASSWORD = false
 
 # Browser microphone (the MIC button in the shell bar) -> radio TX.
 # Hold to talk; releasing unkeys. Route it by dropping the "Web Mic" source

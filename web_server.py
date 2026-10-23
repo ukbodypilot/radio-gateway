@@ -29,9 +29,9 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
     web/certs.py.
     """
 
-    # Keys whose values should be masked in the UI
-    _SENSITIVE_KEYS = {'STREAM_PASSWORD', 'EMAIL_APP_PASSWORD', 'WEB_CONFIG_PASSWORD',
-                       'USRP_AMI_SECRET', 'USRP2_AMI_SECRET', 'DDNS_PASSWORD'}
+    # Keys whose values are never sent to the browser (see
+    # config_schema.secret_keys: matched by name, so new secrets are covered).
+    _SENSITIVE_KEYS = frozenset(config_schema.secret_keys())
 
     # Keys that store hex integers
     _HEX_KEYS = {'AIOC_VID', 'AIOC_PID'}
@@ -245,7 +245,10 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'CAT_RIGHT_VOLUME': '0–100 (−1 = don\'t change)',
         # Web
         'WEB_CONFIG_PORT': 'port (1–65535)',
-        'WEB_CONFIG_PASSWORD': 'blank = no auth (user: admin)',
+        'WEB_CONFIG_PASSWORD': 'blank = no auth on the LAN (user: admin); the tunnel needs one',
+        'WEB_TUNNEL_ALLOW_NO_PASSWORD': 'serve the whole UI through the tunnel with no password (not recommended)',
+        'LINK_BIND': 'interface IP for the link port, blank = all',
+        'LINK_SECRET': 'shared with every endpoint (link_secret file); blank = endpoints unauthenticated',
         'WEB_CONFIG_HTTPS': 'letsencrypt uses DDNS_HOSTNAME; restart to apply',
         'GATEWAY_NAME': 'shown at top of dashboard (blank = none)',
         'WEB_MIC_VOLUME': 'multiplier',
@@ -425,9 +428,14 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
                 print(f"  [USBIP] Manager init failed: {e}")
                 self.usbip_manager = None
 
-        # Bind this server and its password onto a per-server subclass.
-        Handler = type('Handler', (GatewayRequestHandler,),
-                       {'parent': self, 'password': password})
+        # Bind this server and its auth settings onto a per-server subclass.
+        Handler = type('Handler', (GatewayRequestHandler,), {
+            'parent': self,
+            'password': password,
+            'link_secret': str(getattr(self.config, 'LINK_SECRET', '') or ''),
+            'tunnel_allow_open': bool(getattr(
+                self.config, 'WEB_TUNNEL_ALLOW_NO_PASSWORD', False)),
+        })
 
         try:
             self._server = ThreadedServer(('0.0.0.0', port), Handler)

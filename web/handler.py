@@ -29,6 +29,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
 
     parent = None     # the WebConfigServer this handler serves
     password = ''     # WEB_CONFIG_PASSWORD; empty means no auth
+    link_secret = ''  # LINK_SECRET; set means /ws/link skips Basic auth
+    tunnel_allow_open = False  # WEB_TUNNEL_ALLOW_NO_PASSWORD
 
     protocol_version = "HTTP/1.1"  # Required for WebSocket upgrade
 
@@ -46,6 +48,116 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass  # Suppress request logging
+
+    # ── Access control ───────────────────────────────────────────
+    # _check_access() runs first on every request. In order:
+    #   1. Cross-site check (CSRF). A POST or WebSocket upgrade whose Origin
+    #      is not this server is refused, and so is a cross-site GET that
+    #      isn't a top-level visit to a page. Browsers attach Basic auth
+    #      credentials to cross-site requests, so without this any web page
+    #      could drive /manager/run, /reboothost or /ws_mic. Requests with no
+    #      Origin are not from a browser page (curl, MCP, endpoints) and pass.
+    #   2. Endpoint routes. Link endpoints and the Windows client send no
+    #      Basic auth, so the update routes (public repo code, signed when
+    #      LINK_SECRET is set) are always open, and /ws/link is open when
+    #      LINK_SECRET is set because the link server checks REGISTER.
+    #   3. No password: open on the LAN, but 403 through the Cloudflare
+    #      tunnel unless WEB_TUNNEL_ALLOW_NO_PASSWORD. /ws/link stays open
+    #      so tunnel endpoints keep working.
+    #   4. Basic auth.
+
+    _ENDPOINT_UPDATE_PATHS = frozenset({
+        '/api/endpoint/version', '/api/endpoint/files',
+        '/api/winclient/version', '/api/winclient/files',
+    })
+    _LINK_WS_PATH = '/ws/link'
+    # Pages a link on another site may open (Sec-Fetch-Mode: navigate).
+    # Anything else fetched cross-site is refused.
+    _NAVIGABLE_EXTRA = frozenset({'/config'})
+
+    def _check_access(self):
+        path = self.path.split('?', 1)[0]
+        if not self._check_same_origin(path):
+            return False
+        if path in self._ENDPOINT_UPDATE_PATHS:
+            return True
+        if path == self._LINK_WS_PATH and self.link_secret:
+            return True
+        if not self.password:
+            if (self._via_tunnel() and not self.tunnel_allow_open
+                    and path != self._LINK_WS_PATH):
+                self._send_forbidden(
+                    'Set WEB_CONFIG_PASSWORD on the gateway to use the web UI '
+                    'through the tunnel.')
+                return False
+            return True
+        return self._check_auth()
+
+    def _via_tunnel(self):
+        """True when the request came in through the Cloudflare tunnel.
+
+        cloudflared connects from localhost, so the client address can't
+        tell; Cloudflare adds these headers to every proxied request and a
+        tunnel client can't remove them. A LAN client that sends one only
+        makes its own request stricter."""
+        return bool(self.headers.get('Cf-Connecting-Ip')
+                    or self.headers.get('Cf-Ray'))
+
+    def _own_hosts(self):
+        """host[:port] values that count as this server, lower case."""
+        hosts = {self.headers.get('Host', ''),
+                 self.headers.get('X-Forwarded-Host', '')}
+        gw = getattr(self.parent, 'gateway', None)
+        tunnel = getattr(gw, 'cloudflare_tunnel', None)
+        try:
+            url = tunnel.get_url() if tunnel else None
+        except Exception:
+            log_exc()
+            url = None
+        if url:
+            from urllib.parse import urlsplit
+            hosts.add(urlsplit(url).netloc)
+        return {h.strip().lower() for h in hosts if h and h.strip()}
+
+    def _check_same_origin(self, path):
+        is_ws = self.headers.get('Upgrade', '').lower() == 'websocket'
+        if self.command == 'GET' and not is_ws:
+            site = self.headers.get('Sec-Fetch-Site', '')
+            if site not in ('cross-site', 'same-site'):
+                return True   # same-origin, typed/bookmarked, or not a browser
+            if path in self._ENDPOINT_UPDATE_PATHS:
+                return True
+            if (self.headers.get('Sec-Fetch-Mode') == 'navigate'
+                    and (path in self._STATIC_PAGES
+                         or path in self._NAVIGABLE_EXTRA)):
+                return True
+            self._send_forbidden('Cross-site request refused.')
+            return False
+        origin = self.headers.get('Origin')
+        if origin is None:
+            return True
+        from urllib.parse import urlsplit
+        try:
+            netloc = urlsplit(origin.strip()).netloc.lower()
+        except ValueError:
+            netloc = ''
+        if netloc and netloc in self._own_hosts():
+            return True
+        self._send_forbidden('Cross-site request refused.')
+        return False
+
+    def _send_forbidden(self, msg):
+        print(f"  [WebConfig] 403 {self.command} {self.path.split('?', 1)[0]} "
+              f"from {self.client_address[0]}: {msg}")
+        try:
+            body = msg.encode('utf-8')
+            self.send_response(403)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _check_auth(self):
         if not self.password:
@@ -221,7 +333,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
-        if not self._check_auth():
+        if not self._check_access():
             return
         import os
 
@@ -310,7 +422,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     )
 
     def do_POST(self):
-        if not self._check_auth():
+        if not self._check_access():
             return
         if self._dispatch(self._POST_EXACT, self._POST_QEXACT, self._POST_PREFIX):
             return

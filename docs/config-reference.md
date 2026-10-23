@@ -176,8 +176,11 @@ comment, and keys with no form field such as `SUPERVISE_MUMBLE`,
 `PACKET_APRS_IS_PASSCODE` and `MANAGER_CLAUDE_MODEL`. If a 4.x save ate yours,
 restore them from a backup or from `examples/gateway_config.txt`.
 
-Secrets (`STREAM_PASSWORD`, `EMAIL_APP_PASSWORD`, `WEB_CONFIG_PASSWORD`, ...)
-are never sent to the browser. Leaving a secret field blank keeps the stored
+Secrets are never sent to the browser: every string key whose name contains
+`PASSWORD`, `SECRET`, `PASSCODE` or `TOKEN` (`config_schema.secret_keys()`).
+Before 5.1 this was a hand-kept list that missed `MUMBLE_PASSWORD`,
+`MUMBLE_SERVER_1_PASSWORD`, `MUMBLE_SERVER_2_PASSWORD` and `CAT_PASSWORD`,
+which /config showed in clear. Leaving a secret field blank keeps the stored
 value.
 
 ## Defaults & types

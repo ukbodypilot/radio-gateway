@@ -42,10 +42,19 @@ sys.path.insert(0, _RUN_DIR)         # run dir — wins (deploys go here)
 
 try:
     from gateway_link import GatewayLinkClient, AudioPlugin, AIOCPlugin, discover_gateway
+    from gateway_link import (BUNDLE_SIG_HEADER, load_link_secret,
+                              verify_bundle)
 except ImportError as e:
     print(f"[Endpoint] Failed to import gateway_link: {e}")
     print("[Endpoint] Make sure gateway_link.py is in the parent directory.")
     sys.exit(1)
+
+
+def _link_secret():
+    """LINK_SECRET for this endpoint: $RADIO_GATEWAY_LINK_SECRET, or a
+    link_secret file in the run dir or its parent (the parent survives a
+    reboot on read-only-root Pis that run from tmpfs)."""
+    return load_link_secret(_RUN_DIR) or load_link_secret(_PARENT_DIR)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +234,14 @@ def apply_gain(pcm, gain):
 # Self-update — check gateway for newer endpoint code
 # ---------------------------------------------------------------------------
 
+# The files the gateway's update bundle may contain. MUST stay identical to
+# _ENDPOINT_FILES in web_routes_get.py, in the same order (see below). The
+# updater writes nothing else: a bundle entry outside this list, such as
+# "../../.bashrc", is ignored.
+_UPDATE_FILES = ['gateway_link.py', 'link_endpoint.py', 'log_shipper.py',
+                 'd75_link_plugin.py', 'remote_bt_proxy.py']
+
+
 def _compute_local_version():
     """Compute hash of local endpoint files.
 
@@ -241,8 +258,7 @@ def _compute_local_version():
     import hashlib
     h = hashlib.sha256()
     _dir = os.path.dirname(os.path.abspath(__file__))
-    for fname in ['gateway_link.py', 'link_endpoint.py', 'log_shipper.py',
-                  'd75_link_plugin.py', 'remote_bt_proxy.py']:
+    for fname in _UPDATE_FILES:
         path = os.path.join(_dir, fname)
         if os.path.isfile(path):
             with open(path, 'rb') as f:
@@ -286,11 +302,31 @@ def _check_for_update_locked(gateway_url):
         req = urllib.request.Request(f'{gateway_url}/api/endpoint/files')
         resp = urllib.request.urlopen(req, timeout=30)
         bundle = json.loads(resp.read())
+        _sig = resp.headers.get(BUNDLE_SIG_HEADER, '')
 
         _dir = os.path.dirname(os.path.abspath(__file__))
-        updated = 0
+        files = {}
         for fname, b64data in bundle.items():
-            content = base64.b64decode(b64data)
+            if fname not in _UPDATE_FILES:
+                print(f"[Update] Ignoring unexpected bundle entry {fname!r}")
+                continue
+            files[fname] = base64.b64decode(b64data)
+
+        # With a link secret, only run code the gateway signed with it: an
+        # unsigned or wrongly signed bundle came from something else
+        # answering on the gateway's address.
+        _secret = _link_secret()
+        if _secret:
+            if not verify_bundle(_secret, files, _sig):
+                print(f"[Update] REFUSED: bundle signature "
+                      f"{'invalid' if _sig else 'missing'} (check LINK_SECRET "
+                      f"matches the gateway)")
+                return False
+        else:
+            print("[Update] WARNING: no link_secret — installing an unsigned bundle")
+
+        updated = 0
+        for fname, content in files.items():
             path = os.path.join(_dir, fname)
             # Check if content actually changed
             try:
@@ -313,10 +349,10 @@ def _check_for_update_locked(gateway_url):
                 try:
                     subprocess.run(['sudo', '-n', 'mount', '-o', 'remount,rw', '/'],
                                    capture_output=True, timeout=5)
-                    for fname, b64data in bundle.items():
+                    for fname, content in files.items():
                         _ppath = os.path.join(_base, fname)
                         with open(_ppath, 'wb') as pf:
-                            pf.write(base64.b64decode(b64data))
+                            pf.write(content)
                     subprocess.run(['sudo', '-n', 'mount', '-o', 'remount,ro', '/'],
                                    capture_output=True, timeout=5)
                     print(f"[Update] Persisted to base dir")
@@ -618,6 +654,7 @@ def main():
         on_connect=on_connect_from_master,
         ws_url=ws_url,
         url_resolver=_resolve_tunnel_url,
+        secret=_link_secret(),
     )
 
     # Periodic update checker — runs every hour regardless of connection state

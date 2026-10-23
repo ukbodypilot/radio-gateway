@@ -1351,19 +1351,31 @@ def handle_endpoint_files(handler, parent):
     """GET /api/endpoint/files — download all endpoint files as JSON bundle."""
     import base64
     _dir = os.path.dirname(os.path.abspath(__file__))
-    bundle = {}
+    files = {}
     for fname in _ENDPOINT_FILES:
         for path in [os.path.join(_dir, fname),
                      os.path.join(_dir, 'tools', fname),
                      os.path.join(_dir, 'scripts', fname)]:
             if os.path.isfile(path):
                 with open(path, 'rb') as f:
-                    bundle[fname] = base64.b64encode(f.read()).decode()
+                    files[fname] = f.read()
                 break
+    bundle = {k: base64.b64encode(v).decode() for k, v in files.items()}
+    _send_bundle(handler, parent, files, bundle)
+
+
+def _send_bundle(handler, parent, files, bundle):
+    """Send a code-update bundle, signed with LINK_SECRET when one is set
+    (gateway_link.BUNDLE_SIG_HEADER). The signature rides in a header, not
+    the JSON, because older endpoints write every JSON key out as a file."""
+    from gateway_link import BUNDLE_SIG_HEADER, bundle_signature
+    secret = str(getattr(getattr(parent, 'config', None), 'LINK_SECRET', '') or '')
     body = json_mod.dumps(bundle).encode()
     handler.send_response(200)
     handler.send_header('Content-Type', 'application/json')
     handler.send_header('Content-Length', str(len(body)))
+    if secret:
+        handler.send_header(BUNDLE_SIG_HEADER, bundle_signature(secret, files))
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -1412,14 +1424,10 @@ def handle_winclient_version(handler, parent):
 def handle_winclient_files(handler, parent):
     """GET /api/winclient/files — Windows client files as a base64 JSON bundle."""
     import base64
+    files = _winclient_bundle()
     bundle = {fname: base64.b64encode(content).decode()
-              for fname, content in _winclient_bundle().items()}
-    body = json_mod.dumps(bundle).encode()
-    handler.send_response(200)
-    handler.send_header('Content-Type', 'application/json')
-    handler.send_header('Content-Length', str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+              for fname, content in files.items()}
+    _send_bundle(handler, parent, files, bundle)
 
 
 # ── Google Drive + Tunnel URL API ──

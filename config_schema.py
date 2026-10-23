@@ -18,6 +18,8 @@ the flat loader (radio_gateway.Config) and the [plugin.instance] section
 reader (endpoints_state.read_sections) both use them.
 """
 
+import re
+
 DEFAULTS = {
     'MUMBLE_SERVER': '192.168.2.126',
     'MUMBLE_PORT': 64738,
@@ -392,6 +394,10 @@ DEFAULTS = {
     'SDR_INTERNAL_AUTOSTART': True,    # Auto-start internal SDR (rtl_airband) on gateway startup
     'SDR_INTERNAL_AUTOSTART_CHANNEL': 1,   # Channel slot to recall on autostart (-1 = use last settings)
     'ENABLE_CLOUDFLARE_TUNNEL': False,
+    # Requests through the tunnel get 403 while WEB_CONFIG_PASSWORD is blank,
+    # except the link and endpoint-update routes. true restores the old
+    # open-to-the-internet behaviour.
+    'WEB_TUNNEL_ALLOW_NO_PASSWORD': False,
     # ProcessSupervisor opt-ins. Default false → existing systemd /
     # manual handling stays in charge. Setting true makes the gateway
     # supervise the service: respawn on death, status in /processes.
@@ -462,6 +468,10 @@ DEFAULTS = {
     # Gateway Link (duplex audio + command protocol for remote endpoints)
     'ENABLE_GATEWAY_LINK': False,
     'LINK_PORT': 9700,
+    'LINK_BIND': '',                  # interface address for :9700, blank = all
+    # Shared secret for link endpoints (REGISTER HMAC, signed code updates,
+    # /ws/link without Basic auth). Blank = open, as before 5.1.
+    'LINK_SECRET': '',
     'LINK_AUDIO_DUCK': False,
     'LINK_AUDIO_PRIORITY': 3,
     'LINK_AUDIO_BOOST': 1.0,
@@ -760,7 +770,7 @@ LAYOUT = [
         'ENABLE_USBIP', 'USBIP_SERVER', 'USBIP_DEVICES',
     ]),
     ('link', 'Gateway Link', [
-        'ENABLE_GATEWAY_LINK', 'LINK_PORT',
+        'ENABLE_GATEWAY_LINK', 'LINK_PORT', 'LINK_BIND', 'LINK_SECRET',
         'LINK_AUDIO_DUCK', 'LINK_AUDIO_PRIORITY',
         'LINK_AUDIO_BOOST', 'LINK_AUDIO_DISPLAY_GAIN',
         'LINK_RX_MUTED', 'LINK_TX_MUTED',
@@ -778,7 +788,7 @@ LAYOUT = [
         'ENABLE_WEB_MIC', 'WEB_MIC_VOLUME',
         'WEB_MIC_KEY_TIMEOUT', 'WEB_MIC_MAX_TX',
         'ENABLE_WEB_MONITOR', 'WEB_MONITOR_VOLUME', 'MONITOR_VAD_THRESHOLD',
-        'ENABLE_CLOUDFLARE_TUNNEL',
+        'ENABLE_CLOUDFLARE_TUNNEL', 'WEB_TUNNEL_ALLOW_NO_PASSWORD',
         'ENABLE_GDRIVE', 'GDRIVE_REMOTE', 'GDRIVE_FOLDER',
     ]),
     ('transcription', 'Transcription', [
@@ -870,3 +880,15 @@ def infer(text, hex_ok=False):
 def layout_keys():
     """Every key on the web form, in order."""
     return [k for _, _, keys in LAYOUT for k in keys]
+
+
+_SECRET_RE = re.compile(r'PASSWORD|SECRET|PASSCODE|TOKEN')
+
+
+def secret_keys():
+    """Keys whose values must never be sent to the browser: every string key
+    whose name contains PASSWORD, SECRET, PASSCODE or TOKEN. A pattern
+    rather than a list, because a hand-kept list missed four Mumble/CAT
+    passwords, which /config then showed in clear."""
+    return {k for k, v in DEFAULTS.items()
+            if isinstance(v, str) and _SECRET_RE.search(k)}

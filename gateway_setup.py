@@ -409,8 +409,14 @@ def setup_kv4p_loopback_endpoints(gw):
             '--no-update',
         ]
         try:
+            # The secret goes in the environment, not argv, so it
+            # doesn't show in `ps`.
+            from gateway_link import LINK_SECRET_ENV
+            env = dict(os.environ)
+            env[LINK_SECRET_ENV] = str(getattr(gw.config, 'LINK_SECRET', '') or '')
             gw.process_supervisor.add(
                 name, argv,
+                env=env,
                 cwd=repo_root,
                 restart=True, backoff=(2, 30),
             )
@@ -652,6 +658,8 @@ def setup_gateway_link(gw):
             supervisor=gw.process_supervisor,
             ptt_timeout=getattr(gw.config, 'PTT_TIMEOUT_SECONDS', 180),
             on_ptt_timeout=lambda name: gw._link_ptt_active.__setitem__(name, False),
+            bind=str(getattr(gw.config, 'LINK_BIND', '') or ''),
+            secret=str(getattr(gw.config, 'LINK_SECRET', '') or ''),
         )
         gw.link_server.start()
         print(f"  Gateway Link listening on port {link_port}")
@@ -808,6 +816,15 @@ def setup_supervised_streamers(gw):
 def setup_cloudflare_tunnel(gw):
     if not getattr(gw.config, 'ENABLE_CLOUDFLARE_TUNNEL', False):
         return
+    if not getattr(gw.config, 'WEB_CONFIG_PASSWORD', ''):
+        if getattr(gw.config, 'WEB_TUNNEL_ALLOW_NO_PASSWORD', False):
+            print("  [Tunnel] WARNING: no WEB_CONFIG_PASSWORD and "
+                  "WEB_TUNNEL_ALLOW_NO_PASSWORD = true — the whole web UI, "
+                  "including the manager, is open to anyone with the URL")
+        else:
+            print("  [Tunnel] No WEB_CONFIG_PASSWORD: the tunnel serves only "
+                  "link endpoints and updates; the web UI answers 403 there "
+                  "until a password is set")
     try:
         from gateway_utils import CloudflareTunnel
         gw.cloudflare_tunnel = CloudflareTunnel(

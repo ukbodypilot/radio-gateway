@@ -4,6 +4,47 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Security — web UI, link port and endpoint updates
+
+Fixes H1, H3, H4, H5 and M3 from the 2026-10-22 review. Two of these change
+behaviour on upgrade; see *Upgrading* below.
+
+- **Cross-site requests are refused.** POSTs and WebSocket upgrades whose
+  `Origin` isn't the gateway, and cross-site sub-resource GETs, get a 403.
+  Any web page you visited could previously drive the UI with your
+  credentials, up to `/manager/save` + `/manager/run` (Claude with
+  `--dangerously-skip-permissions`), `/reboothost` or `/ws_mic`.
+- **No password, no tunnel.** With `WEB_CONFIG_PASSWORD` blank, requests
+  through the Cloudflare tunnel get a 403, except the endpoint update routes
+  and `/ws/link`, so tunnel endpoints keep working. The LAN is unchanged.
+  `WEB_TUNNEL_ALLOW_NO_PASSWORD = true` restores the old behaviour.
+- **`LINK_SECRET`** (new, blank by default). When set, the link server
+  challenges every connection and REGISTER must carry an HMAC of the nonce
+  and name, checked before the duplicate-name eviction, so a host on the
+  network can no longer take over `kv4p-v` or `ic7100`. `/ws/link` then
+  skips Basic auth, so a web password no longer locks tunnel endpoints out.
+  `LINK_BIND` (new) limits the link port to one interface.
+- **Signed endpoint updates.** With `LINK_SECRET`, `/api/endpoint/files` and
+  `/api/winclient/files` carry `X-Bundle-Signature`, and an endpoint with a
+  `link_secret` file refuses a bundle that isn't signed with it. Endpoints
+  now write only the files on their update list (a `../` name was written
+  anywhere before). The update routes need no web password.
+- **/config hid only six secrets.** It now hides every key whose name
+  contains PASSWORD, SECRET, PASSCODE or TOKEN, which adds the three Mumble
+  passwords and `CAT_PASSWORD` (shown in clear before).
+- The fleet manager's localhost snapshot sends the web password when one is
+  set (it got 401s before).
+
+#### Upgrading
+
+- If you use the web UI **through the tunnel without a password**, set
+  `WEB_CONFIG_PASSWORD` (or set `WEB_TUNNEL_ALLOW_NO_PASSWORD = true`).
+- To authenticate endpoints, set `LINK_SECRET` on the gateway and put the same
+  value in a `link_secret` file next to `link_endpoint.py` on every endpoint
+  (and next to `windows_audio_client.py`). See
+  [gateway_link.md](docs/gateway_link.md#authentication). Until an endpoint has
+  the file the gateway refuses it. Nothing changes while `LINK_SECRET` is blank.
+
 ### Fixed
 
 - `SDR_PRIORITY_ORDER` now takes effect. Both tuners were added to the listen
