@@ -6,10 +6,10 @@ Pick the path that matches what you're trying to do.
 
 | Doc | What it covers |
 |-----|---------------|
-| [../INSTALL.md](../INSTALL.md) | Full install: gateway service, dependencies, systemd units, audio loopback. |
+| [../INSTALL.md](../INSTALL.md) | Full install: gateway service, dependencies, systemd units, audio loopback; updating an existing install; the optional pinned virtualenv. |
 | [HARDWARE_SETUP.md](HARDWARE_SETUP.md) | Physical wiring: AIOC, relays, antennas, the rack |
 | [pi-endpoint-build.md](pi-endpoint-build.md) | Building a Pi-based link endpoint (D75 BT bridge or CM5 AIOC HT) |
-| [config-reference.md](config-reference.md) | Every `gateway_config.txt` key, grouped by feature |
+| [config-reference.md](config-reference.md) | Every `gateway_config.txt` key, grouped by feature; how the file is read and saved; adding a key |
 
 ## 🎙️ I want to operate the radio gateway
 
@@ -24,15 +24,16 @@ Pick the path that matches what you're trying to do.
 | [allstar_bridge.md](allstar_bridge.md) | AllStarLink bridge node + in-gateway USRP plugin + `/usrp` panel |
 | [packet-radio.md](packet-radio.md) | Packet TNC + APRS + Winlink email |
 | [loop-recorder.md](loop-recorder.md) | Per-bus rolling buffer + scrubback |
-| [mcp.md](mcp.md) | 167 MCP tools for AI control + the tools the bots use |
+| [mcp.md](mcp.md) | 167 MCP tools for AI control, and what is deliberately not exposed |
 | [TTS_TEXT_COMMANDS_GUIDE.md](TTS_TEXT_COMMANDS_GUIDE.md) | TTS engines + voices, soundboard, background music + repeating message, smart announcements, AI text |
 
 ## 🔌 I want to extend it — write a plugin or endpoint
 
 | Doc | What it covers |
 |-----|---------------|
-| [plugin-development.md](plugin-development.md) | Building a new radio plugin (bus-based interface) |
-| [gateway_link.md](gateway_link.md) | Link endpoint protocol — connect remote radios over TCP |
+| [plugin-development.md](plugin-development.md) | Building a new radio plugin (bus-based interface), testing it off the box |
+| [gateway_link.md](gateway_link.md) | Link endpoint protocol — connect remote radios over TCP or the Cloudflare tunnel |
+| [../README.md#contributing](../README.md#contributing) | Running the tests and lint that CI runs |
 | [endpoint_logs_design.md](endpoint_logs_design.md) | How every link endpoint's stdout/stderr is captured under `logs/endpoints/` |
 | [mixer-v2-design.md](mixer-v2-design.md) | Audio routing architecture: buses, sinks, processors |
 

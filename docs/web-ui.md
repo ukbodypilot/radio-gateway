@@ -98,7 +98,24 @@ annunciator on the landing page so everything is visible at one glance.
   (handlers) in `web_server.py`, which needs a service restart.
 - Route dispatch is table-driven: exact-match dict → query-stripped exact →
   ordered prefix list, then plugin-contributed routes (`web_routes()` hook),
-  then 404 (GET) / config-form fallback (POST).
+  then 404. Only `POST /config` saves the config file; before 5.0.0 any
+  unmatched POST fell through to the config save.
+- The **config page** (`/config`) is generated from `config_schema.LAYOUT`;
+  the grey text beside each field is its hint (`_FIELD_HINTS` in
+  `web_server.py`) and its default. Saving edits `gateway_config.txt` in
+  place and keeps everything the form doesn't show; see
+  [config-reference.md](config-reference.md#saving-from-the-web-config-form).
+- **HTTPS**: `WEB_CONFIG_HTTPS = self-signed` or `letsencrypt` (the latter for
+  `DDNS_HOSTNAME`) serves the UI over TLS on the same port. Before 5.0.0 both
+  modes were silently read as `false`, and in `letsencrypt` mode a NameError in
+  the renewal thread took the web UI down; renewal now starts only after the
+  server is up.
+- **WebSockets** (`/ws_audio` for the PCM player, `/ws_mic`, `/ws_monitor`, `/ws/link`)
+  share one RFC 6455 codec in `gateway_link.py`. Messages over 1 MB drop the
+  connection; fragmented and split frames are handled.
+- **Manual PTT from the UI** (radio pages, keyboard) is subject to the
+  transmit time-out `PTT_TIMEOUT_SECONDS` (default 180 s): the radio is
+  force-unkeyed and won't re-key until requests pause for 5 s.
 
 ## Source pointers
 
@@ -111,4 +128,7 @@ annunciator on the landing page so everything is visible at one glance.
 | `web_pages/dash_operate.html` | Playback / Transmit / Automation |
 | `web_pages/dash.css`, `dash.js` | Dashboard-family shared styles + helpers |
 | `web_pages/common.css`, `common.js` | Theme tokens, VU engine, st* builders |
-| `web_server.py` | `_STATIC_PAGES`, dispatch tables, auth, HTTPS |
+| `web_server.py` | `_STATIC_PAGES`, dispatch tables, auth, HTTPS, config page + `_save_config` |
+| `web/certs.py` | Self-signed / Let's Encrypt certificates and renewal |
+| `web_routes_stream.py` | WebSocket handlers (audio, mic, monitor, `/ws/link` bridge) |
+| `gateway_link.py` | The shared WebSocket codec (`ws_encode`, `ws_read_frame`, `ws_read_message`) |

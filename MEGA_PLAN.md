@@ -17,6 +17,13 @@
 
 **Current focus:** ✅ **COMPLETE** — all phases live and verified in production. See "Closing summary" at the end of this file.
 
+> **Historical record.** This file is the plan as it was executed in 2026 and
+> is not kept in step with the code. Since then: the alert engine emails
+> instead of using Telegram, and defaults to off (`ENABLE_ALERT_ENGINE`); the
+> Telegram bot and `_load_telegram_config` are gone (5.0.0); the legacy DSP in
+> `core/audio_proc.py` was removed; config defaults moved to
+> `config_schema.py`. For current behaviour read `docs/` and `CHANGELOG.md`.
+
 ---
 
 ## Ordering rationale

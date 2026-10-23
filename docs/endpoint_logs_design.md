@@ -50,6 +50,7 @@ Module `tools/log_shipper.py`:
   - Daemon flush thread wakes every 1.0s; if the link is up, ships everything in the deque as a single `P.LOG` frame.
   - On reconnect: ships the whole backlog (answers Q3: **yes backlog**). The value is "what happened just before the crash that killed the link." Cost is one bursty frame on each reconnect; acceptable.
   - Best-effort send: failed `_link._send(...)` re-queues the batch at the front of the deque and tries again next tick.
+  - A batch is split into several LOG frames so each payload stays under the link protocol's 65535-byte limit. Before 5.0.0 an oversize batch (a reconnect backlog, typically) raised `struct.error` in the flush thread and stopped that endpoint's log shipping until it restarted.
 
 Installed by `link_endpoint.py`'s `__main__` immediately after the `GatewayLinkClient` is constructed, before any plugin loads. That way the shipper captures every line including plugin setup logs.
 
@@ -65,7 +66,7 @@ Module `core/endpoint_logs.py`:
   - `append(endpoint_name, lines)` is the only write path; internal `threading.Lock` serializes appends per file handle.
 - `tail(endpoint_name, lines=50)` — returns last N lines of the file as a string. Used by both the MCP tool and the web UI.
 
-Wired into `GatewayLinkServer` via a new constructor kwarg `on_log_lines=callback`. `setup_gateway_link()` in `core/lifecycle.py` instantiates the store and passes `store.append` as the callback.
+Wired into `GatewayLinkServer` via a new constructor kwarg `on_log_lines=callback`. `setup_gateway_link()` in `gateway_setup.py` instantiates the store and passes `store.append` as the callback.
 
 ## MCP tool
 

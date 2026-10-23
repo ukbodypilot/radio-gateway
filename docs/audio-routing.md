@@ -184,11 +184,45 @@ keyer on the same radio is the two-owners bug above all over again.
 look here. A `PTT ON` that produces no carrier is a hardware or plugin problem
 instead.
 
+## Transmit time-out
+
+Whatever keys a radio (a bus, the web UI, the keyboard, an MCP tool), the
+TH-9800 plugin and every link endpoint's `ptt` command pass through a
+`PttTimeOutTimer` (`gateway_link.py`). After `PTT_TIMEOUT_SECONDS` keyed
+(default 180, `0` = off) the radio is forced unkeyed and the log shows
+`PTT time-out (180s) -- forcing unkey`. Because a bus that is still pushing
+audio re-requests the key every tick, re-keying is then refused until the
+requests **pause for 5 s**; the next real over keys normally.
+
+So a repeater or rebroadcast bus fed by a source that never goes quiet (a stuck
+squelch, a carrier, a looping file) transmits for at most three minutes, then
+waits for a gap. Raise the limit, or set `0`, only if you have a reason to
+transmit longer than that without a break. The browser mic keeps its own
+120 s time-out on top (see [web-ui.md](web-ui.md)).
+
 ## Bus tick architecture
 
-A single bus tick thread (~960 samples / 20 ms cadence) drives every bus's mix step. Sinks that would block on the tick (Broadcastify encoder, automation recorder, Mumble TX, EchoLink) run **off-tick** on per-sink drain threads — `_enqueue_sink` stages a sink call into a bounded deque (maxlen 8, drop-oldest); a `SinkDrain-<id>` daemon thread drains it. This keeps the bus tick at sub-millisecond jitter even when one sink is slow.
+A single BusManager tick thread drives every bus's mix step every **50 ms**
+(2400 samples at 48 kHz, the gateway's chunk size). It is the thread doing the
+real audio work (source reads, mixing, ducking, sink delivery), so it is the
+one that asks for realtime scheduling (`SCHED_RR`, priority 10; `nice -10` if
+that is refused). The older `audio_transmit_loop` in `core/transmit.py` runs
+at **normal priority** since 5.0.0: it only applies queued PTT changes, hands
+audio to the MP3 stream encoder and records the trace, and at equal realtime
+priority it could delay the tick.
+
+The tick thread also owns Python's garbage collector. `gc.disable()` is
+process-wide, so BusManager disables automatic collection and runs the
+collections itself on the tick, at points where a pause is cheap (and
+`gc.freeze()` once startup objects have settled). Before 5.0.0 only the tick
+re-enabled collection, so a gateway with no busses never collected at all.
+
+Sinks that would block on the tick (Broadcastify encoder, automation recorder, Mumble TX, EchoLink) run **off-tick** on per-sink drain threads — `_enqueue_sink` stages a sink call into a bounded deque (maxlen 8, drop-oldest); a `SinkDrain-<id>` daemon thread drains it. This keeps the bus tick at sub-millisecond jitter even when one sink is slow.
 
 The transcriber, speaker, link TX, loop recorder, and remote audio TX were off-tick by design from v2 onward.
+
+A tick that raises keeps running. The traceback is printed once, then a count
+once a minute while the same error repeats, instead of 20 tracebacks a second.
 
 ## Configuration
 

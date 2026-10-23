@@ -31,7 +31,7 @@ If your hardware uses a different format, convert in your plugin.
 ### Step 1: Copy the template
 
 ```bash
-cd ~/Downloads/radio-gateway
+cd /path/to/radio-gateway
 cp examples/example_plugin/plugin.py plugins/myradio.py
 ```
 
@@ -74,6 +74,13 @@ MYRADIO_BAUD = 9600
 
 The enable key is always `ENABLE_` + `PLUGIN_ID` in uppercase.
 
+Your plugin's own keys don't need an entry in `config_schema.py`: a key with
+no schema default is typed by `config_schema.infer()` (number, then
+`true`/`false`, else string). If your plugin ships with the repo and you add
+its keys to `examples/gateway_config.txt`, add them to `config_schema.py` too,
+or `tests/test_config_schema.py` fails; see
+[config-reference.md](config-reference.md#adding-a-new-config-key).
+
 ### Step 4: Restart gateway
 
 ```bash
@@ -111,7 +118,8 @@ You should see in the logs:
 
 ### Testing standalone
 
-Before integrating, test your plugin in isolation:
+Before integrating, test your plugin in isolation. Run it from the repo root
+so `plugins/` imports:
 
 ```python
 # test_myplugin.py
@@ -133,6 +141,28 @@ for i in range(10):
     import time; time.sleep(0.05)
 
 p.cleanup()
+```
+
+To keep a test, put it in `tests/test_myradio.py` as a plain script that
+prints PASS/FAIL lines and exits non-zero on failure (see any existing test).
+`python3 tests/run_all.py myradio` runs it with `tests/_hwstubs.py` loaded, so
+`hid`, `pyaudio`, `pymumble` and `opuslib` import even on a machine without
+them; the stubs refuse to open a device, so test the logic around your
+hardware, not the hardware. CI runs every test on each push.
+
+### Errors you catch and carry on from
+
+Don't write `except Exception: pass`. Use `log_util.log_exc()`, which logs
+`[swallowed] myradio.py:LINE in function: Error: ...` once per call site per
+5 minutes, so a fault inside a 50 ms loop is visible without flooding the log:
+
+```python
+from log_util import log_exc
+
+try:
+    self._serial.write(cmd)
+except Exception:
+    log_exc()
 ```
 
 ### Common pitfalls
@@ -176,6 +206,34 @@ The level fallback is a safety net, not the contract.
 radio: two owners with private `_desired`/`_applied` state is a known failure
 mode — see [audio-routing.md](audio-routing.md#one-bus-per-sink).
 
+**If your plugin can transmit, give it the transmit time-out.** Every built-in
+PTT path honours `PTT_TIMEOUT_SECONDS` (default 180 s, `0` = off) through
+`PttTimeOutTimer` from `gateway_link.py`. The TH-9800 plugin is the pattern:
+
+```python
+from gateway_link import PttTimeOutTimer
+
+def setup(self, config, gateway=None):
+    self._tot = PttTimeOutTimer(config.PTT_TIMEOUT_SECONDS, self._tot_expired)
+    ...
+
+def _tot_expired(self, _key):
+    print(f"  [MyRadio] PTT time-out ({self._tot.limit:g}s) -- forcing unkey")
+    self._key(False)
+
+def set_ptt(self, on):
+    if on:
+        if not self._tot.allow_key('myradio'):
+            return            # timed out and still held: stay unkeyed
+    else:
+        self._tot.released('myradio')
+    self._key(on)
+```
+
+`allow_key()` arms the timer on the first key; after it fires, key-on requests
+are refused until they pause for 5 s. Link endpoints get this from the gateway
+for free.
+
 **Diagnosing:** no `PTT ON` line at all means the key was never *requested*. A
 `PTT ON` with no carrier means the request reached your plugin and the hardware
 path is at fault.
@@ -189,9 +247,11 @@ Your radio runs on a separate device and connects to the gateway over TCP.
 ### Step 1: Set up the remote device
 
 ```bash
-# Copy these two files to your Pi/device:
-scp gateway:~/Downloads/radio-gateway/tools/link_endpoint.py .
-scp gateway:~/Downloads/radio-gateway/gateway_link.py .
+# Copy these files to your Pi/device (one directory):
+scp gateway:/path/to/radio-gateway/gateway_link.py .
+scp gateway:/path/to/radio-gateway/tools/link_endpoint.py .
+scp gateway:/path/to/radio-gateway/tools/log_shipper.py .
+pip install pyaudio        # for the audio/aioc plugins
 ```
 
 ### Step 2: Test with a sound card
@@ -204,7 +264,10 @@ python3 link_endpoint.py --list-devices
 python3 link_endpoint.py --server 192.168.2.140:9700 --name my-radio
 ```
 
-Your radio should appear in the gateway's routing UI immediately.
+Your radio should appear in the gateway's routing UI immediately, as source
+`my_radio` and TX sink `my_radio_tx`. Off the LAN, use
+`--tunnel-url wss://<gateway-host>/ws/link` instead of `--server` (see
+[gateway_link.md](gateway_link.md#websocket-cloudflare-tunnel)).
 
 ### Step 3: Write a custom plugin (optional)
 
@@ -253,19 +316,38 @@ class MyEndpointPlugin(RadioPlugin):
         return {"plugin": self.name, "frequency": self._freq}
 ```
 
-Register and run:
+Save it as `tools/myradio_link_plugin.py` (the shipped ones are
+`d75_link_plugin.py`, `kv4p_link_plugin.py` and `ic7100_link_plugin.py`), then
+register it lazily in `tools/link_endpoint.py` so hosts without its
+dependencies still start:
+
+```python
+def _load_myradio():
+    from myradio_link_plugin import MyEndpointPlugin
+    return MyEndpointPlugin
+
+_LAZY_PLUGINS = {
+    ...,
+    'myradio': _load_myradio,
+}
+```
 
 ```bash
-# In link_endpoint.py, add to _PLUGINS dict:
-# from my_endpoint_plugin import MyEndpointPlugin
-# _PLUGINS['myradio'] = MyEndpointPlugin
-
 python3 link_endpoint.py --server 192.168.2.140:9700 --name my-radio --plugin myradio
 ```
 
+Pass per-instance settings with `--plugin-config-json '{"default_freq": 146.52}'`;
+they arrive merged into the `config` dict given to `setup()`.
+
+You don't need a time-out timer on the endpoint: the gateway applies
+`PTT_TIMEOUT_SECONDS` to every `ptt` command it sends. A local safety unkey
+(as `AIOCPlugin` does after 60 s) still helps if the gateway disappears
+mid-over.
+
 ### Wire Protocol
 
-TCP, framed packets: `[type:1][length:2 BE][payload:N]`
+TCP (or one frame per WebSocket binary message through `/ws/link`), framed
+packets: `[type:1][length:2 BE][payload:N]`, payload at most 65535 bytes.
 
 | Type | Byte | Direction | Payload |
 |------|------|-----------|---------|
@@ -274,17 +356,20 @@ TCP, framed packets: `[type:1][length:2 BE][payload:N]`
 | STATUS | 0x03 | Both | JSON status dict |
 | REGISTER | 0x04 | Endpoint → Server | JSON `{"name":"x","plugin":"x","capabilities":{...}}` |
 | ACK | 0x05 | Endpoint → Server | JSON `{"cmd_id":"x","ok":true,...}` |
+| LOG | 0x06 | Endpoint → Server | JSON `{"type":"log","lines":[...]}` (stdout/stderr, see [endpoint_logs_design.md](endpoint_logs_design.md)) |
 
 ### Connection lifecycle
 
 ```
-1. Endpoint connects to gateway:9700
-2. Endpoint sends REGISTER frame → gateway shows it in routing UI
+1. Endpoint connects to gateway:9700 (or wss://.../ws/link)
+2. Endpoint sends REGISTER within 10 s → gateway shows it in routing UI
+   (a name that is already connected is rejected)
 3. Both sides exchange AUDIO frames (50ms chunks, continuous)
 4. Gateway sends COMMAND frames → endpoint replies with ACK
-5. Both send STATUS heartbeats (every 5-10s)
-6. TCP close or 15s timeout → cleanup
-7. Endpoint auto-reconnects every 5s
+   (ptt commands pass the gateway's PTT time-out first)
+5. Gateway sends a heartbeat every 5 s; endpoint sends STATUS every 10 s
+6. TCP close, or 90 s with no frame → gateway drops the endpoint
+7. Endpoint reconnects with backoff (2 s, growing to 60 s)
 ```
 
 ### Auto-start on boot (systemd)
@@ -321,14 +406,16 @@ sudo systemctl start radio-endpoint
 │                    Gateway Machine                           │
 │                                                              │
 │  plugins/myradio.py ──┐                                      │
-│  th9800_plugin.py ────┤                                      │
-│  sdr_plugin.py ───────┤     ┌──────────────┐                │
-│  kv4p_plugin.py ──────┼────>│  BusManager   │──> Mumble     │
+│  plugins/th9800.py ───┤                                      │
+│  plugins/sdr.py ──────┤     ┌──────────────┐                │
+│  plugins/usrp.py ─────┼────>│  BusManager   │──> Mumble     │
 │                       │     │              │──> Broadcastify │
 │  Link Endpoints ──────┤     │  Listen Bus  │──> Speaker     │
-│   (TCP :9700)         │     │  Solo Bus    │──> Recording   │
-│    ├─ d75-bt ─────────┤     │  Duplex Bus  │──> Transcribe  │
-│    ├─ ftm-150 ────────┤     │  Simplex Bus │──> WebSocket   │
+│   (TCP :9700 or       │     │  Solo Bus    │──> Recording   │
+│    wss /ws/link)      │     │  Duplex Bus  │──> Transcribe  │
+│    ├─ d75 ────────────┤     │  Simplex Bus │──> WebSocket   │
+│    ├─ kv4p-v ─────────┤     │              │                │
+│    ├─ ftm-150 ────────┤     │              │                │
 │    └─ my-radio ───────┘     └──────────────┘                │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -348,10 +435,14 @@ sudo systemctl start radio-endpoint
 
 | File | Radio | Type | Connection |
 |------|-------|------|------------|
-| `th9800_plugin.py` | Yaesu TH-9800 | Local | AIOC USB + CAT TCP |
-| `kv4p_plugin.py` | KV4P HT | Local | USB serial + Opus |
-| `sdr_plugin.py` | RSPduo SDR | Local | PipeWire + rtl_airband |
+| `plugins/th9800.py` | TYT TH-9800 | Local | AIOC USB + CAT TCP; uses `PttTimeOutTimer` |
+| `plugins/sdr.py` | RSPduo SDR | Local | PipeWire + rtl_airband |
+| `plugins/packet.py` | Packet TNC | Local | Direwolf on a link endpoint |
+| `plugins/usrp.py`, `plugins/usrp2.py` | AllStarLink bridge | Local | USRP over UDP + AMI |
 | `gateway_link.py` (AudioPlugin) | Generic sound card | Endpoint | PyAudio/ALSA |
-| `gateway_link.py` (AIOCPlugin) | AIOC + CM108 PTT | Endpoint | PyAudio + HID |
+| `gateway_link.py` (AIOCPlugin) | AIOC + HID GPIO PTT | Endpoint | PyAudio + HID |
+| `tools/kv4p_link_plugin.py` | KV4P HT | Endpoint | USB serial + Opus |
+| `tools/d75_link_plugin.py` | Kenwood TH-D75 | Endpoint | Bluetooth RFCOMM + SCO |
+| `tools/ic7100_link_plugin.py` | Icom IC-7100 | Endpoint | CI-V + USB audio |
 | `examples/example_plugin/plugin.py` | Template | Local | (your hardware) |
 | `plugins/_base.py` | Formal contract reference (Protocol + capability flags + optional hooks) | — | — |

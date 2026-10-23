@@ -2,6 +2,10 @@
 
 ## Status: COMPLETE — v2.0 released 2026-03-31
 
+This page is the design as built for v2.0, kept as the architecture
+reference. Where the code has moved on since, the current state is noted
+inline; the operator-facing description is [audio-routing.md](audio-routing.md).
+
 ## Overview
 
 The v2.0 architecture replaced the monolithic AudioMixer with a bus-based
@@ -76,13 +80,18 @@ class RadioPlugin:
     def get_status(self) -> dict
 ```
 
-**Implemented plugins:**
+**Implemented plugins (v2.0):**
 - `SDRPlugin` — RSPduo dual tuner with internal master/slave ducking.
   Bus sees one source. Each tuner has its own frequency, processing chain,
   and UI controls within the plugin.
 - `TH9800Plugin` — AIOC sound card + CAT serial + relay PTT
 - `D75Plugin` — Bluetooth audio + TCP CAT proxy
 - `KV4PPlugin` — CP2102 USB serial + Opus codec
+
+**Since then:** local plugins live in `plugins/` and are auto-discovered
+(`th9800.py`, `sdr.py`, `packet.py`, `usrp.py`, `usrp2.py`). The D75, KV4P and
+IC-7100 became **link endpoints** (`tools/*_link_plugin.py`) and reach the bus
+as one `LinkAudioSource` each; see [gateway_link.md](gateway_link.md).
 
 Processing is owned by the plugin. The bus receives clean, processed PCM.
 
@@ -106,7 +115,13 @@ each node. Mute buttons and gain sliders are available per-node.
 Routing configuration is saved/loaded as JSON.
 
 A source can appear on multiple busses (e.g., D75 on both a solo bus and
-a repeater bus). TX audio from multiple busses is mixed before delivery.
+a repeater bus).
+
+**Changed since v2.0:** a **sink takes at most one bus**. The original plan
+mixed TX audio from several busses before delivery, but the implementation
+never did; two busses into one radio gave it two PTT owners and stranded the
+transmitter. `routing_rules.py` now refuses the second edge. See
+[audio-routing.md](audio-routing.md#one-bus-per-sink).
 
 ## Bus API
 
@@ -125,15 +140,18 @@ class BusOutput:
     status: dict         # ducking state, levels, etc.
 ```
 
-The BusManager runs all routing-configured busses alongside the main loop.
+The BusManager runs all routing-configured busses on one tick thread (50 ms,
+`SCHED_RR`), which does every source read, mix and sink delivery and owns the
+garbage collector. See
+[audio-routing.md](audio-routing.md#bus-tick-architecture).
 
-## Key Files
+## Key Files (current)
 
 - `audio_bus.py` — Bus classes, DuckGroup, SourceSlot, mixing utilities
-- `sdr_plugin.py` — SDRPlugin (RSPduo dual tuner)
-- `th9800_plugin.py` — TH9800Plugin
-- `d75_plugin.py` — D75Plugin
-- `kv4p_plugin.py` — KV4PPlugin
-- `gateway_core.py` — Bus instantiation, main loop, sink delivery
-- `gateway_utils.py` — Extracted utility classes
-- `web_pages/` — 13 static HTML pages including routing UI
+- `bus_manager.py` — bus lifecycle, tick thread, routing reload, sink dispatch, PTT workers
+- `routing_rules.py` — routing validation (one bus per sink), shared by UI, API and BusManager
+- `plugins/sdr.py`, `plugins/th9800.py`, `plugins/packet.py`, `plugins/usrp.py`, `plugins/usrp2.py` — local plugins
+- `plugin_loader.py` — plugin auto-discovery (`ENABLE_<PLUGIN_ID>`)
+- `audio_sources.py` — every non-plugin source and sink, including `LinkAudioSource`
+- `gateway_core.py`, `core/` — gateway object, lifecycle, monitor and transmit loops
+- `web_pages/routing.html` — the Drawflow routing editor

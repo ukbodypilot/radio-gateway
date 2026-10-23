@@ -48,6 +48,7 @@ More screenshots in `docs/screenshots/`.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Highlights:
 
+- **v5.0** (2026-10-23) — a full code review and its fixes: saving the config form no longer deletes the `[kv4p.*]` sections and keys the form doesn't show; every manual PTT path (TH-9800, D75, KV4P, IC-7100) has a transmit time-out (`PTT_TIMEOUT_SECONDS`, default 180 s); `self-signed` / `letsencrypt` HTTPS modes actually load; loop recording at 48 kbps (`LOOP_RECORD_KBPS`, ~0.5 GiB/day per bus instead of 1.3). Refactor: one config schema (`config_schema.py`), one WebSocket codec (`gateway_link.py`), hardware libraries checked at startup so the whole test suite runs off the box, CI on every push, swallowed exceptions logged. The Telegram bot is gone; alerts are emailed.
 - **v4.6** (2026-08-27) — evidence-based health: a Broadcastify reconnect isn't "successful" until bytes reach the wire, and reconnect workers are serialised so they stop killing each other's connections; a sink can now only be fed by one bus; plugin radios key on audio level as well as the PTT flag, closing a gap where the same source keyed a link endpoint but never the TH-9800; the config form stopped shipping secrets to the browser; manager checks run as one-shot `claude -p` (68M → ~86k tokens per run); Windows client gained live device switching and self-update; DDNS only updates on IP change and alarms on hostname expiry.
 - **v4.5** (2026-08-03) — persistent AllStar links with a backoff/dormant reconciler (`ilink 3` is one-shot; app_rpt never re-establishes it); shared node address book (`usrp_nodes.json`); browser mic is now hold-to-talk with a dead-man release and a 120 s time-out timer.
 - **v4.4** (2026-08-02) — AS1 / AS2 monitor taps in the shell bar: listen to either AllStar instance from any page.
@@ -73,14 +74,16 @@ cd radio-gateway
 bash scripts/install.sh
 ```
 
-The installer walks 15 phases (distro detection, system packages, ALSA loopback, Python packages, KV4P driver, UDEV rules, audio + realtime groups, optional Darkice / SDR / Mumble server, systemd unit). Ends with a health check that flags anything off.
+The installer walks 16 numbered phases (system packages, ALSA loopback, Python packages, KV4P driver, UDEV rules, audio + realtime groups, optional legacy DarkIce / SDR / ADS-B / Mumble server, config, systemd unit, Prometheus + Grafana). Ends with a health check that flags anything off, including email alerts that aren't configured.
 
 After it finishes:
 
 1. **Log out and back in** (or `newgrp audio`) so group memberships take effect.
 2. Edit `gateway_config.txt` — at minimum `[mumble] MUMBLE_SERVER / MUMBLE_PORT / MUMBLE_USERNAME / MUMBLE_PASSWORD`. The example config opens with a Fresh-Install-Minimum block.
-3. Start: `sudo systemctl enable --now radio-gateway && sudo journalctl -u radio-gateway -f`.
+3. Start: `sudo systemctl enable --now radio-gateway && sudo journalctl -u radio-gateway -n 100 --no-pager`. A missing hardware library (hidapi, pyaudio, pymumble) stops the service at startup with the command to install it; a config value that can't be read prints `WARNING: gateway_config.txt:<line>:` and keeps its default.
 4. Open `http://<host>:8080/dashboard`.
+
+**Updating:** `git pull`, then `sudo systemctl restart radio-gateway`. Read the release's *Upgrading* notes in [CHANGELOG.md](CHANGELOG.md) first; 5.0.0 has steps for removing the Telegram services.
 
 ## Documentation
 
@@ -103,24 +106,31 @@ radio-gateway/
 ├── radio_gateway.py            entry point
 ├── gateway_core.py             RadioGateway class, main loop
 ├── gateway_setup.py            phased initialization helpers
-├── gateway_mcp.py              MCP server entry point (167 tools, stdio)
+├── core/                       lifecycle, monitor loop, transmit loop, PTT, Mumble I/O, endpoint log store
+├── hw_deps.py                  hardware-library check at startup (hidapi, pyaudio, pymumble) + pymumble SSL shims
+├── gateway_mcp.py              MCP server entry point (167 tools, stdio); tools in mcp_server/tools/
 ├── web_server.py               HTTP/WS server + config UI
+├── config_schema.py            every setting: default, type, and its place on the config form
 ├── config_format.py            gateway_config.txt value read/write rules (quoting, inline comments)
-├── web_routes_*.py             per-domain POST handlers (transcribe / radio / audio / text / system / manager / automation)
-├── audio_bus.py, bus_manager.py        bus mixer
+├── log_util.py                 log_exc(): rate-limited logging for caught-and-ignored exceptions
+├── web_routes_*.py             per-domain handlers (get / stream / transcribe / radio / audio / text / system / manager / automation / loop / packet)
+├── audio_bus.py, bus_manager.py        bus mixer (the BusManager tick thread does all audio work)
 ├── audio_sources.py            all source/sink classes
 ├── transcriber.py, transcribe_engine.py    ASR + pool dispatcher
 ├── manager_engine.py           Fleet Manager scheduler
-├── plugins/                    radio plugins (th9800, sdr, packet, usrp, usrp2)
-├── tools/*_link_plugin.py      link-endpoint plugins (d75, kv4p, ic7100), deployed to the endpoint host
-├── gateway_link.py             link endpoint protocol + server
+├── email_notifier.py, alerts.py         email alerts; optional Prometheus-threshold alert engine
+├── plugins/                    radio plugins (th9800, sdr, packet, usrp, usrp2), auto-discovered
+├── gateway_link.py             link endpoint protocol, server, client, WebSocket codec, PTT time-out timer
+├── kv4p_endpoints.py           helpers for the KV4P link endpoints (gateway_setup.py spawns one per [kv4p.<name>] section)
 ├── loop_recorder.py            per-bus continuous recording
-├── packet_radio.py             Direwolf TNC + Pat client
+├── packet_tnc.py, packet/      Direwolf TNC, APRS, Winlink (Pat), BBS
 ├── smart_announce.py, radio_automation.py
 ├── web_pages/                  HTML pages + common.css/.js (shell) + dash.css/.js (dashboard family)
 ├── docs/                       feature docs grouped by audience (see docs/index.md)
-├── scripts/                    install.sh + systemd unit templates
-├── tools/                      transcribe_worker.py, link_endpoint.py
+├── scripts/                    install.sh, venv.sh (optional pinned virtualenv), systemd unit templates
+├── tools/                      link_endpoint.py + *_link_plugin.py (deployed to endpoint hosts), transcribe_worker.py, remote_bt_proxy.py, freeze_lock.py
+├── tests/                      standalone test scripts; run_all.py runs them all with hardware stubs
+├── .github/workflows/ci.yml    ruff + every test on each push
 └── examples/gateway_config.txt the canonical config template (read this once)
 ```
 
@@ -131,3 +141,14 @@ MIT.
 ## Contributing
 
 Issues and PRs welcome. See [docs/plugin-development.md](docs/plugin-development.md) for the plugin contract — adding a new radio is the most common contribution shape.
+
+Before sending a change, run what CI runs. Neither needs radio hardware: missing hardware libraries are stubbed by `tests/_hwstubs.py`.
+
+```bash
+pip install numpy "mcp<2" edge-tts gtts ruff    # what CI installs (plus ffmpeg and lame)
+ruff check .                                     # syntax errors, undefined names, unused imports
+python3 tests/run_all.py                         # every tests/test_*.py, each in its own process
+python3 tests/run_all.py ptt config              # only tests whose name contains these words
+```
+
+Each test is a plain script that prints PASS/FAIL lines and exits non-zero on failure, so `python3 tests/test_x.py` runs one on its own. Adding a config key, an MCP tool or a WebSocket path has a test watching it; see the relevant doc.

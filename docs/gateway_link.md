@@ -1,29 +1,25 @@
 # Gateway Link -- Duplex Audio + Command Protocol
 
-## Vision
+Remote radios connect to the gateway as **link endpoints**: a small script on
+the radio's host streams duplex audio and carries commands, status and logs over
+one connection, and the radio shows up in the routing UI like a local one.
 
-The Gateway Link is the foundation for a **distributed radio gateway** where
-multiple radios, SDRs, and gateway instances connect as a mesh over TCP.
-Today, each radio (TH-9800, TH-D75, KV4P) has bespoke driver code tightly
-coupled to the gateway. The Link protocol and plugin architecture will
-eventually replace all hardware-specific code with a uniform interface:
+## Why this exists
 
-**End State:** Every radio is a plugin. The gateway is a mixer + web UI +
-protocol hub. Radios can be local (USB) or remote (TCP). Adding a new radio
-type means writing one Python class (~100 lines) that implements `RadioPlugin`.
+Each radio used to have bespoke driver code inside the gateway, and a radio
+could only be used if it was plugged into the gateway machine. The link protocol
+turns any radio on any reachable machine (a Pi next to a handheld, a Celeron
+under a mobile rig, a CM5 on an IC-7100) into a routing source and sink with
+no gateway code changes: write one plugin class, run `tools/link_endpoint.py`.
 
 ```
-Current Architecture:                    Target Architecture:
-
-Gateway                                  Gateway (mixer + UI + protocol)
-+-- AIOC driver (built-in)               +-- LinkServer (accepts endpoints)
-+-- TH9800 CAT client (built-in)         |   +-- endpoint: TH9800Plugin
-+-- D75 BT proxy + client (built-in)     |   +-- endpoint: D75Plugin
-+-- KV4P serial driver (built-in)        |   +-- endpoint: KV4PPlugin
-+-- SDR rtl_airband manager (built-in)   |   +-- endpoint: AudioPlugin (generic)
-                                         |   +-- endpoint: SDRPlugin
-                                         |   +-- endpoint: ... (any future radio)
-                                         +-- Local plugins (same machine, no TCP)
+Gateway (mixer + web UI + link server :9700)
++-- local plugins in plugins/ (TH-9800, SDR, packet, USRP)    no network
++-- GatewayLinkServer
+    +-- endpoint "ftm-150"   plugin aioc     TCP, LAN
+    +-- endpoint "d75"       plugin d75      TCP, LAN (Pi Zero 2 W, Bluetooth)
+    +-- endpoint "kv4p-v"    plugin kv4p     TCP, spawned by the gateway itself
+    +-- endpoint "ic7100"    plugin ic7100   WebSocket via Cloudflare tunnel
 ```
 
 ---
@@ -32,44 +28,23 @@ Gateway                                  Gateway (mixer + UI + protocol)
 
 | File | Purpose |
 |------|---------|
-| `gateway_link.py` | Protocol, server, client, plugin base, AudioPlugin. Self-contained -- zero imports from other gateway modules. Endpoint scripts can import it standalone. |
-| `tools/link_endpoint.py` | Standalone endpoint script. Connects to a gateway master and streams duplex audio. Plugin registry, gain control, status reporter. |
-| `audio_sources.py` (class `LinkAudioSource`) | Mixer integration. Receives audio from the server's frame dispatch, provides it to the gateway's audio mixer with level metering and boost. |
-| `gateway_core.py` (init block) | Wires `GatewayLinkServer` to `LinkAudioSource`, manages connected state callbacks. |
-
----
-
-## MVP (v1 -- current implementation)
-
-### What's Built
-
-- **Framed TCP protocol:** 5 frame types (AUDIO, COMMAND, STATUS, REGISTER, ACK)
-- **GatewayLinkServer:** single endpoint connection, frame dispatch, 5s heartbeat
-- **GatewayLinkClient:** auto-reconnect (5s backoff), registration on connect
-- **AudioPlugin:** generic sound card via PyAudio -- any ALSA/PipeWire device
-- **RadioPlugin base class:** setup/teardown/get_audio/put_audio/execute/get_status
-- **LinkAudioSource:** mixer integration with level metering, audio boost, duck support
-- **Standalone endpoint script:** `tools/link_endpoint.py` with device listing, gain, status reporter
-- **Dashboard integration:** LINK audio bar (orange), status in gateway status dict
-
-### What's NOT Built (v2+)
-
-- Multiple simultaneous endpoint connections
-- KV4P, D75, TH9800, SDR hardware plugins
-- Command execution (PTT, frequency, CTCSS, power, volume)
-- Endpoint management web UI
-- Auto-discovery (mDNS/Bonjour)
-- Encryption / TLS
-- Cross-internet relay via Cloudflare tunnel
-- Local plugin mode (same machine, no TCP overhead)
+| `gateway_link.py` | Protocol, server, client, `RadioPlugin` base, `AudioPlugin`, `AIOCPlugin`, `PttTimeOutTimer`, and the RFC 6455 WebSocket codec. Self-contained: no imports from other gateway modules, numpy optional, so it ships to endpoints on its own. |
+| `tools/link_endpoint.py` | The endpoint script: plugin registry, gain, status reporter, tunnel fallback, self-update. |
+| `tools/d75_link_plugin.py`, `tools/kv4p_link_plugin.py`, `tools/ic7100_link_plugin.py` | Hardware plugins loaded by the endpoint (`--plugin d75` etc.). |
+| `tools/log_shipper.py` | Ships the endpoint's stdout/stderr to the gateway (see [endpoint_logs_design.md](endpoint_logs_design.md)). |
+| `tools/remote_bt_proxy.py` | Bluetooth serial + SCO audio for the D75 endpoint. |
+| `gateway_setup.py` | `setup_gateway_link` starts the server, creates a `LinkAudioSource` per registered endpoint, and wires the PTT time-out and the log store; `setup_kv4p_loopback_endpoints` spawns one local KV4P endpoint per `[kv4p.<name>]` config section. |
+| `audio_sources.py` (`LinkAudioSource`) | The endpoint as a mixer source/sink: level metering, gain, mute, jitter prefill. |
+| `web_routes_stream.py` (`handle_ws_link`) | `/ws/link`: bridges a WebSocket endpoint to the TCP server. |
+| `web_routes_radio.py` (`handle_linkcmd`) | `POST /linkcmd`: the web UI's commands to an endpoint. |
 
 ---
 
 ## Protocol
 
-### Frame Format
+### Frame format
 
-Every message on the wire is a framed packet:
+Every message is one framed packet:
 
 ```
 +--------+--------+--------+-----...-----+
@@ -78,568 +53,318 @@ Every message on the wire is a framed packet:
 +--------+--------+--------+-----...-----+
 ```
 
-- **Type** (1 byte): identifies the frame kind (see table below)
-- **Length** (2 bytes, big-endian unsigned): payload size in bytes
-- **Payload** (variable): raw bytes (audio) or UTF-8 JSON (commands, status, registration, ack)
+The payload is raw PCM for AUDIO and UTF-8 JSON for everything else. The 16-bit
+length caps a payload at 65535 bytes; `send_frame` raises `ValueError` for a
+larger one rather than sending a corrupt header, and the log shipper splits its
+batches to fit (an oversize LOG batch used to stop an endpoint's log shipping
+for good).
 
-Maximum payload size is 65535 bytes (limited by the 2-byte length field).
-
-### Frame Types
+### Frame types
 
 | Type | Value | Payload | Direction | Description |
 |------|-------|---------|-----------|-------------|
-| AUDIO | `0x01` | Raw PCM bytes | Bidirectional | 48 kHz, 16-bit signed LE, mono. 4800 bytes = 50 ms. |
-| COMMAND | `0x02` | JSON dict | Server-to-endpoint (primarily) | Action request with `cmd` key. |
-| STATUS | `0x03` | JSON dict | Bidirectional | Heartbeat or state report. |
-| REGISTER | `0x04` | JSON dict | Endpoint-to-server | Sent once on connect. Identifies the endpoint. |
-| ACK | `0x05` | JSON dict | Endpoint-to-server | Response to a COMMAND, keyed by `cmd_id`. |
-
-### Audio Format
-
-Audio frames carry raw PCM with these parameters:
-
-- Sample rate: **48000 Hz**
-- Bit depth: **16-bit signed little-endian**
-- Channels: **1 (mono)**
-- Chunk size: **4800 bytes** (50 ms)
-
-Both directions use the same format. The endpoint reads from its hardware
-(microphone, radio RX) and sends AUDIO frames to the server. The server sends
-mixed gateway audio back as AUDIO frames.
+| AUDIO | `0x01` | Raw PCM | Both | 48 kHz, 16-bit signed LE, mono. 4800 bytes = 50 ms. |
+| COMMAND | `0x02` | JSON | Gateway → endpoint (mostly) | `{"cmd": "ptt", "state": true, "cmd_id": "..."}` |
+| STATUS | `0x03` | JSON | Both | Heartbeats and the endpoint's status report. |
+| REGISTER | `0x04` | JSON | Endpoint → gateway | Sent once on connect; identifies the endpoint. |
+| ACK | `0x05` | JSON | Endpoint → gateway | Result of a COMMAND, keyed by `cmd_id`. |
+| LOG | `0x06` | JSON | Endpoint → gateway | `{"type": "log", "lines": [{"ts", "stream", "text"}, ...]}` |
 
 ### Registration
 
-When a client connects, it immediately sends a REGISTER frame:
+On connect the endpoint sends:
 
 ```json
 {
-  "name": "garage-radio",
-  "plugin": "audio",
-  "capabilities": ["audio_rx", "audio_tx"],
+  "name": "ftm-150",
+  "plugin": "aioc",
+  "capabilities": {"audio_rx": true, "audio_tx": true, "ptt": true, "rx_gain": true, "tx_gain": true, "status": true, ...},
   "version": "1.0"
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Human-readable endpoint name (shown on dashboard) |
-| `plugin` | string | Plugin type identifier (`audio`, `kv4p`, `d75`, etc.) |
-| `capabilities` | list[str] | What this endpoint can do (see below) |
-| `version` | string | Protocol version |
+`capabilities` is a dict of flags (`audio_rx`, `audio_tx`, `ptt`, `frequency`,
+`ctcss`, `power`, `rx_gain`, `tx_gain`, `smeter`, `packet`, `status`). The
+server waits up to 10 s for REGISTER, rejects a second endpoint with a name
+that is already connected, and keeps the rest in `link_endpoints.json` under
+`~/.config/radio-gateway/` (mutes and gains survive a reconnect).
 
-**Capability strings** (current and planned):
+In routing, an endpoint becomes a source `<id>` and a TX sink `<id>_tx`. The id
+is the plugin name for a one-off hardware plugin (`d75`, `ic7100`) and the
+sanitised endpoint name otherwise (`kv4p_vhf`, `ftm_150`), so two KV4Ps or two
+AIOCs don't collide.
 
-| Capability | Meaning |
-|------------|---------|
-| `audio_rx` | Endpoint can capture and send audio to the server |
-| `audio_tx` | Endpoint can receive audio from the server and play/transmit it |
-| `ptt` | Endpoint can key/unkey a transmitter |
-| `frequency` | Endpoint can tune to a frequency |
-| `ctcss` | Endpoint supports CTCSS tone setting |
-| `power` | Endpoint can adjust TX power |
-| `status` | Endpoint reports detailed hardware status |
+### Heartbeats and dead peers
 
-The server stores the registration info in `endpoint_info` and logs it.
+- The gateway sends `{"type": "heartbeat", "uptime": ...}` every 5 s.
+- The endpoint sends its plugin's status every `--status-interval` (10 s
+  default) and a heartbeat in between.
+- The gateway declares an endpoint dead after **90 s** with no frame at all.
+  Socket read timeouts on both sides are 120 s, longer on purpose so the
+  gateway's dead-peer check fires first, and TCP keepalive is on.
+- The endpoint reconnects with backoff from 2 s up to 60 s.
 
-### Status Heartbeat
+### Commands
 
-The server sends a STATUS frame every 5 seconds:
+The gateway sends COMMAND, the plugin's `execute()` runs it, and the endpoint
+replies with an ACK carrying the same `cmd_id`. Common commands:
 
-```json
-{
-  "type": "heartbeat",
-  "uptime": 3600.5
-}
-```
+| Command | Fields | Who implements it |
+|---------|--------|-------------------|
+| `status`, `ping` | — | every plugin (base class) |
+| `ptt` | `state: bool` | AIOC, D75, KV4P, IC-7100 |
+| `rx_gain`, `tx_gain` | `db` (clamped to -20..+20, persisted on the endpoint) | `AudioPlugin` and subclasses |
+| `gate` | `enabled`, `threshold` | `AudioPlugin` |
+| `mode` | `audio` / `data` (Direwolf TNC on the endpoint) | AIOC |
+| `frequency`, `ctcss`, `power`, memories, VFO, ... | plugin-specific | D75, KV4P, IC-7100 |
 
-The endpoint sends its own STATUS frames at a configurable interval
-(default 10 seconds via `--status-interval`):
+Unknown commands return `{"ok": false, "error": ...}`. The web UI sends
+commands through `POST /linkcmd` with the command plus the endpoint's name,
+e.g. `{"endpoint": "ftm-150", "cmd": "ptt", "state": true}`; for `status` it
+waits up to 1 s for the fresh report. The MCP radio tools go the same way.
 
-```json
-{
-  "plugin": "audio",
-  "device": "default",
-  "rate": 48000,
-  "input_active": true,
-  "output_active": true,
-  "uptime": 120.3
-}
-```
+### PTT time-out
 
-These heartbeats serve as keepalive and monitoring. If no frames arrive for
-an extended period, the TCP connection will eventually fail and trigger
-auto-reconnect on the client side.
+Every `ptt` command passes through the server's `PttTimeOutTimer`
+(`PTT_TIMEOUT_SECONDS`, default 180, `0` = off). If an endpoint stays keyed
+that long the gateway sends the unkey itself, logs
+`[Link] <name>: PTT time-out (180s) -- forcing unkey`, and refuses key-on
+requests for that endpoint until they have paused for 5 s, so a bus still
+pushing audio can't re-key it at once. The TH-9800 plugin uses the same timer
+class. Independently, `AIOCPlugin` unkeys itself on the endpoint after 60 s
+(`ptt_timeout` plugin config key) in case the gateway goes away mid-over.
 
-### Commands (planned v2)
+### Audio format
 
-Commands follow a request/response pattern. The server sends a COMMAND frame,
-the endpoint executes it and replies with an ACK frame.
-
-```json
-// COMMAND (server -> endpoint)
-{
-  "cmd_id": "abc123",
-  "cmd": "ptt",
-  "state": true
-}
-
-// ACK (endpoint -> server)
-{
-  "cmd_id": "abc123",
-  "ok": true
-}
-```
-
-Planned command types:
-
-| Command | Fields | Description |
-|---------|--------|-------------|
-| `ptt` | `state: bool` | Key or unkey the transmitter |
-| `frequency` | `freq_mhz: float` | Tune to a frequency |
-| `ctcss` | `tone: float` | Set CTCSS tone (0 to disable) |
-| `power` | `level: str` | Set TX power (low/mid/high) |
-| `volume` | `level: float` | Set audio volume (0.0 - 1.0) |
-| `query` | `fields: list` | Request specific status fields |
-
-The `RadioPlugin.execute()` method handles command dispatch. The base class
-returns `{"ok": false, "error": "not implemented"}` for all commands.
+48000 Hz, 16-bit signed little-endian, mono, 4800-byte (50 ms) chunks, both
+directions. The gateway buffers `LINK_JITTER_PREFILL` chunks (default 4)
+before it starts playing an endpoint's audio.
 
 ---
 
-## Plugin Architecture
+## Transports
 
-### RadioPlugin Base Class
+### TCP (LAN)
 
-All hardware plugins inherit from `RadioPlugin` in `gateway_link.py`:
+The default: the endpoint connects to the gateway's `LINK_PORT` (9700). The
+gateway also advertises `_radiogateway._tcp` over mDNS (Avahi), so on the same
+LAN the endpoint can find it without `--server`.
+
+### WebSocket (Cloudflare tunnel)
+
+For an endpoint off the LAN, `/ws/link` on the web UI port accepts a WebSocket
+and bridges it to the TCP server: **each WebSocket binary message is one link
+frame**. The endpoint connects with `--tunnel-url wss://<host>/ws/link`. When
+the URL is a `trycloudflare.com` quick tunnel it changes on every gateway
+restart, so the endpoint can re-read it from `tunnel_url.json` in Google
+Drive (`--gdrive-remote`, `--gdrive-folder`, via rclone).
+
+The connect order is: direct TCP, then the WebSocket URL, then a fresh URL from
+Drive, then back off and retry.
+
+All WebSocket framing in the gateway (`ws_encode`, `ws_read_frame`,
+`ws_read_message`, `WsClosed`) lives in `gateway_link.py`, shared by
+`WebSocketTransport` here, the `/ws/link` bridge and the browser audio, mic and
+monitor handlers. It handles headers and masks split across reads, fragments,
+pings/pongs of any length, and masks client frames as RFC 6455 requires.
+A message over 1 MB (`WS_MAX_PAYLOAD`) drops the connection instead of being
+buffered. Masking is vectorised when numpy is present (about 40x faster per
+audio frame). `tests/test_ws_frames.py` covers it.
+
+---
+
+## Plugin architecture
+
+### RadioPlugin base class
+
+Endpoint plugins subclass `RadioPlugin` in `gateway_link.py`:
 
 ```python
 class RadioPlugin:
     name = "base"
-    capabilities = []
+    capabilities = {"audio_rx": False, "audio_tx": False, "ptt": False,
+                    "frequency": False, "ctcss": False, "power": False,
+                    "rx_gain": False, "tx_gain": False, "smeter": False,
+                    "packet": False, "status": True}
 
-    def setup(self, config):
-        """Initialize hardware. config is a dict from command-line args."""
-        pass
-
-    def teardown(self):
-        """Clean shutdown of hardware."""
-        pass
-
-    def get_audio(self):
-        """Read one chunk of PCM audio from hardware.
-        Returns bytes (48 kHz 16-bit signed LE mono, 4800 bytes = 50 ms)
-        or None if no data is available."""
-        return None
-
-    def put_audio(self, pcm):
-        """Write PCM audio to hardware for playback / transmission."""
-        pass
-
-    def execute(self, cmd):
-        """Handle a command from the master gateway.
-        cmd is a dict like {"cmd": "ptt", "state": true}.
-        Returns a result dict."""
-        return {"ok": False, "error": "not implemented"}
-
-    def get_status(self):
-        """Return current hardware state as a dict."""
-        return {"plugin": self.name}
+    def setup(self, config): ...        # config: dict from CLI args + --plugin-config-json
+    def teardown(self): ...
+    def get_audio(self, chunk_size=4800): ...   # -> (pcm_bytes | None, ptt_flag)
+    def put_audio(self, pcm): ...       # audio from the gateway to play / transmit
+    def execute(self, cmd): ...         # -> result dict, sent back as the ACK
+    def get_status(self): ...           # -> dict, sent as STATUS
 ```
 
-**Key design decisions:**
+### Built-in and shipped plugins
 
-1. **Self-contained module:** `gateway_link.py` has zero imports from other
-   gateway modules. This means the endpoint script can run standalone on a
-   remote machine with only `gateway_link.py` copied over.
+| `--plugin` | Class | Where | Hardware |
+|------------|-------|-------|----------|
+| `audio` | `AudioPlugin` | `gateway_link.py` | Any PyAudio sound card; RX/TX gain, gate |
+| `aioc` | `AIOCPlugin` | `gateway_link.py` | AIOC: sound card + HID GPIO PTT; `mode data` runs Direwolf on the endpoint (KISS on 8001) |
+| `d75` | `D75Plugin` | `tools/d75_link_plugin.py` | Kenwood TH-D75 over Bluetooth (RFCOMM CAT + SCO audio) |
+| `kv4p` | `KV4PPlugin` | `tools/kv4p_link_plugin.py` | KV4P HT over USB serial (Opus audio) |
+| `ic7100` | `IC7100Plugin` | `tools/ic7100_link_plugin.py` | Icom IC-7100: CI-V CAT + USB audio; one method per CI-V command |
 
-2. **Lazy imports:** `AudioPlugin.setup()` imports `pyaudio` lazily so the
-   module has no hard dependency on PyAudio at import time.
+`d75`, `kv4p` and `ic7100` are loaded lazily, so their dependencies are only
+needed on hosts that use them. A new plugin goes in `tools/`, gets an entry in
+`_LAZY_PLUGINS` in `tools/link_endpoint.py`, and runs with
+`--plugin <name>`. See [plugin-development.md](plugin-development.md) for a
+worked example.
 
-3. **50 ms audio chunks:** All audio is chunked at 4800 bytes (50 ms at 48 kHz
-   mono 16-bit). This matches the gateway's internal audio tick rate.
+### Design decisions
 
-4. **Thread safety:** `GatewayLinkServer` and `GatewayLinkClient` use a
-   `_send_lock` for thread-safe writes. Reads happen in a dedicated reader
-   thread. Callbacks fire from the reader thread.
-
-### Writing a New Plugin
-
-To add support for a new radio, create a class that extends `RadioPlugin`:
-
-**Step 1: Define the plugin class**
-
-```python
-# In gateway_link.py or a separate file
-
-class KV4PPlugin(RadioPlugin):
-    """KV4P HT radio plugin -- CP2102 USB-serial with DRA818."""
-
-    name = "kv4p"
-    capabilities = ["audio_rx", "audio_tx", "ptt", "frequency", "ctcss"]
-
-    def __init__(self):
-        super().__init__()
-        self._serial = None
-        self._running = False
-
-    def setup(self, config):
-        """Open serial port and initialize DRA818 module."""
-        import serial
-        port = config.get('device', '/dev/ttyUSB0')
-        self._serial = serial.Serial(port, 9600, timeout=1)
-        # ... DRA818 init sequence ...
-        self._running = True
-
-    def teardown(self):
-        """Close serial port."""
-        self._running = False
-        if self._serial:
-            self._serial.close()
-            self._serial = None
-
-    def get_audio(self):
-        """Read 50 ms of audio from the KV4P's Opus stream."""
-        # ... decode Opus, resample to 48 kHz, return 4800 bytes ...
-        return pcm_bytes
-
-    def put_audio(self, pcm):
-        """Encode and send audio to the KV4P for transmission."""
-        # ... encode to Opus, send over serial ...
-        pass
-
-    def execute(self, cmd):
-        """Handle PTT, frequency, CTCSS commands."""
-        action = cmd.get('cmd')
-        if action == 'ptt':
-            # ... key/unkey via serial ...
-            return {"ok": True}
-        elif action == 'frequency':
-            # ... tune DRA818 ...
-            return {"ok": True, "frequency": cmd['freq_mhz']}
-        return {"ok": False, "error": f"unknown command: {action}"}
-
-    def get_status(self):
-        return {
-            "plugin": self.name,
-            "device": self._serial.port if self._serial else None,
-            "connected": self._serial is not None and self._serial.is_open,
-        }
-```
-
-**Step 2: Register the plugin**
-
-In `tools/link_endpoint.py`, add it to the `_PLUGINS` dict:
-
-```python
-from gateway_link import KV4PPlugin
-
-_PLUGINS = {
-    'audio': AudioPlugin,
-    'kv4p': KV4PPlugin,
-}
-```
-
-**Step 3: Run the endpoint**
-
-```bash
-python3 tools/link_endpoint.py \
-    --server 192.168.2.140:9700 \
-    --name mobile-kv4p \
-    --plugin kv4p \
-    --device /dev/ttyUSB0
-```
-
-### Built-in Plugins
-
-#### AudioPlugin
-
-Generic sound card plugin using PyAudio (portaudio). Works with any
-ALSA or PipeWire audio device.
-
-- **Name:** `audio`
-- **Capabilities:** `audio_rx`, `audio_tx`
-- **Config keys:** `device` (name substring or index), `rate` (default 48000), `channels` (default 1)
-- **Device matching:** tries integer index first, then case-insensitive name substring search
-- **Audio format:** 48 kHz, 16-bit signed LE, mono, 50 ms chunks (4800 bytes / 2400 frames)
-
-#### Planned Plugins
-
-| Plugin | Radio | Transport | Key challenge |
-|--------|-------|-----------|---------------|
-| `KV4PPlugin` | KV4P HT | USB serial (CP2102) | Opus codec, DRA818 38-tone CTCSS |
-| `D75Plugin` | TH-D75 | Bluetooth SCO via proxy | 48-byte SCO frames, non-blocking btstart |
-| `TH9800Plugin` | TH-9800 | CAT serial (FTDI) | Dual VFO, DISPLAY_TEXT parsing |
-| `SDRPlugin` | Any SDR | rtl_airband or direct SoapySDR | Read-only (no TX), multiple tuners |
+1. **Self-contained module.** `gateway_link.py` has no imports from the rest of
+   the gateway and treats numpy as optional, so an endpoint needs only that
+   file, `link_endpoint.py` and its plugin.
+2. **Lazy hardware imports.** `pyaudio`, `hid` and serial libraries are
+   imported in `setup()`, not at module load.
+3. **50 ms chunks** everywhere, matching the gateway's bus tick.
+4. **Threads.** The server has an accept thread, one reader and one sender
+   (with a bounded send queue) per endpoint, and a heartbeat thread. A full send
+   queue drops audio rather than blocking the bus tick. Callbacks fire on the
+   reader thread and must not block.
 
 ---
 
-## Gateway-Side Integration
+## Gateway side
 
 ### LinkAudioSource
 
-`LinkAudioSource` (in `audio_sources.py`) is the mixer source that receives
-audio from the Link server and feeds it into the gateway's audio pipeline:
+One per registered endpoint, created by `setup_gateway_link`:
 
-- **Source name:** `LINK`
-- **Priority:** configurable via `LINK_AUDIO_PRIORITY` (default 3)
-- **PTT control:** `False` (link audio does not key the radio by default)
-- **Queue:** `deque(maxlen=16)` -- the server's `on_audio` callback pushes frames here
-- **Level metering:** RMS-based, with configurable display gain
-- **Audio boost:** configurable multiplier via `LINK_AUDIO_BOOST`
-- **Duck support:** configurable via `LINK_AUDIO_DUCK`
-- **TX path:** `write_tx_audio()` sends gateway audio back to the endpoint via the server
+- **Routing ids:** source `<id>`, TX sink `<id>_tx` (see Registration).
+- **RX:** the reader thread pushes AUDIO frames into a queue; the bus tick
+  pulls them after the jitter prefill. Level metering, `LINK_AUDIO_BOOST`,
+  per-endpoint RX gain and mute.
+- **TX:** a bus wired to `<id>_tx` sends its mix to the endpoint. The deliver
+  loop keys the endpoint's PTT from audio level (`LINK_AUTO_PTT_THRESHOLD`,
+  held `LINK_AUTO_PTT_HOLD` seconds after the last loud chunk), with
+  `PTT_PREKEY_BUFFER_MS` of audio held while the key is applied. See
+  [audio-routing.md](audio-routing.md#ptt-the-sink-kind-decides-the-keying-mechanism).
+- **UI:** a card on `/dashboard/endpoints` and a bar in the shell's meter strip;
+  radio-specific pages (`/d75`, `/kv4p`, `/ic7100`) for the hardware plugins.
 
-### Connection State
+### Logs
 
-The gateway core wires connection state between the server and the audio source:
+Endpoints ship their stdout/stderr as LOG frames; the gateway writes
+`logs/endpoints/<name>.log` and shows them at `/endpoints/logs`. See
+[endpoint_logs_design.md](endpoint_logs_design.md).
 
-1. On REGISTER: `link_audio_source.server_connected = True`
-2. On disconnect: `link_audio_source.server_connected = False`
+### Self-update
 
-When `server_connected` is False, `get_audio()` returns None and the level
-meter decays to zero.
-
-### Dashboard
-
-The LINK source appears as an orange audio bar in the shell frame's level
-display, after MON (purple). The bar shows real-time audio levels from the
-connected endpoint.
+Endpoints compare a hash of their code with `GET /api/endpoint/version` on
+start, on each reconnect (at most every 5 minutes) and hourly, and fetch
+`/api/endpoint/files` when it differs. The bundle is `gateway_link.py`,
+`link_endpoint.py`, `log_shipper.py`, `d75_link_plugin.py` and
+`remote_bt_proxy.py`; the list in `tools/link_endpoint.py` and
+`_ENDPOINT_FILES` in `web_routes_get.py` must match. `--no-update` turns it
+off. See [pi-endpoint-build.md](pi-endpoint-build.md) for how a read-only-root
+Pi persists the update.
 
 ---
 
 ## Configuration
 
-All Link configuration lives in `gateway_config.txt` under the relevant section:
+Gateway side, in `gateway_config.txt` (`[link]` on the config page):
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `ENABLE_GATEWAY_LINK` | `False` | Enable the Gateway Link server |
-| `LINK_PORT` | `9700` | TCP port for endpoint connections |
-| `LINK_AUDIO_PRIORITY` | `3` | Mixer priority for link audio (lower = higher priority) |
-| `LINK_AUDIO_DUCK` | `False` | Whether link audio ducks SDR sources |
-| `LINK_AUDIO_BOOST` | `1.0` | Audio level multiplier for incoming link audio |
-| `LINK_AUDIO_DISPLAY_GAIN` | `1.0` | Display gain for the LINK level bar |
+| `ENABLE_GATEWAY_LINK` | `false` | Run the link server |
+| `LINK_PORT` | `9700` | TCP port for endpoints (the `/ws/link` bridge connects here too) |
+| `LINK_AUDIO_PRIORITY` | `3` | Ducking priority for link audio (lower = higher priority) |
+| `LINK_AUDIO_DUCK` | `false` | Whether link audio ducks SDR sources |
+| `LINK_AUDIO_BOOST` | `1.0` | Level multiplier for incoming link audio |
+| `LINK_AUDIO_DISPLAY_GAIN` | `1.0` | Display gain for the level bars |
+| `LINK_RX_MUTED`, `LINK_TX_MUTED` | `false` | Start-up mute state |
+| `LINK_AUTO_PTT_THRESHOLD` | `10` | Bus level (0-100) that keys an endpoint's TX |
+| `LINK_AUTO_PTT_HOLD` | `0.5` | Seconds to hold the key after the last loud chunk |
+| `LINK_JITTER_PREFILL` | `4` | 50 ms chunks buffered before an endpoint's audio plays |
+| `PTT_PREKEY_BUFFER_MS` | `500` | TX audio held while the key is applied |
+| `PTT_TIMEOUT_SECONDS` | `180` | Transmit time-out for every endpoint (`0` = off) |
+
+KV4P endpoints are configured per instance in `[kv4p.<name>]` sections
+(`port`, `default_freq`, `squelch`, ...). The gateway starts one
+`link_endpoint.py --plugin kv4p` per section and passes the section as
+`--plugin-config-json`.
 
 ---
 
 ## Usage
 
-### Starting the Server (gateway side)
+### Gateway
 
-Set `ENABLE_GATEWAY_LINK = true` in `gateway_config.txt` and restart the
-gateway. The server will listen on the configured port (default 9700).
+Set `ENABLE_GATEWAY_LINK = true` and restart the gateway. It listens on
+`LINK_PORT` and publishes itself over mDNS.
 
-### Running an Endpoint
-
-The standalone endpoint script requires only `gateway_link.py` and Python 3
-(plus `pyaudio` for the audio plugin).
-
-**List available audio devices:**
+### Endpoint
 
 ```bash
+# list audio devices
 python3 tools/link_endpoint.py --list-devices
-```
 
-Output:
-```
-[Endpoint] Audio devices (12):
-  [0] HDA Intel PCH: ALC887-VD Analog  (IN/OUT)
-  [1] HDA Intel PCH: ALC887-VD Digital  (OUT)
-  [4] AIOC: USB Audio  (IN/OUT)
-  ...
-```
-
-**Auto-discover gateway via mDNS (no IP needed):**
-
-```bash
+# LAN, gateway found over mDNS (needs avahi-utils / avahi)
 python3 tools/link_endpoint.py --name living-room --plugin aioc
+
+# explicit address, a device and input gain
+python3 tools/link_endpoint.py --server 192.168.2.140:9700 \
+    --name garage-radio --device "AIOC" --gain 2.0
+
+# through the Cloudflare tunnel
+python3 tools/link_endpoint.py --name ic7100 --plugin ic7100 \
+    --tunnel-url wss://example.trycloudflare.com/ws/link
 ```
 
-The endpoint uses Avahi to find `_radiogateway._tcp` on the local network.
-Requires `avahi-utils` (Debian) or `avahi` (Arch). Falls back to error if
-no gateway found — use `--server` in that case.
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--server HOST:PORT` | mDNS lookup | Gateway address |
+| `--name NAME` | — | Endpoint name (shown on the dashboard; must be unique) |
+| `--plugin PLUGIN` | `audio` | `audio`, `aioc`, `d75`, `kv4p`, `ic7100` |
+| `--device DEVICE` | system default | Audio device name/index, or serial path |
+| `--rate HZ` | `48000` | Sample rate |
+| `--gain FLOAT` | `1.0` | Input gain multiplier |
+| `--plugin-config-json JSON` | — | Extra plugin settings, e.g. `'{"default_freq":147.435,"squelch":2}'` |
+| `--status-interval SEC` | `10.0` | Status report interval |
+| `--tunnel-url URL` | — | `wss://.../ws/link` fallback when TCP fails |
+| `--gdrive-remote`, `--gdrive-folder`, `--rclone-config` | `gdrive`, `radio-gateway` | Where to re-read a changed tunnel URL |
+| `--no-update` | off | Skip the self-update check |
+| `--list-devices` | — | List audio devices and exit |
 
-**Connect with explicit server address:**
+### Deploying to a remote machine
 
-```bash
-python3 tools/link_endpoint.py \
-    --server 192.168.2.140:9700 \
-    --name living-room
-```
-
-**Connect with a specific device and gain:**
-
-```bash
-python3 tools/link_endpoint.py \
-    --server 192.168.2.140:9700 \
-    --name garage-radio \
-    --device "AIOC" \
-    --gain 2.0
-```
-
-**Connect with an ALSA hardware device:**
-
-```bash
-python3 tools/link_endpoint.py \
-    --server 192.168.2.140:9700 \
-    --name remote-sdr \
-    --device hw:1,0
-```
-
-### Endpoint Arguments
-
-| Argument | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `--server HOST:PORT` | Yes | -- | Gateway master address |
-| `--name NAME` | Yes | -- | Endpoint name (shown on dashboard) |
-| `--plugin PLUGIN` | No | `audio` | Hardware plugin to use |
-| `--device DEVICE` | No | system default | Audio device name, index, or path |
-| `--rate HZ` | No | `48000` | Sample rate |
-| `--gain FLOAT` | No | `1.0` | Input gain multiplier |
-| `--status-interval SEC` | No | `10.0` | How often to send status to master |
-| `--list-devices` | No | -- | List audio devices and exit |
-
-### Deploying to a Remote Machine
-
-The endpoint only needs two files:
-
-1. `gateway_link.py` -- protocol + plugins
-2. `tools/link_endpoint.py` -- endpoint script
-
-Copy them to the remote machine:
-
-```bash
-scp gateway_link.py tools/link_endpoint.py user@remote:~/link/
-```
-
-On the remote machine:
-
-```bash
-pip install pyaudio  # for AudioPlugin
-cd ~/link
-python3 link_endpoint.py --server gateway-ip:9700 --name remote-node
-```
-
-No other gateway dependencies are needed.
+Copy `gateway_link.py`, `tools/link_endpoint.py`, `tools/log_shipper.py` and the
+plugin you need into one directory on the endpoint, install that plugin's
+dependencies (`pyaudio` for `audio`/`aioc`, plus `hidapi` for `aioc`), and run
+it as above. For a systemd unit see
+[plugin-development.md](plugin-development.md#auto-start-on-boot-systemd); for a
+complete Pi build, [pi-endpoint-build.md](pi-endpoint-build.md).
 
 ---
 
-## Development Roadmap
+## Not built yet
 
-### Completed
-
-**v1 — MVP** ✓
-- Framed TCP protocol (AUDIO, COMMAND, STATUS, REGISTER, ACK)
-- Duplex audio streaming
-- AudioPlugin (generic sound card via PyAudio)
-- Standalone endpoint script with auto-reconnect
-- LinkAudioSource mixer integration with level metering
-
-**v2 — Commands & Hardware** ✓
-- PTT command with ACK response and 60s safety timeout
-- RX/TX gain commands (-10 to +10 dB, persisted on endpoint)
-- Status query with structured response
-- AIOCPlugin (audio + HID GPIO PTT via /proc/asound/cards)
-- Structured capabilities registration
-
-**v3 — Multi-Endpoint** ✓
-- N simultaneous endpoint connections (dict keyed by name)
-- Dynamic LinkAudioSource creation/destruction per endpoint
-- Per-endpoint controls on controls page (PTT, RX/TX bars, gain, mute)
-- Per-endpoint status card on `/dashboard/endpoints` with live endpoint state + inline PTT/gain controls
-- Per-endpoint audio bars in shell frame
-- Gateway settings persistence (~/.config/radio-gateway/link_endpoints.json)
-- Bidirectional heartbeat (5s) with dead peer detection (15s)
-- Cable-pull resilience (10s socket timeout both sides)
-
-**v4 — Discovery** ✓
-- mDNS auto-discovery via Avahi (gateway publishes `_radiogateway._tcp`)
-- Endpoint discovers gateway on LAN with zero config
-- Fallback to manual `--server HOST:PORT`
-
-### Current — Mixer Integration
-
-The gateway mixer currently treats all link endpoints the same — each
-gets its own `LinkAudioSource` feeding into the broadcast-style additive
-mixer. All endpoints hear the full gateway mix (unless TX muted).
-
-**Planned: Conditional Mixer Matrix**
-- Per-endpoint routing: endpoint A hears endpoint B but not C
-- Source selection: choose which gateway sources an endpoint receives
-  (e.g. "pi-aioc gets SDR1+SDR2 only, not radio RX")
-- Cross-link: endpoint A's audio routed to endpoint B's TX (relay)
-- Web UI matrix editor: grid of sources × endpoints with checkboxes
-
-### Next — Radio Plugins
-
-**KV4PPlugin** — USB serial radio with frequency/CTCSS/power control
-- Wraps existing `kv4p-ht` Python package
-- Capabilities: audio_rx, audio_tx, ptt, frequency, ctcss, power, smeter
-- First plugin with full radio control commands
-- Proves the command language handles real tuning operations
-
-**D75Plugin** — Bluetooth radio (TH-D75)
-- Wraps existing `remote_bt_proxy.py` BT serial + SCO audio
-- Replaces bespoke D75CATClient + D75AudioSource + remote proxy
-- Single TCP connection replaces dual ports (9750 + 9751)
-- Complex: BT RFCOMM timing, SCO frame pacing, btstart sequencing
-
-**TH9800Plugin** — CAT serial radio (TH-9800)
-- Wraps existing `RadioCATClient` + `TH9800_CAT.py`
-- Capabilities: ptt, frequency, volume, smeter
-
-**SDRPlugin** — RTL-SDR / RSPduo receiver
-- Wraps existing `RTLAirbandManager`
-- RX only (no PTT/TX)
-- Capabilities: audio_rx, frequency, modulation
-
-### Future — Network & Mesh
-
-- TLS encryption for internet-facing links
-- Cross-internet relay via Cloudflare tunnel
-- Local plugin mode (same machine, bypass TCP for lower latency)
-- Gateway-to-gateway linking (mesh topology)
-- Endpoint deployment tooling (systemd service, auto-update)
+- Per-endpoint mix selection beyond what routing already does (an endpoint
+  hears whatever bus you wire to its `_tx` sink).
+- TLS on the raw TCP port. Off the LAN, use the tunnel (`wss://`).
+- Authentication of endpoints. Anything that can reach port 9700 or `/ws/link`
+  can register; keep 9700 on the LAN.
+- Gateway-to-gateway linking.
 
 ---
 
-## Design Notes
+## Design notes
 
-### Why a Custom Protocol (not HTTP/WebSocket/gRPC)?
+### Why a custom framing on TCP, and WebSocket only as a carrier?
 
-- **Low latency:** Audio needs sub-100ms round-trip. HTTP adds overhead.
-  WebSocket is close but adds framing complexity. A simple 3-byte header
-  with raw PCM is the minimum overhead.
-- **Bidirectional audio:** Both sides send and receive audio simultaneously.
-  HTTP is request/response. WebSocket works but adds masking overhead.
-- **Simplicity:** The entire protocol is ~100 lines of Python. No dependencies.
-  No serialization library. No schema files.
-- **Self-contained:** The module can be copied to a remote machine and run
-  with zero gateway dependencies.
+- **Low latency, minimal overhead.** A 3-byte header and raw PCM is the least
+  that can carry duplex 50 ms audio plus control.
+- **Simplicity.** The framing is a few dozen lines of stdlib Python with no
+  schema files, so the module runs on a minimal Pi image.
+- **Reachability.** Raw TCP doesn't pass through Cloudflare's tunnel, so the
+  same frames ride inside WebSocket binary messages there. Nothing about the
+  link protocol changes; the bridge just unwraps them.
 
-### Why Plugins (not a Generic Audio Bridge)?
+### Why plugins, not a generic audio bridge?
 
-A generic audio bridge would only handle audio. But radios need control:
-PTT, frequency, CTCSS, power, status. By abstracting hardware into plugins,
-the same protocol carries both audio and control. The gateway can tune a
-remote radio the same way it tunes a local one.
-
-### Thread Model
-
-```
-Server side:
-  AcceptThread  -- waits for incoming connections
-  ReaderThread  -- reads frames, dispatches to callbacks
-  HeartbeatThread -- sends STATUS every 5s
-  (Main thread sends audio via send_audio)
-
-Client side:
-  ConnectThread -- connects + auto-reconnects, spawns reader
-  ReaderThread  -- reads frames, dispatches to callbacks
-  StatusThread  -- sends STATUS at configurable interval
-  MainThread    -- audio capture loop (get_audio + send_audio)
-```
-
-All sends go through a `_send_lock` mutex. Callbacks fire from the reader
-thread -- handlers must be fast and non-blocking to avoid stalling the
-frame pipeline.
+A radio needs control as well as audio: PTT, frequency, CTCSS, power, status.
+With the hardware behind a plugin, one connection carries both, and the gateway
+tunes a remote radio the same way it tunes a local one.

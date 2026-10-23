@@ -89,9 +89,22 @@ recordings/loop/
 
 ### Disk usage
 
-- MP3 at 128 kbps: ~4.7 MB per 5-minute segment
-- 24 hours: ~1.35 GB per bus
-- Waveform data: ~170 KB per 24 hours (negligible)
+Segments are constant-bitrate mono MP3 at `LOOP_RECORD_KBPS` (default **48**,
+in `[advanced]` / the config page). A loop-enabled bus writes continuously,
+silence included, so disk use depends only on the bitrate and retention:
+
+| `LOOP_RECORD_KBPS` | Per 5-minute segment | Per 24 h per bus |
+|---|---|---|
+| 48 (default) | ~1.8 MB | ~0.5 GB |
+| 64 | ~2.4 MB | ~0.7 GB |
+| 128 (fixed before 5.0.0) | ~4.8 MB | ~1.4 GB |
+
+48 kbps is plenty for FM voice. A new value applies to segments started after
+a restart; existing segments keep theirs. Exports (`/loop/export`) are encoded
+separately at 128 kbps. Waveform data is ~170 KB per 24 hours (negligible).
+
+Segments are closed cleanly: the audio still queued for the encoder when a
+segment rolls over is written to it (before 5.0.0 the tail was dropped).
 
 The dashboard's Services page (`/dashboard/services`) shows per-bus disk usage and write rate in the Loop Recorder panel.
 

@@ -1,18 +1,19 @@
 # Radio Plugins
 
-Every radio the gateway controls is a plugin — same interface, same lifecycle, same place in the routing graph as any other source/sink. The set today is TH-9800, TH-D75, KV4P, RSPduo SDR (built-in plugins) plus FTM-150 and IC-7100 (link endpoints — same plugin model, different transport).
+Every radio the gateway controls is a plugin — same interface, same lifecycle, same place in the routing graph as any other source/sink. Two kinds: **local plugins** in `plugins/`, for hardware on the gateway machine (TH-9800, RSPduo SDR, packet TNC, AllStar/USRP), and **link endpoints**, for radios on another machine (TH-D75, KV4P, FTM-150 via AIOC, IC-7100) that connect over the [Gateway Link protocol](gateway_link.md).
 
 For the plugin contract and building a new one, see [plugin-development.md](plugin-development.md).
 
 ## TH-9800
 
-Yaesu FTM-9800 dual-band quad-receiver. Connected via **AIOC** (All-In-One-Cable) over USB for audio + PTT, and **CAT** over serial (currently bridged via TCP from a separate Celeron host running USB/IP).
+TYT TH-9800 quad-band mobile. Connected via **AIOC** (All-In-One-Cable) over USB for audio + PTT, and **CAT** over serial through the [TH9800_CAT](https://github.com/ukbodypilot/TH9800_CAT) daemon (`th9800-cat.service`, TCP port `CAT_PORT`), with the USB devices attached from a separate Celeron host over USB/IP.
 
 **Capabilities**
 - Full CAT control: dual VFO, all memories, every front-panel button replicated in the web UI
 - HID PTT via AIOC
 - Browser-mic PTT (push the on-screen mic button or hold spacebar on `/radio`)
 - Soft-clip on TX path (no hard clipping under audio boost)
+- **Transmit time-out**: any key (bus, web UI, keyboard, MCP `radio_ptt`) is forced off after `PTT_TIMEOUT_SECONDS` (default 180 s, `0` = off), and re-keying is refused until key requests pause for 5 s
 - USB reset recovery — if AIOC vanishes from `/dev/snd`, plugin attempts USB rebind before giving up
 
 **Web UI**: `/radio` — full front-panel emulation plus signal meters and per-VFO frequency display.
@@ -55,7 +56,9 @@ KV4P-HT — open-source SA818/DRA818-based 2 m / 70 cm handheld interface board.
 
 **Web UI**: `/kv4p` — frequency display, all controls in a single panel, signal + audio meters.
 
-**Source**: [`kv4p_endpoints.py`](../kv4p_endpoints.py) + [`tools/kv4p_link_plugin.py`](../tools/kv4p_link_plugin.py) · **Config**: `[kv4p]` in `gateway_config.txt`.
+**Endpoints**: one per `[kv4p.<name>]` section in `gateway_config.txt` (`[kv4p.vhf]`, `[kv4p.uhf]`, ...). The gateway spawns a local `link_endpoint.py --plugin kv4p` for each, registered as `kv4p-v`, `kv4p-u`, ...; routing ids are `kv4p_vhf` / `kv4p_vhf_tx`. Keys in these sections belong to that instance only. An old single `[kv4p]` block is migrated to `[kv4p.vhf]` automatically, with a backup.
+
+**Source**: [`tools/kv4p_link_plugin.py`](../tools/kv4p_link_plugin.py) (the endpoint) · [`kv4p_endpoints.py`](../kv4p_endpoints.py) (gateway-side helpers) · spawned by `setup_kv4p_loopback_endpoints` in [`gateway_setup.py`](../gateway_setup.py).
 
 ## RSPduo SDR
 
@@ -86,7 +89,10 @@ Not a radio — a bridge into the AllStarLink network. `plugins/usrp.py` is an i
 Two radios in our fleet talk to the gateway over the [Gateway Link protocol](gateway_link.md):
 
 - **FTM-150** — runs on the `mx` machine (Intel Celeron). AIOC over USB locally; the link endpoint tunnels audio + PTT + status over TCP.
-- **IC-7100** — runs on a CM5 (when deployed). CI-V CAT + USB Audio Class 2 audio via a single USB connection; link endpoint plugin (`tools/ic7100_link_plugin.py`) speaks the gateway link protocol.
+- **IC-7100** — runs on a CM5 (when deployed). CI-V CAT + USB Audio Class 2 audio via a single USB connection; link endpoint plugin (`tools/ic7100_link_plugin.py`, one method per CI-V command) speaks the gateway link protocol. Web UI at `/ic7100`.
+
+Every link endpoint's PTT goes through the gateway's transmit time-out
+(`PTT_TIMEOUT_SECONDS`), the same as the TH-9800.
 
 A new radio of any kind can become a link endpoint by writing a plugin against the link protocol's interface — no gateway code changes. See [gateway_link.md](gateway_link.md) for the spec and [plugin-development.md](plugin-development.md) for the plugin contract.
 

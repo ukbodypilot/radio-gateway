@@ -33,38 +33,44 @@ The installer copies the example to `gateway_config.txt` if one doesn't exist. T
 
 | Section | Covers |
 |---------|--------|
-| `[startup]` | Startup verbosity + logging |
+| `[startup]` | Startup verbosity |
 | `[mumble]` | Mumble client connection + servers |
 | `[radio]` | AIOC USB radio (TH-9800 default) |
 | `[audio]` | Sample rate, chunk size, channel count |
 | `[levels]` | Per-source gain, master volumes |
-| `[ptt]` | PTT method, hold times, talkback |
+| `[ptt]` | PTT method, hold times, talkback, link auto-PTT, and the transmit time-out `PTT_TIMEOUT_SECONDS` (default 180 s, `0` = off; see below) |
 | `[vad]` | Silero VAD threshold, hold, hysteresis |
 | `[vox]` | Legacy dB-envelope VOX (most paths use VAD now) |
 | `[processing]` | High-pass / low-pass / notch / noise gate / RNNoise |
+| `[sdr1]` / `[sdr2]` | SDR receivers: device, ducking, boost, `SDR_PRIORITY_ORDER` |
 | `[switching]` | SDR ducking, priority, signal threshold |
 | `[remote]` | Remote audio TX/RX link (full duplex) |
 | `[announce]` | Network announcement input (port 9601) |
 | `[playback]` | Playback source — file announcements, soundboard (see [Soundboard categories](#soundboard-categories)) |
 | `[tts]` | Text-to-speech — `TTS_ENGINE` (`kokoro`/`edge`/`gtts`), voice selection, volume, speed |
 | `[speaker]` | Local speaker output mode (virtual/auto/real) |
-| `[streaming]` | Broadcastify / Icecast feed |
+| `[streaming]` | Broadcastify / Icecast feed (in-process ffmpeg encoder) |
+| `[transcription]` | Transcription engine, pool and log — mostly file-only keys, see below |
 | `[echolink]` | EchoLink integration (legacy, TheLinkBox) |
 | `[allstar]` | AllStarLink bridge via USRP — `ENABLE_USRP`, `USRP_REMOTE_HOST/PORT`, `USRP_LISTEN_PORT`, `USRP_NODE`, `USRP_AMI_*` (see [allstar_bridge.md](allstar_bridge.md)) |
 | `[relay]` | USB relay control (radio power, antenna switches) |
 | `[smart]` | AI-generated smart announcements |
 | `[email]` | Gmail SMTP alerting — `ENABLE_EMAIL`, `EMAIL_ADDRESS`, `EMAIL_APP_PASSWORD`, `EMAIL_RECIPIENT`, `EMAIL_ON_STARTUP`, `ENABLE_ALERT_ENGINE` (raw Prometheus-threshold alerts; off by default) |
 | `[manager]` | Fleet Manager runs — `MANAGER_CLAUDE_BIN`, `MANAGER_CLAUDE_MODEL`, `MANAGER_MAX_TURNS` |
-| `[web]` | Web UI port, theme, auth |
+| `[web]` | Web UI port, theme, auth, `WEB_CONFIG_HTTPS` (`false` / `self-signed` / `letsencrypt`, the last uses `DDNS_HOSTNAME`), Cloudflare tunnel |
 | `[ddns]` | DDNS updater (No-IP, Dynu) |
 | `[cat]` | TH-9800 CAT control startup commands |
+| `[mumble-server-1]` / `[mumble-server-2]` | Optional local Mumble server instances |
 | `[kv4p]` | KV4P HT — frequency, squelch, CTCSS, levels, per-source processing |
 | `[d75_processing]` | Per-source processing overrides for the Kenwood TH-D75 |
 | `[packet]` | Packet TNC / APRS / Winlink (see [packet-radio.md](packet-radio.md)) |
 | `[automation]` | Scheduled automation engine — window, task cap, repeater list |
 | `[adsb]` | ADS-B map page — `ADSB_PORT` (dump1090-fa's own HTTP port) |
 | `[usbip]` | Attach USB devices from another machine over USB/IP |
-| `[advanced]` | Tunable thresholds, watchdogs, debug |
+| `[gps]` / `[repeater_db]` | GPS receiver; repeater directory |
+| `[simplex]` | Simplex repeater bus timing |
+| `[advanced]` | Tunable thresholds, watchdogs, debug, `LOOP_RECORD_KBPS` (loop recorder MP3 bitrate, default 48), `LOG_FILE_DAYS` (default 30) |
+| `[kv4p.<name>]` | One section per KV4P link endpoint the gateway spawns (`[kv4p.vhf]`, `[kv4p.uhf]`, ...). Keys here belong to that instance only |
 
 ### Deprecated keys
 
@@ -76,12 +82,34 @@ setting them has no effect. They are commented out in the template.
 | `START_TH9800_CAT` | Was read by `start.sh`, which no longer exists | — |
 | `TH9800_CAT_HEADLESS` | Same | — |
 | `SDR2_PRIORITY` | Superseded by a single ordering key | `SDR_PRIORITY_ORDER` in `[sdr1]` |
+| `SDR_PRIORITY` | Retired (`config_schema.RETIRED`) | `SDR_PRIORITY_ORDER` |
+| `SUPERVISE_DARKICE` | Retired with the external-DarkIce stream path | — (streaming is in-process) |
+| `TELEGRAM_*` | The Telegram bot was removed in 5.0.0 | Email alerts, `[email]`. Delete the `[telegram]` block; it holds a bot token |
+| `TRANSCRIBE_FORWARD_TELEGRAM` | Posted to a route that no longer existed | Keyword hits are emailed (`TRANSCRIPTION_ALERT_KEYWORDS`) |
+| `MANAGER_RUN_MODE` | The Fleet Manager's tmux mode was removed; every run is a one-shot `claude -p` | — |
 
-## Feature-specific keys not in the .ini
+## Transmit time-out (`PTT_TIMEOUT_SECONDS`)
 
-Some features have keys that live OUTSIDE `gateway_config.txt` because they're host-specific or operationally tuned and shouldn't follow the user across machines. See the per-feature docs:
+Every manual key path (the TH-9800 plugin's `_set_ptt`, and the PTT command to
+any link endpoint: D75, KV4P, IC-7100, AIOC) is watched by one
+`PttTimeOutTimer`. After `PTT_TIMEOUT_SECONDS` keyed (default 180) it forces
+the radio unkeyed and logs `PTT time-out (180s) -- forcing unkey`. Key-on
+requests are then refused until they have **paused for 5 s**, so a bus that is
+still pushing audio can't re-key it at once; a fresh press after the pause
+works normally. `0` turns the timer off. The browser mic has its own 120 s
+time-out on top (see [web-ui.md](web-ui.md)), and the AIOC endpoint plugin a
+60 s safety unkey on the endpoint itself.
 
-- **Transcription pool** — `TRANSCRIBE_MODE`, `TRANSCRIBE_REMOTE_URLS`, `TRANSCRIBE_SPLIT_THRESHOLD_SECS`, `TRANSCRIBE_ALLOW_WORKER_REGISTRATION` (default true), `TRANSCRIBE_WORKER_TTL_SECS` (default 90) plus the live UI settings in `.transcribe_settings.json`. Workers started with `--gateway` register themselves, so `TRANSCRIBE_REMOTE_URLS` is only for pinning a worker explicitly. See [transcription-pool.md](transcription-pool.md).
+## File-only keys and settings outside the .ini
+
+Some keys are in `gateway_config.txt` but deliberately **not on the web form**
+(`config_schema.NOT_IN_FORM` lists each with its reason): the Fleet Manager's
+`MANAGER_*`, the APRS-IS keys, `SUPERVISE_MUMBLE`, `TTS_TARGET_RMS_DB`, the
+stream tuning keys and the transcription keys below. Edit the file to change
+them; a form save leaves them as they are. Other settings live outside the file
+entirely. See the per-feature docs:
+
+- **Transcription pool** (file-only keys) — `TRANSCRIBE_MODE`, `TRANSCRIBE_REMOTE_URLS`, `TRANSCRIBE_SPLIT_THRESHOLD_SECS`, `TRANSCRIBE_ALLOW_WORKER_REGISTRATION` (default true), `TRANSCRIBE_WORKER_TTL_SECS` (default 90), `TRANSCRIPTION_ALERT_KEYWORDS` (emailed, at most once per keyword per 5 minutes) plus the live UI settings in `.transcribe_settings.json`. Workers started with `--gateway` register themselves, so `TRANSCRIBE_REMOTE_URLS` is only for pinning a worker explicitly. See [transcription-pool.md](transcription-pool.md).
 - **Fleet Manager** — task docs are `hourly.md` / `daily.md` / `SYSTEM_MANIFEST.md`; engine state in `manager_state.json`; runtime reports in `manager_reports.jsonl`. See [fleet-manager.md](fleet-manager.md).
 - **Routing config** — bus topology lives in `routing_config.json`, edited via the visual editor at `/routing`. Not in the .ini.
 - **Loop recorder retention** — per-bus, edited in the routing UI.
@@ -108,39 +136,91 @@ for values:
   also what makes blanking a secret in the web config form mean *keep the
   stored value*.
 
-`[section]` headers are **cosmetic**. The parser skips them, so a key works
-wherever you put it; the sections exist purely to group things for humans.
+`[section]` headers are **cosmetic** for the main config: the loader skips
+them, so a key works wherever you put it. The one exception is a **dotted**
+section such as `[kv4p.vhf]`. Its keys belong to that one plugin instance (the
+KV4P endpoint called `vhf`), are read by `endpoints_state.read_sections()`, and
+never set the global key of the same name. Before 5.0.0 they leaked: a
+`MUMBLE_PORT` under `[kv4p.vhf]` overrode the real one.
 
-Both halves live in [`config_format.py`](../config_format.py) so they cannot
-drift: `parse_config_value()` reads, and `format_config_value()` writes,
-quoting a value only when the reader would not give it back unchanged. That
-matters because the web config form **rewrites the whole file** on save — a
-reader fix alone would still lose data the next time you pressed Save.
+**A bad value warns and keeps its default.** If a value doesn't fit its key's
+type, the loader prints
+
+```
+WARNING: gateway_config.txt:212: GPS_BAUD = 'fast' is not a valid int; keeping 9600
+```
+
+and carries on with the next line. Before 5.0.0 one bad value aborted the load
+and every key after it silently stayed at its default.
+
+Both halves of the value syntax live in [`config_format.py`](../config_format.py)
+so they cannot drift: `parse_config_value()` reads, and `format_config_value()`
+writes, quoting a value only when the reader would not give it back unchanged.
 Pinned by
 [`tests/test_config_value_parsing.py`](../tests/test_config_value_parsing.py),
 which asserts the round trip is lossless.
 
+## Saving from the web config form
+
+`POST /config` (the **Save** button on the config page, also the TTS engine
+switch and the soundboard category picker) **edits the file in place**. Only
+lines whose values change are rewritten, keeping their inline comments; keys
+the form doesn't show are left alone; form keys missing from the file are
+appended under their `[section]` header. Comments, unknown keys and
+`[plugin.instance]` sections survive. Pinned by
+[`tests/test_config_save_preserves.py`](../tests/test_config_save_preserves.py).
+
+Before 5.0.0 the save regenerated the whole file from the form layout, which
+deleted the `[kv4p.*]` sections (so the KV4P endpoints stopped spawning), every
+comment, and keys with no form field such as `SUPERVISE_MUMBLE`,
+`PACKET_APRS_IS_PASSCODE` and `MANAGER_CLAUDE_MODEL`. If a 4.x save ate yours,
+restore them from a backup or from `examples/gateway_config.txt`.
+
+Secrets (`STREAM_PASSWORD`, `EMAIL_APP_PASSWORD`, `WEB_CONFIG_PASSWORD`, ...)
+are never sent to the browser. Leaving a secret field blank keeps the stored
+value.
+
 ## Defaults & types
 
-The example file has the canonical default for every key as its initial value, and a comment explaining what the key does. When in doubt: read the example. It's the only place that won't drift out of sync with the parser.
+Every key the gateway reads has one entry in
+[`config_schema.py`](../config_schema.py):
 
-Where a key is intentionally blank (e.g. `MUMBLE_PASSWORD =`), the gateway falls back to a sensible default — see the loader in `Config.load_config()` in [`radio_gateway.py`](../radio_gateway.py) for the resolution order.
+| Name | What it holds |
+|------|---------------|
+| `DEFAULTS` | key → default value. The default's Python type is the key's type: `bool`, `int`, `float` or `str`. |
+| `LAYOUT` | `(section, title, [keys])` — the config page's sections and fields, in order. |
+| `NOT_IN_FORM` | Keys deliberately left off the form, each with the reason (secret, file only, ...). |
+| `RETIRED` | Keys still found in old config files that nothing reads. |
+
+`coerce(key, text)` turns the text from the file into a value of the default's
+type. Booleans accept `true/yes/1/on` (anything else is false); int keys
+accept `0x` hex and decimals; keys with no default are guessed by `infer()`
+(number, then boolean word, else string). Plugin instance sections use the
+same `infer()`, with hex allowed.
+
+The example file still carries every key with its default and a comment, and is
+the best thing to read. The schema is what the code uses, and
+[`tests/test_config_schema.py`](../tests/test_config_schema.py) fails if the
+two disagree (an example key the schema doesn't know, a form field with no
+default, a default that is neither on the form nor in `NOT_IN_FORM`).
 
 ## Adding a new config key
 
-The convention used across the codebase:
+1. Add it to `DEFAULTS` in `config_schema.py` with its default. The default's
+   type is the key's type, so write `180`, not `'180'`, for a number.
+2. Put it on the form by adding it to the right `LAYOUT` section, **or** add it
+   to `NOT_IN_FORM` with the reason it is file-only. Optionally give it a hint
+   (units, range) in `_FIELD_HINTS` in `web_server.py`.
+3. Add it to `examples/gateway_config.txt` in the matching section, with a
+   comment saying what it does and what `0`/blank means.
+4. Read it in code as `self.config.MY_KEY`. `Config` sets every default as an
+   attribute, so a `getattr(self.config, 'MY_KEY', fallback)` fallback is never
+   used and only drifts from the schema.
+5. Run `python3 tests/run_all.py config`.
 
-```python
-my_value = getattr(self.config, 'MY_NEW_KEY', 'fallback_default')
-```
-
-So a new key works the moment you read it; the example file documents it for users. Steps:
-
-1. Use the key in code with a `getattr(...)` + default.
-2. Add the key to `examples/gateway_config.txt` in the appropriate section with a comment.
-3. If it's a feature-specific tunable that isn't safe to ship as a default (host-specific path, sensitive setting), document its presence here and in the relevant feature doc.
-
-That's the whole pattern. No schema, no migrations.
+Keys a **plugin** in `plugins/` reads for itself (`ENABLE_MYRADIO`,
+`MYRADIO_DEVICE`) work without a schema entry: they are typed by `infer()`. Add
+them to the schema only if they also go in the example file or on the form.
 
 ## Soundboard categories
 

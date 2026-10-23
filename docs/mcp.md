@@ -14,6 +14,19 @@ In Claude Code or any MCP client, the server is registered in `.mcp.json` at the
 
 The MCP server is launched as a child process of the MCP client (Claude Code, the Fleet Manager). Restarting the radio-gateway service does **not** restart the MCP server — they're separate processes connected by HTTP.
 
+It finds the gateway by reading `gateway_config.txt` with the gateway's own
+value parser (`config_format.parse_config_value`), so quotes and inline
+comments in `WEB_CONFIG_PASSWORD` are handled the same way, and it follows
+`WEB_CONFIG_HTTPS`: `self-signed` and `letsencrypt` make it call
+`https://localhost:<port>`. (Before 5.0.0 it kept comments in the password and
+spoke plain http to a TLS port in those modes.) It needs `mcp<2`, which
+`requirements.txt` pins.
+
+**Transmit tools are time-limited.** `radio_ptt` and the endpoint PTT commands
+go through the gateway's transmit time-out (`PTT_TIMEOUT_SECONDS`, default
+180 s): a key that is never released is forced off, and the radio refuses to
+re-key until key requests pause for 5 s.
+
 ## Tool categories
 
 | Category | Tools |
@@ -126,6 +139,12 @@ from mcp_server.tools import (  # noqa: F401
 ```
 
 The tool's docstring becomes what the LLM reads when deciding whether to call it.
+
+Then list the tool in one of the tables on this page and update the tool count
+in `README.md` (twice), `docs/mcp.md` and `docs/index.md`.
+`tests/test_mcp_tool_registry.py` fails if a registered tool is missing from
+the tables here, if a count is wrong, or if two tools share a name (the second
+silently replaces the first). Run `python3 tests/run_all.py mcp`.
 
 ## Source pointers
 

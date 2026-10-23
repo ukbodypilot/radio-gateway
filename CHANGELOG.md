@@ -4,6 +4,30 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Docs — brought up to date with 5.0.0
+
+- `docs/gateway_link.md` rewritten: it still described the v1 single-endpoint
+  MVP. Now covers LOG frames, the WebSocket tunnel transport and the shared
+  codec, the PTT time-out, routing ids, self-update and every endpoint flag.
+- `docs/config-reference.md`: `config_schema.py`, in-place saving from the
+  config form, `[plugin.instance]` sections, bad-value warnings, the new way to
+  add a key, retired keys (`TELEGRAM_*`, `SUPERVISE_DARKICE`, ...).
+- `INSTALL.md`: an *Updating an existing install* section with the 5.0.0
+  steps, the real 16 installer phases (no more tmux), the startup hardware
+  check and `[swallowed]` lines, HTTPS troubleshooting.
+- `README.md`: v5.0 highlights, current repository layout, how to run the
+  tests and lint that CI runs. `CLAUDE.md`: tests/CI and the 5.0.0 code
+  conventions.
+- Plugin guide, radio plugins, audio routing, mixer design, web UI, loop
+  recorder, MCP, endpoint logs and Pi endpoint pages: the transmit time-out,
+  BusManager tick priority and GC ownership, 48 kbps loop recording, file
+  paths that had moved, TH-9800 maker (TYT, not Yaesu).
+- `examples/gateway_config.txt`: header section names that didn't exist,
+  retired `SDR_PRIORITY` / `SUPERVISE_DARKICE` marked as such.
+- Config page: hints for `PTT_TIMEOUT_SECONDS`, `LOOP_RECORD_KBPS`,
+  `WEB_CONFIG_HTTPS` and `ENABLE_ALERT_ENGINE`.
+- Removed the unused `telegram.png` and `voice.png` screenshots.
+
 ## [5.0.0] -- 2026-10-23
 
 A full code review, its fixes, and a refactor of the parts the bugs kept

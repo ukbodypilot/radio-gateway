@@ -144,7 +144,7 @@ The BCM43430 routes SCO audio to PCM pins by default. A vendor command must be s
 ```
 sudo hcitool cmd 0x3f 0x1c 0x01 0x02 0x00 0x00 0x00
 ```
-This is done automatically in `remote_bt_proxy.py` AudioManager.connect().
+This is done automatically in `remote_bt_proxy.py` AudioManager.connect() (source: `tools/remote_bt_proxy.py` in the gateway repo, the only copy since 5.0.0; the endpoint gets it through self-update).
 
 ### Pairing the D75
 1. Run `sudo hciconfig hci0 piscan` on the Pi
@@ -164,12 +164,20 @@ This is done automatically in `remote_bt_proxy.py` AudioManager.connect().
 
 ## Self-Update Mechanism
 
-On startup and every reconnect (throttled to 5 min), the endpoint checks the gateway's `/api/endpoint/version` API. If new code is available:
+On startup, every reconnect (throttled to 5 min) and hourly, the endpoint checks the gateway's `/api/endpoint/version` API. If new code is available:
 1. Downloads updated files to tmpfs (`~/link/run/`)
 2. Remounts root rw briefly
 3. Persists updated files to `~/link/` (survives reboot)
 4. Remounts root ro
 5. Restarts via `os.execv`
+
+Steps 2–4 silently failed before 5.0.0 (a missing import in the persist step),
+so updates reached the tmpfs copy and were lost on the next reboot. The fix is
+in the endpoint code itself, so an endpoint whose `~/link/` still holds
+pre-5.0.0 code repeats that after every reboot: it boots the old code, which
+fetches the new code but can't persist it. Break the loop once by hand:
+`sudo mount -o remount,rw /`, copy `~/link/run/*.py` over `~/link/`, then
+`sudo mount -o remount,ro /`.
 
 ## Power Consumption
 

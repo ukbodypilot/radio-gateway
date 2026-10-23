@@ -68,6 +68,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'PTT_RELEASE_DELAY': 'seconds',
         'LINK_AUTO_PTT_THRESHOLD': 'level 0-100 (higher = needs louder audio to key)',
         'LINK_AUTO_PTT_HOLD': 'seconds (hold after last audio above threshold)',
+        'PTT_TIMEOUT_SECONDS': 'seconds keyed before a forced unkey; re-key after a 5 s pause (0 = off)',
         'PTT_PREKEY_BUFFER_MS': 'ms of TX audio buffered during key-up (0 = off)',
         'LINK_JITTER_PREFILL': '50ms chunks (4 = 200ms cushion; 2 ok on wired LAN)',
         'REMOTE_AUDIO_JITTER_PREFILL': '50ms chunks (8 = 400ms cushion)',
@@ -243,6 +244,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         # Web
         'WEB_CONFIG_PORT': 'port (1–65535)',
         'WEB_CONFIG_PASSWORD': 'blank = no auth (user: admin)',
+        'WEB_CONFIG_HTTPS': 'letsencrypt uses DDNS_HOSTNAME; restart to apply',
         'GATEWAY_NAME': 'shown at top of dashboard (blank = none)',
         'WEB_MIC_VOLUME': 'multiplier',
         'WEB_MIC_KEY_TIMEOUT': 'seconds — hold-to-talk dead-man',
@@ -251,6 +253,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'EMAIL_ADDRESS': 'Gmail address (sender)',
         'EMAIL_APP_PASSWORD': 'Gmail app password',
         'EMAIL_RECIPIENT': 'blank = same as sender',
+        'ENABLE_ALERT_ENGINE': 'raw Prometheus-threshold alerts by email (noisy)',
         # DDNS
         'DDNS_HOSTNAME': 'dynamic hostname',
         'DDNS_UPDATE_INTERVAL': 'seconds',
@@ -265,6 +268,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         # Advanced
         'LOG_BUFFER_LINES': 'lines (web log viewer)',
         'LOG_FILE_DAYS': 'days (log retention)',
+        'LOOP_RECORD_KBPS': 'kbps MP3 per loop-recorded bus (48 ≈ 0.5 GB/day)',
         'STATUS_UPDATE_INTERVAL': 'seconds',
         'NETWORK_TIMEOUT': 'seconds',
     }

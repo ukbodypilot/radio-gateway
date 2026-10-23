@@ -84,25 +84,61 @@ A single 9-day manager session burned ~68M tokens moving ~174k tokens of real co
 When a session has been going a long time and the current problem is unrelated to the
 earlier one, `/clear` rather than carrying the whole history forward.
 
+## Tests and CI
+- `python3 tests/run_all.py` runs every `tests/test_*.py` in its own process;
+  `python3 tests/run_all.py ptt config` runs only names containing those words.
+  Each test is a plain script with a PASS/FAIL printer, no pytest.
+- Missing hardware libraries (hidapi, pyaudio, pymumble, opuslib) are stubbed by
+  `tests/_hwstubs.py`, so the suite runs off the box. Off the box it needs
+  `pip install numpy "mcp<2" edge-tts gtts` plus ffmpeg and lame.
+- `.github/workflows/ci.yml` runs `ruff check .` (config in `ruff.toml`) and
+  `tests/run_all.py` on every push. Keep both green before committing.
+
+## Code conventions (since 5.0.0)
+- **Config keys**: every key has its default and type in `config_schema.py`
+  `DEFAULTS`, and is either on the web form (`LAYOUT`) or listed in
+  `NOT_IN_FORM` with a reason. Also add it to `examples/gateway_config.txt`.
+  `tests/test_config_schema.py` fails if any of these disagree. `Config` sets
+  every `DEFAULTS` key as an attribute, so a `getattr(cfg, KEY, fallback)`
+  fallback is never used and only drifts from the schema; read `cfg.KEY`.
+- **The config form edits the file in place** (`WebConfigServer._save_config`):
+  comments, unknown keys and `[plugin.instance]` sections survive a save.
+- **Caught exceptions**: never a bare `except: pass`. Use
+  `except Exception: log_exc()` (`log_util.py`), which logs once per call site
+  per 5 minutes.
+- **Hardware imports** are optional at import time; `hw_deps.require()` in
+  `main()` stops the service with install hints. Don't `sys.exit` on import.
+- **WebSocket framing** exists once, in `gateway_link.py` (`ws_encode`,
+  `ws_read_frame`, `ws_read_message`), shared by the browser handlers, the
+  `/ws/link` bridge and the link client. `tests/test_ws_frames.py` covers it.
+- **PTT**: every manual key path goes through `PttTimeOutTimer`
+  (`gateway_link.py`, `PTT_TIMEOUT_SECONDS`). A new PTT path must too.
+- **MCP tools**: the tool count in README.md, docs/mcp.md and docs/index.md is
+  checked by `tests/test_mcp_tool_registry.py`; update all three.
+
 ## Mixer v2.0 Architecture (COMPLETE)
 **Reference docs:**
 - `docs/mixer-v2-design.md` -- architecture reference (bus types, plugin model, routing, API)
-- `docs/mixer-v2-progress.md` -- development history, decisions log, test results
+- `docs/history/mixer-v2-progress.md` -- development history, decisions log, test results
 
 The v2.0 architecture uses bus-based audio routing with all radios as plugins:
 - **4 bus types:** Listen, Solo, Duplex Repeater, Simplex Repeater
-- **4 radio plugins:** SDRPlugin, TH9800Plugin, D75Plugin, KV4PPlugin
+- **Local plugins** in `plugins/` (auto-discovered): TH-9800, SDR, packet, USRP/USRP2.
+  D75, KV4P and IC-7100 are **link endpoints** (`tools/*_link_plugin.py`)
 - **Sources own their processing** (gate/HPF/LPF/notch/gain) -- busses route clean PCM
 - **Ducking is per-bus, priority-based** -- no hardcoded source name rules
 - **All sinks gated by routing connections** -- visual Drawflow node editor
-- **BusManager** runs routing-configured busses alongside main loop
+- **BusManager** tick thread (50 ms, SCHED_RR) does all mixing and sink delivery and
+  owns `gc` (disabled, collected on the tick). The old `audio_transmit_loop` runs at
+  normal priority and only applies queued PTT, feeds the MP3 encoder and the trace.
+- **One bus per sink** -- `routing_rules.py` rejects a second bus into the same sink
 
 ## Gateway Link (duplex audio + command protocol)
 - See `docs/gateway_link.md` for architecture, protocol, plugin system, and roadmap
 - See `CHANGELOG.md` for project-wide release history
-- MVP: single endpoint, duplex audio, generic AudioPlugin
-- Vision: all radios as plugins, gateway as mixer + protocol hub
-- Config: `ENABLE_GATEWAY_LINK`, `LINK_PORT` (default 9700)
+- Many endpoints at once, over TCP :9700 or WebSocket `/ws/link` (Cloudflare tunnel)
+- Endpoint plugins: audio, aioc (built in), d75, kv4p, ic7100 (`tools/*_link_plugin.py`)
+- Config: `ENABLE_GATEWAY_LINK`, `LINK_PORT` (default 9700), `PTT_TIMEOUT_SECONDS`
 
 ## AllStarLink (USRP bridge) — v4.0
 - See `docs/allstar_bridge.md` for the bridge-node (ASL3 container) setup + gateway-side usage

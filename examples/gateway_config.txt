@@ -13,16 +13,24 @@
 #   [mumble] MUMBLE_PASSWORD       — leave blank if server has no password
 #
 # RECOMMENDED (enables key optional features):
-#   [stream_output] STREAM_*       — Broadcastify feed key (sign up at
+#   [streaming] STREAM_*           — Broadcastify feed key (sign up at
 #                                    broadcastify.com)
 #   [email] EMAIL_ADDRESS,         — stream / Fleet Manager / keyword alerts are
 #           EMAIL_APP_PASSWORD       emailed; use a Gmail app password
-#   [gdrive] GDRIVE_*              — OAuth in the web UI at /gdrive
+#   Google Drive                   — no keys; OAuth in the web UI at /gdrive
 #
 # RADIO HARDWARE (enable only what you own):
-#   [radio] / [th9800_cat]         — TH-9800 via AIOC USB
-#   [kv4p] / [d75]                 — KV4P HT or Kenwood D75
-#   [sdr_plugin]                   — RSPduo or RTL-SDR via rtl_airband
+#   [radio] / [cat]                — TH-9800 via AIOC USB + CAT
+#   [kv4p] / [d75_processing]      — KV4P HT or Kenwood D75 (link endpoints)
+#   [sdr1] / [sdr2]                — RSPduo or RTL-SDR via rtl_airband
+#
+# [section] headers are for humans: a key works in any section. The exception
+# is a dotted section such as [kv4p.vhf], whose keys belong to that one
+# endpoint instance and never set the global key of the same name.
+#
+# A value that doesn't fit its key's type logs
+#   WARNING: gateway_config.txt:<line>: KEY = '...' is not a valid int; keeping <default>
+# at startup and the rest of the file still loads.
 #
 # See INSTALL.md for a full walk-through, per-credential instructions, and
 # troubleshooting.
@@ -292,7 +300,7 @@ ENABLE_SDR = true
 # PipeWire (recommended): pw:<sink_name>  |  ALSA loopback (legacy): hw:N,1
 SDR_DEVICE_NAME = pw:sdr_capture
 
-SDR_PRIORITY = 1          # Ducking priority (lower = higher priority)
+# SDR_PRIORITY = 1        # Retired: nothing reads this key any more
 SDR_DUCK = true            # true=duck when higher-priority source active
 SDR_MIX_RATIO = 1.0        # Volume when ducking disabled (0.0 to 1.0)
 SDR_DISPLAY_GAIN = 1.0     # Status bar sensitivity (1.0=normal, 5.0=very sensitive)
@@ -596,9 +604,8 @@ SPEAKER_MODE = virtual
 # Audio flow: Gateway -> in-process ffmpeg MP3 encoder -> Icecast HTTP SOURCE
 #
 # Since v4.1.0 this runs entirely inside the gateway process. There is no
-# ALSA loopback and no darkice process. The legacy external-darkice path is
-# still available behind SUPERVISE_DARKICE (see [advanced]) but is off by
-# default and reads /etc/darkice.cfg, not the STREAM_* keys below.
+# ALSA loopback and no darkice process. The old external-darkice path
+# (SUPERVISE_DARKICE) is retired: nothing reads that key any more.
 
 ENABLE_STREAM_OUTPUT = false
 STREAM_SERVER = audio9.broadcastify.com
@@ -1054,12 +1061,9 @@ LOG_BUFFER_LINES = 2000
 # Days to keep rolling log files (logs/gateway.log, rotates at midnight)
 LOG_FILE_DAYS = 30
 
-# LEGACY external-darkice streaming. Leave false unless you specifically need
-# it: the default Broadcastify path encodes in-process (see [streaming]) and
-# needs no external encoder. When true, the gateway supervises a
-# `darkice -c /etc/darkice.cfg` process via ProcessSupervisor, restarting it
-# on death — and the STREAM_* keys are NOT used; darkice.cfg is.
-SUPERVISE_DARKICE = false
+# SUPERVISE_DARKICE is retired: nothing reads it. The Broadcastify path
+# encodes in-process (see [streaming]) and needs no external encoder.
+# SUPERVISE_DARKICE = false
 
 # Same idea for a local mumble-server instance: gateway supervises it instead
 # of leaving it to systemd.
