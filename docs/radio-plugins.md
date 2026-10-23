@@ -39,7 +39,7 @@ Kenwood TH-D75 handheld with built-in BT serial + audio. Connects over Bluetooth
 
 **Web UI**: `/d75` — band A/B panels, memory loader, S-meter, battery, TNC controls.
 
-**Source**: [`tools/d75_link_plugin.py`](../tools/d75_link_plugin.py) on the Pi · [`audio_sources.py`](../audio_sources.py) `LinkAudioSource` on the gateway.
+**Source**: [`tools/d75_link_plugin.py`](../tools/d75_link_plugin.py) on the Pi · [`sources/network.py`](../sources/network.py) `LinkAudioSource` on the gateway.
 
 ## KV4P
 

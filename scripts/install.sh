@@ -906,7 +906,7 @@ echo
 # ── 6. Darkice (optional — LEGACY external encoder) ───
 #
 # Since v4.1.0 the default Broadcastify/Icecast path does NOT use darkice:
-# StreamOutputSource (audio_sources.py) pipes PCM -> in-process ffmpeg MP3
+# StreamOutputSource (sources/stream_output.py) pipes PCM -> in-process ffmpeg MP3
 # encoder -> Icecast HTTP SOURCE, with credentials read from the STREAM_*
 # keys in gateway_config.txt. No external process, no ALSA loopback.
 #

@@ -27,7 +27,7 @@ def get_stream_stats(gw):
     # one huge step. rate() read 0 across every gap, so the
     # 'broadcastify_stream_down' alert emailed 4-11 times a day about a
     # healthy stream. The counter is now incremented in
-    # StreamOutputSource._reader (audio_sources.py), where the bytes are
+    # StreamOutputSource._reader (sources/stream_output.py), where the bytes are
     # actually written to the socket. Don't reintroduce it here.
     return {
         **_err,

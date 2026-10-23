@@ -224,7 +224,7 @@ Ducking lives in `BGMSource`, not the bus. Only `ListenBus` implements ducking
 at all, and a listen bus gates its Mumble sink on a **bus-wide VAD flag** that
 steady music does not hold open — routing a bed through one makes the music
 vanish between announcements while the voice punches through. Ducking in the
-source works on any bus type. See `_duck_target` in `audio_sources.py`.
+source works on any bus type. See `_duck_target` in `sources/bgm.py`.
 
 Beds are decoded with `normalize=False`, so a set levelled offline keeps its
 loudness match. The peak-normalise that quiet soundboard clips rely on would

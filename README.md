@@ -115,7 +115,7 @@ radio-gateway/
 ├── log_util.py                 log_exc(): rate-limited logging for caught-and-ignored exceptions
 ├── web_routes_*.py             per-domain handlers (get / stream / transcribe / radio / audio / text / system / manager / automation / loop / packet)
 ├── audio_bus.py, bus_manager.py        bus mixer (the BusManager tick thread does all audio work)
-├── audio_sources.py            all source/sink classes
+├── sources/                    audio source/sink classes, one module per family (audio_sources.py re-exports them)
 ├── transcriber.py, transcribe_engine.py    ASR + pool dispatcher
 ├── manager_engine.py           Fleet Manager scheduler
 ├── email_notifier.py, alerts.py         email alerts; optional Prometheus-threshold alert engine

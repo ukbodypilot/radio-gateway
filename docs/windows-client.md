@@ -215,5 +215,5 @@ Gateway side — `gateway_config.txt`:
 - [`windows_audio_client.py`](../windows_audio_client.py) — the whole client
 - [`web_routes_get.py`](../web_routes_get.py) — `handle_winclient_version`,
   `handle_winclient_files`, `_winclient_bundle`
-- [`audio_sources.py`](../audio_sources.py) — `RemoteAudioSource`, the gateway
+- [`sources/network.py`](../sources/network.py) — `RemoteAudioSource`, the gateway
   end of both connections

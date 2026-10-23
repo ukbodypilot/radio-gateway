@@ -152,6 +152,6 @@ garbage collector. See
 - `routing_rules.py` — routing validation (one bus per sink), shared by UI, API and BusManager
 - `plugins/sdr.py`, `plugins/th9800.py`, `plugins/packet.py`, `plugins/usrp.py`, `plugins/usrp2.py` — local plugins
 - `plugin_loader.py` — plugin auto-discovery (`ENABLE_<PLUGIN_ID>`)
-- `audio_sources.py` — every non-plugin source and sink, including `LinkAudioSource`
+- `sources/` — every non-plugin source and sink, including `LinkAudioSource`
 - `gateway_core.py`, `core/` — gateway object, lifecycle, monitor and transmit loops
 - `web_pages/routing.html` — the Drawflow routing editor

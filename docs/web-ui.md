@@ -70,7 +70,7 @@ annunciator on the landing page so everything is visible at one glance.
   an `UNKEY` text frame but is never the only thing that stops TX: the
   gateway dead-mans a lapsed key refresh and enforces a 120 s TOT on the bus
   thread, because a lost `pointerup` or a slammed lid must not be able to
-  strand a transmitter. See `WebMicSource` in `audio_sources.py`.
+  strand a transmitter. See `WebMicSource` in `sources/web.py`.
 - **Holding MIC ducks every local output** for the duration of the hold. On a
   speakerphone the dashboard's own playback is acoustically coupled back into
   the browser mic, so without this the operator hears themselves returned. Two

@@ -197,7 +197,8 @@ def handle_ic7100cmd(handler, parent):
                 result = {'ok': False, 'error': 'audio source missing'}
         elif cmd == 'vol':
             # RX listening volume — gateway-side audio boost on the link
-            # source (0-500%, 100 = unity). Applied in audio_sources.py.
+            # source (0-500%, 100 = unity). Applied in LinkAudioSource
+            # (sources/network.py).
             _src = gw.link_endpoints.get(_ep)
             if _src is None:
                 result = {'ok': False, 'error': 'audio source missing'}

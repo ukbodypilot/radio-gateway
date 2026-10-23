@@ -34,7 +34,7 @@ Gateway (mixer + web UI + link server :9700)
 | `tools/log_shipper.py` | Ships the endpoint's stdout/stderr to the gateway (see [endpoint_logs_design.md](endpoint_logs_design.md)). |
 | `tools/remote_bt_proxy.py` | Bluetooth serial + SCO audio for the D75 endpoint. |
 | `gateway_setup.py` | `setup_gateway_link` starts the server, creates a `LinkAudioSource` per registered endpoint, and wires the PTT time-out and the log store; `setup_kv4p_loopback_endpoints` spawns one local KV4P endpoint per `[kv4p.<name>]` config section. |
-| `audio_sources.py` (`LinkAudioSource`) | The endpoint as a mixer source/sink: level metering, gain, mute, jitter prefill. |
+| `sources/network.py` (`LinkAudioSource`) | The endpoint as a mixer source/sink: level metering, gain, mute, jitter prefill. |
 | `web_routes_stream.py` (`handle_ws_link`) | `/ws/link`: bridges a WebSocket endpoint to the TCP server. |
 | `web_routes_radio.py` (`handle_linkcmd`) | `POST /linkcmd`: the web UI's commands to an endpoint. |
 
