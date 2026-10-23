@@ -312,6 +312,12 @@ def speak_text(gw, text, voice=None):
 # ---------------------------------------------------------------------------
 
 def _cmd_speak(gw, args):
+    """!speak [voice] <text>: speak text on air, or list voices when empty.
+
+    The optional first word picks a voice: a Kokoro voice id on Kokoro, or a
+    number from the active backend's table on edge / gTTS. Anything else is
+    treated as part of the text.
+    """
     if args:
         voice = None
         speak_txt = args
@@ -351,6 +357,7 @@ def _cmd_speak(gw, args):
 
 
 def _cmd_play(gw, args):
+    """!play <slot>: queue the announcement file on that playback slot."""
     # Multi-digit now that slots run past 9. `args in '0123456789'`
     # was a substring test, so it also matched '' and '123' — the
     # latter would have raised a KeyError below.
@@ -372,6 +379,11 @@ def _cmd_play(gw, args):
 
 
 def _cmd_cw(gw, args):
+    """!cw <text>: render text as Morse with the CW_* settings and play it.
+
+    The tone goes to a temporary WAV that the playback source queues; the
+    file is removed here only if queueing fails.
+    """
     if not args:
         gw.send_text_message("Usage: !cw &lt;text&gt;")
     else:
@@ -394,6 +406,9 @@ def _cmd_cw(gw, args):
 
 
 def _cmd_status(gw, args):
+    """!status: reply with uptime, host load, radio, sources, Mumble,
+    processing and network addresses as one text message.
+    """
     import psutil
 
     s = []
@@ -479,6 +494,7 @@ def _cmd_status(gw, args):
 
 
 def _cmd_files(gw, args):
+    """!files: list the station ID and announcement slots that have a file."""
     if gw.playback_source:
         lines = ["=== Announcement Files ==="]
         found = False
@@ -497,6 +513,7 @@ def _cmd_files(gw, args):
 
 
 def _cmd_stop(gw, args):
+    """!stop: stop playback and clear the playback queue."""
     if gw.playback_source:
         gw.playback_source.stop_playback()
         gw.send_text_message("Playback stopped")
@@ -505,22 +522,26 @@ def _cmd_stop(gw, args):
 
 
 def _cmd_restart(gw, args):
+    """!restart: ask the main loop to exit and restart the gateway."""
     gw.send_text_message("Gateway restarting...")
     gw.restart_requested = True
     gw.running = False
 
 
 def _cmd_mute(gw, args):
+    """!mute: mute TX (Mumble to radio)."""
     gw.tx_muted = True
     gw.send_text_message("TX muted (Mumble → Radio)")
 
 
 def _cmd_unmute(gw, args):
+    """!unmute: unmute TX."""
     gw.tx_muted = False
     gw.send_text_message("TX unmuted")
 
 
 def _cmd_id(gw, args):
+    """!id: play the station ID file on slot 0."""
     if gw.playback_source:
         info = gw.playback_source.file_status['0']
         if info['path']:
@@ -533,6 +554,7 @@ def _cmd_id(gw, args):
 
 
 def _cmd_smart(gw, args):
+    """!smart [N]: trigger smart announcement N, or list them when no N."""
     if not gw.smart_announce or not gw.smart_announce._claude_bin:
         gw.send_text_message("Smart announcements not configured")
     elif args and args.isdigit():
@@ -553,6 +575,7 @@ def _cmd_smart(gw, args):
 
 
 def _cmd_endpoints(gw, args):
+    """!endpoints / !ep: list link endpoints with their last reported health."""
     eps = getattr(gw, 'link_endpoints', {})
     if not eps:
         gw.send_text_message("No link endpoints connected")
@@ -575,6 +598,7 @@ def _cmd_endpoints(gw, args):
 
 
 def _cmd_loop(gw, args):
+    """!loop: report how many buses and segments the loop recorder holds."""
     if hasattr(gw, 'loop_recorder') and gw.loop_recorder:
         lr = gw.loop_recorder
         buses = lr.get_active_buses() if hasattr(lr, 'get_active_buses') else []
@@ -585,6 +609,7 @@ def _cmd_loop(gw, args):
 
 
 def _cmd_help(gw, args):
+    """!help: reply with the command list."""
     help_text = [
         "=== Gateway Commands ===",
         "!speak [voice#] <text> - TTS broadcast (voices 1-9)",
@@ -637,8 +662,15 @@ def on_text_message(gw, text_message):
         !mute          - Mute TX (Mumble → Radio)
         !unmute        - Unmute TX
         !id            - Play station ID (shortcut for !play 0)
+        !cw <text>     - Send Morse code on radio
+        !smart [N]     - List or trigger smart announcements
+        !endpoints/!ep - Show connected link endpoints
+        !loop          - Loop recorder status
+        !restart       - Restart the gateway
         !status        - Show gateway status
         !help          - Show available commands
+
+    Handlers live in _TEXT_COMMANDS.
     """
     try:
         # Debug: Print when text is received (if verbose)
@@ -725,6 +757,7 @@ def trigger_playback(gw, queue_fn, label="playback", volume=None):
     pb.stop_playback()
 
     def _bg_play(_pb=pb, _seq=my_seq, _gw=gw, _fn=queue_fn, _label=label, _vol=volume):
+        """Enqueue the clip unless a newer press has already superseded it."""
         try:
             with _pb._play_lock:
                 if _pb._play_seq != _seq:
@@ -810,6 +843,7 @@ def handle_key(gw, char):
     elif char == 'j':
         if gw.relay_radio and not gw._relay_radio_pressing:
             def _pulse_power():
+                """Hold the radio power relay for one second, like a button press."""
                 gw._relay_radio_pressing = True
                 gw.relay_radio.set_state(True)
                 gw._trace_events.append((time.monotonic(), 'relay_radio', 'press'))
@@ -838,6 +872,7 @@ def handle_key(gw, char):
     elif char == 'l':
         if gw.cat_client:
             def _send_cat_config():
+                """Re-send the CAT setup from config to the radio."""
                 try:
                     gw.cat_client._stop = False
                     gw.cat_client.setup_radio(gw.config)

@@ -139,10 +139,12 @@ UPDATE_STATE = {"version": "", "status": "unknown", "detail": ""}
 # Config persistence
 # ---------------------------------------------------------------------------
 def _config_path():
+    """Path of the JSON config file, next to this script."""
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILENAME)
 
 
 def load_config():
+    """Load the saved config. Returns {} if the file is missing or unreadable."""
     path = _config_path()
     if os.path.exists(path):
         try:
@@ -154,6 +156,7 @@ def load_config():
 
 
 def save_config(cfg):
+    """Write *cfg* to the config file."""
     path = _config_path()
     with open(path, "w") as f:
         json.dump(cfg, f, indent=2)
@@ -207,6 +210,10 @@ def _keyboard_listener_console(state):
 
 
 def _handle_key(ch, state):
+    """Act on one keypress. See the module docstring for the key map.
+
+    While a device picker is open every key goes to the picker instead.
+    """
     # The picker is modal: while it is open it swallows every key, so a stray
     # keystroke can't mute TX or step the voice effect behind the menu.
     if state.get("picker") is not None:
@@ -281,6 +288,7 @@ def _handle_key(ch, state):
 # Device selection
 # ---------------------------------------------------------------------------
 def list_input_devices():
+    """Return (index, name, channels) for every device that can capture."""
     devices = []
     for d in sd.query_devices():
         if d["max_input_channels"] > 0:
@@ -289,6 +297,7 @@ def list_input_devices():
 
 
 def list_output_devices():
+    """Return (index, name, channels) for every device that can play."""
     devices = []
     for d in sd.query_devices():
         if d["max_output_channels"] > 0:
@@ -297,6 +306,7 @@ def list_output_devices():
 
 
 def find_device_by_name(name, output=False):
+    """Return the index of the input (or output) device named *name*, or None."""
     for d in sd.query_devices():
         if output:
             if d["max_output_channels"] > 0 and d["name"] == name:
@@ -308,6 +318,9 @@ def find_device_by_name(name, output=False):
 
 
 def choose_input_device(cfg):
+    """Pick the TX program-feed input: the saved one if it still exists,
+    otherwise ask on the console. Returns (index, name).
+    """
     saved_name = cfg.get("tx_device_name")
     if saved_name:
         idx = find_device_by_name(saved_name, output=False)
@@ -370,6 +383,9 @@ def choose_mic_device(cfg):
 
 
 def choose_output_device(cfg):
+    """Pick the RX speaker output: the saved one if it still exists,
+    otherwise ask on the console. Returns (index, name).
+    """
     saved_name = cfg.get("rx_device_name")
     if saved_name:
         idx = find_device_by_name(saved_name, output=True)
@@ -606,6 +622,7 @@ def open_picker(state, kind):
 
 
 def close_picker(state):
+    """Close the device picker without choosing."""
     state["picker"] = None
 
 
@@ -687,6 +704,7 @@ def render_picker(state):
 # Level meter
 # ---------------------------------------------------------------------------
 def rms_db(pcm_bytes):
+    """RMS level of int16 PCM in dBFS; -100 for silence or an empty buffer."""
     n_samples = len(pcm_bytes) // 2
     if n_samples == 0:
         return -100.0
@@ -698,6 +716,11 @@ def rms_db(pcm_bytes):
 
 
 def level_bar(db, width=20, vol_pct=100):
+    """Render a 60 dB level bar with a marker at the volume setting.
+
+    *vol_pct* scales the level first, so a boosted mic reads louder.
+    Returns (bar, scaled_db).
+    """
     # vol_pct may exceed 100 for the mic gain control (boost); the dB scaling
     # reflects the boost (clamped at 0 dBFS), while the marker pins to the bar.
     vol_frac = max(0.0, vol_pct / 100.0)
@@ -737,6 +760,7 @@ def sparkline(values, width=20, lo=0.0, hi=100.0):
 # Helper
 # ---------------------------------------------------------------------------
 def _recv_exact(sock, n):
+    """Read exactly *n* bytes from *sock*. Returns None if the peer closes first."""
     buf = bytearray()
     while len(buf) < n:
         chunk = sock.recv(n - len(buf))
@@ -812,17 +836,20 @@ class SampleFIFO:
     """
 
     def __init__(self, maxlen=SAMPLE_RATE):  # ~1 s cap
+        """Create an empty FIFO holding at most *maxlen* samples."""
         self._buf = np.zeros(0, dtype=np.int16)
         self._lock = threading.Lock()
         self._maxlen = int(maxlen)
 
     def push(self, samples):
+        """Append int16 samples, dropping the oldest past the cap."""
         with self._lock:
             self._buf = np.concatenate([self._buf, samples])
             if len(self._buf) > self._maxlen:
                 self._buf = self._buf[-self._maxlen:]
 
     def pull(self, n):
+        """Remove and return exactly *n* samples, zero-padded if fewer are buffered."""
         with self._lock:
             have = len(self._buf)
             if have >= n:
@@ -836,10 +863,12 @@ class SampleFIFO:
             return out
 
     def available(self):
+        """Number of samples buffered."""
         with self._lock:
             return len(self._buf)
 
     def clear(self):
+        """Drop everything buffered."""
         with self._lock:
             self._buf = self._buf[:0]
 
@@ -879,8 +908,15 @@ class _FX:
     """Base effect = passthrough (the 'Raw' slot)."""
     name = "Raw"
     def __init__(self, rate):
+        """*rate* is the sample rate in Hz."""
         self.rate = rate
     def process(self, x):
+        """Process one float32 mono chunk (int16 amplitude scale).
+
+        Returns a float32 chunk of the same length. Subclasses keep their state
+        (phase, delay lines, filter state) across calls so chunk boundaries
+        don't click.
+        """
         return x
 
 
@@ -968,6 +1004,7 @@ class _Vibrato(_FX):
 
 
 class _Echo(_FX):
+    """Single feedback delay mixed with the dry voice."""
     def __init__(self, rate, delay=0.28, fb=0.45, mix=0.5, name="Echo"):
         super().__init__(rate)
         self.name = name
@@ -1205,9 +1242,11 @@ EFFECTS = [
 ]
 
 def effect_name(index):
+    """Name of effect *index*, wrapping around the EFFECTS list."""
     return EFFECTS[index % len(EFFECTS)][0]
 
 def make_effect(index, rate):
+    """Create a fresh instance of effect *index* (wrapping) at *rate*."""
     return EFFECTS[index % len(EFFECTS)][1](rate)
 # ---------------------------------------------------------------------------
 # TX thread — capture mic and send to gateway
@@ -1407,6 +1446,7 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
     wav_writer = None
 
     def connect():
+        """Open the TX socket to the gateway. Returns it, or None on failure."""
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(2.0)
@@ -1626,6 +1666,7 @@ def _mic_thread_func(state, cfg, mic_dev_index, mic_dev_name, mic_fifo):
            "index": mic_dev_index, "name": mic_dev_name}
 
     def _cb(indata, frames, time_info, status):
+        """Sound device callback: queue the mic block, counting xruns and drops."""
         if status:
             state["mic_xruns"] = state.get("mic_xruns", 0) + 1
         try:
@@ -1975,6 +2016,7 @@ def _gpu_monitor_thread(state):
     # CREATE_NO_WINDOW on Windows so polling doesn't flash a console window.
     flags = 0x08000000 if sys.platform == "win32" else 0
     def _sample():
+        """Run nvidia-smi once. Returns (util %, used MiB, total MiB, name)."""
         out = subprocess.run(query, capture_output=True, text=True,
                              timeout=5, creationflags=flags).stdout.strip()
         line = out.splitlines()[0]
@@ -2275,6 +2317,7 @@ def diag_capture(seconds=5):
     log_path = os.path.join(here, "diag_output.txt")
     log_fh = open(log_path, "w", encoding="utf-8")
     def log(msg=""):
+        """Print a line and append it to diag_output.txt."""
         print(msg, flush=True)
         log_fh.write(msg + "\n")
         log_fh.flush()
@@ -2300,6 +2343,7 @@ def diag_capture(seconds=5):
     total_frames = [0]
 
     def cb(indata, frames, time_info, status):
+        """Sound device callback: record timing, block size and status, queue the data."""
         now = time.monotonic()
         if t_start[0] is None:
             t_start[0] = now
@@ -2373,6 +2417,14 @@ def diag_capture(seconds=5):
 
 
 def main():
+    """Entry point: choose devices, start the TX / mic / RX / display threads.
+
+    Usage: windows_audio_client.py [gateway_host] [--no-update] [diag].
+    The host falls back to the saved config, then a prompt. Any argument
+    containing 'diag' runs diag_capture() instead. A self-update check runs
+    before any audio device is opened unless --no-update is given or
+    updates are disabled in the config.
+    """
     # Persist startup info to a file so it survives any later screen clears.
     here = os.path.dirname(os.path.abspath(__file__))
     startup_log = os.path.join(here, "startup.log")

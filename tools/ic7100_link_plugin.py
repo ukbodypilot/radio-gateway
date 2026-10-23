@@ -253,6 +253,12 @@ class CIVController:
 
     def __init__(self, port: str, baud: int = 19200, civ_addr: int = 0x88,
                  timeout: float = 1.0):
+        """Set up the controller; nothing touches the port until connect().
+
+        *civ_addr* is the radio's CI-V address (0x88 on a stock IC-7100).
+        *timeout* is the per-command reply wait for user commands; the poll
+        thread uses the shorter _poll_timeout.
+        """
         self._port = port
         self._baud = baud
         self._addr = civ_addr
@@ -330,6 +336,11 @@ class CIVController:
     # -- Connection management --
 
     def connect(self) -> bool:
+        """Open the serial port and read a first snapshot of radio state.
+
+        Returns True on success. On failure ``connected`` stays False and the
+        plugin watchdog retries.
+        """
         try:
             import serial
             self._serial = serial.Serial(
@@ -345,6 +356,7 @@ class CIVController:
             return False
 
     def disconnect(self):
+        """Close the serial port and mark the controller disconnected."""
         self.connected = False
         try:
             if self._serial:
@@ -357,6 +369,7 @@ class CIVController:
 
     def _build_frame(self, cmd: int, subcmd: int | None = None,
                      data: bytes = b'') -> bytes:
+        """Build a CI-V frame: FE FE <radio> <controller> cmd [subcmd] data FD."""
         body = bytes([self._addr, _CTRL_ADDR, cmd])
         if subcmd is not None:
             body += bytes([subcmd])
@@ -419,6 +432,7 @@ class CIVController:
     # -- Radio commands --
 
     def get_freq(self) -> float | None:
+        """Read the operating frequency (0x03). Returns MHz, or None on no reply."""
         resp = self._transact(self._build_frame(0x03))
         # Response: [0x03, bcd0..bcd4] — skip the echoed cmd byte
         if resp and len(resp) >= 6 and resp[0] == 0x03:
@@ -427,6 +441,7 @@ class CIVController:
         return None
 
     def set_freq(self, mhz: float) -> bool:
+        """Tune to *mhz* (0x05). Returns True when the radio ACKs."""
         hz = round(mhz * 1e6)
         resp = self._transact(self._build_frame(0x05, data=_freq_to_bcd(hz)))
         ok = resp is not None and len(resp) >= 1 and resp[0:1] == _OK
@@ -435,6 +450,7 @@ class CIVController:
         return ok
 
     def get_mode(self) -> str | None:
+        """Read the operating mode and filter (0x04). Returns the mode name or None."""
         resp = self._transact(self._build_frame(0x04))
         # Response: [0x04, mode, filter] — skip the echoed cmd byte
         if resp and len(resp) >= 2 and resp[0] == 0x04:
@@ -445,6 +461,10 @@ class CIVController:
         return None
 
     def set_mode(self, mode: str, filter_idx: int = 1) -> bool:
+        """Set the operating mode by name (LSB, USB, FM, ...) and filter 1-3 (0x06).
+
+        Returns False for an unknown mode name or a NAK.
+        """
         m = _MODE_BY_NAME.get(mode.upper())
         if m is None:
             return False
@@ -455,6 +475,7 @@ class CIVController:
         return ok
 
     def get_smeter(self) -> int | None:
+        """Read the S-meter (0x15 0x02) as raw 0-255, or None."""
         resp = self._transact(self._build_frame(0x15, subcmd=0x02))
         if resp and len(resp) >= 3 and resp[0] == 0x15 and resp[1] == 0x02:
             # 2 BCD bytes → 0000–0255
@@ -466,6 +487,7 @@ class CIVController:
     # TX meters — all 0x15 reads, 2-BCD 0000–0255, same decode as the
     # S-meter. Meaningful only while transmitting.
     def _read_meter(self, subcmd: int) -> int | None:
+        """Read a 0x15 meter by subcommand as raw 0-255, or None."""
         resp = self._transact(self._build_frame(0x15, subcmd=subcmd))
         if resp and len(resp) >= 4 and resp[0] == 0x15 and resp[1] == subcmd:
             return ((resp[2] & 0x0f) * 100
@@ -473,24 +495,34 @@ class CIVController:
         return None
 
     def get_po(self) -> int | None:
+        """Read the RF power-out meter (0x15 0x11). Only meaningful on TX."""
         v = self._read_meter(0x11)        # RF power meter
         if v is not None:
             self.po = v
         return v
 
     def get_swr(self) -> int | None:
+        """Read the SWR meter (0x15 0x12). Only meaningful on TX."""
         v = self._read_meter(0x12)        # SWR meter
         if v is not None:
             self.swr = v
         return v
 
     def get_alc(self) -> int | None:
+        """Read the ALC meter (0x15 0x13). Only meaningful on TX."""
         v = self._read_meter(0x13)        # ALC meter
         if v is not None:
             self.alc = v
         return v
 
     def set_ptt(self, on: bool) -> bool:
+        """Key or unkey the transmitter (0x1C 0x00). Returns True on ACK.
+
+        On key-up DATA mode is switched on first, on both VFOs when in split,
+        so the USB codec (gateway audio) modulates rather than the hand mic.
+        It is switched off again on unkey, but only if this method turned it
+        on; a DATA mode the operator set by hand is left alone.
+        """
         # Auto-engage DATA mode around gateway-initiated PTT cycles so the
         # USB codec is the modulation source on TX (per the operator's
         # MOD INPUT config: DATA OFF MOD=MIC, DATA MOD=USB). Restore on
@@ -521,6 +553,7 @@ class CIVController:
         return ok
 
     def get_ptt(self) -> bool | None:
+        """Read TX state (0x1C 0x00). Returns True/False, or None on no reply."""
         resp = self._transact(self._build_frame(0x1c, subcmd=0x00))
         if resp and len(resp) >= 3 and resp[0] == 0x1c and resp[1] == 0x00:
             self.transmitting = bool(resp[2])
@@ -593,6 +626,7 @@ class CIVController:
 
     # Split VFO — 0x0F (0x00=simplex, 0x01=split).
     def get_split(self) -> bool | None:
+        """Read split on/off (0x0F). Returns the state or None."""
         resp = self._transact(self._build_frame(0x0f))
         if resp and len(resp) >= 2 and resp[0] == 0x0f:
             self.split = bool(resp[1])
@@ -600,6 +634,7 @@ class CIVController:
         return None
 
     def set_split(self, on: bool) -> bool:
+        """Turn split on or off (0x0F). Returns True on ACK."""
         resp = self._transact(
             self._build_frame(0x0f, data=bytes([0x01 if on else 0x00])))
         ok = resp is not None and resp[0:1] == _OK
@@ -609,6 +644,7 @@ class CIVController:
 
     # RIT offset — 0x21 0x00 (signed BCD, 3 bytes).
     def get_rit_offset(self) -> int | None:
+        """Read the RIT offset in Hz (0x21 0x00), or None."""
         resp = self._transact(self._build_frame(0x21, subcmd=0x00))
         if resp and len(resp) >= 5 and resp[0] == 0x21 and resp[1] == 0x00:
             self.rit_hz = _bcd_to_rit_offset(resp[2:5])
@@ -616,6 +652,7 @@ class CIVController:
         return None
 
     def set_rit_offset(self, hz: int) -> bool:
+        """Set the RIT offset in Hz, clamped to +/-9999 (0x21 0x00)."""
         hz = max(-9999, min(9999, int(hz)))
         resp = self._transact(self._build_frame(
             0x21, subcmd=0x00, data=_rit_offset_to_bcd(hz)))
@@ -626,6 +663,7 @@ class CIVController:
 
     # RIT enable — 0x21 0x01.
     def set_rit_on(self, on: bool) -> bool:
+        """Turn RIT on or off (0x21 0x01). Returns True on ACK."""
         resp = self._transact(self._build_frame(
             0x21, subcmd=0x01, data=bytes([0x01 if on else 0x00])))
         ok = resp is not None and resp[0:1] == _OK
@@ -635,6 +673,7 @@ class CIVController:
 
     # XIT enable — 0x21 0x02.
     def set_xit_on(self, on: bool) -> bool:
+        """Turn XIT on or off (0x21 0x02). Returns True on ACK."""
         resp = self._transact(self._build_frame(
             0x21, subcmd=0x02, data=bytes([0x01 if on else 0x00])))
         ok = resp is not None and resp[0:1] == _OK
@@ -647,6 +686,7 @@ class CIVController:
     _AGC_RMAP  = {v: k for k, v in _AGC_MAP.items()}
 
     def set_agc(self, mode: str) -> bool:
+        """Set AGC to 'fast', 'mid' or 'slow' (0x16 0x12). False for any other value."""
         m = mode.lower()
         if m not in self._AGC_MAP:
             return False
@@ -659,6 +699,7 @@ class CIVController:
 
     # Noise Blanker — on/off: 0x16 0x22; level: 0x14 0x12 (0..255).
     def set_nb_on(self, on: bool) -> bool:
+        """Turn the noise blanker on or off (0x16 0x22)."""
         resp = self._transact(self._build_frame(
             0x16, subcmd=0x22, data=bytes([0x01 if on else 0x00])))
         ok = resp is not None and resp[0:1] == _OK
@@ -667,6 +708,7 @@ class CIVController:
         return ok
 
     def set_nb_level(self, pct: int) -> bool:
+        """Set the noise blanker level, 0-100% (0x14 0x12)."""
         pct = max(0, min(100, int(pct)))
         scaled = round(pct * 255 / 100)
         resp = self._transact(self._build_frame(
@@ -678,6 +720,7 @@ class CIVController:
 
     # Noise Reduction — on/off: 0x16 0x40; level: 0x14 0x06.
     def set_nr_on(self, on: bool) -> bool:
+        """Turn noise reduction on or off (0x16 0x40)."""
         resp = self._transact(self._build_frame(
             0x16, subcmd=0x40, data=bytes([0x01 if on else 0x00])))
         ok = resp is not None and resp[0:1] == _OK
@@ -686,6 +729,7 @@ class CIVController:
         return ok
 
     def set_nr_level(self, pct: int) -> bool:
+        """Set the noise reduction level, 0-100% (0x14 0x06)."""
         pct = max(0, min(100, int(pct)))
         scaled = round(pct * 255 / 100)
         resp = self._transact(self._build_frame(
@@ -697,6 +741,7 @@ class CIVController:
 
     # Preamp — 0x16 0x02 (0=off, 1=pre1, 2=pre2).
     def set_preamp(self, stage: int) -> bool:
+        """Set the preamp: 0 off, 1 P.AMP1, 2 P.AMP2 (0x16 0x02)."""
         stage = max(0, min(2, int(stage)))
         resp = self._transact(self._build_frame(
             0x16, subcmd=0x02, data=bytes([stage])))
@@ -710,6 +755,7 @@ class CIVController:
     # byte is the dB amount in BCD). Confirmed against the IC-7100 manual
     # CI-V table; earlier guesses of 0x01 and 0x20 both NG'd the radio.
     def set_atten(self, on: bool) -> bool:
+        """Turn the 12 dB attenuator on or off (0x11)."""
         resp = self._transact(self._build_frame(
             0x11, data=bytes([0x12 if on else 0x00])))
         ok = resp is not None and resp[0:1] == _OK
@@ -719,6 +765,7 @@ class CIVController:
 
     # IF shift — 0x14 0x07 (0..255, 0x80 = center).
     def set_if_shift(self, pct: int) -> bool:
+        """Set IF shift, 0-100% with 50 as centre (0x14 0x07)."""
         pct = max(0, min(100, int(pct)))
         scaled = round(pct * 255 / 100)
         resp = self._transact(self._build_frame(
@@ -730,6 +777,7 @@ class CIVController:
 
     # Filter selection — uses 0x06 with mode + filter (1/2/3).
     def set_filter(self, idx: int) -> bool:
+        """Select filter 1-3 for the current mode (0x06). False if the mode is unknown."""
         idx = max(1, min(3, int(idx)))
         m = _MODE_BY_NAME.get(self.mode.upper())
         if m is None:
@@ -743,6 +791,7 @@ class CIVController:
     # Squelch level — 0x14 0x03 (0..255). Mostly used on FM; on SSB/CW
     # the squelch is normally run wide open (level 0).
     def set_squelch(self, pct: int) -> bool:
+        """Set the squelch level, 0-100% with 0 fully open (0x14 0x03)."""
         pct = max(0, min(100, int(pct)))
         scaled = round(pct * 255 / 100)
         resp = self._transact(self._build_frame(
@@ -755,6 +804,7 @@ class CIVController:
     # RF output power — 0x14 0x0A (0..255). Maps 0..100% TX power. Same
     # level-control family as squelch/NB/NR/IF-shift above.
     def set_rf_power(self, pct: int) -> bool:
+        """Set TX RF output power, 0-100% (0x14 0x0A)."""
         pct = max(0, min(100, int(pct)))
         scaled = round(pct * 255 / 100)
         resp = self._transact(self._build_frame(
@@ -769,6 +819,7 @@ class CIVController:
     # the gateway-side audio_boost (which scales the captured RX stream
     # AFTER it leaves the radio).
     def set_af_level(self, pct: int) -> bool:
+        """Set the radio's AF (volume) level, 0-100% (0x14 0x01)."""
         pct = max(0, min(100, int(pct)))
         scaled = round(pct * 255 / 100)
         resp = self._transact(self._build_frame(
@@ -786,6 +837,11 @@ class CIVController:
     # toggling this picks which audio source feeds the modulator: mic when
     # off, USB codec (gateway audio) when on.
     def set_data_mode(self, on: bool, filt: int = 1) -> bool:
+        """Turn DATA mode on or off with filter *filt* 1-3 (0x1A 0x06).
+
+        With the radio set to DATA OFF MOD = MIC and DATA MOD = USB, this picks
+        the hand mic (off) or the gateway's USB audio (on) as the TX source.
+        """
         flag = 0x01 if on else 0x00
         filt = max(1, min(3, int(filt))) if on else 0
         resp = self._transact(self._build_frame(
@@ -797,6 +853,7 @@ class CIVController:
         return ok
 
     def get_data_mode(self) -> bool | None:
+        """Read DATA mode on/off and its filter (0x1A 0x06). Returns on/off or None."""
         resp = self._transact(self._build_frame(0x1a, subcmd=0x06))
         if resp and len(resp) >= 4 and resp[0] == 0x1a and resp[1] == 0x06:
             self.data_mode = bool(resp[2])
@@ -807,6 +864,7 @@ class CIVController:
 
     # Mic gain — 0x14 0x0B (0..255). Maps 0..100% TX microphone gain.
     def set_mic_gain(self, pct: int) -> bool:
+        """Set TX mic gain, 0-100% (0x14 0x0B)."""
         pct = max(0, min(100, int(pct)))
         scaled = round(pct * 255 / 100)
         resp = self._transact(self._build_frame(
@@ -818,6 +876,7 @@ class CIVController:
 
     # Squelch condition — 0x15 0x01 (0=closed/muted, 1=open/audio passing).
     def get_squelch_status(self) -> bool | None:
+        """Read whether the squelch is open (0x15 0x01). Returns True/False or None."""
         resp = self._transact(self._build_frame(0x15, subcmd=0x01))
         if resp and len(resp) >= 3 and resp[0] == 0x15 and resp[1] == 0x01:
             self.squelch_open = bool(resp[2])
@@ -827,6 +886,7 @@ class CIVController:
     # DTCS enable — 0x16 0x4A. DTCS gates RX (and encodes TX) with a
     # digital code instead of a CTCSS tone — the FM "digital squelch".
     def set_dtcs_on(self, on: bool) -> bool:
+        """Turn DTCS (digital code squelch) on or off (0x16 0x4A)."""
         resp = self._transact(self._build_frame(
             0x16, subcmd=0x4a, data=bytes([0x01 if on else 0x00])))
         ok = resp is not None and resp[0:1] == _OK
@@ -835,6 +895,7 @@ class CIVController:
         return ok
 
     def get_dtcs_on(self) -> bool | None:
+        """Read DTCS on/off (0x16 0x4A). Returns the state or None."""
         resp = self._transact(self._build_frame(0x16, subcmd=0x4a))
         if resp and len(resp) >= 3 and resp[0] == 0x16 and resp[1] == 0x4a:
             self.dtcs_on = bool(resp[2])
@@ -843,6 +904,7 @@ class CIVController:
 
     # DTCS code + polarity — 0x1B 0x07.
     def set_dtcs_code(self, code: int, polarity: int = 0) -> bool:
+        """Set the DTCS code and polarity 0-3 (0x1B 0x07)."""
         resp = self._transact(self._build_frame(
             0x1b, subcmd=0x07, data=_dtcs_to_bytes(code, polarity)))
         ok = resp is not None and resp[0:1] == _OK
@@ -1027,6 +1089,7 @@ class CIVController:
         return None
 
     def get_rit_on(self) -> bool | None:
+        """Read RIT on/off (0x21 0x01). Returns the state or None."""
         resp = self._transact(self._build_frame(0x21, subcmd=0x01))
         if resp and len(resp) >= 3 and resp[0] == 0x21 and resp[1] == 0x01:
             self.rit_on = bool(resp[2])
@@ -1034,6 +1097,7 @@ class CIVController:
         return None
 
     def get_xit_on(self) -> bool | None:
+        """Read XIT on/off (0x21 0x02). Returns the state or None."""
         resp = self._transact(self._build_frame(0x21, subcmd=0x02))
         if resp and len(resp) >= 3 and resp[0] == 0x21 and resp[1] == 0x02:
             self.xit_on = bool(resp[2])
@@ -1041,6 +1105,7 @@ class CIVController:
         return None
 
     def get_agc(self) -> str | None:
+        """Read the AGC speed (0x16 0x12). Returns 'fast' / 'mid' / 'slow' or None."""
         resp = self._transact(self._build_frame(0x16, subcmd=0x12))
         if resp and len(resp) >= 3 and resp[0] == 0x16 and resp[1] == 0x12:
             self.agc = self._AGC_RMAP.get(resp[2], self.agc)
@@ -1068,6 +1133,7 @@ class CIVController:
         return (self.nr_on, self.nr_level)
 
     def get_preamp(self) -> int | None:
+        """Read the preamp stage, 0-2 (0x16 0x02), or None."""
         resp = self._transact(self._build_frame(0x16, subcmd=0x02))
         if resp and len(resp) >= 3 and resp[0] == 0x16 and resp[1] == 0x02:
             self.preamp = max(0, min(2, resp[2]))
@@ -1075,6 +1141,7 @@ class CIVController:
         return None
 
     def get_atten(self) -> bool | None:
+        """Read attenuator on/off (0x11). Returns the state or None."""
         # 0x11 has no subcommand; data byte 0x00 = off, non-zero = on.
         resp = self._transact(self._build_frame(0x11))
         if resp and len(resp) >= 2 and resp[0] == 0x11:
@@ -1083,30 +1150,35 @@ class CIVController:
         return None
 
     def get_if_shift(self) -> int | None:
+        """Read IF shift as 0-100% (0x14 0x07), or None."""
         v = self._read_level_pct(0x07)
         if v is not None:
             self.if_shift = v
         return v
 
     def get_squelch(self) -> int | None:
+        """Read the squelch level as 0-100% (0x14 0x03), or None."""
         v = self._read_level_pct(0x03)
         if v is not None:
             self.squelch = v
         return v
 
     def get_rf_power(self) -> int | None:
+        """Read TX RF power as 0-100% (0x14 0x0A), or None."""
         v = self._read_level_pct(0x0A)
         if v is not None:
             self.rf_power = v
         return v
 
     def get_af_level(self) -> int | None:
+        """Read the AF (volume) level as 0-100% (0x14 0x01), or None."""
         v = self._read_level_pct(0x01)
         if v is not None:
             self.af_level = v
         return v
 
     def get_mic_gain(self) -> int | None:
+        """Read TX mic gain as 0-100% (0x14 0x0B), or None."""
         v = self._read_level_pct(0x0B)
         if v is not None:
             self.mic_gain = v
@@ -1216,6 +1288,7 @@ class IC7100AudioCapture:
     CHUNK = 4800  # 50 ms at 48 kHz 16-bit mono
 
     def __init__(self, device: str, rx_queue: _queue_mod.Queue):
+        """Capture from ALSA *device* into *rx_queue* once start() is called."""
         self._device = device
         self._queue = rx_queue
         self._thread = None
@@ -1223,12 +1296,14 @@ class IC7100AudioCapture:
         self._proc = None
 
     def start(self):
+        """Start the capture thread."""
         self._running = True
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name='IC7100-RXAudio')
         self._thread.start()
 
     def stop(self):
+        """Stop the capture thread and kill arecord."""
         self._running = False
         if self._proc:
             try:
@@ -1239,6 +1314,11 @@ class IC7100AudioCapture:
             self._thread.join(timeout=3)
 
     def _loop(self):
+        """Run arecord and queue 50 ms chunks, restarting it with backoff if it dies.
+
+        When the queue is full the oldest chunk is dropped, so a slow reader
+        hears recent audio rather than a growing delay.
+        """
         backoff = 1.0
         while self._running:
             try:
@@ -1286,6 +1366,7 @@ class IC7100AudioPlayback:
     """Sends TX audio to the IC-7100 USB codec via aplay subprocess."""
 
     def __init__(self, device: str):
+        """Play to ALSA *device* once start() is called."""
         self._device = device
         self._queue: _queue_mod.Queue = _queue_mod.Queue(maxsize=64)
         self._thread = None
@@ -1293,12 +1374,14 @@ class IC7100AudioPlayback:
         self._proc = None
 
     def start(self):
+        """Start the playback thread."""
         self._running = True
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name='IC7100-TXAudio')
         self._thread.start()
 
     def stop(self):
+        """Stop the playback thread and kill aplay."""
         self._running = False
         if self._proc:
             try:
@@ -1322,6 +1405,7 @@ class IC7100AudioPlayback:
             pass
 
     def _loop(self):
+        """Feed queued chunks to aplay, restarting it with backoff if it dies."""
         backoff = 1.0
         while self._running:
             try:
@@ -1369,6 +1453,14 @@ class IC7100AudioPlayback:
 # ---------------------------------------------------------------------------
 
 class IC7100Rigctld:
+    """Minimal hamlib NET rigctl server so direwolf can key the IC-7100.
+
+    Direwolf's ``PTT RIG 2 host:port`` talks to this over TCP. It sends
+    ``\\dump_state`` on connect and ``T 0|1`` (or ``set_ptt``) to key; PTT is
+    forwarded to CIVController.set_ptt on the plugin's already-open serial
+    port. Other commands get ``RPRT -11`` (not implemented), which is
+    harmless for PTT-only use.
+    """
 
     _DUMP_STATE = (
         "0\n"
@@ -1384,6 +1476,11 @@ class IC7100Rigctld:
 
     def __init__(self, civ_provider, host='127.0.0.1', port=4532,
                  ptt_settle_ms=200):
+        """*civ_provider* returns the current CIVController (or None), so a
+        reconnect that replaces the controller is picked up. *ptt_settle_ms*
+        delays the reply to a key-up so the radio's TX stage is up before
+        direwolf starts sending audio.
+        """
         self._get_civ = civ_provider
         self._host = host
         self._port = port
@@ -1409,6 +1506,7 @@ class IC7100Rigctld:
             pass
 
     def start(self):
+        """Bind the listening socket and start accepting. False if the bind fails."""
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1427,6 +1525,7 @@ class IC7100Rigctld:
         return True
 
     def stop(self):
+        """Stop accepting and close the listening socket."""
         self._running = False
         if self._server:
             try:
@@ -1436,9 +1535,11 @@ class IC7100Rigctld:
 
     @property
     def stats(self):
+        """Copy of the connect / PTT / unknown-command / error counters."""
         return dict(self._stats)
 
     def _accept_loop(self):
+        """Accept clients and serve each on its own thread."""
         while self._running:
             try:
                 conn, addr = self._server.accept()
@@ -1451,6 +1552,7 @@ class IC7100Rigctld:
                              daemon=True, name='IC7100-Rigctld-Client').start()
 
     def _client_loop(self, conn, addr):
+        """Serve one client: read newline-terminated commands and send replies."""
         print(f"[IC7100-Rigctld] client {addr} connected", flush=True)
         buf = b''
         try:
@@ -1492,6 +1594,7 @@ class IC7100Rigctld:
             print(f"[IC7100-Rigctld] client {addr} disconnected", flush=True)
 
     def _handle(self, line):
+        """Answer one rigctl command line. Returns the reply text."""
         if not line:
             return 'RPRT 0\n'
         cmd = line[1:] if line.startswith('\\') else line
@@ -1551,10 +1654,16 @@ class IC7100Rigctld:
 # ---------------------------------------------------------------------------
 
 class IC7100DirewolfRunner:
+    """Runs direwolf as a local packet TNC while the radio is in data mode.
+
+    Direwolf reads and writes the IC-7100 USB codec directly (via plughw),
+    keys through the IC7100Rigctld shim and serves KISS on ``kiss_port``.
+    """
 
     def __init__(self, audio_device, rigctld_port=4532,
                  conf_path='/tmp/direwolf_ic7100.conf',
                  direwolf_path='/usr/bin/direwolf'):
+        """Configure the runner; direwolf is not started until start()."""
         self._audio_device = audio_device
         self._rigctld_port = rigctld_port
         self._conf_path = conf_path
@@ -1569,6 +1678,11 @@ class IC7100DirewolfRunner:
         self.modem = 1200
 
     def start(self, callsign, ssid=0, modem=1200, kiss_port=8001, txdelay=120):
+        """Write a direwolf config for *callsign*-*ssid* and launch direwolf.
+
+        Returns False if direwolf is missing, there is no audio device, or the
+        config can't be written or the process can't be launched.
+        """
         if not os.path.exists(self._direwolf_path):
             print(f"[IC7100-Direwolf] not found at {self._direwolf_path}",
                   flush=True)
@@ -1624,6 +1738,7 @@ class IC7100DirewolfRunner:
         return True
 
     def stop(self):
+        """Terminate direwolf, killing it if it doesn't exit within 3 s."""
         with self._lock:
             self._running = False
             p = self._proc
@@ -1642,15 +1757,18 @@ class IC7100DirewolfRunner:
 
     @property
     def running(self):
+        """True while direwolf is running."""
         with self._lock:
             return (self._running and self._proc is not None
                     and self._proc.poll() is None)
 
     @property
     def log_tail(self):
+        """The last 200 lines of direwolf output."""
         return list(self._log_tail)
 
     def _monitor_loop(self):
+        """Copy direwolf output to the log and the tail buffer until it exits."""
         proc = self._proc
         if not proc or not proc.stdout:
             return
@@ -1696,6 +1814,7 @@ class IC7100Plugin(RadioPlugin):
     _SETTINGS_POLL_EVERY = 2
 
     def __init__(self):
+        """Create an idle plugin; setup() opens the radio."""
         self._civ: CIVController | None = None
         self._capture: IC7100AudioCapture | None = None
         self._playback: IC7100AudioPlayback | None = None
@@ -1746,6 +1865,13 @@ class IC7100Plugin(RadioPlugin):
     # -- Lifecycle --
 
     def setup(self, config):
+        """Open CI-V and audio, start the rigctld shim and background threads.
+
+        Keys read from *config*: device, civ_addr, civ_baud, audio_in /
+        audio_device, rigctld_port. Saved RX/TX gains and TX interlocks are
+        restored from the settings file. A failed CI-V connect is not fatal;
+        the watchdog keeps retrying.
+        """
         port       = config.get('device', '/dev/ttyUSB0')
         civ_addr   = int(str(config.get('civ_addr', '0x88')), 16)
         # IC-7100 CI-V baud — radio MENU > Set > Connectors > CI-V > CI-V Baud.
@@ -1827,6 +1953,7 @@ class IC7100Plugin(RadioPlugin):
         self._meter_thread.start()
 
     def teardown(self):
+        """Stop direwolf, the rigctld shim, audio and CI-V."""
         self._running = False
         if self._direwolf:
             self._direwolf.stop()
@@ -1845,6 +1972,11 @@ class IC7100Plugin(RadioPlugin):
     # -- Audio I/O --
 
     def get_audio(self, chunk_size=4800):
+        """Return (pcm, False) with the next RX chunk, or (None, False).
+
+        Audio is dropped while the radio's squelch is closed, since the USB
+        codec streams the noise floor otherwise.
+        """
         # The IC-7100's USB codec streams its receive audio unconditionally
         # (no internal squelch gating like the kv4p/D75 do). Without this
         # check the gateway's audio meters always show the noise floor for
@@ -1863,6 +1995,7 @@ class IC7100Plugin(RadioPlugin):
             return None, False
 
     def put_audio(self, pcm):
+        """Send a TX audio chunk to the radio, applying the TX gain."""
         # Instrumentation: track each call so the GUI / diagnostics can
         # tell whether the bus is actually feeding TX audio to us (vs no
         # routing at all). Updated even when _playback is missing so a
@@ -1879,6 +2012,11 @@ class IC7100Plugin(RadioPlugin):
     # -- Command dispatch --
 
     def execute(self, cmd):
+        """Run a command dict from the gateway and return the reply dict.
+
+        While it runs, the poll loop is told to back off so the command gets
+        the serial port straight away.
+        """
         if not isinstance(cmd, dict):
             return {"ok": False, "error": "invalid command"}
         # Signal the poll loop to abort any in-progress poll and yield the
@@ -1891,6 +2029,7 @@ class IC7100Plugin(RadioPlugin):
             self._user_cmd_pending.clear()
 
     def _execute_inner(self, cmd):
+        """Dispatch *cmd* to its handler in _COMMANDS."""
         action = cmd.get('cmd', '')
         # isinstance: a JSON list or dict here would be unhashable
         handler = self._COMMANDS.get(action) if isinstance(action, str) else None
@@ -1899,6 +2038,11 @@ class IC7100Plugin(RadioPlugin):
         return handler(self, cmd)
 
     def _cmd_ptt(self, cmd):
+        """Key or unkey: {state} sets it, no state toggles.
+
+        Refused while the TX interlock for the current band's antenna port is
+        off.
+        """
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         # Explicit state if provided; otherwise toggle current TX state.
@@ -1922,6 +2066,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "ptt": state}
 
     def _cmd_tx_interlock(self, cmd):
+        """Enable or disable TX per antenna port: {hf, vu}. Saved to the settings file."""
         # Enable/disable TX per antenna port. Keys: 'hf', 'vu' (bool).
         if 'hf' in cmd:
             self._tx_allow['hf'] = bool(cmd['hf'])
@@ -1939,6 +2084,7 @@ class IC7100Plugin(RadioPlugin):
                 "tx_allow_vu": self._tx_allow['vu']}
 
     def _cmd_frequency(self, cmd):
+        """Tune the radio: {freq} in MHz."""
         freq = cmd.get('freq')
         if freq is None:
             return {"ok": False, "error": "missing freq"}
@@ -1950,6 +2096,11 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "freq": freq}
 
     def _cmd_mode(self, cmd):
+        """Set the operating mode: {mode, filter}.
+
+        The values 'audio' and 'data' are the packet TNC switch instead and go
+        to _set_tnc_mode.
+        """
         mode = cmd.get('mode', '')
         # 'audio'/'data' is the packet-TNC switch from packet_radio.py;
         # any other value is a radio operating-mode change (LSB/USB/FM…).
@@ -1966,6 +2117,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "mode": mode}
 
     def _cmd_ctcss(self, cmd):
+        """Set any of {tx_hz, rx_hz, tx_on, rx_on}; replies with the full CTCSS state."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         tx_hz  = float(cmd['tx_hz'])  if 'tx_hz'  in cmd else None
@@ -1985,6 +2137,7 @@ class IC7100Plugin(RadioPlugin):
         }
 
     def _cmd_cat(self, cmd):
+        """Send raw CI-V bytes: {raw} as bytes or a hex string. Replies with the response hex."""
         raw = cmd.get('raw', b'')
         if isinstance(raw, str):
             raw = bytes.fromhex(raw.replace(' ', ''))
@@ -1999,21 +2152,25 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": True, "response": resp.hex() if resp else None}
 
     def _cmd_rx_gain(self, cmd):
+        """Set gateway-side RX gain: {db}, clamped to +/-20. Saved to the settings file."""
         self._rx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
         self._save_settings()
         return {"ok": True, "rx_gain_db": self._rx_gain_db}
 
     def _cmd_tx_gain(self, cmd):
+        """Set gateway-side TX gain: {db}, clamped to +/-20. Saved to the settings file."""
         self._tx_gain_db = max(-20, min(20, float(cmd.get('db', 0))))
         self._save_settings()
         return {"ok": True, "tx_gain_db": self._tx_gain_db}
 
     def _cmd_status(self, cmd):
+        """Reply with get_status()."""
         return {"ok": True, "status": self.get_status()}
 
     # -- VFO / memory commands -----------------------------------------
 
     def _cmd_vfo(self, cmd):
+        """Select VFO A or B: {vfo} (or {which})."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         which = cmd.get('vfo', cmd.get('which', ''))
@@ -2024,6 +2181,7 @@ class IC7100Plugin(RadioPlugin):
                 "memory_mode": self._civ.memory_mode}
 
     def _cmd_vfo_swap(self, cmd):
+        """Swap VFO A and B."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         ok = self._civ.swap_vfo()
@@ -2032,12 +2190,14 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "active_vfo": self._civ.active_vfo}
 
     def _cmd_vfo_equalize(self, cmd):
+        """Copy the active VFO to the other one."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         ok = self._civ.equalize_vfo()
         return {"ok": ok}
 
     def _cmd_memory_mode(self, cmd):
+        """Switch to memory mode ({on: true}) or back to VFO mode."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         on = bool(cmd.get('on', True))
@@ -2048,6 +2208,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "memory_mode": self._civ.memory_mode}
 
     def _cmd_memory_select(self, cmd):
+        """Select memory channel {channel} (or {ch})."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         try:
@@ -2061,6 +2222,7 @@ class IC7100Plugin(RadioPlugin):
                 "memory_mode": self._civ.memory_mode}
 
     def _cmd_call_channel(self, cmd):
+        """Select a call channel: {which}."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         which = str(cmd.get('which', '') or '')
@@ -2071,21 +2233,25 @@ class IC7100Plugin(RadioPlugin):
                 "memory_channel": self._civ.memory_channel}
 
     def _cmd_memory_write(self, cmd):
+        """Write the current VFO into the selected memory channel."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         return {"ok": self._civ.write_memory()}
 
     def _cmd_memory_clear(self, cmd):
+        """Clear the selected memory channel."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         return {"ok": self._civ.clear_memory()}
 
     def _cmd_memory_to_vfo(self, cmd):
+        """Copy the selected memory channel into the VFO."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         return {"ok": self._civ.memory_to_vfo()}
 
     def _cmd_memory_read(self, cmd):
+        """Read memory channel {channel} (or {ch}); replies with its raw bytes as hex."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         try:
@@ -2099,6 +2265,7 @@ class IC7100Plugin(RadioPlugin):
     # -- HF feature commands (Phase C) ---------------------------------
 
     def _cmd_split(self, cmd):
+        """Turn split on or off: {on}."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         on = bool(cmd.get('on', False))
@@ -2106,6 +2273,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "split": self._civ.split}
 
     def _cmd_rit(self, cmd):
+        """Set RIT: {hz} and/or {on}. Setting an offset turns RIT on unless {on} is given."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         ok = True
@@ -2122,6 +2290,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "rit_hz": self._civ.rit_hz, "rit_on": self._civ.rit_on}
 
     def _cmd_xit(self, cmd):
+        """Turn XIT on or off: {on}."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         on = bool(cmd.get('on', False))
@@ -2129,6 +2298,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "xit_on": self._civ.xit_on}
 
     def _cmd_agc(self, cmd):
+        """Set AGC speed: {mode} 'fast' / 'mid' / 'slow'."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         mode = str(cmd.get('mode', 'mid')).lower()
@@ -2136,6 +2306,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "agc": self._civ.agc}
 
     def _cmd_nb(self, cmd):
+        """Set the noise blanker: {on} and/or {level} 0-100."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         ok = True
@@ -2144,6 +2315,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "nb_on": self._civ.nb_on, "nb_level": self._civ.nb_level}
 
     def _cmd_nr(self, cmd):
+        """Set noise reduction: {on} and/or {level} 0-100."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         ok = True
@@ -2152,6 +2324,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "nr_on": self._civ.nr_on, "nr_level": self._civ.nr_level}
 
     def _cmd_preamp(self, cmd):
+        """Set the preamp: {stage} 0-2."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         stage = int(cmd.get('stage', 0))
@@ -2159,6 +2332,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "preamp": self._civ.preamp}
 
     def _cmd_atten(self, cmd):
+        """Turn the attenuator on or off: {on}."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         on = bool(cmd.get('on', False))
@@ -2166,6 +2340,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "atten": self._civ.atten}
 
     def _cmd_if_shift(self, cmd):
+        """Set IF shift: {pct} 0-100, 50 is centre."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         pct = int(cmd.get('pct', 50))
@@ -2173,6 +2348,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "if_shift": self._civ.if_shift}
 
     def _cmd_filter(self, cmd):
+        """Select filter {idx} 1-3 for the current mode."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         idx = int(cmd.get('idx', 1))
@@ -2180,6 +2356,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "filter": self._civ.filter_idx}
 
     def _cmd_squelch(self, cmd):
+        """Set the squelch level: {pct} 0-100."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         pct = int(cmd.get('pct', 0))
@@ -2187,6 +2364,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "squelch": self._civ.squelch}
 
     def _cmd_power(self, cmd):
+        """Set TX RF power: {pct} 0-100."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         pct = int(cmd.get('pct', 0))
@@ -2194,6 +2372,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "rf_power": self._civ.rf_power}
 
     def _cmd_mic_gain(self, cmd):
+        """Set TX mic gain: {pct} 0-100."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         pct = int(cmd.get('pct', 0))
@@ -2201,6 +2380,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "mic_gain": self._civ.mic_gain}
 
     def _cmd_af_level(self, cmd):
+        """Set the radio's AF (volume) level: {pct} 0-100."""
         # Radio front-panel AF (volume) knob. Separate from the
         # gateway-side audio_boost slider.
         if not self._civ or not self._civ.connected:
@@ -2212,6 +2392,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "af_level": self._civ.af_level}
 
     def _cmd_data_mode(self, cmd):
+        """Set DATA mode: {on} (toggles when absent) and optional {filt}."""
         # Toggle the radio's DATA mode (USB-D / FM-D / ...) so the
         # MOD INPUT chain swaps audio source per the operator's menu
         # configuration. Typical use: DATA OFF MOD = MIC for the
@@ -2227,6 +2408,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "data_mode": self._civ.data_mode}
 
     def _cmd_squelch_type(self, cmd):
+        """Pick FM squelch gating: {type} 'noise', 'tsql' or 'dtcs'."""
         # FM squelch gating: 'noise' (carrier), 'tsql' (CTCSS tone),
         # or 'dtcs' (digital code). Orchestrates the RX-tone and
         # DTCS enables so only one gating mode is active at a time.
@@ -2241,6 +2423,7 @@ class IC7100Plugin(RadioPlugin):
         return {"ok": ok, "squelch_type": stype}
 
     def _cmd_dtcs(self, cmd):
+        """Set DTCS: {on}, {code} and/or {polarity}; replies with the full DTCS state."""
         if not self._civ or not self._civ.connected:
             return {"ok": False, "error": "CI-V not connected"}
         ok = True
@@ -2453,6 +2636,9 @@ class IC7100Plugin(RadioPlugin):
     # -- Status --
 
     def get_status(self):
+        """Return the status dict pushed to the gateway: radio state from the
+        CI-V cache, gains, TX interlocks, TNC and rigctld state, host stats.
+        """
         status = {"plugin": self.name}
         if self._civ:
             status.update({
@@ -2546,6 +2732,7 @@ class IC7100Plugin(RadioPlugin):
     # -- Watchdog --
 
     def _watchdog(self):
+        """Reconnect CI-V whenever the serial link drops."""
         while self._running:
             time.sleep(self._RECONNECT_DELAY)
             if not self._running:
@@ -2565,11 +2752,6 @@ class IC7100Plugin(RadioPlugin):
                     self._status_dirty = True
 
     def _poll_loop(self):
-        # Mark this thread as the poll thread so every _transact() it makes
-        # uses the short timeout. User-command transacts run on the endpoint
-        # reader thread and aren't tagged, so they keep the longer default.
-        if self._civ:
-            self._civ._tls.in_poll = True
         """Periodically read the radio so the cache — and therefore the GUI —
         tracks the radio, including changes the operator makes on the radio's
         own front panel. The fast group (freq/mode/PTT/meters) runs every
@@ -2577,6 +2759,11 @@ class IC7100Plugin(RadioPlugin):
         Settings polling is skipped during TX so it never contends with the
         meter loop. A user command from the GUI still goes straight to the
         radio via execute() — this loop only pulls state the other way."""
+        # Mark this thread as the poll thread so every _transact() it makes
+        # uses the short timeout. User-command transacts run on the endpoint
+        # reader thread and aren't tagged, so they keep the longer default.
+        if self._civ:
+            self._civ._tls.in_poll = True
         cycle = 0
         while self._running:
             time.sleep(self._POLL_INTERVAL)
@@ -2669,6 +2856,7 @@ class IC7100Plugin(RadioPlugin):
     # -- Settings persistence --
 
     def _save_settings(self):
+        """Save RX/TX gains and TX interlocks to the settings file."""
         try:
             d = os.path.dirname(self._settings_file)
             if d:
@@ -2684,6 +2872,7 @@ class IC7100Plugin(RadioPlugin):
             print(f"[IC7100] Failed to save settings: {e}", flush=True)
 
     def _load_settings(self):
+        """Load the settings file. Returns the dict, or None if missing or bad."""
         try:
             with open(self._settings_file) as f:
                 return json.load(f)
@@ -2696,6 +2885,7 @@ class IC7100Plugin(RadioPlugin):
 # ---------------------------------------------------------------------------
 
 def _apply_volume(pcm: bytes, gain: float) -> bytes:
+    """Scale S16_LE mono PCM by *gain*, clipping to 16 bits."""
     n = len(pcm) // 2
     samples = struct.unpack(f'<{n}h', pcm)
     out = []
@@ -2708,4 +2898,5 @@ def _apply_volume(pcm: bytes, gain: float) -> bytes:
 
 
 def _db_to_linear(db: float) -> float:
+    """Convert a gain in dB to a linear factor."""
     return 10 ** (db / 20.0)
