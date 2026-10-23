@@ -94,14 +94,14 @@ class FakeTunnel:
         return self.url
 
 
-def start_web(password='', link_secret='', tunnel_allow_open=False, tunnel_url=None,
-              link_port=9700):
+def start_web(password='', tunnel_allow_open=False, tunnel_url=None,
+              link_port=9700, link_server=None):
     gw = types.SimpleNamespace(cloudflare_tunnel=FakeTunnel(tunnel_url) if tunnel_url else None,
-                               _plugin_web_routes={},
+                               _plugin_web_routes={}, link_server=link_server,
                                config=types.SimpleNamespace(LINK_PORT=link_port))
-    parent = types.SimpleNamespace(gateway=gw, config=types.SimpleNamespace(LINK_SECRET=link_secret))
+    parent = types.SimpleNamespace(gateway=gw)
     Handler = type('H', (GatewayRequestHandler,), {
-        'parent': parent, 'password': password, 'link_secret': link_secret,
+        'parent': parent, 'password': password,
         'tunnel_allow_open': tunnel_allow_open,
     })
     srv = ThreadedServer(('127.0.0.1', 0), Handler)
@@ -192,76 +192,176 @@ def web_access():
     st, _, _ = req(srv, 'GET', '/metrics', {'Cf-Ray': 'x'})
     check("...but /metrics through the tunnel does", st == 401, st)
     st, _, _ = req(srv, 'GET', '/ws/link')
-    check("/ws/link without LINK_SECRET still needs the password", st == 401, st)
-    srv.shutdown()
-    srv = start_web(password='pw', link_secret='s')
-    st, _, _ = req(srv, 'GET', '/ws/link')
-    check("/ws/link with LINK_SECRET skips Basic auth (H5)", st != 401, st)
+    check("/ws/link skips Basic auth; the link server authenticates (H5)", st != 401, st)
     srv.shutdown()
 
 
-# ── Link REGISTER auth ───────────────────────────────────────────
+# ── Link REGISTER auth and key delivery ──────────────────────────
+
+class KeyStore:
+    """Stands in for link_endpoint._store_link_key."""
+
+    def __init__(self, durable=True):
+        self.durable = durable
+        self.key = None
+
+    def __call__(self, key):
+        self.key = key
+        return (True, '') if self.durable else (False, 'read-only root')
+
+
+def client(port, name, key='', store=None, ws_url=None):
+    c = GatewayLinkClient('127.0.0.1' if port else None, port, name, {},
+                          secret=key, on_link_key=store, ws_url=ws_url)
+    c.start()
+    return c
+
 
 def link_auth():
-    print("\n5. link REGISTER needs LINK_SECRET when the gateway has one (H3)")
+    tmp = _tmpdirs.mkdtemp('rgw_link_')
+    enroll = os.path.join(tmp, 'enrolled.json')
+
+    print("\n5. first connect delivers the key; then the name must authenticate (H3)")
     port = free_port()
     registered = []
-    srv = GatewayLinkServer(port=port, secret='s3cret', bind='127.0.0.1',
+    srv = GatewayLinkServer(port=port, secret='M', bind='127.0.0.1', enroll_path=enroll,
                             on_register=lambda info: registered.append(info['name']))
     srv.start()
-    good = GatewayLinkClient('127.0.0.1', port, 'kv4p-v', {}, secret='s3cret')
-    good.start()
-    check("endpoint with the secret registers",
+    store = KeyStore()
+    real = client(port, 'kv4p-v', store=store)
+    check("endpoint with no key registers (trust on first use)",
           wait_for(lambda: 'kv4p-v' in srv.get_endpoint_names()), srv.get_endpoint_names())
+    check("...and receives its own key", wait_for(lambda: store.key == srv.key_for('kv4p-v')))
+    check("...and is enrolled once it has stored it", wait_for(lambda: srv.is_enrolled('kv4p-v')))
+    check("stored info doesn't keep the auth field", 'auth' not in srv.get_endpoint_info('kv4p-v'))
     real_sock = srv._endpoints['kv4p-v'].sock
 
-    for label, secret in (("no secret (old endpoint)", ''), ("wrong secret", 'guess')):
-        bad = GatewayLinkClient('127.0.0.1', port, 'kv4p-v', {}, secret=secret)
-        bad.start()
-        time.sleep(1.5 if not secret else 1.0)
+    for label, key in (("no key", ''), ("a wrong key", 'guess')):
+        bad = client(port, 'kv4p-v', key=key)
+        time.sleep(1.0)
         bad.stop()
-        check(f"impostor with {label} did not evict the real endpoint",
+        check(f"impostor with {label} can't take over the enrolled name",
               srv._endpoints.get('kv4p-v') is not None
               and srv._endpoints['kv4p-v'].sock is real_sock)
-    check("on_register ran once", registered == ['kv4p-v'], registered)
-    good.stop()
+    real.stop()
+    wait_for(lambda: 'kv4p-v' not in srv.get_endpoint_names())
+
+    again = client(port, 'kv4p-v', key=store.key)
+    check("the real endpoint reconnects with its stored key",
+          wait_for(lambda: 'kv4p-v' in srv.get_endpoint_names()))
+    check("...authenticated", srv._endpoints['kv4p-v'].authenticated)
+
+    ic = client(port, 'ic7100', store=KeyStore())
+    wait_for(lambda: srv.is_enrolled('ic7100'))
+    ic.stop()
+    wait_for(lambda: 'ic7100' not in srv.get_endpoint_names())
+    stolen = client(port, 'ic7100', key=store.key)   # kv4p-v's key
+    time.sleep(1.0)
+    stolen.stop()
+    check("one endpoint's key can't pose as another enrolled endpoint",
+          'ic7100' not in srv.get_endpoint_names())
+    again.stop()
+
+    print("\n5a. nothing gets stranded")
+    ro = KeyStore(durable=False)
+    pi = client(port, 'pi-ro', store=ro)
+    wait_for(lambda: ro.key is not None)
+    time.sleep(0.3)
+    check("endpoint that can't store its key durably stays unenrolled",
+          not srv.is_enrolled('pi-ro'))
+    pi.stop()
+    wait_for(lambda: 'pi-ro' not in srv.get_endpoint_names())
+    pi2 = client(port, 'pi-ro')   # rebooted, key gone
+    check("...so after losing the key it can still connect",
+          wait_for(lambda: 'pi-ro' in srv.get_endpoint_names()))
+    pi2.stop()
+    old = client(port, 'old-code')   # no on_link_key: like pre-5.1 endpoint code
+    check("old endpoint code (can't store a key) still connects",
+          wait_for(lambda: 'old-code' in srv.get_endpoint_names()))
+    time.sleep(0.3)
+    check("...and isn't enrolled, so it can update and enroll later",
+          not srv.is_enrolled('old-code'))
+    old.stop()
+    srv.stop()
+
+    srv = GatewayLinkServer(port=port, secret='M', bind='127.0.0.1', enroll_path=enroll)
+    srv.start()
+    bad = client(port, 'kv4p-v')
+    time.sleep(1.0)
+    bad.stop()
+    check("enrollment survives a gateway restart", 'kv4p-v' not in srv.get_endpoint_names())
+    srv.stop()
+
+    srv = GatewayLinkServer(port=port, secret='M2', bind='127.0.0.1', enroll_path=enroll)
+    srv.start()
+    s2 = KeyStore()
+    moved = client(port, 'kv4p-v', key=store.key, store=s2)
+    check("master secret changed: old key re-enrolls instead of being refused",
+          wait_for(lambda: s2.key == srv.key_for('kv4p-v')))
+    moved.stop()
+    srv.stop()
+
+    srv = GatewayLinkServer(port=port, secret='M2', bind='127.0.0.1', enroll_path=enroll,
+                            enroll_new=False)
+    srv.start()
+    stranger = client(port, 'stranger', store=KeyStore())
+    time.sleep(1.0)
+    stranger.stop()
+    check("LINK_ENROLL_NEW = false: a new name is refused",
+          'stranger' not in srv.get_endpoint_names())
+    known = client(port, 'kv4p-v', key=s2.key)
+    check("...an enrolled one with its key still connects",
+          wait_for(lambda: 'kv4p-v' in srv.get_endpoint_names()))
+    known.stop()
     srv.stop()
 
     print("\n5b. the same through /ws/link (tunnel path), with a web password set")
     port = free_port()
-    srv = GatewayLinkServer(port=port, secret='s3cret', bind='127.0.0.1')
+    srv = GatewayLinkServer(port=port, secret='M', bind='127.0.0.1',
+                            enroll_path=os.path.join(tmp, 'e2.json'))
     srv.start()
-    web = start_web(password='pw', link_secret='s3cret', link_port=port)
+    web = start_web(password='pw', link_port=port)
     ws_url = f"ws://127.0.0.1:{web.server_address[1]}/ws/link"
-    c = GatewayLinkClient(None, None, 'ic7100', {}, ws_url=ws_url, secret='s3cret')
-    c.start()
-    check("endpoint registers over the WebSocket bridge, no web password needed",
-          wait_for(lambda: 'ic7100' in srv.get_endpoint_names()), srv.get_endpoint_names())
+    ks = KeyStore()
+    c = client(None, 'ic7100', store=ks, ws_url=ws_url)
+    check("endpoint enrolls over the WebSocket bridge, no web password needed",
+          wait_for(lambda: srv.is_enrolled('ic7100')), srv.get_endpoint_names())
     c.stop()
-    bad = GatewayLinkClient(None, None, 'ic7100-x', {}, ws_url=ws_url, secret='guess')
-    bad.start()
+    wait_for(lambda: 'ic7100' not in srv.get_endpoint_names())
+    c = client(None, 'ic7100', key=ks.key, ws_url=ws_url)
+    check("...and authenticates over it afterwards",
+          wait_for(lambda: 'ic7100' in srv.get_endpoint_names()
+                   and srv._endpoints['ic7100'].authenticated))
+    c.stop()
+    wait_for(lambda: 'ic7100' not in srv.get_endpoint_names())
+    bad = client(None, 'ic7100', key='guess', ws_url=ws_url)
     time.sleep(1.5)
-    check("wrong secret over the bridge is refused",
-          'ic7100-x' not in srv.get_endpoint_names())
+    check("wrong key over the bridge is refused", 'ic7100' not in srv.get_endpoint_names())
     bad.stop()
     web.shutdown()
     srv.stop()
 
-    print("\n6. gateway without LINK_SECRET still takes everyone")
+    print("\n6. a gateway with link auth off (or an old one) still takes everyone")
     port = free_port()
     srv = GatewayLinkServer(port=port)
     srv.start()
-    old = GatewayLinkClient('127.0.0.1', port, 'old', {})
-    new = GatewayLinkClient('127.0.0.1', port, 'new', {}, secret='s3cret')
-    old.start()
-    new.start()
-    check("endpoint without a secret registers",
-          wait_for(lambda: 'old' in srv.get_endpoint_names()))
-    check("endpoint with a secret registers (after a short challenge wait)",
+    o = client(port, 'old')
+    n = client(port, 'new', key='k')
+    check("endpoint without a key registers", wait_for(lambda: 'old' in srv.get_endpoint_names()))
+    check("endpoint with a key registers (after a short challenge wait)",
           wait_for(lambda: 'new' in srv.get_endpoint_names()))
-    old.stop()
-    new.stop()
+    check("...and knows the gateway didn't challenge", wait_for(lambda: n.gateway_challenged is False))
+    o.stop()
+    n.stop()
     srv.stop()
+
+    print("\n6b. the master secret file")
+    from gateway_link import load_or_create_master_secret
+    path = os.path.join(tmp, 'cfg', 'link_secret')
+    a = load_or_create_master_secret(path)
+    check("generated on first use", len(a) == 64)
+    check("kept across restarts", load_or_create_master_secret(path) == a)
+    check("file is private (0600)", (os.stat(path).st_mode & 0o777) == 0o600)
 
 
 # ── Signed updates ───────────────────────────────────────────────
@@ -274,7 +374,11 @@ class BundleHandler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    last_name = ''
+
     def do_GET(self):
+        if self.path == '/api/endpoint/files':
+            BundleHandler.last_name = self.headers.get('X-Endpoint-Name', '')
         if self.path == '/api/endpoint/version':
             body = json.dumps({'version': 'remote-differs'}).encode()
         else:
@@ -321,8 +425,11 @@ def signed_updates():
     check("...but a ../ entry is not written",
           not os.path.exists(os.path.join(tmp, 'escaped.py')))
 
-    with open(os.path.join(tmp, 'link_secret'), 'w') as f:
-        f.write('k\n')   # parent dir, as on a read-only-root Pi
+    ok, err = le._store_link_key('k')
+    check("delivered key is stored durably", ok, err)
+    check("...in a private file", (os.stat(os.path.join(run, 'link_secret')).st_mode & 0o777) == 0o600)
+    check("...and read back as this endpoint's key", le._link_secret() == 'k')
+    le._ENDPOINT_NAME = 'kv4p-v'
     BundleHandler.files = {'log_shipper.py': b'# newer\n'}
     BundleHandler.extra = {}
     BundleHandler.sig = ''
@@ -331,20 +438,33 @@ def signed_updates():
     check("with a secret: wrongly signed bundle refused", le._check_for_update_locked(url) is False)
     with open(os.path.join(run, 'log_shipper.py'), 'rb') as f:
         check("refused bundle left the file alone", f.read() == b'# new\n')
+    BundleHandler.sig = ''
+    le._LINK_CLIENT = types.SimpleNamespace(gateway_challenged=True)
+    check("unsigned bundle from a gateway that challenged us: refused",
+          le._check_for_update_locked(url) is False)
+    le._LINK_CLIENT = types.SimpleNamespace(gateway_challenged=False)
+    BundleHandler.files = {'log_shipper.py': b'# rollback\n'}
+    check("unsigned bundle from a gateway without link auth (rollback): installs",
+          le._check_for_update_locked(url) is True)
+    le._LINK_CLIENT = None
+    BundleHandler.files = {'log_shipper.py': b'# newer\n'}
     BundleHandler.sig = bundle_signature('k', BundleHandler.files)
     check("with a secret: correctly signed bundle installs", le._check_for_update_locked(url) is True)
+    check("update request names the endpoint", BundleHandler.last_name == 'kv4p-v',
+          BundleHandler.last_name)
     srv.shutdown()
 
-    print("\n9. the gateway signs what it serves")
-    web = start_web(link_secret='k')
-    st, body, r = req(web, 'GET', '/api/endpoint/files')
+    print("\n9. the gateway signs with the requesting endpoint's key")
+    ls = GatewayLinkServer(port=0, secret='M')   # not started; key_for only
+    web = start_web(link_server=ls)
+    st, body, r = req(web, 'GET', '/api/endpoint/files', {'X-Endpoint-Name': 'kv4p-v'})
     got = {k: base64.b64decode(v) for k, v in json.loads(body).items()}
-    check("served bundle carries a valid signature",
-          st == 200 and verify_bundle('k', got, r.getheader('X-Bundle-Signature', '')))
-    web.shutdown()
-    web = start_web()
+    sig = r.getheader('X-Bundle-Signature', '')
+    check("signed with kv4p-v's key", st == 200 and verify_bundle(ls.key_for('kv4p-v'), got, sig))
+    check("...which another endpoint's key doesn't verify",
+          not verify_bundle(ls.key_for('ic7100'), got, sig))
     st, body, r = req(web, 'GET', '/api/endpoint/files')
-    check("no LINK_SECRET: no signature header", r.getheader('X-Bundle-Signature') is None)
+    check("no name: no signature", r.getheader('X-Bundle-Signature') is None)
     web.shutdown()
 
 

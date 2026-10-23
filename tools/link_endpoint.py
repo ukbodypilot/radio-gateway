@@ -42,8 +42,8 @@ sys.path.insert(0, _RUN_DIR)         # run dir — wins (deploys go here)
 
 try:
     from gateway_link import GatewayLinkClient, AudioPlugin, AIOCPlugin, discover_gateway
-    from gateway_link import (BUNDLE_SIG_HEADER, load_link_secret,
-                              verify_bundle)
+    from gateway_link import (BUNDLE_SIG_HEADER, ENDPOINT_NAME_HEADER, LINK_SECRET_FILE,
+                              load_link_secret, verify_bundle)
 except ImportError as e:
     print(f"[Endpoint] Failed to import gateway_link: {e}")
     print("[Endpoint] Make sure gateway_link.py is in the parent directory.")
@@ -51,10 +51,56 @@ except ImportError as e:
 
 
 def _link_secret():
-    """LINK_SECRET for this endpoint: $RADIO_GATEWAY_LINK_SECRET, or a
-    link_secret file in the run dir or its parent (the parent survives a
-    reboot on read-only-root Pis that run from tmpfs)."""
+    """This endpoint's link key: $RADIO_GATEWAY_LINK_SECRET (how the gateway
+    hands it to the kv4p endpoints it starts), or the link_secret file the
+    gateway's key delivery wrote, in the run dir or its parent (the parent
+    survives a reboot on read-only-root Pis that run from tmpfs)."""
     return load_link_secret(_RUN_DIR) or load_link_secret(_PARENT_DIR)
+
+
+def _tmpfs_layout():
+    """True when this runs from <base>/run on a read-only-root Pi, where
+    only <base> survives a reboot (same test the updater uses)."""
+    return os.path.isdir(os.path.join(_PARENT_DIR, 'run'))
+
+
+def _write_private(path, text):
+    fd = os.open(path + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(text)
+    os.replace(path + '.tmp', path)
+
+
+def _store_link_key(key):
+    """Save the key the gateway delivered. Returns (durable, error).
+
+    durable is False when it couldn't be written where it survives a
+    reboot; the gateway then keeps this endpoint unenrolled (it may
+    register without a key), so losing the key can't lock it out."""
+    try:
+        _write_private(os.path.join(_RUN_DIR, LINK_SECRET_FILE), key + '\n')
+    except OSError as e:
+        return False, f'write failed: {e}'
+    if not _tmpfs_layout():
+        return True, ''
+    try:
+        subprocess.run(['sudo', '-n', 'mount', '-o', 'remount,rw', '/'],
+                       capture_output=True, timeout=5)
+        try:
+            _write_private(os.path.join(_PARENT_DIR, LINK_SECRET_FILE), key + '\n')
+        finally:
+            subprocess.run(['sudo', '-n', 'mount', '-o', 'remount,ro', '/'],
+                           capture_output=True, timeout=5)
+        return True, ''
+    except Exception as e:
+        return False, f'persist to {_PARENT_DIR} failed: {e}'
+
+
+# Set in main(): the update request names the endpoint so the gateway signs
+# with its key, and an unsigned bundle is accepted only from a gateway that
+# didn't challenge us (one from before link auth, e.g. after a revert).
+_ENDPOINT_NAME = None
+_LINK_CLIENT = None
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +346,8 @@ def _check_for_update_locked(gateway_url):
 
         # Download files
         req = urllib.request.Request(f'{gateway_url}/api/endpoint/files')
+        if _ENDPOINT_NAME:
+            req.add_header(ENDPOINT_NAME_HEADER, _ENDPOINT_NAME)
         resp = urllib.request.urlopen(req, timeout=30)
         bundle = json.loads(resp.read())
         _sig = resp.headers.get(BUNDLE_SIG_HEADER, '')
@@ -312,18 +360,24 @@ def _check_for_update_locked(gateway_url):
                 continue
             files[fname] = base64.b64decode(b64data)
 
-        # With a link secret, only run code the gateway signed with it: an
-        # unsigned or wrongly signed bundle came from something else
-        # answering on the gateway's address.
+        # With a key, only run code the gateway signed with it: an unsigned
+        # or wrongly signed bundle came from something else answering on
+        # the gateway's address. One exception so a rollback can't strand
+        # us: a gateway that didn't challenge our last connection predates
+        # link auth and can't sign, so its unsigned bundle is accepted.
         _secret = _link_secret()
-        if _secret:
-            if not verify_bundle(_secret, files, _sig):
-                print(f"[Update] REFUSED: bundle signature "
-                      f"{'invalid' if _sig else 'missing'} (check LINK_SECRET "
-                      f"matches the gateway)")
-                return False
+        _old_gw = _LINK_CLIENT is not None and _LINK_CLIENT.gateway_challenged is False
+        if _secret and verify_bundle(_secret, files, _sig):
+            pass
+        elif _secret and not (_old_gw and not _sig):
+            print(f"[Update] REFUSED: bundle signature "
+                  f"{'invalid' if _sig else 'missing'} for this endpoint's key")
+            return False
+        elif _secret:
+            print("[Update] Gateway has no link auth (older version) — "
+                  "installing its unsigned bundle")
         else:
-            print("[Update] WARNING: no link_secret — installing an unsigned bundle")
+            print("[Update] No link key yet — installing an unsigned bundle")
 
         updated = 0
         for fname, content in files.items():
@@ -412,6 +466,8 @@ def main():
                         help='List available audio devices and exit')
 
     args = parser.parse_args()
+    global _ENDPOINT_NAME
+    _ENDPOINT_NAME = args.name
 
     # --list-devices mode
     if args.list_devices:
@@ -655,7 +711,10 @@ def main():
         ws_url=ws_url,
         url_resolver=_resolve_tunnel_url,
         secret=_link_secret(),
+        on_link_key=_store_link_key,
     )
+    global _LINK_CLIENT
+    _LINK_CLIENT = client
 
     # Periodic update checker — runs every hour regardless of connection state
     def _periodic_update_checker():

@@ -56,9 +56,9 @@ Every request goes through `GatewayRequestHandler._check_access`
    transmit. Requests with no `Origin` (curl, MCP, endpoints) aren't from a
    web page and pass. The tunnel hostname counts as this server.
 2. **Endpoint routes.** `/api/endpoint/*` and `/api/winclient/*` (public
-   repo code, signed when `LINK_SECRET` is set) need no password.
-   `/ws/link` needs none when `LINK_SECRET` is set, because the link server
-   authenticates REGISTER. See [gateway_link.md](gateway_link.md#authentication).
+   repo code, signed with each endpoint's key) need no password.
+   `/ws/link` needs none, because the link server authenticates each
+   endpoint itself. See [gateway_link.md](gateway_link.md#authentication).
    `/metrics` is open to clients on the gateway itself (Prometheus scrapes
    it without credentials), but not through the tunnel.
 3. **HTTP Basic auth** with `WEB_CONFIG_USERNAME` / `WEB_CONFIG_PASSWORD`.

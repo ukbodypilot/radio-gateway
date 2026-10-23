@@ -409,11 +409,12 @@ def setup_kv4p_loopback_endpoints(gw):
             '--no-update',
         ]
         try:
-            # The secret goes in the environment, not argv, so it
-            # doesn't show in `ps`.
+            # Its link key goes in the environment, not argv, so it
+            # doesn't show in `ps`. These are ours, so no first-use enrollment.
             from gateway_link import LINK_SECRET_ENV
             env = dict(os.environ)
-            env[LINK_SECRET_ENV] = str(getattr(gw.config, 'LINK_SECRET', '') or '')
+            _ls = getattr(gw, 'link_server', None)
+            env[LINK_SECRET_ENV] = _ls.key_for(name) if _ls else ''
             gw.process_supervisor.add(
                 name, argv,
                 env=env,
@@ -659,7 +660,9 @@ def setup_gateway_link(gw):
             ptt_timeout=getattr(gw.config, 'PTT_TIMEOUT_SECONDS', 180),
             on_ptt_timeout=lambda name: gw._link_ptt_active.__setitem__(name, False),
             bind=str(getattr(gw.config, 'LINK_BIND', '') or ''),
-            secret=str(getattr(gw.config, 'LINK_SECRET', '') or ''),
+            secret=_link_master_secret(gw.config),
+            enroll_new=bool(getattr(gw.config, 'LINK_ENROLL_NEW', True)),
+            enroll_path=os.path.expanduser('~/.config/radio-gateway/link_enrolled.json'),
         )
         gw.link_server.start()
         print(f"  Gateway Link listening on port {link_port}")
@@ -811,6 +814,17 @@ def setup_supervised_streamers(gw):
                         print(f"  [Stream] mumble-gw{n} supervisor add failed: {e2}")
             except Exception as e:
                 print(f"  [Stream] mumble-gw{n} supervisor add failed: {e}")
+
+
+def _link_master_secret(config):
+    """LINK_SECRET if set, else the gateway's own generated secret, kept
+    0600 in ~/.config/radio-gateway/link_secret (created on first start)."""
+    secret = str(getattr(config, 'LINK_SECRET', '') or '').strip()
+    if secret:
+        return secret
+    from gateway_link import load_or_create_master_secret
+    return load_or_create_master_secret(
+        os.path.expanduser('~/.config/radio-gateway/link_secret'))
 
 
 def setup_cloudflare_tunnel(gw):

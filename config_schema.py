@@ -472,9 +472,12 @@ DEFAULTS = {
     'ENABLE_GATEWAY_LINK': False,
     'LINK_PORT': 9700,
     'LINK_BIND': '',                  # interface address for :9700, blank = all
-    # Shared secret for link endpoints (REGISTER HMAC, signed code updates,
-    # /ws/link without Basic auth). Blank = open, as before 5.1.
+    # Master secret the per-endpoint link keys derive from. Blank = the
+    # gateway generates one (~/.config/radio-gateway/link_secret).
     'LINK_SECRET': '',
+    # Endpoint names not seen before get their key over the link on first
+    # connect (trust on first use). false = only already-enrolled names.
+    'LINK_ENROLL_NEW': True,
     'LINK_AUDIO_DUCK': False,
     'LINK_AUDIO_PRIORITY': 3,
     'LINK_AUDIO_BOOST': 1.0,
@@ -773,7 +776,7 @@ LAYOUT = [
         'ENABLE_USBIP', 'USBIP_SERVER', 'USBIP_DEVICES',
     ]),
     ('link', 'Gateway Link', [
-        'ENABLE_GATEWAY_LINK', 'LINK_PORT', 'LINK_BIND', 'LINK_SECRET',
+        'ENABLE_GATEWAY_LINK', 'LINK_PORT', 'LINK_BIND', 'LINK_SECRET', 'LINK_ENROLL_NEW',
         'LINK_AUDIO_DUCK', 'LINK_AUDIO_PRIORITY',
         'LINK_AUDIO_BOOST', 'LINK_AUDIO_DISPLAY_GAIN',
         'LINK_RX_MUTED', 'LINK_TX_MUTED',

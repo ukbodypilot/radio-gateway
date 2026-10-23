@@ -431,14 +431,16 @@ REMOTE_AUDIO_RECONNECT_INTERVAL = 5.0  # Server: seconds between reconnect attem
 # ─── Link endpoints (docs/gateway_link.md) ───
 LINK_PORT = 9700                # TCP port remote endpoints connect in on
 LINK_BIND =                     # interface IP to listen on, blank = all interfaces
-# Shared secret for link endpoints. When set: endpoints must prove they know
-# it to REGISTER (HMAC over a per-connection challenge), code updates are
-# signed with it, and /ws/link no longer needs the web password. Put the
-# same value in a file named link_secret next to link_endpoint.py on each
-# endpoint (and next to windows_audio_client.py). Blank = any host that can
-# reach the port can register as any endpoint.
-# Generate one with: python3 -c "import secrets; print(secrets.token_hex(24))"
+# Endpoint authentication is always on. Each endpoint gets its own key,
+# delivered over the link the first time a new endpoint name connects, and
+# must prove it has the key from then on; code updates are signed with it.
+# Nothing to set up on the endpoints. See docs/gateway_link.md#authentication.
+# LINK_SECRET: master the keys derive from. Blank = the gateway generates
+# one in ~/.config/radio-gateway/link_secret. Changing it re-enrolls everyone.
 LINK_SECRET =
+# Give keys to endpoint names never seen before. Turn off once every
+# endpoint shows as enrolled, so nothing new can join.
+LINK_ENROLL_NEW = true
 LINK_AUDIO_BOOST = 1.0          # RX volume multiplier for link audio
 LINK_AUDIO_DISPLAY_GAIN = 1.0   # meter sensitivity only, does not affect audio
 LINK_AUDIO_DUCK = false         # duck link audio under higher-priority sources

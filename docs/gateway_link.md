@@ -69,7 +69,7 @@ for good).
 | REGISTER | `0x04` | JSON | Endpoint → gateway | Sent once on connect; identifies the endpoint. |
 | ACK | `0x05` | JSON | Endpoint → gateway | Result of a COMMAND, keyed by `cmd_id`. |
 | LOG | `0x06` | JSON | Endpoint → gateway | `{"type": "log", "lines": [{"ts", "stream", "text"}, ...]}` |
-| CHALLENGE | `0x07` | JSON | Gateway → endpoint | `{"nonce": "<32 hex>", "v": 1}`, first frame, only when `LINK_SECRET` is set. |
+| CHALLENGE | `0x07` | JSON | Gateway → endpoint | `{"nonce": "<32 hex>", "v": 1}`, first frame on every connection (5.1+). |
 
 ### Registration
 
@@ -84,8 +84,8 @@ On connect the endpoint sends:
 }
 ```
 
-With `LINK_SECRET` set, REGISTER also carries
-`"auth": HMAC-SHA256(secret, "radio-gateway-link-v1|<nonce>|<name>")` in hex,
+An endpoint that has its key adds
+`"auth": HMAC-SHA256(key, "radio-gateway-link-v1|<nonce>|<name>")` in hex,
 answering the CHALLENGE (see [Authentication](#authentication)).
 
 `capabilities` is a dict of flags (`audio_rx`, `audio_tx`, `ptt`, `frequency`,
@@ -178,49 +178,62 @@ audio frame). `tests/test_ws_frames.py` covers it.
 
 ### Authentication
 
-Without `LINK_SECRET` (the default, and the only behaviour before 5.1) any
-host that can reach the link port, or `/ws/link` through the tunnel, can
-REGISTER under any name. Because a duplicate name replaces the existing
-connection, it can take over a real radio: receive its TX audio and
-commands and inject audio as its RX.
+Before 5.1 any host that could reach the link port, or `/ws/link` through
+the tunnel, could REGISTER under any name. Because a duplicate name replaces
+the existing connection, it could take over a real radio: receive its TX
+audio and commands and inject audio as its RX.
 
-With `LINK_SECRET` set on the gateway:
+Since 5.1 every endpoint has its own key, and nothing is set up by hand:
 
-1. The server's first frame on every connection is a CHALLENGE with a fresh
-   random nonce.
-2. REGISTER must carry `auth`, the HMAC above. A missing or wrong one gets a
+1. **Master secret.** The gateway uses `LINK_SECRET` if set, otherwise it
+   generates one on first start in `~/.config/radio-gateway/link_secret`
+   (mode 0600). Each endpoint's key is
+   `HMAC-SHA256(master, "radio-gateway-endpoint-key-v1|<name>")`, so one
+   endpoint's key is no use for posing as another.
+2. **Challenge.** The server's first frame on every connection is a
+   CHALLENGE with a fresh random nonce. An endpoint with a key answers in
+   REGISTER (`auth`, above).
+3. **First connect (trust on first use).** A name the gateway hasn't
+   enrolled may register without `auth`. The gateway then sends it
+   `{"cmd": "link_key_set", "key": ...}`. The endpoint writes the key to
+   `link_secret` (next to `link_endpoint.py`, and on a read-only-root Pi also
+   to the persistent parent directory) and ACKs `ok: true` only if the key
+   will survive a reboot. Only then is the name enrolled, in
+   `~/.config/radio-gateway/link_enrolled.json`.
+4. **After that** the name must authenticate. A missing or wrong `auth` gets a
    COMMAND `{"error": "link auth failed: ..."}` and the connection closes,
-   **before** the duplicate-name check, so it can't evict anyone.
-3. `/ws/link` no longer needs the web password, since REGISTER is now
-   authenticated. Before, a web password locked tunnel endpoints out.
-4. Code updates are signed (see [Self-update](#self-update)).
+   **before** the duplicate-name check, so it can't evict the real endpoint.
+5. Code updates are signed with the endpoint's key (see
+   [Self-update](#self-update)).
+6. `/ws/link` needs no web password, because the link server does this.
 
 The nonce is per connection, so a captured REGISTER can't be replayed, and
 nothing depends on the clock (Pis without an RTC boot with the wrong time).
-This authenticates the endpoint; it doesn't encrypt the audio. On the LAN
-TCP path, someone who can already intercept and rewrite traffic between the
-two can still tamper with a session after it is set up.
+This authenticates the endpoint; it doesn't encrypt the audio.
 
-Endpoints read the secret from `$RADIO_GATEWAY_LINK_SECRET`, or from a file
-named `link_secret` next to `link_endpoint.py` (or in its parent directory,
-which survives a reboot on a read-only-root Pi). The KV4P endpoints the
-gateway starts itself get it through the environment. An endpoint with a
-secret waits up to 3 s for a CHALLENGE and registers without auth if none
-comes, so it still works with a gateway that has no secret.
+**The trade-off is the first connect.** The key travels once, in the clear on
+the LAN TCP path (inside TLS on the tunnel path). Someone sniffing the LAN at
+that moment could copy it, and anyone who reaches the gateway first with a
+name that isn't enrolled yet can claim that name. Once every endpoint has
+connected, set `LINK_ENROLL_NEW = false` and new names are refused; enrolled
+ones keep working. To enroll a new endpoint later, turn it back on briefly.
 
-To turn it on:
+**Nothing gets stranded:**
 
-```bash
-python3 -c "import secrets; print(secrets.token_hex(24))"   # once
-# gateway: LINK_SECRET = <that value> in gateway_config.txt, restart
-# each endpoint (in the directory link_endpoint.py runs from):
-echo '<that value>' > link_secret && chmod 600 link_secret
-```
-
-Old endpoints ignore the CHALLENGE and are refused until they have the file.
-They can still self-update first (the update routes need no secret), so the
-order doesn't matter much, but endpoints refuse an unsigned update once they
-have a secret.
+- An endpoint that can't store its key durably ACKs `ok: false` and stays
+  unenrolled, so it can still connect without a key after a reboot.
+- Endpoint code from before 5.1 ignores the CHALLENGE and answers
+  `link_key_set` as an unknown command (`ok: false`), so it stays
+  unenrolled, connects, self-updates, and enrolls on its next connect.
+- If the master secret changes, the enrolled list (which stores a
+  fingerprint of it) starts empty and every endpoint re-enrolls.
+- Rolling the gateway back to a version without link auth: the endpoint
+  waits up to 3 s for a CHALLENGE, registers without auth when none comes,
+  and accepts that gateway's unsigned updates (see below).
+- The KV4P endpoints the gateway starts itself get their key through
+  `$RADIO_GATEWAY_LINK_SECRET`.
+- To re-enroll one endpoint by hand, remove its name from
+  `link_enrolled.json` and restart the gateway.
 
 `LINK_BIND` limits the link port to one interface address (blank = all).
 
@@ -314,11 +327,14 @@ start, on each reconnect (at most every 5 minutes) and hourly, and fetch
 off.
 
 The endpoint writes only the files on that list (a bundle entry such as
-`../../.bashrc` is ignored). With `LINK_SECRET` the gateway signs the bundle
-(`X-Bundle-Signature`, an HMAC over each file's name and SHA-256), and an
-endpoint that has a `link_secret` refuses a bundle that isn't signed with it.
-Without a secret on the endpoint it installs unsigned bundles and says so in
-its log. `windows_audio_client.py` does the same for `/api/winclient/files`.
+`../../.bashrc` is ignored). The endpoint names itself in an
+`X-Endpoint-Name` header and the gateway signs the bundle with that
+endpoint's key (`X-Bundle-Signature`, an HMAC over each file's name and
+SHA-256). An endpoint with a key refuses a bundle that isn't signed with it,
+unless the gateway didn't challenge its last connection (a gateway from before
+5.1, e.g. after a rollback, which can't sign). An endpoint without a key yet
+installs unsigned bundles and says so in its log. `windows_audio_client.py`
+updates are not signed yet; it too writes only the files on its list.
 The update routes need no web password: they serve only code from this
 repository. See [pi-endpoint-build.md](pi-endpoint-build.md) for how a read-only-root
 Pi persists the update.
@@ -334,7 +350,8 @@ Gateway side, in `gateway_config.txt` (`[link]` on the config page):
 | `ENABLE_GATEWAY_LINK` | `false` | Run the link server |
 | `LINK_PORT` | `9700` | TCP port for endpoints (the `/ws/link` bridge connects here too) |
 | `LINK_BIND` | blank | Interface address to listen on; blank = all |
-| `LINK_SECRET` | blank | Shared secret: authenticated REGISTER, signed updates, `/ws/link` without the web password. See [Authentication](#authentication) |
+| `LINK_SECRET` | blank | Master for per-endpoint keys; blank = generated in `~/.config/radio-gateway/link_secret`. See [Authentication](#authentication) |
+| `LINK_ENROLL_NEW` | `true` | Let names that aren't enrolled yet connect and receive their key. Turn off once every endpoint has connected |
 | `LINK_AUDIO_PRIORITY` | `3` | Ducking priority for link audio (lower = higher priority) |
 | `LINK_AUDIO_DUCK` | `false` | Whether link audio ducks SDR sources |
 | `LINK_AUDIO_BOOST` | `1.0` | Level multiplier for incoming link audio |
@@ -396,8 +413,8 @@ python3 tools/link_endpoint.py --name ic7100 --plugin ic7100 \
 ### Deploying to a remote machine
 
 Copy `gateway_link.py`, `tools/link_endpoint.py`, `tools/log_shipper.py` and the
-plugin you need into one directory on the endpoint (plus a `link_secret` file
-if the gateway has `LINK_SECRET`), install that plugin's
+plugin you need into one directory on the endpoint (it gets its key from the
+gateway on first connect), install that plugin's
 dependencies (`pyaudio` for `audio`/`aioc`, plus `hidapi` for `aioc`), and run
 it as above. For a systemd unit see
 [plugin-development.md](plugin-development.md#auto-start-on-boot-systemd); for a

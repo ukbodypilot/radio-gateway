@@ -28,17 +28,18 @@ behaviour on upgrade; see *Upgrading* below.
   through the Cloudflare tunnel get a 403, except the endpoint update routes
   and `/ws/link`, so tunnel endpoints keep working. The LAN is unchanged.
   `WEB_TUNNEL_ALLOW_NO_PASSWORD = true` restores the old behaviour.
-- **`LINK_SECRET`** (new, blank by default). When set, the link server
-  challenges every connection and REGISTER must carry an HMAC of the nonce
-  and name, checked before the duplicate-name eviction, so a host on the
-  network can no longer take over `kv4p-v` or `ic7100`. `/ws/link` then
-  skips Basic auth, so a web password no longer locks tunnel endpoints out.
-  `LINK_BIND` (new) limits the link port to one interface.
-- **Signed endpoint updates.** With `LINK_SECRET`, `/api/endpoint/files` and
-  `/api/winclient/files` carry `X-Bundle-Signature`, and an endpoint with a
-  `link_secret` file refuses a bundle that isn't signed with it. Endpoints
-  now write only the files on their update list (a `../` name was written
-  anywhere before). The update routes need no web password.
+- **Link endpoints authenticate, with nothing to set up.** The gateway
+  generates a master secret (or uses `LINK_SECRET`) and gives each endpoint
+  its own key the first time it connects (trust on first use). From then on
+  that name must answer a per-connection challenge, checked before the
+  duplicate-name eviction, so a host on the network can no longer take over
+  `kv4p-v` or `ic7100`. `/ws/link` skips Basic auth, so a web password
+  doesn't lock tunnel endpoints out. New: `LINK_SECRET`, `LINK_ENROLL_NEW`
+  (turn off once everything has enrolled), `LINK_BIND` (one interface).
+- **Signed endpoint updates.** `/api/endpoint/files` is signed with the
+  requesting endpoint's key, and an endpoint with a key refuses a bundle that
+  isn't. Endpoints now write only the files on their update list (a `../`
+  name was written anywhere before). The update routes need no web password.
 - **/config hid only six secrets.** It now hides every key whose name
   contains PASSWORD, SECRET, PASSCODE or TOKEN, which adds the three Mumble
   passwords and `CAT_PASSWORD` (shown in clear before).
@@ -49,16 +50,15 @@ behaviour on upgrade; see *Upgrading* below.
 
 - The web UI now asks for **user / user** unless you set your own
   `WEB_CONFIG_USERNAME` / `WEB_CONFIG_PASSWORD` (do). Saved browser logins
-  for `admin` stop working. Endpoints that connect **through the tunnel**
-  (`/ws/link`) need `LINK_SECRET` set on both sides first, or they get 401.
-  LAN endpoints on port 9700 are unaffected. The room-monitor Android app
-  sends no credentials and stops connecting. Remote transcribe workers
-  need `--gateway-password` if you change the password from `user`.
-- To authenticate endpoints, set `LINK_SECRET` on the gateway and put the same
-  value in a `link_secret` file next to `link_endpoint.py` on every endpoint
-  (and next to `windows_audio_client.py`). See
-  [gateway_link.md](docs/gateway_link.md#authentication). Until an endpoint has
-  the file the gateway refuses it. Nothing changes while `LINK_SECRET` is blank.
+  for `admin` stop working. The room-monitor Android app sends no
+  credentials and stops connecting. Remote transcribe workers need
+  `--gateway-password` if you change the password from `user`.
+- Link endpoints need nothing. Update the gateway; each endpoint connects as
+  before, self-updates, and picks up its key on the next connect. Old
+  endpoint code is accepted until then. The first key delivery is in the
+  clear on the LAN, so once the gateway log shows "stored its key — enrolled"
+  for every endpoint, set `LINK_ENROLL_NEW = false`. See
+  [gateway_link.md](docs/gateway_link.md#authentication).
 
 ### Fixed
 

@@ -30,7 +30,6 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     parent = None     # the WebConfigServer this handler serves
     username = 'user'  # WEB_CONFIG_USERNAME
     password = ''     # WEB_CONFIG_PASSWORD; empty means no auth
-    link_secret = ''  # LINK_SECRET; set means /ws/link skips Basic auth
     tunnel_allow_open = False  # WEB_TUNNEL_ALLOW_NO_PASSWORD
 
     protocol_version = "HTTP/1.1"  # Required for WebSocket upgrade
@@ -59,9 +58,9 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     #      could drive /manager/run, /reboothost or /ws_mic. Requests with no
     #      Origin are not from a browser page (curl, MCP, endpoints) and pass.
     #   2. Endpoint routes. Link endpoints and the Windows client send no
-    #      Basic auth, so the update routes (public repo code, signed when
-    #      LINK_SECRET is set) are always open, and /ws/link is open when
-    #      LINK_SECRET is set because the link server checks REGISTER.
+    #      Basic auth, so the update routes (public repo code, signed per
+    #      endpoint) and /ws/link (the link server authenticates REGISTER)
+    #      are always open.
     #      /metrics is open to this machine (Prometheus scrapes it).
     #   3. No password: open on the LAN, but 403 through the Cloudflare
     #      tunnel unless WEB_TUNNEL_ALLOW_NO_PASSWORD. /ws/link stays open
@@ -83,7 +82,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
             return False
         if path in self._ENDPOINT_UPDATE_PATHS:
             return True
-        if path == self._LINK_WS_PATH and self.link_secret:
+        if path == self._LINK_WS_PATH:
             return True
         # Prometheus on the box scrapes /metrics with no credentials.
         if path == '/metrics' and self._from_this_box():

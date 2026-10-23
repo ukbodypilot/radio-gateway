@@ -360,22 +360,35 @@ class GatewayLinkProtocol:
 
 
 # ---------------------------------------------------------------------------
-# Link authentication (LINK_SECRET)
+# Link authentication
 # ---------------------------------------------------------------------------
-# With a shared secret set, the server opens each connection with a
-# CHALLENGE frame carrying a random nonce, and the endpoint's REGISTER must
-# carry auth = HMAC-SHA256(secret, "radio-gateway-link-v1|<nonce>|<name>").
-# The nonce is fresh per connection, so a captured REGISTER can't be
-# replayed, and no clock sync is needed (Pis without an RTC boot with the
-# wrong time). The same secret signs the endpoint code-update bundle.
+# The gateway holds a master secret (LINK_SECRET, or one it generates and
+# keeps in ~/.config/radio-gateway/link_secret). Each endpoint gets its own
+# key, derived from the master and its name (endpoint_key), so the key one
+# endpoint holds can't be used to pose as another.
 #
-# Endpoints read the secret from $RADIO_GATEWAY_LINK_SECRET or from a file
-# named link_secret next to link_endpoint.py. Older endpoints ignore the
-# CHALLENGE frame; a gateway with a secret refuses them until they have one.
+# The server opens every connection with a CHALLENGE frame carrying a fresh
+# nonce. An endpoint with a key answers in REGISTER with
+# auth = HMAC-SHA256(key, "radio-gateway-link-v1|<nonce>|<name>"). The nonce
+# is per connection, so a captured REGISTER can't be replayed, and no clock
+# sync is needed (Pis without an RTC boot with the wrong time).
+#
+# Keys are delivered over the link itself, trust on first use: an endpoint
+# name the gateway has not enrolled yet may REGISTER without auth; the
+# gateway then sends it {"cmd": "link_key_set", "key": ...}, the endpoint
+# stores it and ACKs, and from then on that name must authenticate. An
+# endpoint that couldn't store its key durably ACKs ok=false and stays
+# unenrolled, so a reboot that loses the key can't lock it out.
+# LINK_ENROLL_NEW = false stops enrolling new names.
+#
+# The endpoint's key also verifies its signed code updates.
 
 LINK_SECRET_ENV = 'RADIO_GATEWAY_LINK_SECRET'
 LINK_SECRET_FILE = 'link_secret'
 BUNDLE_SIG_HEADER = 'X-Bundle-Signature'
+# Endpoint name on an update request, so the gateway signs with its key.
+# A header rather than ?name= because older gateways route the path exactly.
+ENDPOINT_NAME_HEADER = 'X-Endpoint-Name'
 
 
 def load_link_secret(directory=None):
@@ -389,6 +402,83 @@ def load_link_secret(directory=None):
             return f.read().strip()
     except OSError:
         return ''
+
+
+def endpoint_key(master, name):
+    """The per-endpoint key for *name* under the gateway's *master* secret."""
+    import hmac
+    import hashlib
+    return hmac.new(master.encode('utf-8'),
+                    f"radio-gateway-endpoint-key-v1|{name}".encode('utf-8'),
+                    hashlib.sha256).hexdigest()
+
+
+def load_or_create_master_secret(path):
+    """Read the gateway's generated master secret from *path*, creating it
+    (0600) on first use. Used when LINK_SECRET is blank."""
+    try:
+        with open(path) as f:
+            secret = f.read().strip()
+        if secret:
+            return secret
+    except OSError:
+        pass
+    import secrets as _secrets
+    secret = _secrets.token_hex(32)
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    fd = os.open(path + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(secret + '\n')
+    os.replace(path + '.tmp', path)
+    return secret
+
+
+class LinkEnrollment:
+    """Endpoint names that have stored their key, persisted as JSON.
+
+    The file records a fingerprint of the master secret; if the master
+    changes, every endpoint's key is invalid, so the list starts empty and
+    each endpoint re-enrolls instead of being refused forever."""
+
+    def __init__(self, path, master):
+        import hashlib
+        self._path = path
+        self._fp = hashlib.sha256(('fp|' + master).encode('utf-8')).hexdigest()[:16]
+        self._lock = threading.Lock()
+        self._names = set()
+        if not path:
+            return   # in memory only
+        try:
+            with open(path) as f:
+                d = json.load(f)
+            if d.get('fingerprint') == self._fp:
+                self._names = set(d.get('names') or [])
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def __contains__(self, name):
+        with self._lock:
+            return name in self._names
+
+    def add(self, name):
+        with self._lock:
+            if name in self._names:
+                return
+            self._names.add(name)
+            data = {'fingerprint': self._fp, 'names': sorted(self._names)}
+        if not self._path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self._path) or '.', exist_ok=True)
+            with open(self._path + '.tmp', 'w') as f:
+                json.dump(data, f)
+            os.replace(self._path + '.tmp', self._path)
+        except OSError as e:
+            print(f"  [Link] Could not save enrolled endpoints: {e}")
+
+    def names(self):
+        with self._lock:
+            return sorted(self._names)
 
 
 def link_register_mac(secret, nonce, name):
@@ -429,7 +519,8 @@ class _EndpointConn:
     __slots__ = ('name', 'sock', 'send_lock', 'reader_thread', 'info',
                  'capabilities', 'last_heartbeat', 'audio_sink', 'addr',
                  'via_tunnel', 'ping_ms', '_ping_sent',
-                 '_send_queue', '_sender_thread', '_sender_running')
+                 '_send_queue', '_sender_thread', '_sender_running',
+                 'authenticated', 'key_pending')
 
     def __init__(self, name, sock, addr=None):
         self.name = name
@@ -444,6 +535,8 @@ class _EndpointConn:
         self.audio_sink = None  # set by on_register callback return value
         self.ping_ms = -1       # last measured round-trip time (-1 = no data)
         self._ping_sent = 0.0   # monotonic time when last ping was sent
+        self.authenticated = False  # REGISTER carried a valid HMAC
+        self.key_pending = False    # link_key_set sent, waiting for its ACK
         # Async send queue — audio frames queued here, sender thread drains
         import queue as _q
         self._send_queue = _q.Queue(maxsize=20)  # ~1s buffer at 50ms chunks
@@ -597,11 +690,14 @@ class GatewayLinkServer:
                  on_register=None, on_disconnect=None, on_ack=None,
                  on_endpoint_status=None, on_log_lines=None,
                  supervisor=None, ptt_timeout=0, on_ptt_timeout=None,
-                 bind='', secret=''):
+                 bind='', secret='', enroll_new=True, enroll_path=None):
         self._port = port
         self._bind = bind or ''
-        # LINK_SECRET. Blank: any client may REGISTER (pre-5.1 behaviour).
+        # Master secret (see "Link authentication"). Blank turns challenge
+        # and enrollment off: any client may REGISTER (pre-5.1 behaviour).
         self._secret = secret or ''
+        self._enroll_new = bool(enroll_new)
+        self._enrolled = LinkEnrollment(enroll_path, self._secret) if self._secret else None
         self._on_command = on_command
         self._on_register = on_register
         self._on_disconnect = on_disconnect
@@ -646,6 +742,13 @@ class GatewayLinkServer:
 
     # -- public API ---------------------------------------------------------
 
+    def key_for(self, name):
+        """*name*'s endpoint key, or '' when link auth is off."""
+        return endpoint_key(self._secret, name) if self._secret else ''
+
+    def is_enrolled(self, name):
+        return bool(self._enrolled is not None and name in self._enrolled)
+
     def start(self):
         """Bind, listen, and start accept + heartbeat threads."""
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -655,8 +758,14 @@ class GatewayLinkServer:
         self._server_sock.listen(8)
         print(f"  [Link] Server listening on {self._bind or '*'}:{self._port}")
         if not self._secret:
-            print("  [Link] WARNING: LINK_SECRET is blank — any host that can "
+            print("  [Link] WARNING: link auth is off — any host that can "
                   "reach this port can register as any endpoint")
+        elif self._enroll_new:
+            print(f"  [Link] Endpoint auth on; new endpoint names enroll on first "
+                  f"connect (enrolled: {', '.join(self._enrolled.names()) or 'none yet'})")
+        else:
+            print("  [Link] Endpoint auth on; enrolling new names is off "
+                  "(LINK_ENROLL_NEW = false)")
 
         self._stop.clear()
         self._accept_thread = threading.Thread(target=self._accept_loop,
@@ -804,6 +913,7 @@ class GatewayLinkServer:
             info['via_tunnel'] = ep.via_tunnel
             info['addr'] = f"{ep.addr[0]}:{ep.addr[1]}" if ep.addr else None
             info['ping_ms'] = ep.ping_ms
+            info['enrolled'] = self.is_enrolled(name)
             return info
 
     # -- internal -----------------------------------------------------------
@@ -919,20 +1029,29 @@ class GatewayLinkServer:
                     pass
                 return
 
-            # Authenticate before anything else, so a client without the
-            # secret can't evict the real endpoint below.
+            # Authenticate before anything else, so a client without its
+            # key can't evict the real endpoint below.
+            _authed = False
+            _enrolling = False
             if nonce is not None:
                 import hmac as _hmac
                 _mac = str(info.get('auth') or '')
-                _want = link_register_mac(self._secret, nonce, ep_name)
-                if not (_mac and _hmac.compare_digest(_mac, _want)):
+                _want = link_register_mac(self.key_for(ep_name), nonce, ep_name)
+                if _mac and _hmac.compare_digest(_mac, _want):
+                    _authed = True
+                elif ep_name not in self._enrolled and self._enroll_new:
+                    # Trust on first use. A wrong key for a name we never
+                    # enrolled (e.g. the master secret changed) re-enrolls too.
+                    _enrolling = True
+                else:
+                    _why = ('enrolled name, ' + ('bad' if _mac else 'no') + ' key'
+                            if ep_name in self._enrolled
+                            else 'not enrolled and LINK_ENROLL_NEW is off')
                     print(f"  [Link] {addr[0]}:{addr[1]} REGISTER as '{ep_name}' "
-                          f"refused: {'bad' if _mac else 'no'} LINK_SECRET auth")
+                          f"refused: {_why}")
                     try:
                         P.send_frame(sock, P.COMMAND, json.dumps(
-                            {"error": "link auth failed: set the gateway's "
-                                      "LINK_SECRET in this endpoint's link_secret file"}
-                        ).encode('utf-8'))
+                            {"error": f"link auth failed ({_why})"}).encode('utf-8'))
                     except (OSError, ConnectionError):
                         pass
                     ep_name = None  # nothing registered; finally has nothing to remove
@@ -955,7 +1074,10 @@ class GatewayLinkServer:
 
                 # Build endpoint and store
                 ep = _EndpointConn(ep_name, sock, addr)
+                info.pop('auth', None)
                 ep.info = info
+                ep.authenticated = _authed
+                ep.key_pending = _enrolling
                 ep.reader_thread = threading.current_thread()
                 caps = info.get('capabilities', {})
                 ep.capabilities = caps if isinstance(caps, dict) else {}
@@ -966,6 +1088,14 @@ class GatewayLinkServer:
                   f"from={addr[0]}:{addr[1]} "
                   f"plugin={info.get('plugin', '?')} "
                   f"caps={enabled}")
+
+            if _authed:
+                self._enrolled.add(ep_name)
+            elif _enrolling:
+                print(f"  [Link] {ep_name}: not enrolled yet — sending its key "
+                      f"(trust on first use)")
+                self.send_command_to(ep_name, {'cmd': 'link_key_set',
+                                               'key': self.key_for(ep_name)})
 
             # Call on_register — return value is the audio sink for this endpoint
             if self._on_register:
@@ -1006,6 +1136,16 @@ class GatewayLinkServer:
                         ack = json.loads(payload)
                         cmd_name = ack.get('cmd', ack.get('cmd_id', '?'))
                         ok = ack.get('ok', False)
+                        if cmd_name == 'link_key_set' and getattr(ep, 'key_pending', False):
+                            ep.key_pending = False
+                            if ok:
+                                self._enrolled.add(ep_name)
+                                print(f"  [Link] {ep_name}: stored its key — enrolled; "
+                                      f"it must authenticate from now on")
+                            else:
+                                print(f"  [Link] {ep_name}: could not store its key "
+                                      f"durably ({(ack.get('result') or {}).get('error', '?')}); "
+                                      f"left unenrolled so a reboot can't lock it out")
                         # Fulfill any pending send_command_to_and_wait() waiter
                         # before invoking on_ack — the HTTP caller is blocked.
                         _cid = ack.get('_cmd_id')
@@ -1334,9 +1474,15 @@ class GatewayLinkClient:
     def __init__(self, host, port, name, capabilities, plugin_name="audio",
                  on_audio=None, on_command=None, on_status=None,
                  on_connect=None, on_disconnect=None,
-                 ws_url=None, url_resolver=None, secret=''):
+                 ws_url=None, url_resolver=None, secret='', on_link_key=None):
         self._host = host
-        self._secret = secret or ''      # LINK_SECRET, to answer CHALLENGE
+        self._secret = secret or ''      # this endpoint's key, to answer CHALLENGE
+        # on_link_key(key) -> (stored_durably: bool, error: str). Called when
+        # the gateway delivers this endpoint's key (trust on first use).
+        self._on_link_key = on_link_key
+        # Whether the gateway challenged the last connection: True/False,
+        # None until a connection with a key has been made.
+        self.gateway_challenged = None
         self._port = port
         self._name = name
         self._capabilities = capabilities
@@ -1552,6 +1698,7 @@ class GatewayLinkClient:
             }
             if self._secret:
                 _nonce = self._await_challenge(connected_via)
+                self.gateway_challenged = bool(_nonce)
                 if _nonce:
                     reg_info["auth"] = link_register_mac(
                         self._secret, _nonce, self._name)
@@ -1641,6 +1788,27 @@ class GatewayLinkClient:
                 if self._stop.wait(2.0):
                     break
 
+    def _store_link_key(self, cmd):
+        """The gateway sent this endpoint its key: store it, use it from now
+        on, and ACK whether it was stored durably (only then does the gateway
+        require it)."""
+        key = str(cmd.get('key') or '').strip()
+        ok, err = False, 'no key in command'
+        if key:
+            if self._on_link_key is None:
+                err = 'endpoint has nowhere to store a key'
+            else:
+                try:
+                    ok, err = self._on_link_key(key)
+                except Exception as e:
+                    ok, err = False, f'{type(e).__name__}: {e}'
+            # Use it this session either way: it authenticates the next
+            # reconnect even if it didn't survive to disk.
+            self._secret = key
+        print(f"  [Link] Received link key from gateway: "
+              f"{'stored' if ok else 'NOT stored durably (' + str(err) + ')'}")
+        self.send_ack('link_key_set', {'ok': bool(ok), 'error': '' if ok else str(err)})
+
     def _await_challenge(self, connected_via, timeout=3.0):
         """Wait briefly for the server's CHALLENGE and return its nonce.
 
@@ -1706,6 +1874,8 @@ class GatewayLinkClient:
                             self.send_ack('ping', {'ok': True})
                         elif 'error' in cmd and 'cmd' not in cmd:
                             print(f"  [Link] Server refused us: {cmd['error']}")
+                        elif cmd.get('cmd') == 'link_key_set':
+                            self._store_link_key(cmd)
                         elif self._on_command:
                             self._on_command(cmd)
                     elif ftype == P.STATUS:
@@ -1752,6 +1922,8 @@ class GatewayLinkClient:
                             self.send_ack('ping', {'ok': True})
                         elif 'error' in cmd and 'cmd' not in cmd:
                             print(f"  [Link] Server refused us: {cmd['error']}")
+                        elif cmd.get('cmd') == 'link_key_set':
+                            self._store_link_key(cmd)
                         elif self._on_command:
                             self._on_command(cmd)
                     elif ftype == P.STATUS:

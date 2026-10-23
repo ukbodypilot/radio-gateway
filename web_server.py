@@ -249,7 +249,8 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'WEB_CONFIG_PASSWORD': 'default "user"; blank keeps the current one',
         'WEB_TUNNEL_ALLOW_NO_PASSWORD': 'serve the whole UI through the tunnel with no password (not recommended)',
         'LINK_BIND': 'interface IP for the link port, blank = all',
-        'LINK_SECRET': 'shared with every endpoint (link_secret file); blank = endpoints unauthenticated',
+        'LINK_SECRET': 'master for endpoint keys; blank = generated (~/.config/radio-gateway/link_secret)',
+        'LINK_ENROLL_NEW': 'new endpoint names get their key on first connect; turn off once all are enrolled',
         'WEB_CONFIG_HTTPS': 'letsencrypt uses DDNS_HOSTNAME; restart to apply',
         'GATEWAY_NAME': 'shown at top of dashboard (blank = none)',
         'WEB_MIC_VOLUME': 'multiplier',
@@ -434,7 +435,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
             'parent': self,
             'username': str(getattr(self.config, 'WEB_CONFIG_USERNAME', '') or 'user'),
             'password': password,
-            'link_secret': str(getattr(self.config, 'LINK_SECRET', '') or ''),
             'tunnel_allow_open': bool(getattr(
                 self.config, 'WEB_TUNNEL_ALLOW_NO_PASSWORD', False)),
         })
