@@ -12,6 +12,7 @@ Dependencies: stdlib only (+ pyaudio inside AudioPlugin.setup only)
 
 import math
 import os
+import re
 import socket
 import struct
 import json
@@ -391,17 +392,28 @@ BUNDLE_SIG_HEADER = 'X-Bundle-Signature'
 ENDPOINT_NAME_HEADER = 'X-Endpoint-Name'
 
 
-def load_link_secret(directory=None):
-    """The endpoint-side secret: env var first, then <directory>/link_secret.
-    Returns '' when neither is set."""
+def link_secret_filename(name=None):
+    """The key file for endpoint *name*. Per-name so two endpoints sharing a
+    host (and run dir) don't overwrite each other's key; with no name, the
+    legacy shared 'link_secret'."""
+    safe = re.sub(r'[^A-Za-z0-9._-]', '_', name or '').strip('.')
+    return f'{LINK_SECRET_FILE}.{safe}' if safe else LINK_SECRET_FILE
+
+
+def load_link_secret(directory=None, name=None):
+    """The endpoint-side secret: env var first, then <directory>/link_secret.<name>,
+    then the legacy shared <directory>/link_secret (keys stored before the file
+    was per-name). Returns '' when none is set."""
     secret = os.environ.get(LINK_SECRET_ENV, '').strip()
     if secret or not directory:
         return secret
-    try:
-        with open(os.path.join(directory, LINK_SECRET_FILE)) as f:
-            return f.read().strip()
-    except OSError:
-        return ''
+    for fname in dict.fromkeys((link_secret_filename(name), LINK_SECRET_FILE)):
+        try:
+            with open(os.path.join(directory, fname)) as f:
+                return f.read().strip()
+        except OSError:
+            continue
+    return ''
 
 
 def endpoint_key(master, name):

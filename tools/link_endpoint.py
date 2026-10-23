@@ -42,8 +42,8 @@ sys.path.insert(0, _RUN_DIR)         # run dir — wins (deploys go here)
 
 try:
     from gateway_link import GatewayLinkClient, AudioPlugin, AIOCPlugin, discover_gateway
-    from gateway_link import (BUNDLE_SIG_HEADER, ENDPOINT_NAME_HEADER, LINK_SECRET_FILE,
-                              load_link_secret, verify_bundle)
+    from gateway_link import (BUNDLE_SIG_HEADER, ENDPOINT_NAME_HEADER,
+                              link_secret_filename, load_link_secret, verify_bundle)
 except ImportError as e:
     print(f"[Endpoint] Failed to import gateway_link: {e}")
     print("[Endpoint] Make sure gateway_link.py is in the parent directory.")
@@ -55,7 +55,8 @@ def _link_secret():
     hands it to the kv4p endpoints it starts), or the link_secret file the
     gateway's key delivery wrote, in the run dir or its parent (the parent
     survives a reboot on read-only-root Pis that run from tmpfs)."""
-    return load_link_secret(_RUN_DIR) or load_link_secret(_PARENT_DIR)
+    return (load_link_secret(_RUN_DIR, _ENDPOINT_NAME)
+            or load_link_secret(_PARENT_DIR, _ENDPOINT_NAME))
 
 
 def _tmpfs_layout():
@@ -78,7 +79,7 @@ def _store_link_key(key):
     reboot; the gateway then keeps this endpoint unenrolled (it may
     register without a key), so losing the key can't lock it out."""
     try:
-        _write_private(os.path.join(_RUN_DIR, LINK_SECRET_FILE), key + '\n')
+        _write_private(os.path.join(_RUN_DIR, link_secret_filename(_ENDPOINT_NAME)), key + '\n')
     except OSError as e:
         return False, f'write failed: {e}'
     if not _tmpfs_layout():
@@ -87,7 +88,7 @@ def _store_link_key(key):
         subprocess.run(['sudo', '-n', 'mount', '-o', 'remount,rw', '/'],
                        capture_output=True, timeout=5)
         try:
-            _write_private(os.path.join(_PARENT_DIR, LINK_SECRET_FILE), key + '\n')
+            _write_private(os.path.join(_PARENT_DIR, link_secret_filename(_ENDPOINT_NAME)), key + '\n')
         finally:
             subprocess.run(['sudo', '-n', 'mount', '-o', 'remount,ro', '/'],
                            capture_output=True, timeout=5)

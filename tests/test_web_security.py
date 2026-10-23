@@ -429,6 +429,17 @@ def signed_updates():
     check("delivered key is stored durably", ok, err)
     check("...in a private file", (os.stat(os.path.join(run, 'link_secret')).st_mode & 0o777) == 0o600)
     check("...and read back as this endpoint's key", le._link_secret() == 'k')
+    # Two endpoints on one host share a run dir: each keeps its own key file.
+    le._ENDPOINT_NAME = 'ep-a'
+    le._store_link_key('key-a')
+    le._ENDPOINT_NAME = 'ep-b'
+    le._store_link_key('key-b')
+    le._ENDPOINT_NAME = 'ep-a'
+    check("a second endpoint's key doesn't overwrite the first's", le._link_secret() == 'key-a')
+    le._ENDPOINT_NAME = 'ep-b'
+    check("...and each reads back its own", le._link_secret() == 'key-b')
+    le._ENDPOINT_NAME = 'ep-new'
+    check("an unstored name falls back to the legacy shared key", le._link_secret() == 'k')
     le._ENDPOINT_NAME = 'kv4p-v'
     BundleHandler.files = {'log_shipper.py': b'# newer\n'}
     BundleHandler.extra = {}
