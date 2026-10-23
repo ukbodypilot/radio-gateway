@@ -236,4 +236,4 @@ Static config keys that affect routing live in `[processing]` and `[switching]` 
 - [`bus_manager.py`](../bus_manager.py) — bus lifecycle, routing reload, sink dispatch, per-bus AudioProcessor management
 - [`sources/`](../sources/) — every source/sink class (FilePlayback, LoopPlayback, RemoteAudio*, NetworkAnnouncement, WebMic, WebMonitor, LinkAudio, EchoLink, StreamOutput)
 - [`web_pages/routing.html`](../web_pages/routing.html) — Drawflow editor + node renderers
-- [`web_server.py`](../web_server.py) — `_handle_routing_cmd` dispatcher and per-command handlers (now table-driven; one method per command)
+- [`web/routing_cmds.py`](../web/routing_cmds.py) — `_handle_routing_cmd` dispatcher and per-command handlers (now table-driven; one method per command)
