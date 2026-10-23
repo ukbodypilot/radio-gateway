@@ -120,7 +120,7 @@ def req(srv, method, path, headers=None, body=None):
 
 
 def basic(pw):
-    return {'Authorization': 'Basic ' + base64.b64encode(f'admin:{pw}'.encode()).decode()}
+    return {'Authorization': 'Basic ' + base64.b64encode(f'user:{pw}'.encode()).decode()}
 
 
 def web_access():
@@ -187,6 +187,10 @@ def web_access():
     check("credentials don't help a cross-site POST", st == 403, st)
     st, _, _ = req(srv, 'GET', '/api/endpoint/files')
     check("endpoint updates need no web password", st == 200, st)
+    st, _, _ = req(srv, 'GET', '/metrics')
+    check("local Prometheus scrape of /metrics needs no login", st not in (401, 403), st)
+    st, _, _ = req(srv, 'GET', '/metrics', {'Cf-Ray': 'x'})
+    check("...but /metrics through the tunnel does", st == 401, st)
     st, _, _ = req(srv, 'GET', '/ws/link')
     check("/ws/link without LINK_SECRET still needs the password", st == 401, st)
     srv.shutdown()

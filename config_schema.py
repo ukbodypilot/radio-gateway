@@ -386,8 +386,9 @@ DEFAULTS = {
     # Web Configuration UI
     'ENABLE_WEB_CONFIG': True,
     'WEB_CONFIG_PORT': 8080,
-    # Basic auth password (user: admin). A blank line in the file keeps this
-    # default (the loader skips blank values), so the UI always has one.
+    # Basic auth login. A blank line in the file keeps these defaults (the
+    # loader skips blank values), so the UI always has a login.
+    'WEB_CONFIG_USERNAME': 'user',
     'WEB_CONFIG_PASSWORD': 'user',
     'WEB_CONFIG_HTTPS': 'false',  # false, self-signed, or letsencrypt (a string: a bool default coerced 'self-signed' to False)
     'GATEWAY_NAME': '',           # Display name shown at top of dashboard (blank = none)
@@ -785,7 +786,7 @@ LAYOUT = [
         'ENABLE_VOX', 'VOX_THRESHOLD', 'VOX_ATTACK_TIME', 'VOX_RELEASE_TIME',
     ]),
     ('web', 'Web Configuration', [
-        'ENABLE_WEB_CONFIG', 'WEB_CONFIG_PORT', 'WEB_CONFIG_PASSWORD',
+        'ENABLE_WEB_CONFIG', 'WEB_CONFIG_PORT', 'WEB_CONFIG_USERNAME', 'WEB_CONFIG_PASSWORD',
         'WEB_CONFIG_HTTPS', 'GATEWAY_NAME', 'WEB_THEME',
         'ENABLE_WEB_MIC', 'WEB_MIC_VOLUME',
         'WEB_MIC_KEY_TIMEOUT', 'WEB_MIC_MAX_TX',

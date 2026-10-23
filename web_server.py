@@ -245,7 +245,8 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'CAT_RIGHT_VOLUME': '0–100 (−1 = don\'t change)',
         # Web
         'WEB_CONFIG_PORT': 'port (1–65535)',
-        'WEB_CONFIG_PASSWORD': 'user: admin; default password "user" (blank keeps the current one)',
+        'WEB_CONFIG_USERNAME': 'web UI login name (default user)',
+        'WEB_CONFIG_PASSWORD': 'default "user"; blank keeps the current one',
         'WEB_TUNNEL_ALLOW_NO_PASSWORD': 'serve the whole UI through the tunnel with no password (not recommended)',
         'LINK_BIND': 'interface IP for the link port, blank = all',
         'LINK_SECRET': 'shared with every endpoint (link_secret file); blank = endpoints unauthenticated',
@@ -431,6 +432,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         # Bind this server and its auth settings onto a per-server subclass.
         Handler = type('Handler', (GatewayRequestHandler,), {
             'parent': self,
+            'username': str(getattr(self.config, 'WEB_CONFIG_USERNAME', '') or 'user'),
             'password': password,
             'link_secret': str(getattr(self.config, 'LINK_SECRET', '') or ''),
             'tunnel_allow_open': bool(getattr(

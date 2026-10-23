@@ -907,13 +907,14 @@ MANAGER_MAX_TURNS = 40                   # hard cap on tool-use turns per run
 #
 # Config editor: http(s)://<gateway-ip>:<port>/
 # Live dashboard: http(s)://<gateway-ip>:<port>/dashboard
-# HTTP Basic Auth (user: admin). The default password is "user": change it.
-# Leaving it blank keeps the default; there is no password-less setting.
+# HTTP Basic Auth. The default login is user / user: change it.
+# Leaving either blank keeps the default; there is no password-less setting.
 # POSTs and WebSockets from other web sites are refused either way (CSRF).
 # HTTPS uses a self-signed certificate (auto-generated on first run).
 
 ENABLE_WEB_CONFIG = true
 WEB_CONFIG_PORT = 8080
+WEB_CONFIG_USERNAME = user
 WEB_CONFIG_PASSWORD = user
 WEB_CONFIG_HTTPS = false           # false, self-signed, or letsencrypt (uses DDNS_HOSTNAME)
 ENABLE_CLOUDFLARE_TUNNEL = false   # free public HTTPS via *.trycloudflare.com (no port fwd needed)

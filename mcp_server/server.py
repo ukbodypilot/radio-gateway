@@ -45,6 +45,7 @@ def _load_config():
     cfg_path = os.path.join(GW_ROOT, 'gateway_config.txt')
     port = 8080
     # Same rule as the gateway's loader: a blank value keeps the default.
+    username = DEFAULTS['WEB_CONFIG_USERNAME']
     password = DEFAULTS['WEB_CONFIG_PASSWORD']
     https = False
     if os.path.isfile(cfg_path):
@@ -63,11 +64,13 @@ def _load_config():
                         pass
                 elif k == 'WEB_CONFIG_PASSWORD' and v:
                     password = v
+                elif k == 'WEB_CONFIG_USERNAME' and v:
+                    username = v
                 elif k == 'WEB_CONFIG_HTTPS':
                     https = v.lower() in ('true', '1', 'yes', 'self-signed',
                                           'letsencrypt', 'lets-encrypt', 'le')
     scheme = 'https' if https else 'http'
-    return f'{scheme}://127.0.0.1:{port}', password
+    return f'{scheme}://127.0.0.1:{port}', username, password
 
 
 class _LoopbackHTTPSHandler(urllib.request.HTTPSHandler):
@@ -92,7 +95,7 @@ class _LoopbackHTTPSHandler(urllib.request.HTTPSHandler):
         return super().https_open(req)
 
 
-GW_BASE_URL, GW_PASSWORD = _load_config()
+GW_BASE_URL, GW_USERNAME, GW_PASSWORD = _load_config()
 urllib.request.install_opener(urllib.request.build_opener(_LoopbackHTTPSHandler()))
 
 
@@ -102,7 +105,7 @@ urllib.request.install_opener(urllib.request.build_opener(_LoopbackHTTPSHandler(
 
 def _auth_headers():
     if GW_PASSWORD:
-        creds = base64.b64encode(f'admin:{GW_PASSWORD}'.encode()).decode()
+        creds = base64.b64encode(f'{GW_USERNAME}:{GW_PASSWORD}'.encode()).decode()
         return {'Authorization': f'Basic {creds}'}
     return {}
 

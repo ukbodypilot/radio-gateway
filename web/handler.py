@@ -28,6 +28,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     """
 
     parent = None     # the WebConfigServer this handler serves
+    username = 'user'  # WEB_CONFIG_USERNAME
     password = ''     # WEB_CONFIG_PASSWORD; empty means no auth
     link_secret = ''  # LINK_SECRET; set means /ws/link skips Basic auth
     tunnel_allow_open = False  # WEB_TUNNEL_ALLOW_NO_PASSWORD
@@ -61,6 +62,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     #      Basic auth, so the update routes (public repo code, signed when
     #      LINK_SECRET is set) are always open, and /ws/link is open when
     #      LINK_SECRET is set because the link server checks REGISTER.
+    #      /metrics is open to this machine (Prometheus scrapes it).
     #   3. No password: open on the LAN, but 403 through the Cloudflare
     #      tunnel unless WEB_TUNNEL_ALLOW_NO_PASSWORD. /ws/link stays open
     #      so tunnel endpoints keep working.
@@ -83,6 +85,9 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
             return True
         if path == self._LINK_WS_PATH and self.link_secret:
             return True
+        # Prometheus on the box scrapes /metrics with no credentials.
+        if path == '/metrics' and self._from_this_box():
+            return True
         if not self.password:
             if (self._via_tunnel() and not self.tunnel_allow_open
                     and path != self._LINK_WS_PATH):
@@ -92,6 +97,11 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
                 return False
             return True
         return self._check_auth()
+
+    def _from_this_box(self):
+        """A client on this machine, not cloudflared relaying the tunnel."""
+        return (self.client_address[0] in ('127.0.0.1', '::1')
+                and not self._via_tunnel())
 
     def _via_tunnel(self):
         """True when the request came in through the Cloudflare tunnel.
@@ -172,7 +182,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
             user, pw = decoded.split(':', 1)
             # compare_digest: constant-time, no timing side-channel
             import hmac
-            if (hmac.compare_digest(user, 'admin')
+            if (hmac.compare_digest(user, self.username)
                     and hmac.compare_digest(pw, self.password)):
                 return True
         except Exception:

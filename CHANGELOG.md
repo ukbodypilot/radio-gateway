@@ -14,12 +14,16 @@ behaviour on upgrade; see *Upgrading* below.
   Any web page you visited could previously drive the UI with your
   credentials, up to `/manager/save` + `/manager/run` (Claude with
   `--dangerously-skip-permissions`), `/reboothost` or `/ws_mic`.
-- **The web UI has a password by default: `user`** (login `admin` / `user`).
+- **The web UI has a login by default: `user` / `user`.** The user name is
+  a new setting, `WEB_CONFIG_USERNAME` (it was fixed at `admin`), and
   `WEB_CONFIG_PASSWORD` used to default to blank, meaning no login at all.
-  A blank `WEB_CONFIG_PASSWORD =` line in an existing config keeps the new
-  default, because the loader skips blank values, so every install now
-  asks for a login. The MCP server uses the same default and
-  `transcribe_worker.py --gateway-password` defaults to `user`.
+  A blank line in an existing config keeps the new defaults, because the
+  loader skips blank values, so every install now asks for a login. The
+  MCP server and the fleet manager use the same settings, and
+  `transcribe_worker.py` gained `--gateway-username`; both its options
+  default to `user`.
+  `/metrics` stays open to clients on the gateway itself so the local
+  Prometheus scrape keeps working.
 - **No password, no tunnel.** With `WEB_CONFIG_PASSWORD` blank, requests
   through the Cloudflare tunnel get a 403, except the endpoint update routes
   and `/ws/link`, so tunnel endpoints keep working. The LAN is unchanged.
@@ -43,8 +47,9 @@ behaviour on upgrade; see *Upgrading* below.
 
 #### Upgrading
 
-- The web UI now asks for **admin / user** unless you set your own
-  `WEB_CONFIG_PASSWORD` (do). Endpoints that connect **through the tunnel**
+- The web UI now asks for **user / user** unless you set your own
+  `WEB_CONFIG_USERNAME` / `WEB_CONFIG_PASSWORD` (do). Saved browser logins
+  for `admin` stop working. Endpoints that connect **through the tunnel**
   (`/ws/link`) need `LINK_SECRET` set on both sides first, or they get 401.
   LAN endpoints on port 9700 are unaffected. The room-monitor Android app
   sends no credentials and stops connecting. Remote transcribe workers

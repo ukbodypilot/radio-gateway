@@ -2115,7 +2115,7 @@ echo "                 (link endpoints + transcribe-worker cards)"
 echo "      Services   http://<gateway-ip>:8080/dashboard/services"
 echo "                 (Broadcastify status and last error live here)"
 echo "      Operate    http://<gateway-ip>:8080/dashboard/operate"
-echo "  Web UI login is admin / user: change WEB_CONFIG_PASSWORD"
+echo "  Web UI login is user / user: change WEB_CONFIG_USERNAME / WEB_CONFIG_PASSWORD"
 echo "  Firewall: sudo ufw allow 8080/tcp"
 echo
 echo "EMAIL ALERTS (recommended):"

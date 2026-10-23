@@ -59,9 +59,11 @@ Every request goes through `GatewayRequestHandler._check_access`
    repo code, signed when `LINK_SECRET` is set) need no password.
    `/ws/link` needs none when `LINK_SECRET` is set, because the link server
    authenticates REGISTER. See [gateway_link.md](gateway_link.md#authentication).
-3. **HTTP Basic auth**, user `admin`, password `WEB_CONFIG_PASSWORD`. The
-   default is `user`, and a blank value in the file keeps the default, so
-   there is always a password. Change it.
+   `/metrics` is open to clients on the gateway itself (Prometheus scrapes
+   it without credentials), but not through the tunnel.
+3. **HTTP Basic auth** with `WEB_CONFIG_USERNAME` / `WEB_CONFIG_PASSWORD`.
+   The default login is `user` / `user`, and a blank value in the file keeps
+   the default, so there is always a login. Change it.
 4. (Defence in depth: if the password were ever empty, requests through the
    Cloudflare tunnel, which carry `Cf-Ray`/`Cf-Connecting-Ip`, would get a
    403 except the endpoint routes and `/ws/link`, unless

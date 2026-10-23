@@ -376,6 +376,9 @@ def main():
     parser.add_argument('--register-interval', type=float, default=30.0,
                         help='Seconds between registration heartbeats '
                              '(default 30; clamped to the gateway TTL/3)')
+    parser.add_argument('--gateway-username', default=os.environ.get('GATEWAY_USERNAME', 'user'),
+                        help="The gateway's WEB_CONFIG_USERNAME (default 'user'). "
+                             "Env: GATEWAY_USERNAME")
     parser.add_argument('--gateway-password', default=os.environ.get('GATEWAY_PASSWORD', 'user'),
                         help="The gateway's WEB_CONFIG_PASSWORD (default 'user', "
                              "the gateway's default). Env: GATEWAY_PASSWORD")
@@ -399,7 +402,7 @@ def main():
         if args.gateway_password:
             import base64 as _b64
             _auth = 'Basic ' + _b64.b64encode(
-                f'admin:{args.gateway_password}'.encode()).decode()
+                f'{args.gateway_username}:{args.gateway_password}'.encode()).decode()
         # Started before serve_forever so the first heartbeat goes out while
         # the model is still loading — the gateway sees the worker as present
         # but not ready, rather than missing entirely for the ~30s load.
