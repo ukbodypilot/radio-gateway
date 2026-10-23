@@ -386,7 +386,9 @@ DEFAULTS = {
     # Web Configuration UI
     'ENABLE_WEB_CONFIG': True,
     'WEB_CONFIG_PORT': 8080,
-    'WEB_CONFIG_PASSWORD': '',    # Basic auth password (user: admin), blank = no auth
+    # Basic auth password (user: admin). A blank line in the file keeps this
+    # default (the loader skips blank values), so the UI always has one.
+    'WEB_CONFIG_PASSWORD': 'user',
     'WEB_CONFIG_HTTPS': 'false',  # false, self-signed, or letsencrypt (a string: a bool default coerced 'self-signed' to False)
     'GATEWAY_NAME': '',           # Display name shown at top of dashboard (blank = none)
     'WEB_THEME': 'grey',          # Dashboard color theme: grey, blue, red, green, purple, amber, teal, pink

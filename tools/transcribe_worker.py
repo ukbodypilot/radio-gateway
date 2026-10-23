@@ -376,9 +376,9 @@ def main():
     parser.add_argument('--register-interval', type=float, default=30.0,
                         help='Seconds between registration heartbeats '
                              '(default 30; clamped to the gateway TTL/3)')
-    parser.add_argument('--gateway-password', default=os.environ.get('GATEWAY_PASSWORD', ''),
-                        help='WEB_CONFIG_PASSWORD, if the gateway web UI has '
-                             'one set. Env: GATEWAY_PASSWORD')
+    parser.add_argument('--gateway-password', default=os.environ.get('GATEWAY_PASSWORD', 'user'),
+                        help="The gateway's WEB_CONFIG_PASSWORD (default 'user', "
+                             "the gateway's default). Env: GATEWAY_PASSWORD")
     args = parser.parse_args()
 
     model_key = args.model

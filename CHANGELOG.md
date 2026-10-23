@@ -14,6 +14,12 @@ behaviour on upgrade; see *Upgrading* below.
   Any web page you visited could previously drive the UI with your
   credentials, up to `/manager/save` + `/manager/run` (Claude with
   `--dangerously-skip-permissions`), `/reboothost` or `/ws_mic`.
+- **The web UI has a password by default: `user`** (login `admin` / `user`).
+  `WEB_CONFIG_PASSWORD` used to default to blank, meaning no login at all.
+  A blank `WEB_CONFIG_PASSWORD =` line in an existing config keeps the new
+  default, because the loader skips blank values, so every install now
+  asks for a login. The MCP server uses the same default and
+  `transcribe_worker.py --gateway-password` defaults to `user`.
 - **No password, no tunnel.** With `WEB_CONFIG_PASSWORD` blank, requests
   through the Cloudflare tunnel get a 403, except the endpoint update routes
   and `/ws/link`, so tunnel endpoints keep working. The LAN is unchanged.
@@ -37,8 +43,12 @@ behaviour on upgrade; see *Upgrading* below.
 
 #### Upgrading
 
-- If you use the web UI **through the tunnel without a password**, set
-  `WEB_CONFIG_PASSWORD` (or set `WEB_TUNNEL_ALLOW_NO_PASSWORD = true`).
+- The web UI now asks for **admin / user** unless you set your own
+  `WEB_CONFIG_PASSWORD` (do). Endpoints that connect **through the tunnel**
+  (`/ws/link`) need `LINK_SECRET` set on both sides first, or they get 401.
+  LAN endpoints on port 9700 are unaffected. The room-monitor Android app
+  sends no credentials and stops connecting. Remote transcribe workers
+  need `--gateway-password` if you change the password from `user`.
 - To authenticate endpoints, set `LINK_SECRET` on the gateway and put the same
   value in a `link_secret` file next to `link_endpoint.py` on every endpoint
   (and next to `windows_audio_client.py`). See

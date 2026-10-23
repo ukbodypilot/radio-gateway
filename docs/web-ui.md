@@ -59,21 +59,23 @@ Every request goes through `GatewayRequestHandler._check_access`
    repo code, signed when `LINK_SECRET` is set) need no password.
    `/ws/link` needs none when `LINK_SECRET` is set, because the link server
    authenticates REGISTER. See [gateway_link.md](gateway_link.md#authentication).
-3. **No password set:** open on the LAN, but through the Cloudflare tunnel
-   (requests carrying Cloudflare's `Cf-Ray`/`Cf-Connecting-Ip`) everything
-   except the endpoint routes and `/ws/link` gets a 403 asking for
-   `WEB_CONFIG_PASSWORD`. `WEB_TUNNEL_ALLOW_NO_PASSWORD = true` turns that
-   off.
-4. **Password set:** HTTP Basic auth, user `admin`.
+3. **HTTP Basic auth**, user `admin`, password `WEB_CONFIG_PASSWORD`. The
+   default is `user`, and a blank value in the file keeps the default, so
+   there is always a password. Change it.
+4. (Defence in depth: if the password were ever empty, requests through the
+   Cloudflare tunnel, which carry `Cf-Ray`/`Cf-Connecting-Ip`, would get a
+   403 except the endpoint routes and `/ws/link`, unless
+   `WEB_TUNNEL_ALLOW_NO_PASSWORD = true`.)
 
 Secrets (any string key whose name contains `PASSWORD`, `SECRET`,
 `PASSCODE` or `TOKEN`, from `config_schema.secret_keys()`) are never sent to
 the browser; a blank field on save keeps the stored value.
 
 The fleet manager's own snapshot requests to localhost send the password
-(via curl's config on stdin, so it isn't visible in `ps`). The room-monitor
-Android app doesn't send credentials, so it works only while no password is
-set, and through the tunnel only with `WEB_TUNNEL_ALLOW_NO_PASSWORD`.
+(via curl's config on stdin, so it isn't visible in `ps`). MCP reads the same
+default. `tools/transcribe_worker.py` defaults `--gateway-password` to
+`user`. The room-monitor Android app doesn't send credentials, so it can't
+connect to `/ws_monitor` any more.
 
 ## The four dashboard pages
 

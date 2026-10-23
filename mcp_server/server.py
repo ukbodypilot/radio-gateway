@@ -41,9 +41,11 @@ def _load_config():
     if GW_ROOT not in sys.path:
         sys.path.insert(0, GW_ROOT)
     from config_format import parse_config_value
+    from config_schema import DEFAULTS
     cfg_path = os.path.join(GW_ROOT, 'gateway_config.txt')
     port = 8080
-    password = ''
+    # Same rule as the gateway's loader: a blank value keeps the default.
+    password = DEFAULTS['WEB_CONFIG_PASSWORD']
     https = False
     if os.path.isfile(cfg_path):
         with open(cfg_path) as f:
@@ -59,7 +61,7 @@ def _load_config():
                         port = int(v)
                     except ValueError:
                         pass
-                elif k == 'WEB_CONFIG_PASSWORD':
+                elif k == 'WEB_CONFIG_PASSWORD' and v:
                     password = v
                 elif k == 'WEB_CONFIG_HTTPS':
                     https = v.lower() in ('true', '1', 'yes', 'self-signed',

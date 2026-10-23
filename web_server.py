@@ -245,7 +245,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'CAT_RIGHT_VOLUME': '0–100 (−1 = don\'t change)',
         # Web
         'WEB_CONFIG_PORT': 'port (1–65535)',
-        'WEB_CONFIG_PASSWORD': 'blank = no auth on the LAN (user: admin); the tunnel needs one',
+        'WEB_CONFIG_PASSWORD': 'user: admin; default password "user" (blank keeps the current one)',
         'WEB_TUNNEL_ALLOW_NO_PASSWORD': 'serve the whole UI through the tunnel with no password (not recommended)',
         'LINK_BIND': 'interface IP for the link port, blank = all',
         'LINK_SECRET': 'shared with every endpoint (link_secret file); blank = endpoints unauthenticated',

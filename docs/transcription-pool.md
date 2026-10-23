@@ -134,7 +134,7 @@ move fixes itself on the next heartbeat.
 | `--gateway URL` | *(unset — env `GATEWAY_URL`)* | Gateway base URL, e.g. `http://192.168.2.140:8080`. Registration is off when unset. |
 | `--name NAME` | hostname | Label shown on the `/transcribe` page, the worker's card on `/dashboard/endpoints`, and in `transcription_workers`. |
 | `--register-interval SECS` | 30 | Heartbeat period, auto-clamped to the gateway's TTL/3. |
-| `--gateway-password PW` | *(env `GATEWAY_PASSWORD`)* | Only needed if `WEB_CONFIG_PASSWORD` is set on the gateway. |
+| `--gateway-password PW` | `user` *(env `GATEWAY_PASSWORD`)* | The gateway's `WEB_CONFIG_PASSWORD`; `user` is the gateway default. |
 
 How it behaves:
 
