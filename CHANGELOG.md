@@ -4,6 +4,114 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.0.0] -- 2026-10-23
+
+A full code review, its fixes, and a refactor of the parts the bugs kept
+coming from. Saving config no longer deletes things, every PTT path has a
+time-out, the WebSocket and config code each exist once, and CI runs the
+whole test suite off the box on every push. Plus the Telegram bot is gone
+and alerts are emailed (below).
+
+### Fixed — saving config deleted the kv4p sections and 14 settings
+
+`_save_config` regenerated `gateway_config.txt` from the form layout alone, so
+every save (config form, TTS engine switch, soundboard categories) dropped the
+`[kv4p.*]` sections that spawn the kv4p endpoints, all comments, and keys with
+no layout entry (`SUPERVISE_MUMBLE`, `PACKET_APRS_IS_PASSCODE`,
+`MANAGER_CLAUDE_MODEL`, ...). It now edits the file in place: only lines whose
+values change are rewritten, and missing layout keys are appended under their
+section. Unmatched POSTs no longer fall through to the config save; only
+`POST /config` saves, everything else is a 404.
+
+### Fixed — HTTPS modes and the web UI in Let's Encrypt mode
+
+- `WEB_CONFIG_HTTPS` defaulted to the bool `False`, so `self-signed` and
+  `letsencrypt` were coerced to off. The default is now the string `'false'`.
+- `web/certs.py` used a `_thr` alias lost in the May mixin split. In
+  `letsencrypt` mode the NameError stopped `serve_forever`, taking down the
+  web UI, MCP and tunnel link endpoints. Renewal now starts after the server
+  is serving, in its own try.
+- The MCP server had its own config parser: it kept inline comments and quotes
+  in the password and spoke plain http to a TLS socket in the documented HTTPS
+  modes. It now uses `parse_config_value` and maps every mode.
+
+### Added — a transmit time-out timer on every PTT path
+
+A manual PTT for the TH-9800, D75, KV4P or IC-7100 (web UI, keyboard, MCP tool)
+stayed keyed until something unkeyed it. `PttTimeOutTimer` force-unkeys after
+`PTT_TIMEOUT_SECONDS` (default 180, 0 = off) and refuses re-keys until a 5 s
+pause. It covers `TH9800Plugin._set_ptt` and every endpoint PTT command.
+Shutdown also runs every cleanup step now, even when an earlier one raises; a
+failing loop recorder used to stop cleanup with PTT still keyed.
+
+### Fixed — smaller bugs found in the review
+
+- SDR filter toggles imported a module that no longer exists, so the flag
+  flipped but the audio didn't change.
+- `gc.disable()` is process-wide and only the bus tick re-enabled collection;
+  with no busses nothing ever collected. BusManager now owns it.
+- The log viewer could raise "deque mutated during iteration"; alert emails
+  showed the oldest 200 log lines, not the newest; `print(a, b)` logged only
+  `a`.
+- Loop segments dropped their queued tail on close.
+- Oversize link LOG batches raised `struct.error` and stopped that endpoint's
+  log shipping for good; they are split now.
+- The repeater scan recorded the previous frequency when a tune failed.
+- Pre-flight `pgrep -f radio_gateway.py` SIGKILLed editors, greps and test
+  runs; it now matches only real gateway processes. The CPU governor write
+  ran a stray `sudo tee` with no input.
+- Endpoint updates never persisted on read-only-root endpoints (missing
+  `import subprocess`).
+- Config: keys inside a `[plugin.instance]` section leaked into the main
+  config (`MUMBLE_PORT` under `[kv4p.vhf]` overrode the real one); one bad
+  value aborted loading every key after it; the section reader cut `/#` to `/`.
+- WebSocket: split headers or masks desynced the stream, pongs over 125 bytes
+  had a wrong length, the client sent unmasked control frames, fragments
+  weren't supported, and any 64-bit length was buffered. Frames over 1 MB now
+  drop the connection.
+
+### Changed — efficiency
+
+- `LOOP_RECORD_KBPS` (default 48, was a fixed 128): about 0.5 GiB/day per
+  loop-enabled bus instead of 1.3.
+- WebSocket masking is about 40x faster (0.48 ms -> 0.012 ms per audio frame).
+- A repeating tick-loop error prints its traceback once, then a count once a
+  minute, instead of 20 tracebacks a second.
+- `/sysinfo` caches interface addresses for 30 s instead of spawning `ip`.
+- The old audio transmit loop runs at normal priority; only the BusManager tick
+  (which does the real audio work) is SCHED_RR.
+
+### Changed — refactor
+
+- **One config schema.** Defaults, types and the web form layout live in
+  `config_schema.py`; `Config`, the section reader and the form all use it.
+- **One WebSocket codec** in `gateway_link.py`, shared by the browser audio,
+  mic, monitor and link handlers and the link client.
+- **Hardware libraries are checked at startup** (`hw_deps.require()`, with
+  install hints) instead of exiting at import, so every test runs off the box.
+- **CI**: `.github/workflows/ci.yml` runs ruff and all tests
+  (`tests/run_all.py`) on every push.
+- **Swallowed exceptions are logged**: 176 silent `except: pass` blocks now
+  print `[swallowed] file:line ...` once per call site per 5 minutes
+  (`log_util.log_exc`).
+- **Optional pinned venv**: `scripts/venv.sh freeze|build|check|use|unuse`
+  runs the service from a venv built from `requirements.lock`. Nothing
+  changes until you run `use`. `mcp<2` is pinned.
+- IC-7100 CI-V commands, Mumble `!` commands and shutdown are table-driven
+  or step-by-step instead of long if-chains.
+- Removed about 400 unused imports, 17 dead functions, the legacy gateway DSP
+  in `core/audio_proc.py`, and the duplicate `scripts/remote_bt_proxy.py`
+  (`tools/` is the one copy).
+
+### Upgrading to 5.0.0
+
+Pull and restart. Watch the startup log for `WARNING: gateway_config.txt:<line>:`
+lines: a bad value now warns with its line number and keeps its default
+instead of silently stopping the load. Keys you had put inside a `[plugin.instance]` section no
+longer affect the main config; move them to the main section if you meant
+them globally. New keys: `PTT_TIMEOUT_SECONDS` (180) and `LOOP_RECORD_KBPS`
+(48). If you use `scripts/remote_bt_proxy.py`, use `tools/remote_bt_proxy.py`.
+
 ### Removed — the GUI Test Bench page
 
 `/test` (`web_pages/test.html`, 300 lines) and its System-menu link. It was a
