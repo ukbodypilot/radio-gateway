@@ -44,6 +44,7 @@ Pick the path that matches what you're trying to do.
 | [history/audio-quality-research.md](history/audio-quality-research.md) | RNNoise vs DeepFilterNet evaluation notes |
 | [history/mixer-v2-progress.md](history/mixer-v2-progress.md) | v2 mixer build log + decision history |
 | [history/ftm150-reverse-engineering.md](history/ftm150-reverse-engineering.md) | FTM-150 control head RE notes (project shelved) |
+| [history/mega-plan.md](history/mega-plan.md) | The 2026-05 observability / monolith-split / plugin-system plan, as executed (complete) |
 | [windows-client-audio-investigation.md](windows-client-audio-investigation.md) | Why the Windows client produced silent chunks, and the 44.1 kHz + soxr fix |
 | [../CHANGELOG.md](../CHANGELOG.md) | Versioned release notes |
 
