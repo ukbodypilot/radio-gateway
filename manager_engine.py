@@ -615,7 +615,7 @@ class ManagerEngine:
         text = f"{entry.get('summary', '')}"
         findings = entry.get('findings', [])
         if findings:
-            text += "\n\n" + "\n".join(f"- {f}" for f in findings[:10])
+            text += "\n\n" + "\n".join(f"- {f}" for f in findings[:30])
         self._notify_email(
             f"[Gateway Manager] {task_type} run: {entry.get('severity', 'alert')}",
             f"{entry.get('ts', '')}\n\n{text}",
