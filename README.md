@@ -145,7 +145,7 @@ Issues and PRs welcome. See [docs/plugin-development.md](docs/plugin-development
 Before sending a change, run what CI runs. Neither needs radio hardware: missing hardware libraries are stubbed by `tests/_hwstubs.py`.
 
 ```bash
-pip install numpy "mcp<2" edge-tts gtts ruff    # what CI installs (plus ffmpeg and lame)
+pip install numpy "mcp<2" edge-tts gtts soundfile ruff    # what CI installs (plus ffmpeg and lame)
 ruff check .                                     # syntax errors, undefined names, unused imports
 python3 tests/run_all.py                         # every tests/test_*.py, each in its own process
 python3 tests/run_all.py ptt config              # only tests whose name contains these words

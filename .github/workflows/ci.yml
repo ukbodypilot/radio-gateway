@@ -23,7 +23,7 @@ jobs:
       - name: System tools the stream tests use
         run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg lame
       - name: Python packages the tests import
-        run: pip install numpy "mcp<2" edge-tts gtts ruff
+        run: pip install numpy "mcp<2" edge-tts gtts soundfile ruff
       - name: Lint (syntax errors, undefined names, unused imports)
         run: ruff check .
       - name: Tests

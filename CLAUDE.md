@@ -90,7 +90,7 @@ earlier one, `/clear` rather than carrying the whole history forward.
   Each test is a plain script with a PASS/FAIL printer, no pytest.
 - Missing hardware libraries (hidapi, pyaudio, pymumble, opuslib) are stubbed by
   `tests/_hwstubs.py`, so the suite runs off the box. Off the box it needs
-  `pip install numpy "mcp<2" edge-tts gtts` plus ffmpeg and lame.
+  `pip install numpy "mcp<2" edge-tts gtts soundfile` plus ffmpeg and lame.
 - `.github/workflows/ci.yml` runs `ruff check .` (config in `ruff.toml`) and
   `tests/run_all.py` on every push. Keep both green before committing.
 
