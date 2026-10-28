@@ -2611,6 +2611,14 @@ class AIOCPlugin(AudioPlugin):
 
         # Open HID BEFORE audio — arecord on hw: kills /dev/hidraw but an
         # already-open file descriptor survives and stays usable for writes
+        if not self._open_hid():
+            print(f"         PTT will not work. Check USB connection and permissions.")
+
+        # Open audio streams AFTER HID
+        super().setup(config)
+
+    def _open_hid(self):
+        """Open the AIOC's HID interface into self._hid. True on success."""
         try:
             import hid as _hid_mod
             if hasattr(_hid_mod, 'Device'):
@@ -2620,13 +2628,30 @@ class AIOCPlugin(AudioPlugin):
                 self._hid.open(self._vid, self._pid)
             _prod = getattr(self._hid, 'product', '') or getattr(self._hid, 'get_product_string', lambda: '')()
             print(f"  [Link] AIOCPlugin: HID opened ({_prod})")
+            return True
         except Exception as e:
             print(f"  [Link] AIOCPlugin: HID open failed: {e}")
-            print(f"         PTT will not work. Check USB connection and permissions.")
             self._hid = None
+            return False
 
-        # Open audio streams AFTER HID
-        super().setup(config)
+    def _write_ptt_hid(self, data):
+        """Write the GPIO report. The AIOC drops off the USB bus now and then (2026-10-25, 2026-10-27) and
+        comes back as a new hidraw node; the old handle then fails every write with 'No such device' while
+        audio recovers on its own. On a failed write, or no handle, reopen once and retry."""
+        if self._hid:
+            try:
+                self._hid.write(data)
+                return
+            except Exception as e:
+                print(f"  [Link] AIOCPlugin: HID write failed ({e}); reopening")
+                try:
+                    self._hid.close()
+                except Exception:
+                    pass
+                self._hid = None
+        if not self._open_hid():
+            raise OSError("HID not connected")
+        self._hid.write(data)
 
     def teardown(self):
         """Unkey PTT, cancel safety timer, and close HID + audio.
@@ -2758,16 +2783,7 @@ class AIOCPlugin(AudioPlugin):
                 self.reopen_audio()
             # Reopen HID (was closed for data mode)
             if not self._hid:
-                try:
-                    import hid as _hid_mod
-                    if hasattr(_hid_mod, 'Device'):
-                        self._hid = _hid_mod.Device(vid=self._vid, pid=self._pid)
-                    else:
-                        self._hid = _hid_mod.device()
-                        self._hid.open(self._vid, self._pid)
-                    print("  [Link] AIOCPlugin: HID reopened after data mode", flush=True)
-                except Exception as e:
-                    print(f"  [Link] AIOCPlugin: HID reopen failed: {e}", flush=True)
+                self._open_hid()
 
         return {"ok": True, "mode": new_mode}
 
@@ -2866,8 +2882,6 @@ class AIOCPlugin(AudioPlugin):
         Serialised on _ptt_hw_lock so the command path and the safety-timer
         path can't interleave their write + state update.
         """
-        if not self._hid:
-            return {"ok": False, "error": "HID not connected"}
         try:
             import struct
             state = 1 if state_on else 0
@@ -2875,7 +2889,7 @@ class AIOCPlugin(AudioPlugin):
             iodata = state << (self._ptt_channel - 1)
             data = struct.pack("<BBBBB", 0, 0, iodata, iomask, 0)
             with self._ptt_hw_lock:
-                self._hid.write(bytes(data))
+                self._write_ptt_hid(bytes(data))
                 self._ptt_on = state_on
             # Release held audio as soon as the radio is actually keyed. Done
             # outside the HW lock (the aplay write can block) and also here
