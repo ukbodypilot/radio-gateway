@@ -410,6 +410,25 @@ class ManagerEngine:
         env = dict(os.environ)
         env.setdefault('HOME', '/home/user')
         env['PATH'] = '/home/user/.local/bin:' + env.get('PATH', '/usr/local/bin:/usr/bin:/bin')
+        # The gateway web API wants Basic auth, and the run's own curls (the
+        # daily task has no pre-collected snapshot) used to get 401. Hand it a
+        # 0600 curl config via GW_CURL_AUTH: `curl -K "$GW_CURL_AUTH" ...`.
+        # A file, not the env var itself, so the password never lands in a
+        # command line or `ps`; removed as soon as the run ends.
+        _auth_path = None
+        _pw = str(getattr(self.config, 'WEB_CONFIG_PASSWORD', '') or '')
+        if _pw:
+            _cred = (str(getattr(self.config, 'WEB_CONFIG_USERNAME', '') or 'user')
+                     + ':' + _pw)
+            try:
+                import tempfile
+                _fd, _auth_path = tempfile.mkstemp(prefix='gw_curl_', suffix='.cfg')
+                with os.fdopen(_fd, 'w') as _f:
+                    _f.write('user = "' + _cred.replace('\\', '\\\\').replace('"', '\\"') + '"\n')
+                env['GW_CURL_AUTH'] = _auth_path
+            except Exception as e:
+                print(f"  [Manager] Could not write curl auth file: {e}")
+                _auth_path = None
         try:
             r = subprocess.run(cmd, cwd=_BASE, capture_output=True, text=True,
                                timeout=_MAX_WAIT_SECS, env=env)
@@ -425,6 +444,12 @@ class ManagerEngine:
             self._write_error_report(run_id, task_type,
                                      f'claude -p failed: {type(e).__name__}: {e}')
             return False
+        finally:
+            if _auth_path:
+                try:
+                    os.unlink(_auth_path)
+                except OSError:
+                    pass
 
         if self._find_report(run_id):
             return True
