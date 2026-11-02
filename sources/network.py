@@ -171,6 +171,11 @@ class RemoteAudioServer:
         self.port = int(config.REMOTE_AUDIO_PORT)
         self.connected = False
         self.client_address = None  # "host:port" when connected
+        # Optional callable returning the IP of the connected RX peer. The RX
+        # and TX ends are the same machine, so when it is connected we dial
+        # it rather than trust REMOTE_AUDIO_HOST, which goes stale when the
+        # client's DHCP lease moves. Set by gateway_setup.
+        self.peer_host_fn = None
         self._socket = None
         self._connect_thread = None
         self._running = False
@@ -194,6 +199,14 @@ class RemoteAudioServer:
         self._connect_thread.start()
         print(f"✓ Remote audio server will connect to {self.host}:{self.port}")
 
+    def _dest_host(self):
+        """The connected RX peer's IP if there is one, else REMOTE_AUDIO_HOST."""
+        try:
+            peer = self.peer_host_fn() if self.peer_host_fn else None
+        except Exception:
+            peer = None
+        return peer or self.host
+
     def _connect_loop(self):
         """Connect to the client, reconnect on failure (backoff while it is down)."""
         delay = self._reconnect_interval
@@ -201,13 +214,14 @@ class RemoteAudioServer:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2.0)
-                sock.connect((self.host, self.port))
+                dest = self._dest_host()
+                sock.connect((dest, self.port))
                 delay = self._reconnect_interval  # connected: next outage starts fast again
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 sock.setblocking(False)  # non-blocking so send_audio never stalls audio loop
                 self._tx_backlog = b''   # stale partial frame belongs to the old connection
                 self._socket = sock
-                self.client_address = f"{self.host}:{self.port}"
+                self.client_address = f"{dest}:{self.port}"
                 self.connected = True
                 print(f"\n[RemoteAudio] Connected to client {self.client_address}")
                 # Stay in this loop until disconnect is detected.
@@ -337,6 +351,7 @@ class RemoteAudioSource(AudioSource):
 
         self.audio_level = 0
         self.server_connected = False
+        self.peer_host = None  # IP of the connected RX peer, None when down
 
         self._chunk_queue = _queue_mod.Queue(maxsize=32)
         self._sub_buffer = b''
@@ -394,6 +409,7 @@ class RemoteAudioSource(AudioSource):
                 conn.settimeout(2.0)
                 self._conn = conn
                 self.server_connected = True
+                self.peer_host = addr[0]
                 print(f"\n[SDRSV] Server connected from {addr[0]}:{addr[1]}")
 
                 while self._reader_running:
@@ -437,6 +453,7 @@ class RemoteAudioSource(AudioSource):
                     print(f"\n[SDRSV] Connection error: {e}")
             finally:
                 self.server_connected = False
+                self.peer_host = None
                 self._conn = None
                 if conn:
                     try:

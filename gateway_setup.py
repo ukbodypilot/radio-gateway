@@ -274,6 +274,9 @@ def setup_remote_audio(gw):
             print("⚠ Warning: REMOTE_AUDIO_HOST not set — TX server needs a destination IP")
         else:
             gw.remote_audio_server = RemoteAudioServer(gw.config)
+            # Same machine as the RX peer: dial its live address when up.
+            gw.remote_audio_server.peer_host_fn = (
+                lambda: getattr(getattr(gw, 'remote_audio_source', None), 'peer_host', None))
             gw.remote_audio_server.start()
     except Exception as e:
         print(f"⚠ Warning: Could not start remote audio TX server: {e}")
