@@ -23,10 +23,13 @@ Normally started by the packaged launcher (windows_client_launcher.py).
 
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
+from collections import deque
 from tkinter import filedialog
 
 import customtkinter as ctk
@@ -39,6 +42,11 @@ except Exception:
     _kb = None
 
 try:
+    import psutil                   # CPU / memory stats (optional)
+except Exception:
+    psutil = None
+
+try:
     import pystray                  # tray icon (optional)
     from PIL import Image, ImageDraw
 except Exception:
@@ -46,6 +54,8 @@ except Exception:
 
 FROZEN = bool(getattr(sys, "frozen", False))
 APP_NAME = "RadioGatewayClient"
+WIDE_PX = 1000          # window width at which Controls and Stats go side by side
+MAX_RECENT_HOSTS = 6
 _ANSI = re.compile(r"\033\[[0-9;]*[A-Za-z]")
 
 
@@ -90,6 +100,84 @@ def level_frac(db):
     return max(0.0, min(1.0, (db + 60.0) / 60.0))
 
 
+def fmt_bytes(n):
+    """Human-readable byte count."""
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+
+
+class Graph(ctk.CTkFrame):
+    """Scrolling line graph on a plain canvas, newest sample at the right.
+
+    `hi=None` autoscales (never below `floor`); a fixed `lo`/`hi` pins the range.
+    A None sample leaves a gap in the line. Drawing is skipped while the graph
+    isn't on screen, so the hidden Stats tab costs nothing.
+    """
+
+    def __init__(self, parent, title, unit="", lo=0.0, hi=None, floor=1.0,
+                 fmt="{:.0f}", color="#4aa3ff", n=90, height=52):
+        super().__init__(parent, fg_color="transparent")
+        head = ctk.CTkFrame(self, fg_color="transparent")
+        head.pack(fill="x")
+        ctk.CTkLabel(head, text=title, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        self.val = ctk.CTkLabel(head, text="-", anchor="e",
+                                font=ctk.CTkFont(size=12, weight="bold"))
+        self.val.pack(side="right")
+        self.cv = tk.Canvas(self, height=height, bg="#1b1b1b", highlightthickness=0)
+        self.cv.pack(fill="x")
+        self.cv.bind("<Configure>", lambda e: self._render())
+        self.data = deque(maxlen=n)
+        self._text = None
+        self.unit, self.lo, self.hi, self.floor = unit, lo, hi, floor
+        self.fmt, self.color = fmt, color
+
+    def push(self, v):
+        """Add a sample (or None for 'no data') and redraw."""
+        self.data.append(v)
+        text = "-" if v is None else self.fmt.format(v) + self.unit
+        if text != self._text:
+            self._text = text
+            self.val.configure(text=text)
+        self._render()
+
+    def _render(self):
+        cv = self.cv
+        if not cv.winfo_viewable():
+            return
+        cv.delete("all")
+        w, h = cv.winfo_width(), cv.winfo_height()
+        vals = [v for v in self.data if v is not None]
+        hi = self.hi if self.hi is not None else max(self.floor, max(vals, default=0.0) * 1.2)
+        lo = self.lo
+        span = (hi - lo) or 1.0
+        cv.create_line(0, h / 2, w, h / 2, fill="#2a2a2a")
+        step = w / max(1, self.data.maxlen - 1)
+        x0 = w - (len(self.data) - 1) * step
+        seg = []
+
+        def flush():
+            if len(seg) >= 4:
+                cv.create_line(*seg, fill=self.color, width=1.5)
+            elif len(seg) == 2:
+                cv.create_oval(seg[0] - 1.5, seg[1] - 1.5, seg[0] + 1.5, seg[1] + 1.5,
+                               fill=self.color, outline="")
+
+        for i, v in enumerate(self.data):
+            if v is None:
+                flush()
+                seg.clear()
+                continue
+            y = h - 2 - (max(lo, min(hi, v)) - lo) / span * (h - 4)
+            seg += [x0 + i * step, y]
+        flush()
+        cv.create_text(w - 3, 2, anchor="ne", fill="#707070", font=("Segoe UI", 8),
+                       text=f"{hi:.0f}")
+
+
 class App(ctk.CTk):
     """Main window. `self.eng` is the engine's shared state dict while
     connected, and None otherwise; `self.vals` holds the user's settings so they
@@ -101,11 +189,19 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
         self.title("Radio Gateway Client")
         h = min(860, max(520, self.winfo_screenheight() - 120))
-        self.geometry(f"560x{h}+40+20")
+        self.geometry(f"600x{h}+40+20")
         self.minsize(520, 480)
 
         self.argv = argv
         self.cfg = wac.load_config()
+        m = re.fullmatch(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", self.cfg.get("window_geometry") or "")
+        if m:
+            # Clamp to the current screen so an unplugged monitor can't strand the window.
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            w, hh, x, y = (int(v) for v in m.groups())
+            w, hh = max(520, min(w, sw)), max(480, min(hh, sh))
+            x, y = max(0, min(x, sw - 120)), max(0, min(y, sh - 120))
+            self.geometry(f"{w}x{hh}+{x}+{y}")
         self.eng = None
         self.threads = []
         self.tray = None
@@ -113,6 +209,8 @@ class App(ctk.CTk):
         self._ptt_release_job = None
         self._closing = False
         self._todo = []            # callables queued by other threads, run by _poll
+        self._cfg_cache = {}       # widget -> last configure() options, see _cfg
+        self._bar_last = {}        # meter key -> last drawn value
         self._host0 = ''
 
         c = self.cfg
@@ -126,15 +224,37 @@ class App(ctk.CTk):
         }
         self.vals["effected"] = self.vals["effect_index"] != 0
 
+        # stats sampling state
+        self._net_prev = None            # (monotonic, tx_bytes, rx_bytes)
+        self._rtt = None                 # latest gateway round-trip, ms
+        self._rtt_hist = deque(maxlen=30)
+        self._probe_target = None        # (host, port) the RTT probe connects to
+        self._probe_stop = threading.Event()
+        self._proc = None
+        self._cpu_prev = None            # (monotonic, {tid: cpu seconds})
+        if psutil is not None:
+            try:
+                self._proc = psutil.Process()
+                self._proc.cpu_percent(None)       # prime; first call returns 0
+                psutil.cpu_percent(None)
+            except Exception:
+                self._proc = None
+
         self._build()
         self._load_devices()
         self._apply_hotkey()
         self._start_tray()
         self.protocol("WM_DELETE_WINDOW", self._on_close_button)
+        self._relayout_job = None
+        self.bind("<Configure>", self._on_configure)
         self.bind_all("<KeyPress-space>", self._space_down)
         self.bind_all("<KeyRelease-space>", self._space_up)
         self._host0 = self.host.get().strip()
+        self._set_probe_target(self._host0)
+        threading.Thread(target=self._probe_loop, daemon=True, name="Probe").start()
         self.after(80, self._poll)
+        self.after(250, self._tick_fast)
+        self.after(1000, self._tick_slow)
         threading.Thread(target=self._startup_update_then_connect, daemon=True).start()
 
     # ------------------------------------------------------------------ UI --
@@ -151,22 +271,62 @@ class App(ctk.CTk):
             anchor="w", padx=12, pady=(8, 2))
         return box
 
+    def _on_configure(self, event):
+        """Window resized: re-pick the layout once the drag settles."""
+        if event.widget is not self:
+            return
+        if self._relayout_job is not None:
+            self.after_cancel(self._relayout_job)
+        self._relayout_job = self.after(80, self._relayout)
+
+    def _relayout(self, force=False):
+        self._relayout_job = None
+        wide = self.winfo_width() >= WIDE_PX
+        if wide == self._layout_wide and not force:
+            return
+        self._layout_wide = wide
+        if wide:
+            self.seg.grid_remove()
+            self.body.grid(row=1, column=0, columnspan=1, sticky="nsew", padx=(0, 4))
+            self.stats_body.grid(row=1, column=1, columnspan=1, sticky="nsew", padx=(4, 0))
+            return
+        self.seg.grid(row=0, column=0, columnspan=2, pady=(2, 6))
+        show, hide = ((self.body, self.stats_body) if self.seg.get() == "Controls"
+                      else (self.stats_body, self.body))
+        hide.grid_remove()
+        show.grid(row=1, column=0, columnspan=2, sticky="nsew")
+
     def _build(self):
         # Footer is packed first so it stays visible; the controls scroll above it.
         self.footer = ctk.CTkFrame(self, fg_color="transparent")
         self.footer.pack(side="bottom", fill="x")
-        self.body = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.body.pack(side="top", fill="both", expand=True)
+        # Both panes always exist; _relayout() shows them side by side when the
+        # window is wide, otherwise one at a time behind a Controls / Stats switch.
+        self.main = ctk.CTkFrame(self, fg_color="transparent")
+        self.main.pack(side="top", fill="both", expand=True, padx=8)
+        self.main.grid_rowconfigure(1, weight=1)
+        self.main.grid_columnconfigure((0, 1), weight=1, uniform="pane")
+        self.seg = ctk.CTkSegmentedButton(self.main, values=["Controls", "Stats"],
+                                          command=lambda _v: self._relayout(force=True))
+        self.seg.set("Controls")
+        self.body = ctk.CTkScrollableFrame(self.main, fg_color="transparent")
+        self.stats_body = ctk.CTkScrollableFrame(self.main, fg_color="transparent")
+        self._layout_wide = None
 
         # --- connection ------------------------------------------------------
         box = self._section("Gateway")
         r = ctk.CTkFrame(box, fg_color="transparent")
         r.pack(fill="x", padx=12, pady=(0, 4))
-        self.host = ctk.CTkEntry(r, placeholder_text="gateway IP or hostname")
         host = (self.argv[0] if self.argv and not self.argv[0].startswith("--")
                 else self.cfg.get("gateway_host", ""))
-        self.host.insert(0, host)
+        recent = list(self.cfg.get("recent_hosts") or [])
+        if host and host not in recent:
+            recent.insert(0, host)
+        # Editable dropdown: type a new address or pick a previous gateway.
+        self.host = ctk.CTkComboBox(r, values=recent or [""])
+        self.host.set(host)
         self.host.pack(side="left", fill="x", expand=True)
+        self.host.bind("<Return>", lambda e: self._host_committed())
         self.btn_connect = ctk.CTkButton(r, text="Connect", width=110, command=self._toggle_connect)
         self.btn_connect.pack(side="left", padx=(8, 0))
         r = ctk.CTkFrame(box, fg_color="transparent")
@@ -175,6 +335,10 @@ class App(ctk.CTk):
         self.lbl_tx.pack(side="left", padx=(0, 18))
         self.lbl_rx = ctk.CTkLabel(r, text="RX: offline", anchor="w")
         self.lbl_rx.pack(side="left")
+        self.sw_auto = ctk.CTkSwitch(r, text="Auto-connect on start")
+        if self.cfg.get("auto_connect", True):
+            self.sw_auto.select()
+        self.sw_auto.pack(side="right")
 
         # --- devices ---------------------------------------------------------
         box = self._section("Audio devices")
@@ -260,6 +424,53 @@ class App(ctk.CTk):
         self.lbl_ver = ctk.CTkLabel(self.footer, text="", anchor="w", text_color="gray55")
         self.lbl_ver.pack(fill="x", padx=16, pady=(2, 8))
         self._refresh_sliders()
+        self._build_stats()
+        self._relayout(force=True)
+
+    def _stat_section(self, title):
+        box = ctk.CTkFrame(self.stats_body)
+        box.pack(fill="x", padx=6, pady=(8, 0))
+        ctk.CTkLabel(box, text=title, font=ctk.CTkFont(weight="bold")).pack(
+            anchor="w", padx=12, pady=(8, 2))
+        return box
+
+    def _stat_graph(self, box, *a, **kw):
+        g = Graph(box, *a, **kw)
+        g.pack(fill="x", padx=12, pady=3)
+        return g
+
+    def _stat_text(self, box):
+        lbl = ctk.CTkLabel(box, text="", anchor="w", justify="left",
+                           font=ctk.CTkFont(family="Consolas", size=12), text_color="gray75")
+        lbl.pack(fill="x", padx=12, pady=(2, 10))
+        return lbl
+
+    def _build_stats(self):
+        box = self._stat_section("Network")
+        self.g_txk = self._stat_graph(box, "TX to gateway", " kbps", floor=64, color="#4aa3ff")
+        self.g_rxk = self._stat_graph(box, "RX from gateway", " kbps", floor=64, color="#66bb6a")
+        self.g_rtt = self._stat_graph(box, "Gateway round-trip (TCP connect)", " ms",
+                                      floor=10, fmt="{:.1f}", color="#ffb74d")
+        self.t_net = self._stat_text(box)
+
+        box = self._stat_section("Audio engine")
+        self.g_lvl_tx = self._stat_graph(box, "Program feed level", " dB", lo=-60, hi=0,
+                                         fmt="{:.0f}", color="#4aa3ff")
+        self.g_lvl_mic = self._stat_graph(box, "Mic level (after gain)", " dB", lo=-60, hi=0,
+                                          fmt="{:.0f}", color="#ba68c8")
+        self.g_lvl_rx = self._stat_graph(box, "Speaker level", " dB", lo=-60, hi=0,
+                                         fmt="{:.0f}", color="#66bb6a")
+        self.g_loop = self._stat_graph(box, "TX loop time per chunk", " ms", floor=25,
+                                       fmt="{:.1f}", color="#e57373")
+        self.t_audio = self._stat_text(box)
+
+        box = self._stat_section("CPU / GPU")
+        self.g_cpu = self._stat_graph(box, "This app (CPU, all cores)", "%", floor=10,
+                                      fmt="{:.1f}", color="#4aa3ff")
+        self.g_sys = self._stat_graph(box, "Whole system (CPU)", "%", hi=100, color="#9e9e9e")
+        self.t_load = self._stat_text(box)
+        self.g_gpu = self._stat_graph(box, "GPU", "%", hi=100, color="#76ff03")
+        self.t_gpu = self._stat_text(box)
 
     def _meter_row(self, parent, key, label, vol_key, vmax, sw_text, sw_key):
         f = self._row(parent, label)
@@ -378,6 +589,26 @@ class App(ctk.CTk):
         return None
 
     # ----------------------------------------------------------- connection --
+    def _remember_host(self, host):
+        """Put `host` at the head of the recent-gateways list (and the dropdown)."""
+        recent = [h for h in (self.cfg.get("recent_hosts") or []) if h != host]
+        recent.insert(0, host)
+        recent = recent[:MAX_RECENT_HOSTS]
+        self.cfg["recent_hosts"] = recent
+        self.cfg["gateway_host"] = host
+        self.host.configure(values=recent)
+
+    def _host_committed(self):
+        """Enter in the host box: remember it and connect if we aren't already."""
+        host = self.host.get().strip()
+        if not host:
+            return
+        self._remember_host(host)
+        self._save_cfg()
+        self._set_probe_target(host)
+        if self.eng is None:
+            self.connect()
+
     def _toggle_connect(self):
         if self.eng is None:
             self.connect()
@@ -396,6 +627,7 @@ class App(ctk.CTk):
             return
         (tx_i, tx_n), (mic_i, mic_n), (out_i, out_n) = picks["tx"], picks["mic"], picks["out"]
 
+        self._remember_host(host)
         cfg = self.cfg
         wac.AUDIO_LATENCY = cfg.get("audio_latency", wac.AUDIO_LATENCY)
         try:
@@ -434,6 +666,12 @@ class App(ctk.CTk):
                         for n, fn, a in specs]
         for t in self.threads:
             t.start()
+        # Same nvidia-smi poller the console client uses; it quietly exits if
+        # there is no NVIDIA GPU.
+        threading.Thread(target=wac._gpu_monitor_thread, args=(state,),
+                         daemon=True, name="GPU").start()
+        self._net_prev = (time.monotonic(), 0, 0)
+        self._set_probe_target(host)
         self.eng = state
         self.btn_connect.configure(text="Disconnect")
         self._msg(f"Connecting to {host} …")
@@ -446,6 +684,7 @@ class App(ctk.CTk):
         st["running"] = False
         st["ptt_held"] = False
         self.eng = None
+        self._net_prev = None
         self.btn_connect.configure(text="Connect", state="disabled")
         self.lbl_tx.configure(text="TX: offline", text_color="gray70")
         self.lbl_rx.configure(text="RX: offline", text_color="gray70")
@@ -553,42 +792,194 @@ class App(ctk.CTk):
 
     # ----------------------------------------------------------------- poll --
     def _msg(self, text):
-        self.lbl_msg.configure(text=text)
+        self._cfg(self.lbl_msg, text=text)
+
+    def _cfg(self, widget, **kw):
+        """configure() only the options that changed. customtkinter redraws a
+        widget on every configure(), so skipping no-ops keeps the UI thread cheap."""
+        cache = self._cfg_cache.setdefault(widget, {})
+        changed = {k: v for k, v in kw.items() if k not in cache or cache[k] != v}
+        if changed:
+            cache.update(changed)
+            widget.configure(**changed)
+
+    def _setbar(self, key, value):
+        """Move a meter only when it changed enough to be visible."""
+        if abs(value - self._bar_last.get(key, -1.0)) >= 0.012:
+            self._bar_last[key] = value
+            self.bars[key].set(value)
 
     def _poll(self):
         while self._todo:
             self._todo.pop(0)()
         st = self.eng
         if st is not None:
-            self.bars["tx"].set(level_frac(st.get("tx_db", -100.0)))
-            self.bars["rx"].set(level_frac(st.get("rx_db", -100.0)))
+            self._setbar("tx", level_frac(st.get("tx_db", -100.0)))
+            self._setbar("rx", level_frac(st.get("rx_db", -100.0)))
             _bar, mic_scaled = wac.level_bar(st.get("mic_db", -100.0),
                                              vol_pct=st.get("mic_vol", 100))
-            self.bars["mic"].set(level_frac(mic_scaled))
+            self._setbar("mic", level_frac(mic_scaled))
             ok, bad = "#4caf50", "#e57373"
-            self.lbl_tx.configure(text="TX: " + ("connected" if st["tx_connected"] else "connecting…"),
-                                  text_color=ok if st["tx_connected"] else bad)
+            self._cfg(self.lbl_tx,
+                      text="TX: " + ("connected" if st["tx_connected"] else "connecting…"),
+                      text_color=ok if st["tx_connected"] else bad)
             frm = st.get("rx_from")
-            self.lbl_rx.configure(
-                text="RX: " + (f"connected ({frm[0]})" if st["rx_connected"] and frm else
-                               "connected" if st["rx_connected"] else "waiting for gateway…"),
-                text_color=ok if st["rx_connected"] else bad)
+            self._cfg(self.lbl_rx,
+                      text="RX: " + (f"connected ({frm.split(':')[0]})" if st["rx_connected"] and frm else
+                                     "connected" if st["rx_connected"] else "waiting for gateway…"),
+                      text_color=ok if st["rx_connected"] else bad)
             msg = strip_ansi(st.get("picker_msg") or "")
             err = st.get("tx_error") or st.get("mic_error")
             if err and not msg:
                 msg = f"Error: {err}"
+            if not msg and st["tx_connected"] and self.lbl_msg.cget("text").startswith("Connecting"):
+                msg = "Connected."
             if msg:
                 self._msg(msg)
             if not st.get("tx_wav_request") and self.btn_rec.cget("text") == "Stop recording":
                 self.btn_rec.configure(text="Record TX to WAV…")
         held = self._ptt_held()
-        self.btn_ptt.configure(
-            fg_color="#c62828" if held else "#3b3b3b",
-            hover_color="#d32f2f" if held else "#4a4a4a",
-            text="ON AIR" if held else "HOLD TO TALK  (Space)")
-        self.lbl_ver.configure(text=self._version_text())
+        self._cfg(self.btn_ptt,
+                  fg_color="#c62828" if held else "#3b3b3b",
+                  hover_color="#d32f2f" if held else "#4a4a4a",
+                  text="ON AIR" if held else "HOLD TO TALK  (Space)")
+        self._cfg(self.lbl_ver, text=self._version_text())
         if not self._closing:
             self.after(80, self._poll)
+
+    # ---------------------------------------------------------------- stats --
+    def _set_probe_target(self, host):
+        port = int(self.cfg.get("web_port", wac.DEFAULT_WEB_PORT))
+        self._probe_target = (host, port) if host else None
+
+    def _probe_loop(self):
+        """Time a TCP connect to the gateway's web port every 2 s. A handshake
+        is a fair round-trip measure and needs nothing from the gateway beyond
+        the web server it already runs."""
+        while not self._probe_stop.is_set():
+            target = self._probe_target
+            rtt = None
+            if target:
+                t0 = time.perf_counter()
+                try:
+                    with socket.create_connection(target, timeout=2):
+                        rtt = (time.perf_counter() - t0) * 1000.0
+                except OSError:
+                    rtt = None
+            self._rtt = rtt
+            self._probe_stop.wait(2.0)
+
+    def _tick_fast(self):
+        """4 Hz: level and loop-time graphs."""
+        st = self.eng
+        if st is not None:
+            self.g_lvl_tx.push(max(-60.0, st.get("tx_db", -100.0)))
+            _bar, mic_scaled = wac.level_bar(st.get("mic_db", -100.0),
+                                             vol_pct=st.get("mic_vol", 100))
+            self.g_lvl_mic.push(max(-60.0, mic_scaled))
+            self.g_lvl_rx.push(max(-60.0, st.get("rx_db", -100.0)))
+            self.g_loop.push(st.get("tx_iter_ms", 0.0))
+        if not self._closing:
+            self.after(250, self._tick_fast)
+
+    def _tick_slow(self):
+        """1 Hz: throughput, round-trip, CPU/GPU and the text readouts."""
+        try:
+            self._sample_slow()
+        except Exception as e:
+            sys.stderr.write(f"[stats] {type(e).__name__}: {e}\n")
+        if not self._closing:
+            self.after(1000, self._tick_slow)
+
+    def _sample_slow(self):
+        st = self.eng
+        now = time.monotonic()
+
+        # -- network ------------------------------------------------------------
+        if st is not None and self._net_prev is not None:
+            t0, tx0, rx0 = self._net_prev
+            tx, rx = st.get("tx_bytes", 0), st.get("rx_bytes", 0)
+            dt = max(1e-3, now - t0)
+            self.g_txk.push((tx - tx0) * 8.0 / dt / 1000.0)
+            self.g_rxk.push((rx - rx0) * 8.0 / dt / 1000.0)
+            self._net_prev = (now, tx, rx)
+        self._rtt_hist.append(self._rtt)
+        self.g_rtt.push(self._rtt)
+        ok = [r for r in self._rtt_hist if r is not None]
+        lost = len(self._rtt_hist) - len(ok)
+        jitter = (sum(abs(a - b) for a, b in zip(ok, ok[1:])) / (len(ok) - 1)
+                  if len(ok) > 1 else 0.0)
+        net = [f"RTT   avg {sum(ok) / len(ok):.1f} ms   jitter {jitter:.1f} ms   "
+               f"failed {lost}/{len(self._rtt_hist)}" if ok
+               else "RTT   no reply from the gateway web port"]
+        if st is not None:
+            net.insert(0, f"Sent {fmt_bytes(st.get('tx_bytes', 0))}   "
+                          f"received {fmt_bytes(st.get('rx_bytes', 0))}   "
+                          f"reconnects TX {max(0, st.get('tx_connects', 0) - 1)}  "
+                          f"RX {max(0, st.get('rx_connects', 0) - 1)}")
+        self.t_net.configure(text="\n".join(net))
+
+        # -- audio engine -------------------------------------------------------
+        if st is not None:
+            cb = st.get("tx_cb_stats") or {}
+
+            def rate(key):
+                v = st.get(key)
+                return f"{v / 1000:.1f} kHz" if v else "-"
+
+            self.t_audio.configure(text="\n".join([
+                f"TX feed   capture {rate('tx_capture_rate')} x{st.get('tx_capture_channels', '-')}ch"
+                f"  resample {st.get('tx_resample_backend', '-')}"
+                f"  block {wac.TX_BLOCK_MS} ms  latency {wac.AUDIO_LATENCY}",
+                f"          callbacks {cb.get('callbacks', 0)}  xruns {st.get('tx_xruns', 0)}"
+                f"  queue {st.get('tx_q_depth', 0)}  dropped {st.get('tx_q_drops', 0)}"
+                f"  send {st.get('tx_send_ms', 0.0):.2f} ms",
+                f"Mic       capture {rate('mic_capture_rate')}"
+                f"  resample {st.get('mic_resample_backend', '-')}"
+                f"  xruns {st.get('mic_xruns', 0)}  dropped {st.get('mic_q_drops', 0)}",
+                f"Speaker   stream {rate('rx_stream_rate')}  device {rate('rx_device_rate')}"
+                f"  queue {st.get('rx_q_depth', 0)}  from {st.get('rx_from') or '-'}",
+            ]))
+        else:
+            self.t_audio.configure(text="Not connected.")
+
+        # -- CPU ----------------------------------------------------------------
+        if self._proc is not None:
+            ncpu = psutil.cpu_count() or 1
+            self.g_cpu.push(self._proc.cpu_percent(None) / ncpu)
+            self.g_sys.push(psutil.cpu_percent(None))
+            names = {t.native_id: t.name for t in threading.enumerate()}
+            names[threading.main_thread().native_id] = "UI"
+            cur = {th.id: th.user_time + th.system_time for th in self._proc.threads()}
+            lines = []
+            if self._cpu_prev is not None:
+                pt, prev = self._cpu_prev
+                dt = max(1e-3, now - pt)
+                share = {}
+                for tid, secs in cur.items():
+                    if tid in prev:
+                        key = names.get(tid, "audio / other")
+                        share[key] = share.get(key, 0.0) + (secs - prev[tid]) / dt * 100.0
+                top = sorted(share.items(), key=lambda kv: -kv[1])
+                lines = [f"{k} {v:.0f}%" for k, v in top if v >= 0.5][:6]
+            self._cpu_prev = (now, cur)
+            rss = self._proc.memory_info().rss
+            self.t_load.configure(text=(
+                f"Memory {fmt_bytes(rss)}   threads {len(cur)}\n"
+                f"Busiest threads (% of one core): " + (", ".join(lines) or "idle")))
+        else:
+            self.t_load.configure(text="CPU stats need the psutil package (pip install psutil).")
+
+        # -- GPU ----------------------------------------------------------------
+        if st is not None and st.get("gpu_available"):
+            self.g_gpu.push(st.get("gpu_util", 0.0))
+            self.t_gpu.configure(text=(
+                f"{st.get('gpu_name', 'GPU')}   memory "
+                f"{st.get('gpu_mem_used', 0):.0f} / {st.get('gpu_mem_total', 0):.0f} MiB\n"
+                "Voice effects run on the CPU, so this normally stays near zero."))
+        else:
+            self.t_gpu.configure(text="No NVIDIA GPU data (nvidia-smi unavailable). "
+                                      "Voice effects run on the CPU anyway.")
 
     def _version_text(self):
         s = wac.UPDATE_STATE
@@ -678,6 +1069,14 @@ class App(ctk.CTk):
     # ----------------------------------------------------------------- exit --
     def _save_cfg(self):
         c = self.cfg
+        host = self.host.get().strip()
+        if host:                       # remember it even if we never connected
+            c["gateway_host"] = host
+        c["auto_connect"] = bool(self.sw_auto.get())
+        try:
+            c["window_geometry"] = self.geometry()
+        except Exception:
+            pass
         c["mic_vol"] = self.vals["mic_vol"]
         c["duck_pct"] = self.vals["duck_pct"]
         c["effect_index"] = self.vals["effect_index"]
@@ -694,6 +1093,7 @@ class App(ctk.CTk):
         if self._closing:
             return
         self._closing = True
+        self._probe_stop.set()
         try:
             self._save_cfg()
         except Exception:

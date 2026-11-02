@@ -1,7 +1,7 @@
 # Build RadioGatewayClient.exe (windowed, one file) with PyInstaller.
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File build_windows_client.ps1
-# Needs:  py -m pip install pyinstaller numpy scipy sounddevice soxr customtkinter keyboard pystray pillow
+# Needs:  py -m pip install pyinstaller numpy scipy sounddevice soxr customtkinter keyboard pystray pillow psutil
 #
 # The exe holds Python + dependencies. The client code (windows_audio_client.py,
 # windows_audio_gui.py) is bundled only as a first-run seed; after that it is

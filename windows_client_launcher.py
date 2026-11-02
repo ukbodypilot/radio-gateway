@@ -25,7 +25,7 @@ MODULES = ("windows_audio_client", "windows_audio_gui")   # load order matters
 # Never true at runtime. Gives PyInstaller's import scanner something to follow
 # so it collects the dependencies of the modules loaded dynamically below.
 if os.environ.get("_WAC_NEVER_SET_"):
-    import customtkinter, keyboard, numpy, pystray, sounddevice  # noqa: F401
+    import customtkinter, keyboard, numpy, psutil, pystray, sounddevice  # noqa: F401
     import scipy.signal, soxr  # noqa: F401
     from PIL import Image, ImageDraw  # noqa: F401
     import windows_audio_client, windows_audio_gui  # noqa: F401
