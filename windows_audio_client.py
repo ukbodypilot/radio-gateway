@@ -124,7 +124,7 @@ CONFIG_FILENAME = "windows_audio_client.json"
 # /api/winclient/version and /api/winclient/files. Overridable in the JSON
 # config as "web_port" / "update_enabled".
 DEFAULT_WEB_PORT = 8080
-UPDATE_FILES = ["windows_audio_client.py"]
+UPDATE_FILES = ["windows_audio_client.py", "windows_audio_gui.py"]
 
 # Env var the parent uses to tell the relaunched child what it just did. The
 # child runs with --no-update so it never repeats the check, which would
@@ -1568,7 +1568,8 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
                 wav_rate = SAMPLE_RATE if resampling_now else cap["rate"]
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 wav_path = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
+                    state.get("tx_wav_dir")
+                    or os.path.dirname(os.path.abspath(__file__)),
                     f"tx_dump_{wav_rate}_{ts}.wav",
                 )
                 try:

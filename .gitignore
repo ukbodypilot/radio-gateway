@@ -116,3 +116,4 @@ usrp2_desired.json
 # Kokoro TTS ONNX models — large binaries (>300 MB), fetched by install.sh
 tools/models/kokoro/
 .claude/worktrees/
+RadioGatewayClient.spec

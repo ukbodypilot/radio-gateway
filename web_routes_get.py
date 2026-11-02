@@ -1388,6 +1388,7 @@ def handle_endpoint_files(handler, parent):
 # file it has no use for.
 _WINCLIENT_FILES = [
     'windows_audio_client.py',
+    'windows_audio_gui.py',
 ]
 
 
