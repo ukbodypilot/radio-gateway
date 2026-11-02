@@ -93,6 +93,8 @@ SAMPLE_RATE = 48000
 CHANNELS = 1
 FRAMES_PER_BUFFER = 2400  # 2400 frames x 2 bytes = 4800 bytes per chunk
 RECONNECT_INTERVAL = 5  # seconds between connection attempts
+TX_KEEPALIVE = b'\x00\x00'   # one silent sample; any frame < 256 bytes is a keepalive
+TX_KEEPALIVE_S = 1.0         # how often to send it while nothing is live
 SILENCE = b'\x00' * (FRAMES_PER_BUFFER * 2)  # 4800 bytes of silence
 
 DEFAULT_TX_PORT = 9602  # Gateway's RX listen port (we connect out to this)
@@ -1444,6 +1446,7 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
 
     sock = None
     wav_writer = None
+    last_keepalive = 0.0   # monotonic time of the last idle keepalive frame
 
     def connect():
         """Open the TX socket to the gateway. Returns it, or None on failure."""
@@ -1606,13 +1609,25 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
 
             # Send if connected; otherwise quietly drop and keep going so
             # the meter / WAV dump still work while waiting on the gateway.
-            # Program mute and mic gating are already folded into the mix above,
-            # so we always send the mixed chunk to keep the stream continuous.
+            # Program mute and mic gating are already folded into the mix above.
+            # While nothing is live (program off, PTT released) the mix is pure
+            # silence, so send only a tiny keepalive frame once a second instead
+            # of ~768 kbps of zeros. The gateway treats a frame under 256 bytes
+            # as "link alive, no audio" (sources/network.py, IDLE_TIMEOUT_S).
             if sock is not None:
                 try:
-                    header = struct.pack(">I", len(pcm))
-                    sock.sendall(header + pcm)
-                    state["tx_bytes"] = state.get("tx_bytes", 0) + len(header) + len(pcm)
+                    idle = (state.get("tx_suppress_idle", True)
+                            and not state["tx_live"] and not ptt)
+                    if idle:
+                        if time.monotonic() - last_keepalive >= TX_KEEPALIVE_S:
+                            last_keepalive = time.monotonic()
+                            frame = struct.pack(">I", len(TX_KEEPALIVE)) + TX_KEEPALIVE
+                            sock.sendall(frame)
+                            state["tx_bytes"] = state.get("tx_bytes", 0) + len(frame)
+                    else:
+                        header = struct.pack(">I", len(pcm))
+                        sock.sendall(header + pcm)
+                        state["tx_bytes"] = state.get("tx_bytes", 0) + len(header) + len(pcm)
                 except Exception:
                     try:
                         sock.close()
