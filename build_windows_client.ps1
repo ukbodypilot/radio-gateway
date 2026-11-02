@@ -9,11 +9,14 @@
 # so you only rebuild the exe when windows_client_launcher.py or the dependency
 # set changes.
 
+param([string]$DistPath = "dist")   # build elsewhere if the running exe is locking dist\
+
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 py -m PyInstaller --noconfirm --clean --onefile --windowed `
     --name RadioGatewayClient `
+    --distpath $DistPath `
     --collect-all customtkinter `
     --collect-submodules scipy.signal `
     --hidden-import pystray._win32 `
@@ -22,4 +25,4 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed `
     windows_client_launcher.py
 
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
-Write-Host "Built: $PSScriptRoot\dist\RadioGatewayClient.exe"
+Write-Host "Built: $(Join-Path $DistPath RadioGatewayClient.exe)"

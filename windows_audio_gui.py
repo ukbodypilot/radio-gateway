@@ -23,6 +23,7 @@ Normally started by the packaged launcher (windows_client_launcher.py).
 
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -210,6 +211,7 @@ class App(ctk.CTk):
         self._closing = False
         self._todo = []            # callables queued by other threads, run by _poll
         self._cfg_cache = {}       # widget -> last configure() options, see _cfg
+        self._picked = set()       # device kinds the user chose by hand this session
         self._bar_last = {}        # meter key -> last drawn value
         self._host0 = ''
 
@@ -554,10 +556,13 @@ class App(ctk.CTk):
         for kind, menu in self.dev_menus.items():
             names = [n for _i, n, _c in self.dev_items[kind]] or ["(none)"]
             menu.configure(values=names)
-            cur = menu.get() if menu.get() in names else None
-            menu.set(cur or (saved[kind] if saved[kind] in names else names[0]))
+            if kind in self._picked and menu.get() in names:
+                continue                  # the user's own choice stands
+            # Saved device if it is present, else whatever is showing, else the first.
+            menu.set(saved[kind] if saved[kind] in names
+                     else (menu.get() if menu.get() in names else names[0]))
 
-    def _rescan(self):
+    def _rescan(self, quiet=False):
         if self.eng is not None:
             self._msg("Disconnect first to rescan — PortAudio can't re-enumerate "
                       "while streams are open.")
@@ -570,9 +575,40 @@ class App(ctk.CTk):
             self._msg(f"Rescan failed: {e}")
             return
         self._load_devices()
-        self._msg("Device list refreshed.")
+        if not quiet:
+            self._msg("Device list refreshed.")
+
+    def _missing_saved(self):
+        """Saved device names that aren't in the current device list (and that the
+        user hasn't replaced by hand)."""
+        keys = {"tx": "tx_device_name", "mic": "mic_device_name", "out": "rx_device_name"}
+        missing = []
+        for kind, key in keys.items():
+            want = self.cfg.get(key)
+            have = [n for _i, n, _c in self.dev_items[kind]]
+            if want and kind not in self._picked and want not in have:
+                missing.append(want)
+        return missing
+
+    def _auto_connect(self, tries=0):
+        """Connect on start, but only with the devices you saved. Exclusive
+        devices (WDM-KS) can be invisible for a moment while a previous copy is
+        still letting go of them, so rescan a few times before giving up. If one
+        is still missing, don't connect with a stand-in: say so instead."""
+        missing = self._missing_saved()
+        if missing and tries < 8:
+            self._msg(f"Waiting for audio device: {missing[0]} …")
+            self._rescan(quiet=True)
+            self.after(750, lambda: self._auto_connect(tries + 1))
+            return
+        if missing:
+            self._msg(f"Saved device not found: {', '.join(missing)}. "
+                      "Pick one above and press Connect.")
+            return
+        self.connect()
 
     def _device_chosen(self, kind, name):
+        self._picked.add(kind)
         if self.eng is None:
             return
         for idx, n, _c in self.dev_items[kind]:
@@ -636,8 +672,14 @@ class App(ctk.CTk):
             pass
         tx_port = cfg.get("tx_port", wac.DEFAULT_TX_PORT)
         rx_port = cfg.get("rx_port", wac.DEFAULT_RX_PORT)
-        cfg.update(gateway_host=host, tx_port=tx_port, rx_port=rx_port,
-                   tx_device_name=tx_n, rx_device_name=out_n, mic_device_name=mic_n)
+        cfg.update(gateway_host=host, tx_port=tx_port, rx_port=rx_port)
+        # Remember a device only if you picked it (or none was saved yet); a
+        # stand-in chosen because the saved one was missing must not replace it.
+        for kind, key, name in (("tx", "tx_device_name", tx_n),
+                                ("mic", "mic_device_name", mic_n),
+                                ("out", "rx_device_name", out_n)):
+            if kind in self._picked or not cfg.get(key):
+                cfg[key] = name
         self._save_cfg()
 
         v = self.vals
@@ -1015,7 +1057,7 @@ class App(ctk.CTk):
         except Exception as e:
             wac.UPDATE_STATE.update(status="failed", detail=f"{type(e).__name__}: {e}")
         if host and self.cfg.get("auto_connect", True):
-            self._todo.append(self.connect)
+            self._todo.append(self._auto_connect)
 
     def _relaunch(self):
         """Start a fresh copy of ourselves (--no-update so it can't loop) and exit."""
@@ -1074,7 +1116,10 @@ class App(ctk.CTk):
             c["gateway_host"] = host
         c["auto_connect"] = bool(self.sw_auto.get())
         try:
-            c["window_geometry"] = self.geometry()
+            geo = self.geometry()
+            m = re.fullmatch(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", geo)
+            if m and int(m.group(1)) >= 520 and int(m.group(2)) >= 480:
+                c["window_geometry"] = geo     # skip pre-map sizes like 200x200
         except Exception:
             pass
         c["mic_vol"] = self.vals["mic_vol"]
@@ -1113,12 +1158,105 @@ class App(ctk.CTk):
         self.after(300, self.destroy)
 
 
+_MUTEX = None           # held for the life of the process (single-instance lock)
+_QUIT_EVENT = None      # named event: signalled by a newer launch to ask us to quit
+
+
+def take_over():
+    """Make this launch the only running copy: quit the others.
+
+    Closing the window only hides it to the tray, so without this every launch
+    stacks another copy that fights for the audio devices and the RX port.
+    Order: (1) signal the named quit event, which every running copy of this
+    version watches, and wait for their lock to free; (2) force-close any
+    RadioGatewayClient.exe still alive, which catches older builds that have no
+    watcher. Windows only; a no-op elsewhere.
+    """
+    global _MUTEX, _QUIT_EVENT
+    if sys.platform != "win32":
+        return
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateMutexW.restype = ctypes.c_void_p
+    k32.CreateEventW.restype = ctypes.c_void_p
+    for fn in (k32.CloseHandle, k32.SetEvent, k32.ResetEvent):
+        fn.argtypes = [ctypes.c_void_p]
+    event = k32.CreateEventW(None, True, False, "Local\\RadioGatewayClientGUI.Quit")
+
+    # 1. Ask running copies to quit cleanly, then wait for the lock to free up.
+    k32.SetEvent(event)
+    deadline = time.monotonic() + 5.0
+    while True:
+        handle = k32.CreateMutexW(None, False, "Local\\RadioGatewayClientGUI")
+        if ctypes.get_last_error() != 183:          # ERROR_ALREADY_EXISTS
+            _MUTEX = handle
+            break
+        k32.CloseHandle(handle)
+        if time.monotonic() >= deadline:
+            break                                   # a stuck copy: step 2 handles it
+        time.sleep(0.2)
+
+    # 2. Force-close whatever is left of the packaged exe (never ourselves, nor
+    #    the one-file bootstrap process that launched us).
+    if FROZEN:
+        keep = [os.getpid(), os.getppid()]
+        cmd = ["taskkill", "/F", "/IM", os.path.basename(sys.executable)]
+        for pid in keep:
+            cmd += ["/FI", f"PID ne {pid}"]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=15,
+                           creationflags=0x08000000)    # CREATE_NO_WINDOW
+        except Exception:
+            pass
+        time.sleep(0.5)                              # let ports and devices free up
+    if _MUTEX is None:
+        _MUTEX = k32.CreateMutexW(None, False, "Local\\RadioGatewayClientGUI")
+    # The event stays signalled while old copies exit; clear it so it doesn't
+    # tell *us* to quit, then watch it for the next launch.
+    k32.ResetEvent(event)
+    _QUIT_EVENT = event
+
+
+def start_quit_watcher(app):
+    """Quit this copy cleanly when a newer launch signals the quit event."""
+    if _QUIT_EVENT is None:
+        return
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32")
+    k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+
+    def watch():
+        k32.WaitForSingleObject(_QUIT_EVENT, 0xFFFFFFFF)
+        app._todo.append(app.quit_app)               # run on the Tk thread
+
+    threading.Thread(target=watch, daemon=True, name="QuitWatch").start()
+
+
 def main():
+    take_over()
     ensure_streams()
     if FROZEN:
-        # Config lives beside the engine files, in the per-user data folder.
-        wac._config_path = lambda: os.path.join(data_dir(), wac.CONFIG_FILENAME)
-    App(sys.argv[1:]).mainloop()
+        # Config lives in the per-user data folder, not next to the exe.
+        cfg_path = os.path.join(data_dir(), wac.CONFIG_FILENAME)
+        wac._config_path = lambda: cfg_path
+        if not os.path.exists(cfg_path):
+            # First run of the exe: adopt the console client's saved settings
+            # (gateway, devices, ...) if its JSON sits beside the exe or up to
+            # two folders above it (dist\new\ -> dist\ -> repo root), so the
+            # gateway address isn't asked for again.
+            folder = os.path.dirname(os.path.abspath(sys.executable))
+            for _ in range(3):
+                legacy = os.path.join(folder, wac.CONFIG_FILENAME)
+                if os.path.isfile(legacy):
+                    try:
+                        shutil.copyfile(legacy, cfg_path)
+                    except OSError:
+                        pass
+                    break
+                folder = os.path.dirname(folder)
+    app = App(sys.argv[1:])
+    start_quit_watcher(app)
+    app.mainloop()
 
 
 if __name__ == "__main__":
