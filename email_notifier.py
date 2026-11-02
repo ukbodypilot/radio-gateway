@@ -312,6 +312,21 @@ class EmailNotifier:
                     if sdr_name:
                         sdr_line += f"  ({sdr_name})"
                     lines.append(sdr_line)
+                if s.get('sdr2_enabled'):
+                    sdr2_name = self.gateway.config.SDR2_DEVICE_NAME
+                    sdr2_line = "SDR2:          enabled"
+                    if sdr2_name:
+                        sdr2_line += f"  ({sdr2_name})"
+                    lines.append(sdr2_line)
+
+                # AllStar (USRP) nodes
+                for _n, _p in (('AS1', 'usrp'), ('AS2', 'usrp2')):
+                    if s.get(f'{_p}_enabled'):
+                        _node = s.get(f'{_p}_node', '')
+                        _l = f"AllStar {_n[-1]}:    enabled"
+                        if _node:
+                            _l += f"  (node {_node})"
+                        lines.append(_l)
 
                 # Streaming
                 if s.get('streaming_enabled'):
