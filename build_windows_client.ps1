@@ -1,7 +1,7 @@
 # Build RadioGatewayClient.exe (windowed, one file) with PyInstaller.
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File build_windows_client.ps1
-# Needs:  py -m pip install pyinstaller numpy scipy sounddevice soxr customtkinter keyboard pystray pillow
+# Needs:  py -m pip install pyinstaller numpy scipy sounddevice soxr customtkinter keyboard pystray pillow psutil
 #
 # The exe holds Python + dependencies. The client code (windows_audio_client.py,
 # windows_audio_gui.py) is bundled only as a first-run seed; after that it is
@@ -9,11 +9,14 @@
 # so you only rebuild the exe when windows_client_launcher.py or the dependency
 # set changes.
 
+param([string]$DistPath = "dist")   # build elsewhere if the running exe is locking dist\
+
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 py -m PyInstaller --noconfirm --clean --onefile --windowed `
     --name RadioGatewayClient `
+    --distpath $DistPath `
     --collect-all customtkinter `
     --collect-submodules scipy.signal `
     --hidden-import pystray._win32 `
@@ -22,4 +25,4 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed `
     windows_client_launcher.py
 
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
-Write-Host "Built: $PSScriptRoot\dist\RadioGatewayClient.exe"
+Write-Host "Built: $(Join-Path $DistPath RadioGatewayClient.exe)"

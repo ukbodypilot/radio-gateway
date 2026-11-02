@@ -6,7 +6,9 @@ customtkinter, ...) but NOT the client code itself, which changes often. The
 code lives as plain .py files in %LOCALAPPDATA%\\RadioGatewayClient\\app, where
 the gateway's self-update can overwrite them. This launcher:
 
-  1. seeds that folder from the copies bundled in the exe (first run only),
+  1. seeds that folder from the copies bundled in the exe: when it is empty, and
+     again whenever this exe is a different build from the one that last
+     seeded it (so installing a newer exe is never overridden by stale files),
   2. loads windows_audio_client.py and windows_audio_gui.py from it,
   3. falls back to the bundled copies if the downloaded ones fail to import,
      so a bad update can never leave the client unable to start.
@@ -15,6 +17,7 @@ This file is the fixed shell: it is not part of the update bundle, so keep it
 tiny. Changes to it need a rebuilt exe (see build_windows_client.ps1).
 """
 
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -25,7 +28,7 @@ MODULES = ("windows_audio_client", "windows_audio_gui")   # load order matters
 # Never true at runtime. Gives PyInstaller's import scanner something to follow
 # so it collects the dependencies of the modules loaded dynamically below.
 if os.environ.get("_WAC_NEVER_SET_"):
-    import customtkinter, keyboard, numpy, pystray, sounddevice  # noqa: F401
+    import customtkinter, keyboard, numpy, psutil, pystray, sounddevice  # noqa: F401
     import scipy.signal, soxr  # noqa: F401
     from PIL import Image, ImageDraw  # noqa: F401
     import windows_audio_client, windows_audio_gui  # noqa: F401
@@ -41,6 +44,17 @@ def _app_dir():
     path = os.path.join(base, "RadioGatewayClient", "app")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def _stamp(folder):
+    """Short hash of the client files in `folder`; identifies an exe build."""
+    h = hashlib.sha256()
+    for name in MODULES:
+        path = os.path.join(folder, name + ".py")
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                h.update(f.read())
+    return h.hexdigest()[:16]
 
 
 def _load(name, path):
@@ -60,11 +74,26 @@ def _load_all(folder):
 def main():
     app = _app_dir()
     bundle = _bundle_dir()
+    # A different exe build than the one that last seeded the folder replaces
+    # the files; gateway updates in between leave the marker alone, so they stick.
+    marker = os.path.join(app, ".seeded_from")
+    stamp = _stamp(bundle)
+    try:
+        with open(marker) as f:
+            reseed = f.read().strip() != stamp
+    except OSError:
+        reseed = True
     for name in MODULES:
         dst = os.path.join(app, name + ".py")
         src = os.path.join(bundle, name + ".py")
-        if not os.path.isfile(dst) and os.path.isfile(src):
+        if os.path.isfile(src) and (reseed or not os.path.isfile(dst)):
             shutil.copyfile(src, dst)
+    if reseed:
+        try:
+            with open(marker, "w") as f:
+                f.write(stamp)
+        except OSError:
+            pass
     try:
         gui = _load_all(app)
     except Exception as e:

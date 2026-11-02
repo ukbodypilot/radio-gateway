@@ -1480,6 +1480,7 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
                     sock = connect()
                     if sock is not None:
                         state["tx_connected"] = True
+                        state["tx_connects"] = state.get("tx_connects", 0) + 1
 
             # Get audio from callback queue (ALWAYS — regardless of socket)
             try:
@@ -1611,6 +1612,7 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
                 try:
                     header = struct.pack(">I", len(pcm))
                     sock.sendall(header + pcm)
+                    state["tx_bytes"] = state.get("tx_bytes", 0) + len(header) + len(pcm)
                 except Exception:
                     try:
                         sock.close()
@@ -1871,6 +1873,7 @@ def _rx_thread_func(state, cfg, rx_port, out_dev_index, out_dev_name):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             conn.settimeout(0.2)
             state["rx_connected"] = True
+            state["rx_connects"] = state.get("rx_connects", 0) + 1
             state["rx_from"] = f"{addr[0]}:{addr[1]}"
 
             import queue as _queue
@@ -1965,6 +1968,8 @@ def _rx_thread_func(state, cfg, rx_port, out_dev_index, out_dev_name):
                         break
 
                     state["rx_db"] = rms_db(pcm)
+                    state["rx_bytes"] = state.get("rx_bytes", 0) + 4 + len(pcm)
+                    state["rx_q_depth"] = rx_q.qsize()
 
                     if state["rx_play"]:
                         vol = state["rx_vol"]
