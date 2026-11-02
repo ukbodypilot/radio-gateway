@@ -376,6 +376,23 @@ class RemoteAudioSource(AudioSource):
             _pf = 8
         self._jitter_prefill = max(1, min(_pf, 31))
         self._jitter_primed = False
+        # Silence-suppressed senders (client stops streaming when nothing is
+        # live, sending only a tiny keepalive ~1/s). Timings below handle that:
+        self._last_chunk_mono = 0.0   # last REAL audio chunk (not keepalive)
+        self.keepalives = 0           # tiny frames seen (liveness only)
+
+    # A length-prefixed frame shorter than this is a keepalive: it proves the
+    # link is alive (resets the read timeout) but is NOT audio, so it must not
+    # enter the queue, move the level meter, or count as a jitter-buffer push.
+    KEEPALIVE_MAX_BYTES = 256
+    # Idle read timeout. Must exceed the sender's keepalive interval (~1 s)
+    # with margin for Wi-Fi hiccups; a stalled peer is still dropped.
+    IDLE_TIMEOUT_S = 5.0
+    # No real audio for this long -> the next burst re-primes (fresh cushion).
+    IDLE_UNPRIME_S = 0.75
+    # Buffered audio that stopped arriving this long ago is a finished burst
+    # shorter than the prefill: play it out rather than strand it.
+    BURST_FLUSH_S = 0.15
 
     def setup_audio(self, port_override=None):
         """Bind listen socket and start the reader/accept thread."""
@@ -406,7 +423,7 @@ class RemoteAudioSource(AudioSource):
             try:
                 conn, addr = self._listen_socket.accept()
                 conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                conn.settimeout(2.0)
+                conn.settimeout(self.IDLE_TIMEOUT_S)
                 self._conn = conn
                 self.server_connected = True
                 self.peer_host = addr[0]
@@ -425,12 +442,17 @@ class RemoteAudioSource(AudioSource):
                     if payload is None:
                         break
 
+                    if msg_len < self.KEEPALIVE_MAX_BYTES:
+                        self.keepalives += 1
+                        continue  # liveness only; read timeout already reset
+
                     # Track level in reader thread (works even when not on a bus)
                     try:
                         self.audio_level = pcm_level(payload, self.audio_level)
                     except Exception:
                         log_exc()
 
+                    self._last_chunk_mono = time.monotonic()
                     try:
                         self._chunk_queue.put_nowait(payload)
                     except _queue_mod.Full:
@@ -508,8 +530,17 @@ class RemoteAudioSource(AudioSource):
         # Wait until the jitter buffer is primed before delivering audio.
         # Single transient underruns (below) emit silence for that tick but
         # leave _jitter_primed alone — only disconnect re-arms it.
+        idle = time.monotonic() - self._last_chunk_mono
         if not self._jitter_primed:
-            return None, False
+            # A burst shorter than the prefill would otherwise sit in the
+            # queue until the next transmission. Once it stops arriving,
+            # play it out.
+            if (self._last_chunk_mono and idle > self.BURST_FLUSH_S
+                    and not self._chunk_queue.empty()):
+                self._jitter_primed = True
+            else:
+                self.audio_level = int(self.audio_level * 0.7)
+                return None, False
 
         cb = self._chunk_bytes
 
@@ -519,6 +550,17 @@ class RemoteAudioSource(AudioSource):
                 blob = self._chunk_queue.get_nowait()
                 self._sub_buffer += blob
             except _queue_mod.Empty:
+                # Starved. Sender stopped (silence suppression) or underrun.
+                self.audio_level = int(self.audio_level * 0.7)  # no frames to decay it
+                if idle > self.BURST_FLUSH_S and self._sub_buffer:
+                    # End of a burst: pad the partial tail so the last
+                    # syllable isn't left stranded in the sub-buffer.
+                    self._sub_buffer += b'\x00' * (cb - len(self._sub_buffer))
+                    break
+                if idle > self.IDLE_UNPRIME_S:
+                    # Idle: next burst gets a fresh prefill cushion instead
+                    # of draining chunk-by-chunk into an empty buffer.
+                    self._jitter_primed = False
                 return None, False
 
         raw = self._sub_buffer[:cb]
