@@ -274,11 +274,8 @@
   <div class="shared-row">
     <div class="f-row tight">
       <label class="lbl">Sample Rate</label>
-      <select id="sdr-sr" class="si" title="Both tuners use the same ADC clock — max 2.0 MHz in Master/Slave mode">
-        <option value="0.5">500 kHz</option>
-        <option value="1.0">1.0 MHz</option>
-        <option value="1.536">1.536 MHz</option>
-        <option value="2.0" selected>2.0 MHz (max)</option>
+      <select id="sdr-sr" class="si" title="Master/Slave mode: the driver only offers 62.5 kHz-2 MHz in powers of two, and only 2.0 MHz divides evenly into rtl_airband's 16 kHz audio (the others cause drops)">
+        <option value="2.0" selected>2.0 MHz</option>
       </select>
     </div>
     <div class="f-row tight">
@@ -567,15 +564,8 @@
         </div>
         <div class="f-row">
           <label class="lbl lbl-wide">Sample Rate</label>
-          <select id="single-sample-rate" class="si ctl">
-            <option value="0.25">250 kHz</option>
-            <option value="0.5">500 kHz</option>
-            <option value="1.0">1.0 MHz</option>
-            <option value="2.0" selected>2.0 MHz</option>
-            <option value="2.56">2.56 MHz</option>
-            <option value="6.0">6.0 MHz</option>
-            <option value="8.0">8.0 MHz</option>
-            <option value="10.66">10.66 MHz</option>
+          <select id="single-sample-rate" class="si ctl" title="2.0 MHz (low-IF) is the only rate offered. Other rates either do not divide evenly into rtl_airband's 16 kHz audio (audio drops) or are zero-IF, which gave no audio on this RSPduo.">
+            <option value="2.0" selected>2.0 MHz (low-IF)</option>
           </select>
         </div>
         <div class="f-row">
@@ -1041,8 +1031,10 @@ function autoCenter() {
   var maxF = Math.max.apply(null, freqs);
   var center = (minF + maxF) / 2;
   var spread = maxF - minF;
-  var needed = spread + 0.050;
-  var rates = [0.25, 0.5, 1.0, 2.0, 2.56, 6.0, 8.0, 10.66];
+  // Keep channels well inside the band (decimation filters roll off near the
+  // edges): span x1.25 plus 50 kHz.
+  var needed = spread * 1.25 + 0.050;
+  var rates = [2.0];
   var bestRate = rates[rates.length - 1];
   for (var i = 0; i < rates.length; i++) {
     if (rates[i] >= needed) { bestRate = rates[i]; break; }

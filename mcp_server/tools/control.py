@@ -126,7 +126,8 @@ def sdr_single_tune(
 
     Args:
         centerfreq:   Center frequency in MHz (e.g. 446.70)
-        sample_rate:  Sample rate / bandwidth in MHz (e.g. 0.5, 1.0, 2.0)
+        sample_rate:  Sample rate / bandwidth in MHz. Only 2.0 is accepted: 0.5 and 1.0
+                      cause audio drops, and the zero-IF rates gave no audio on the RSPduo.
         channels:     List of channel dicts, each with 'freq' (MHz), 'modulation' ('nfm'/'am'),
                       'squelch_threshold' (dBFS, e.g. -26), and optional 'label'.
                       Example: [{"freq": 446.76, "modulation": "nfm", "squelch_threshold": -26, "label": "PMR 1"}]

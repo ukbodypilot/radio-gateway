@@ -28,6 +28,56 @@ from plugins._base import (
 
 
 # ---------------------------------------------------------------------------
+# Sample rates that rtl_airband can turn into 16 kHz NFM audio without drops
+# ---------------------------------------------------------------------------
+
+# rtl_airband steps round(sample_rate / 16000) input samples per audio sample
+# (rtl_airband.cpp bps). If the ratio isn't a whole number, the audio comes
+# out at the wrong rate -- 1 MS/s gives 15873 Hz, 500 kS/s 16129 Hz -- and
+# the gateway's buffer slowly empties (drops) or overfills (chops).
+_RTL_AIRBAND_WAVE_RATE = 16000
+
+# What SoapySDRPlay3 accepts (Settings.cpp getInputSampleRateAndDecimation):
+# dual tuner only 62.5k-2M in powers of two; single tuner adds 96/192/384/768k
+# (zero-IF) and anything from 2 to 10.66 MS/s.
+_DRIVER_FIXED_RATES_SINGLE = (62500, 96000, 125000, 192000, 250000, 384000,
+                              500000, 768000, 1000000, 2000000)
+_DRIVER_FIXED_RATES_DUAL = (62500, 125000, 250000, 500000, 1000000, 2000000)
+
+
+def _rate_hz(mhz):
+    return int(round(float(mhz) * 1e6))
+
+
+def sample_rate_problem(mhz, single=True):
+    """None if `mhz` is a rate the driver accepts and that divides evenly
+    into rtl_airband's 16 kHz audio; otherwise a human-readable reason."""
+    try:
+        hz = _rate_hz(mhz)
+    except (TypeError, ValueError):
+        return f'invalid sample rate: {mhz!r}'
+    if single:
+        ok = hz in _DRIVER_FIXED_RATES_SINGLE or 2000000 <= hz <= 10660000
+    else:
+        ok = hz in _DRIVER_FIXED_RATES_DUAL
+    if not ok:
+        return f'{hz / 1e6:g} MS/s is not supported by the SDRplay driver in {"single" if single else "dual"}-tuner mode'
+    if hz % _RTL_AIRBAND_WAVE_RATE:
+        # C round(): halves go away from zero (Python's round() would give 62 for 62.5)
+        real = hz / int(hz / _RTL_AIRBAND_WAVE_RATE + 0.5)
+        return (f'{hz / 1e6:g} MS/s does not divide evenly into 16 kHz audio '
+                f'(rtl_airband would produce {real:.0f} Hz), which causes audio drops')
+    if hz != 2000000:
+        # Everything else that divides evenly is zero-IF.  Measured 2026-11-05
+        # on the RSPduo: at 384 kS/s both channels read ~-75 dBFS against
+        # ~-33 at 2 MS/s low-IF, so the squelch never opened and no audio came
+        # out (768k the same).  Cause unproven; refuse until one is verified.
+        return (f'{hz / 1e6:g} MS/s is zero-IF, which gave no audio on this RSPduo '
+                f'(channel levels ~42 dB down); use 2.0 MS/s')
+    return None
+
+
+# ---------------------------------------------------------------------------
 # _VoiceFilter — steep HPF/LPF on a tuner's demodulated audio
 # ---------------------------------------------------------------------------
 
@@ -478,8 +528,9 @@ class SDRPlugin:
 
     ANTENNAS = ['Tuner 1 50 ohm', 'Tuner 1 Hi-Z', 'Tuner 2 50 ohm']
     MODULATIONS = ['nfm', 'am']
-    SAMPLE_RATES = [0.5, 1.0, 2.0, 2.56, 6.0, 8.0, 10.66]
-    SINGLE_SAMPLE_RATES = [0.25, 0.5, 1.0, 2.0, 2.56, 6.0, 8.0, 10.66]
+    # Only rates that pass sample_rate_problem() (no audio drops).
+    SAMPLE_RATES = [2.0]   # dual tuner: the only one that divides into 16 kHz
+    SINGLE_SAMPLE_RATES = [2.0]   # zero-IF rates gave no audio (see sample_rate_problem)
     MAX_SINGLE_CHANNELS = 2
 
     # All tunable settings with (type, default)
@@ -566,7 +617,7 @@ class SDRPlugin:
         # Single-tuner mode state
         self._sdr_mode = 'dual'       # 'dual' or 'single'
         self._single_centerfreq = 446.70
-        self._single_sample_rate = 0.5
+        self._single_sample_rate = 2.0
         self._single_channels = []    # list of channel dicts
         self._single_antenna = 'Tuner 1 50 ohm'
         self._single_gain_mode = 'agc'
@@ -1126,6 +1177,25 @@ class SDRPlugin:
 
         return self._master_has_signal_hyst
 
+    # -- Internal: sample rate --
+
+    def _dual_rate_hz(self):
+        """Dual tuner runs at 2 MS/s: the driver only offers powers of two up
+        to 2 MS/s there, and only 2 MS/s divides into 16 kHz audio."""
+        rate = min(self.sample_rate, 2.0)
+        prob = sample_rate_problem(rate, single=False)
+        if prob:
+            print(f"  [SDR] {prob} -- using 2 MS/s")
+            return 2000000
+        return _rate_hz(rate)
+
+    def _single_rate_hz(self):
+        prob = sample_rate_problem(self._single_sample_rate, single=True)
+        if prob:
+            print(f"  [SDR] {prob} -- using 2 MS/s")
+            return 2000000
+        return _rate_hz(self._single_sample_rate)
+
     # -- Internal: voice filter spec --
 
     def _voice_filter_spec(self, n):
@@ -1248,7 +1318,7 @@ class SDRPlugin:
             f'agc_setpoint={self.agc_setpoint}',
         ]
         device_settings = ','.join(settings_parts)
-        sample_rate = min(self.sample_rate, 2.0)
+        sample_rate = self._dual_rate_hz()
 
         ch_opts = ''
         if self.squelch_threshold != 0:
@@ -1316,7 +1386,7 @@ devices:
             gain_line = f'  gain = "RFGR={self.rfgr2},IFGR={self.ifgr2}";\n'
 
         device_settings = f'agc_setpoint={self.agc_setpoint2}'
-        sample_rate = min(self.sample_rate, 2.0)
+        sample_rate = self._dual_rate_hz()
 
         ch_opts = ''
         if self.squelch_threshold2 != 0:
@@ -1516,6 +1586,10 @@ devices:
 
     def _apply_settings(self, **kwargs):
         """Update SDR1 tuning and restart."""
+        if 'sample_rate' in kwargs:
+            prob = sample_rate_problem(min(float(kwargs['sample_rate']), 2.0), single=False)
+            if prob:
+                return {'ok': False, 'error': prob}
         for key, (typ, _default) in self._SETTING_KEYS.items():
             if key in kwargs:
                 try:
@@ -1645,7 +1719,7 @@ devices:
             f'  device_settings = "{",".join(settings_parts)}";\n'
             f'  mode = "multichannel";\n'
             f'  centerfreq = {self._single_centerfreq};\n'
-            f'  sample_rate = {float(self._single_sample_rate)};\n'
+            f'  sample_rate = {self._single_rate_hz()};\n'
             f'{gain_line}\n'
             f'{dev_opts}'
             f'  channels:\n'
@@ -1807,6 +1881,11 @@ devices:
 
     def _apply_single_settings(self, cmd):
         """Update single-mode device settings and restart."""
+        if 'sample_rate' in cmd:
+            prob = sample_rate_problem(cmd['sample_rate'], single=True)
+            if prob:
+                return {'ok': False, 'error': prob}
+            cmd['sample_rate'] = float(cmd['sample_rate'])
         self._sdr_mode = 'single'
         for attr in ('centerfreq', 'sample_rate', 'antenna', 'gain_mode',
                      'correction', 'tau'):
