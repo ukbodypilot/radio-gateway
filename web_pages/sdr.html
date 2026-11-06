@@ -180,9 +180,21 @@
   /* Channel list (single mode) */
   .ch-header { display:flex; align-items:center; justify-content:space-between;
                margin-bottom:var(--s-2); }
-  .ch-row { display:flex; align-items:center; gap:var(--s-2);
-            padding:var(--s-2) 0; border-bottom:1px solid var(--t-border); }
-  .ch-row:last-child { border-bottom:none; }
+  .ch-item { border-bottom:1px solid var(--t-border); }
+  .ch-item:last-child { border-bottom:none; }
+  .ch-row { display:flex; align-items:center; gap:var(--s-2); padding:var(--s-2) 0; }
+  .ch-filt-btn.changed { color:var(--t-accent); }
+  .ch-filters { padding:0 0 var(--s-2) 32px; }
+  .ch-filter-grid { display:grid; grid-template-columns:repeat(3, auto 90px auto);
+                    align-items:center; gap:var(--s-1) var(--s-2);
+                    justify-content:start; margin-bottom:var(--s-1); }
+  .ch-filter-grid .lbl { color:var(--t-text-dim); font-size:var(--f-xs); }
+  .ch-filter-grid .unit { color:var(--t-text-mute); font-size:var(--f-xs); min-width:16px; }
+  .ch-filter-hint { color:var(--t-text-mute); font-size:var(--f-xs); margin-top:var(--s-1); }
+  @media (max-width:700px) {
+    .ch-filters { padding-left:0; }
+    .ch-filter-grid { grid-template-columns:auto 1fr auto; }
+  }
   .ch-num { color:var(--t-accent); font-weight:700; font-family:inherit;
             font-size:var(--f-sm); min-width:24px; text-align:center; }
   .ch-level-wrap { width:80px; height:14px; background:var(--t-btn);
@@ -316,7 +328,7 @@
       <label class="lbl">NFM Tau</label>
       <select id="sdr-tau" class="si ctl">
         <option value="0">Off</option><option value="50">50 µs</option><option value="75">75 µs</option>
-        <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="1000">1000 µs</option>
+        <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="750">750 µs</option><option value="1000">1000 µs</option>
       </select>
     </div>
     <label class="tgl"><input type="checkbox" id="sdr-continuous" checked> Continuous output</label>
@@ -378,13 +390,13 @@
       <input type="number" id="sdr-ampfactor" step="0.1" min="0" max="10" value="1.0" class="si">
       <span class="unit">×</span>
       <label class="lbl">HPF</label>
-      <input type="number" id="sdr-highpass" step="10" min="0" max="1000" value="100" class="si">
+      <input type="number" id="sdr-highpass" step="10" min="0" max="1000" value="100" class="si" title="Audio high-pass, 12 dB/oct, applied by the gateway (0 = off)">
       <span class="unit">Hz</span>
       <label class="lbl">LPF</label>
-      <input type="number" id="sdr-lowpass" step="100" min="500" max="8000" value="2500" class="si">
+      <input type="number" id="sdr-lowpass" step="100" min="0" max="8000" value="2500" class="si" title="Audio low-pass, 24 dB/oct, applied by the gateway (0 = off)">
       <span class="unit">Hz</span>
       <label class="lbl">Ch BW</label>
-      <input type="number" id="sdr-chbw" step="1000" min="0" max="25000" value="0" class="si">
+      <input type="number" id="sdr-chbw" step="500" min="0" max="15000" value="0" class="si">
       <span class="unit">Hz</span>
       <label class="lbl">Notch</label>
       <input type="number" id="sdr-notch" step="1" min="0" max="5000" value="0" class="si">
@@ -426,7 +438,7 @@
       <label class="lbl">NFM Tau</label>
       <select id="sdr2-tau" class="si ctl">
         <option value="0">Off</option><option value="50">50 µs</option><option value="75">75 µs</option>
-        <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="1000">1000 µs</option>
+        <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="750">750 µs</option><option value="1000">1000 µs</option>
       </select>
     </div>
     <label class="tgl"><input type="checkbox" id="sdr2-continuous" checked> Continuous output</label>
@@ -481,13 +493,13 @@
       <input type="number" id="sdr2-ampfactor" step="0.1" min="0" max="10" value="1.0" class="si">
       <span class="unit">×</span>
       <label class="lbl">HPF</label>
-      <input type="number" id="sdr2-highpass" step="10" min="0" max="1000" value="100" class="si">
+      <input type="number" id="sdr2-highpass" step="10" min="0" max="1000" value="100" class="si" title="Audio high-pass, 12 dB/oct, applied by the gateway (0 = off)">
       <span class="unit">Hz</span>
       <label class="lbl">LPF</label>
-      <input type="number" id="sdr2-lowpass" step="100" min="500" max="8000" value="2500" class="si">
+      <input type="number" id="sdr2-lowpass" step="100" min="0" max="8000" value="2500" class="si" title="Audio low-pass, 24 dB/oct, applied by the gateway (0 = off)">
       <span class="unit">Hz</span>
       <label class="lbl">Ch BW</label>
-      <input type="number" id="sdr2-chbw" step="1000" min="0" max="25000" value="0" class="si">
+      <input type="number" id="sdr2-chbw" step="500" min="0" max="15000" value="0" class="si">
       <span class="unit">Hz</span>
       <label class="lbl">Notch</label>
       <input type="number" id="sdr2-notch" step="1" min="0" max="5000" value="0" class="si">
@@ -582,7 +594,7 @@
           <label class="lbl lbl-wide">NFM Tau</label>
           <select id="single-tau" class="si ctl">
             <option value="0">Off</option><option value="50">50 µs</option><option value="75">75 µs</option>
-            <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="1000">1000 µs</option>
+            <option value="200" selected>200 µs</option><option value="530">530 µs</option><option value="750">750 µs</option><option value="1000">1000 µs</option>
           </select>
         </div>
       </div>
@@ -796,7 +808,8 @@ function renderChannelList(channels) {
   var html = '';
   for (var i = 0; i < singleChannels.length; i++) {
     var ch = singleChannels[i];
-    html += '<div class="ch-row" data-idx="' + i + '">';
+    html += '<div class="ch-item" data-idx="' + i + '">';
+    html += '<div class="ch-row">';
     html += '<span class="ch-num">' + (i + 1) + '</span>';
     html += '<div class="ch-level-wrap vu"><div class="ch-level-fill" id="ch-level-' + i + '"></div></div>';
     html += '<input type="number" step="0.00125" min="0.001" max="2000" value="' + (ch.frequency || ch.freq || 446.5) + '" class="si ch-freq" title="Frequency (MHz)">';
@@ -805,15 +818,128 @@ function renderChannelList(channels) {
     html += '<option value="am"' + ((ch.modulation || 'nfm') === 'am' ? ' selected' : '') + '>AM</option>';
     html += '</select>';
     html += '<input type="number" min="-60" max="0" value="' + (ch.squelch_threshold !== undefined ? ch.squelch_threshold : (ch.squelch !== undefined ? ch.squelch : -26)) + '" class="si ch-sq" title="Squelch (dBFS)">';
-    html += '<input type="text" value="' + (ch.label || '') + '" class="si ch-label" placeholder="Label" title="Channel label">';
+    html += '<input type="text" value="' + _escAttr(ch.label || '') + '" class="si ch-label" placeholder="Label" title="Channel label">';
+    var nf = _chFilterChangedCount(ch);
+    html += '<button class="rb rb-sm ch-filt-btn' + (nf ? ' changed' : '') + '" onclick="toggleChFilters(' + i + ')" title="Per-channel audio filters">Filters' + (nf ? ' (' + nf + ')' : '') + '</button>';
     html += '<button class="rb rb-sm rb-danger" onclick="removeChannel(' + i + ')" title="Remove channel">X</button>';
+    html += '</div>';
+    html += _chFiltersHtml(ch, i);
     html += '</div>';
   }
   container.innerHTML = html;
 }
 
+/* Per-channel rtl_airband options. Defaults mirror the backend
+   (plugins/sdr.py _write_config_single): a field at its default is not
+   written to the config, so rtl_airband's own default applies. */
+var CH_FILTER_DEFAULTS = {ampfactor: 1.0, highpass: 100, lowpass: 2500,
+                          channel_bw: 0, notch: 0, notch_q: 10, continuous: false};
+var _chFiltersOpen = new Set();
+
+function _escAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+                  .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function _chVal(ch, key) {
+  return (ch[key] !== undefined && ch[key] !== null) ? ch[key] : CH_FILTER_DEFAULTS[key];
+}
+
+function _chFilterChangedCount(ch) {
+  var n = 0;
+  for (var k in CH_FILTER_DEFAULTS) {
+    if (Number(_chVal(ch, k)) !== Number(CH_FILTER_DEFAULTS[k])) n++;
+  }
+  if (ch.tau !== undefined && ch.tau !== null && ch.tau !== '') n++;
+  return n;
+}
+
+function _chFiltersHtml(ch, i) {
+  var open = _chFiltersOpen.has(i);
+  var h = '<div class="ch-filters"' + (open ? '' : ' style="display:none"') + ' id="ch-filters-' + i + '">';
+  h += '<div class="ch-filter-grid">';
+  function num(cls, label, key, step, min, max, unit, title) {
+    return '<label class="lbl" title="' + title + '">' + label + '</label>' +
+           '<input type="number" class="si ' + cls + '" step="' + step + '" min="' + min + '" max="' + max +
+           '" value="' + _chVal(ch, key) + '" title="' + title + '">' +
+           '<span class="unit">' + unit + '</span>';
+  }
+  h += num('ch-amp', 'Amp', 'ampfactor', 0.1, 0, 10, '×', 'Audio gain applied after demodulation');
+  h += num('ch-hpf', 'HPF', 'highpass', 10, 0, 1000, 'Hz', 'Audio high-pass, 12 dB/oct, applied by the gateway (0 = off). Removes CTCSS tone/rumble');
+  h += num('ch-lpf', 'LPF', 'lowpass', 100, 0, 8000, 'Hz', 'Audio low-pass, 24 dB/oct, applied by the gateway (0 = off). Lower = less hiss, less clarity');
+  h += num('ch-bw', 'Ch BW', 'channel_bw', 500, 0, 15000, 'Hz', 'I/Q channel filter before the demodulator, full width (0 = off). ~10000-12000 suits 12.5 kHz NFM');
+  h += num('ch-notch', 'Notch', 'notch', 1, 0, 5000, 'Hz', 'Audio notch frequency (0 = off)');
+  h += num('ch-notchq', 'Notch Q', 'notch_q', 1, 1, 100, '', 'Notch sharpness (higher = narrower)');
+  var tau = (ch.tau !== undefined && ch.tau !== null) ? String(ch.tau) : '';
+  h += '<label class="lbl" title="FM de-emphasis time constant">De-emph</label>';
+  h += '<select class="si ch-tau" title="FM de-emphasis time constant (Device = use the De-emphasis setting above)">';
+  var taus = [['', 'Device'], ['0', 'Off'], ['50', '50 µs'], ['75', '75 µs'], ['200', '200 µs'],
+              ['530', '530 µs'], ['750', '750 µs'], ['1000', '1000 µs']];
+  for (var t = 0; t < taus.length; t++) {
+    h += '<option value="' + taus[t][0] + '"' + (taus[t][0] === tau ? ' selected' : '') + '>' + taus[t][1] + '</option>';
+  }
+  h += '</select><span class="unit"></span>';
+  h += '</div>';
+  h += '<label class="tgl"><input type="checkbox" class="ch-cont"' + (_chVal(ch, 'continuous') ? ' checked' : '') +
+       '> Continuous output (stream silence while squelch is closed)</label>';
+  h += '<div class="ch-filter-hint">HPF/LPF take effect immediately. The other fields need Apply &amp; Restart.</div>';
+  h += '</div>';
+  return h;
+}
+
+/* HPF/LPF run in the gateway, not rtl_airband, so they apply live via
+   set_voice_filter -- no restart, no audio gap. */
+function applyVoiceFilterLive(tuner, hpEl, lpEl, statusId) {
+  var hp = parseInt(hpEl.value), lp = parseInt(lpEl.value);
+  if (isNaN(hp)) hp = 0;
+  if (isNaN(lp)) lp = 0;
+  postJson('/sdrcmd', {cmd: 'set_voice_filter', tuner: tuner, highpass: hp, lowpass: lp})
+    .then(function(d) {
+      if (d.ok) {
+        setStatus(statusId, 'Filter ' + tuner + ': ' + (hp || 'off') + ' - ' + (lp ? lp + ' Hz' : 'off') + ' applied live', 'ok');
+      } else {
+        setStatus(statusId, 'Filter not applied: ' + (d.error || 'unknown') +
+                  (String(d.error).indexOf('no channel') >= 0 ? ' (press Apply & Restart first)' : ''), 'err');
+      }
+      setTimeout(function() { setStatus(statusId, ''); }, 4000);
+    })
+    .catch(function() { setStatus(statusId, 'Network error', 'err'); });
+}
+
+document.getElementById('single-channel-list').addEventListener('change', function(ev) {
+  var t = ev.target;
+  if (!t.classList || !(t.classList.contains('ch-lpf') || t.classList.contains('ch-hpf'))) return;
+  var item = t.closest('.ch-item');
+  if (!item) return;
+  var idx = parseInt(item.getAttribute('data-idx'));
+  var hpEl = item.querySelector('.ch-hpf'), lpEl = item.querySelector('.ch-lpf');
+  if (singleChannels[idx]) {
+    singleChannels[idx].highpass = parseInt(hpEl.value) || 0;
+    singleChannels[idx].lowpass = parseInt(lpEl.value) || 0;
+  }
+  applyVoiceFilterLive(idx + 1, hpEl, lpEl, 'single-apply-status');
+});
+
+[['sdr', 1], ['sdr2', 2]].forEach(function(p) {
+  var hpEl = document.getElementById(p[0] + '-highpass'), lpEl = document.getElementById(p[0] + '-lowpass');
+  if (!hpEl || !lpEl) return;
+  var fire = function() { applyVoiceFilterLive(p[1], hpEl, lpEl, 'sdr-apply-status'); };
+  hpEl.addEventListener('change', fire);
+  lpEl.addEventListener('change', fire);
+});
+
+function toggleChFilters(i) {
+  var el = document.getElementById('ch-filters-' + i);
+  if (!el) return;
+  var open = el.style.display === 'none';
+  el.style.display = open ? '' : 'none';
+  if (open) _chFiltersOpen.add(i); else _chFiltersOpen.delete(i);
+}
+
 function addChannel() {
-  singleChannels.push({frequency: 446.500, modulation: 'nfm', squelch: -26, label: ''});
+  // Keep unsaved edits in existing rows when the list re-renders.
+  singleChannels = gatherChannelsFromUI();
+  singleChannels.push({freq: 446.500, modulation: 'nfm', squelch_threshold: -26, label: ''});
   renderChannelList(singleChannels);
 }
 
@@ -821,7 +947,9 @@ function removeChannel(idx) {
   postJson('/sdrcmd', {cmd: 'single_remove_channel', index: idx})
     .then(function(d) {
       if (d.ok) {
+        singleChannels = gatherChannelsFromUI();
         singleChannels.splice(idx, 1);
+        _chFiltersOpen.clear();   // indices shift after a removal
         renderChannelList(singleChannels);
       } else {
         setStatus('single-apply-status', 'Error removing channel: ' + (d.error || 'unknown'), 'err');
@@ -831,15 +959,30 @@ function removeChannel(idx) {
 }
 
 function gatherChannelsFromUI() {
-  var rows = document.querySelectorAll('#single-channel-list .ch-row');
+  var rows = document.querySelectorAll('#single-channel-list .ch-item');
   var channels = [];
+  function numOr(el, parse, dflt) {
+    var v = parse(el.value);
+    return isNaN(v) ? dflt : v;
+  }
   for (var i = 0; i < rows.length; i++) {
-    channels.push({
-      freq: parseFloat(rows[i].querySelector('.ch-freq').value),
-      modulation: rows[i].querySelector('.ch-mod').value,
-      squelch_threshold: parseInt(rows[i].querySelector('.ch-sq').value),
-      label: rows[i].querySelector('.ch-label').value
-    });
+    var r = rows[i];
+    var ch = {
+      freq: parseFloat(r.querySelector('.ch-freq').value),
+      modulation: r.querySelector('.ch-mod').value,
+      squelch_threshold: parseInt(r.querySelector('.ch-sq').value),
+      label: r.querySelector('.ch-label').value,
+      ampfactor: numOr(r.querySelector('.ch-amp'), parseFloat, CH_FILTER_DEFAULTS.ampfactor),
+      highpass: numOr(r.querySelector('.ch-hpf'), parseInt, CH_FILTER_DEFAULTS.highpass),
+      lowpass: numOr(r.querySelector('.ch-lpf'), parseInt, CH_FILTER_DEFAULTS.lowpass),
+      channel_bw: numOr(r.querySelector('.ch-bw'), parseInt, CH_FILTER_DEFAULTS.channel_bw),
+      notch: numOr(r.querySelector('.ch-notch'), parseFloat, CH_FILTER_DEFAULTS.notch),
+      notch_q: numOr(r.querySelector('.ch-notchq'), parseFloat, CH_FILTER_DEFAULTS.notch_q),
+      continuous: r.querySelector('.ch-cont').checked
+    };
+    var tau = r.querySelector('.ch-tau').value;
+    if (tau !== '') ch.tau = parseInt(tau);   // '' = inherit the device De-emphasis
+    channels.push(ch);
   }
   return channels;
 }

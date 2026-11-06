@@ -28,6 +28,72 @@ from plugins._base import (
 
 
 # ---------------------------------------------------------------------------
+# _VoiceFilter — steep HPF/LPF on a tuner's demodulated audio
+# ---------------------------------------------------------------------------
+
+class _VoiceFilter:
+    """Butterworth band-limit for one tuner's audio (int16 mono in/out).
+
+    rtl_airband's own `lowpass`/`highpass` options are only handed to the
+    LAME MP3 encoder (output.cpp airlame_init) -- its PulseAudio output,
+    which is what the gateway reads, is never filtered.  So the LPF/HPF
+    fields on the SDR page are applied here instead.
+
+    LPF is 4th-order (24 dB/oct), HPF 2nd-order (12 dB/oct).  A cutoff of 0
+    disables that side.  Filter state carries across chunks.
+    """
+
+    LPF_ORDER = 4
+    HPF_ORDER = 2
+
+    def __init__(self, rate):
+        self.rate = rate
+        self.spec = None        # (highpass_hz, lowpass_hz) currently built
+        self._sos = None
+        self._zi = None
+        self.rebuilds = 0       # instrumentation: times the filter was (re)designed
+        self.errors = 0
+
+    def _build(self, spec):
+        from scipy.signal import butter, sosfilt_zi
+        hp, lp = spec
+        nyq = self.rate / 2.0
+        parts = []
+        if lp and 0 < lp < nyq * 0.98:
+            parts.append(butter(self.LPF_ORDER, lp, 'lowpass', fs=self.rate, output='sos'))
+        if hp and 0 < hp < nyq * 0.5:
+            parts.append(butter(self.HPF_ORDER, hp, 'highpass', fs=self.rate, output='sos'))
+        self.spec = spec
+        self.rebuilds += 1
+        if not parts:
+            self._sos = self._zi = None
+            return
+        self._sos = np.vstack(parts)
+        self._zi = sosfilt_zi(self._sos) * 0.0
+
+    def describe(self):
+        if self._sos is None or not self.spec:
+            return 'off'
+        hp, lp = self.spec
+        return f'{int(hp) if hp else 0}-{int(lp) if lp else 0} Hz'
+
+    def process(self, arr, spec):
+        """Filter int16/float samples. Returns int16 array."""
+        try:
+            if spec != self.spec:
+                self._build(spec)
+            if self._sos is None or len(arr) == 0:
+                return arr
+            from scipy.signal import sosfilt
+            y, self._zi = sosfilt(self._sos, arr.astype(np.float64), zi=self._zi)
+            return np.clip(y, -32768, 32767).astype(np.int16)
+        except Exception:
+            self.errors += 1
+            log_exc()
+            return arr
+
+
+# ---------------------------------------------------------------------------
 # _TunerCapture — internal audio plumbing for one PipeWire tuner
 # ---------------------------------------------------------------------------
 
@@ -38,8 +104,11 @@ class _TunerCapture:
     and provides processed mono PCM via get_chunk().
     """
 
-    def __init__(self, name, config, sink_name, processor):
+    def __init__(self, name, config, sink_name, processor, filter_spec=None):
         self.name = name
+        # Callable -> (highpass_hz, lowpass_hz), read each chunk so a new
+        # setting takes effect on the next Apply without recreating the tuner.
+        self._filter_spec = filter_spec
         self.config = config
         self._pw_sink_name = sink_name
         self.processor = processor
@@ -69,6 +138,7 @@ class _TunerCapture:
         self._audio_rate = getattr(config, 'AUDIO_RATE', 48000)
         self._chunk_size = getattr(config, 'AUDIO_CHUNK_SIZE', 2400)
         self._chunk_bytes = self._chunk_size * 2 * 2  # stereo 16-bit = 4 bytes/sample
+        self.voice_filter = _VoiceFilter(self._audio_rate)
         # Diagnostics
         self._overflows = 0
         self._underruns = 0
@@ -304,6 +374,17 @@ class _TunerCapture:
             audio_boost = getattr(self.config, boost_key, 1.0)
             if audio_boost != 1.0:
                 arr = np.clip(farr * audio_boost, -32768, 32767).astype(np.int16)
+                raw = arr.tobytes()
+
+        # Steep HPF/LPF from the SDR page (rtl_airband doesn't filter pulse output)
+        if self._filter_spec is not None and len(arr) > 0:
+            try:
+                spec = self._filter_spec()
+            except Exception:
+                log_exc()
+                spec = None
+            if spec is not None:
+                arr = self.voice_filter.process(arr, spec)
                 raw = arr.tobytes()
 
         # Apply audio processing (HPF, LPF, notch, gate)
@@ -628,7 +709,7 @@ class SDRPlugin:
         success = False
 
         if enable_sdr1:
-            self._tuner1 = _TunerCapture('SDR1', config, sink1, self._processor1)
+            self._tuner1 = _TunerCapture('SDR1', config, sink1, self._processor1, filter_spec=lambda: self._voice_filter_spec(1))
             if self._tuner1.setup():
                 print(f"  SDR1: {self.frequency:.3f} MHz {self.modulation.upper()}")
                 success = True
@@ -637,7 +718,7 @@ class SDRPlugin:
                 self._tuner1 = None
 
         if enable_sdr2:
-            self._tuner2 = _TunerCapture('SDR2', config, sink2, self._processor2)
+            self._tuner2 = _TunerCapture('SDR2', config, sink2, self._processor2, filter_spec=lambda: self._voice_filter_spec(2))
             if self._tuner2.setup():
                 print(f"  SDR2: {self.frequency2:.3f} MHz {self.modulation2.upper()}")
                 success = True
@@ -839,7 +920,40 @@ class SDRPlugin:
             return self._remove_single_channel(cmd.get('index', -1))
         elif action == 'single_update_channel':
             return self._update_single_channel(cmd.get('index', -1), cmd)
+        elif action == 'set_voice_filter':
+            return self._set_voice_filter(cmd)
         return {"ok": False, "error": f"unknown command: {action}"}
+
+    def _set_voice_filter(self, cmd):
+        """Change a tuner's HPF/LPF live -- no rtl_airband restart.
+
+        The filter runs in the gateway (_VoiceFilter), and each tuner reads its
+        spec per chunk, so updating the stored value is all it takes.
+        tuner: 1 or 2 (single mode: channel 1 or 2).
+        """
+        try:
+            tuner = int(cmd.get('tuner', 1))
+            hp = int(float(cmd['highpass']))
+            lp = int(float(cmd['lowpass']))
+        except (KeyError, ValueError, TypeError):
+            return {'ok': False, 'error': 'tuner, highpass and lowpass are required numbers'}
+        if tuner not in (1, 2):
+            return {'ok': False, 'error': f'invalid tuner: {tuner}'}
+        if not (0 <= hp <= 1000) or not (0 <= lp <= 8000):
+            return {'ok': False, 'error': 'highpass must be 0-1000 Hz, lowpass 0-8000 Hz'}
+        if lp and hp and lp <= hp:
+            return {'ok': False, 'error': 'lowpass must be above highpass'}
+        if self._sdr_mode == 'single':
+            if tuner - 1 >= len(self._single_channels):
+                return {'ok': False, 'error': f'no channel {tuner}'}
+            ch = self._single_channels[tuner - 1]
+            ch['highpass'], ch['lowpass'] = hp, lp
+        elif tuner == 1:
+            self.highpass, self.lowpass = hp, lp
+        else:
+            self.highpass2, self.lowpass2 = hp, lp
+        self._save_settings()
+        return {'ok': True, 'tuner': tuner, 'highpass': hp, 'lowpass': lp}
 
     def get_status(self):
         """Return full status dict for web UI and status bar."""
@@ -882,6 +996,10 @@ class SDRPlugin:
                 d[_pfx + 'underruns'] = _tc._underruns
                 d[_pfx + 'queue_depth'] = _tc._chunk_queue.qsize()
                 d[_pfx + 'get_gaps'] = _tc._get_gaps[-10:] if _tc._get_gaps else []
+                _vf = _tc.voice_filter
+                d[_pfx + 'voice_filter'] = _vf.describe()
+                d[_pfx + 'voice_filter_rebuilds'] = _vf.rebuilds
+                d[_pfx + 'voice_filter_errors'] = _vf.errors
 
         # Mode field (always present)
         d['sdr_mode'] = self._sdr_mode
@@ -1008,6 +1126,23 @@ class SDRPlugin:
 
         return self._master_has_signal_hyst
 
+    # -- Internal: voice filter spec --
+
+    def _voice_filter_spec(self, n):
+        """(highpass_hz, lowpass_hz) for tuner n (1 or 2) in the current mode.
+
+        Single mode: channel n-1 feeds sink sdr_capture / sdr_capture2.
+        Dual mode: SDR1 uses highpass/lowpass, SDR2 highpass2/lowpass2.
+        """
+        if self._sdr_mode == 'single':
+            if n - 1 >= len(self._single_channels):
+                return None
+            ch = self._single_channels[n - 1]
+            return (float(ch.get('highpass', 100) or 0), float(ch.get('lowpass', 2500) or 0))
+        if n == 1:
+            return (float(self.highpass), float(self.lowpass))
+        return (float(self.highpass2), float(self.lowpass2))
+
     # -- Internal: processor sync --
 
     @staticmethod
@@ -1129,7 +1264,7 @@ class SDRPlugin:
             if self.notch_q != 10.0:
                 ch_opts += f'      notch_q = {self.notch_q};\n'
         if self.channel_bw > 0:
-            ch_opts += f'      bandwidth = {self.channel_bw};\n'
+            ch_opts += f'      bandwidth = {int(self.channel_bw)};\n'
 
         dev_opts = ''
         if self.correction != 0.0:
@@ -1197,7 +1332,7 @@ devices:
             if self.notch_q2 != 10.0:
                 ch_opts += f'      notch_q = {self.notch_q2};\n'
         if self.channel_bw2 > 0:
-            ch_opts += f'      bandwidth = {self.channel_bw2};\n'
+            ch_opts += f'      bandwidth = {int(self.channel_bw2)};\n'
 
         dev_opts = ''
         if self.tau2 != 200:
@@ -1455,25 +1590,27 @@ devices:
                 ch_opts += f'      squelch_threshold = {sq};\n'
             amp = ch.get('ampfactor', 1.0)
             if amp != 1.0:
-                ch_opts += f'      ampfactor = {amp};\n'
+                ch_opts += f'      ampfactor = {float(amp)};\n'
             lp = ch.get('lowpass', 2500)
             if lp != 2500:
-                ch_opts += f'      lowpass = {lp};\n'
+                ch_opts += f'      lowpass = {int(lp)};\n'
             hp = ch.get('highpass', 100)
             if hp != 100:
-                ch_opts += f'      highpass = {hp};\n'
+                ch_opts += f'      highpass = {int(hp)};\n'
             notch = ch.get('notch', 0.0)
+            # rtl_airband requires notch_q to be a float of the same type as
+            # notch, and JSON turns 1000.0 into 1000 -- always write floats.
             if notch > 0:
-                ch_opts += f'      notch = {notch};\n'
+                ch_opts += f'      notch = {float(notch)};\n'
                 nq = ch.get('notch_q', 10.0)
                 if nq != 10.0:
-                    ch_opts += f'      notch_q = {nq};\n'
+                    ch_opts += f'      notch_q = {float(nq)};\n'
             cbw = ch.get('channel_bw', 0.0)
             if cbw > 0:
-                ch_opts += f'      bandwidth = {cbw};\n'
+                ch_opts += f'      bandwidth = {int(cbw)};\n'
             tau = ch.get('tau', self._single_tau)
             if tau != 200:
-                ch_opts += f'      tau = {tau};\n'
+                ch_opts += f'      tau = {int(tau)};\n'
             continuous = ch.get('continuous', False)
             label = ch.get('label', f'Ch{i+1}')
 
@@ -1634,22 +1771,22 @@ devices:
         sink1 = sdr1_device.split(':', 1)[1] if ':' in sdr1_device else sdr1_device
 
         if new_mode == 'single':
-            self._tuner1 = _TunerCapture('SDR-Ch1', config, sink1, self._processor1)
+            self._tuner1 = _TunerCapture('SDR-Ch1', config, sink1, self._processor1, filter_spec=lambda: self._voice_filter_spec(1))
             capture_ok = self._tuner1.setup()
             if len(self._single_channels) >= 2:
                 sdr2_device = getattr(config, 'SDR2_DEVICE_NAME', 'pw:sdr_capture2')
                 sink2 = sdr2_device.split(':', 1)[1] if ':' in sdr2_device else sdr2_device
-                self._tuner2 = _TunerCapture('SDR-Ch2', config, sink2, self._processor2)
+                self._tuner2 = _TunerCapture('SDR-Ch2', config, sink2, self._processor2, filter_spec=lambda: self._voice_filter_spec(2))
                 self._tuner2.setup()
             else:
                 self._tuner2 = None
         else:
             sdr2_device = getattr(config, 'SDR2_DEVICE_NAME', 'pw:sdr_capture2')
             sink2 = sdr2_device.split(':', 1)[1] if ':' in sdr2_device else sdr2_device
-            self._tuner1 = _TunerCapture('SDR1', config, sink1, self._processor1)
+            self._tuner1 = _TunerCapture('SDR1', config, sink1, self._processor1, filter_spec=lambda: self._voice_filter_spec(1))
             capture_ok = self._tuner1.setup()
             if getattr(config, 'ENABLE_SDR2', False):
-                self._tuner2 = _TunerCapture('SDR2', config, sink2, self._processor2)
+                self._tuner2 = _TunerCapture('SDR2', config, sink2, self._processor2, filter_spec=lambda: self._voice_filter_spec(2))
                 self._tuner2.setup()
 
         # Step 6: Closed-loop verification
