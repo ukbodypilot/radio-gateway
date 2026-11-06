@@ -11,7 +11,6 @@ See docs/mixer-v2-design.md for architecture.
 """
 
 from log_util import log_exc
-import collections
 import json
 import os
 import queue as _queue_mod
@@ -195,13 +194,13 @@ class _TunerCapture:
         self._underruns = 0
         self._last_get_time = 0.0
         self._get_gaps = []  # recent gaps > 60ms
-        # Browser PCM monitor tap (SDR1/SDR2 buttons, see pcm_taps.py). Filled
-        # in get_chunk() with the chunk the bus is being served — NOT by a
-        # second get_chunk() call, which would pop _chunk_queue and steal
-        # audio from the bus. Bounded at ~200 ms so a stalled browser can't
-        # grow it. Only fills while capture runs, i.e. while routed to a bus.
+        # Browser PCM monitor tap (SDR1/SDR2 buttons, see pcm_taps.py). The
+        # tap follows the BUS this tuner is routed to: the bus manager sends
+        # that bus's processed output (gate/HPF/LPF/notch/denoise + delay) to
+        # the browser, so the routing-page processing buttons are audible.
         self.pcm_tap = False
-        self._tap_queue = collections.deque(maxlen=4)
+        self.tap_from_bus = True
+        self.tap_bus = None            # bus id the tap last followed (status)
         self.tap_chunks = 0            # chunks handed to the tap (status)
 
     def setup(self):
@@ -385,7 +384,6 @@ class _TunerCapture:
                     _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
                     _st.record(_sid, 'zerofill', mono_silence,
                                self._chunk_queue.qsize(), 'underrun')
-                self._feed_tap(mono_silence)
                 return mono_silence
             return None
 
@@ -456,20 +454,7 @@ class _TunerCapture:
             _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
             _st.record(_sid, 'get_chunk', raw, self._chunk_queue.qsize())
 
-        self._feed_tap(raw)
         return raw
-
-    def _feed_tap(self, raw):
-        if self.pcm_tap and raw:
-            self._tap_queue.append(raw)
-            self.tap_chunks += 1
-
-    def take_tap(self):
-        """One tapped chunk for the browser PCM monitor, or None."""
-        try:
-            return self._tap_queue.popleft()
-        except IndexError:
-            return None
 
     def cleanup(self):
         """Stop parec and reader thread, drain queue for clean restart."""
@@ -1007,7 +992,7 @@ class SDRPlugin:
 
         Does NOT touch routing. Exclusive with AS1/AS2 and the other tuner —
         see pcm_taps.set_tap. Refuses when the tuner's capture isn't running
-        (not routed to any bus): the tap is filled from what the bus pulls, so
+        (not routed to any bus): with no bus there is no output to carry, so
         it would light the button and play nothing.
         """
         from pcm_taps import set_tap, parse_on
@@ -1075,6 +1060,7 @@ class SDRPlugin:
             d['tuner1_active'] = self._tuner1.active
             d['tuner1_pcm_tap'] = self._tuner1.pcm_tap
             d['tuner1_tap_chunks'] = self._tuner1.tap_chunks
+            d['tuner1_tap_bus'] = self._tuner1.tap_bus
         else:
             d['audio_level'] = 0
             d['tuner1_muted'] = True
@@ -1087,6 +1073,7 @@ class SDRPlugin:
             d['tuner2_active'] = self._tuner2.active
             d['tuner2_pcm_tap'] = self._tuner2.pcm_tap
             d['tuner2_tap_chunks'] = self._tuner2.tap_chunks
+            d['tuner2_tap_bus'] = self._tuner2.tap_bus
         else:
             d['audio_level2'] = 0
             d['tuner2_muted'] = True

@@ -17,7 +17,7 @@ import time
 import numpy as np
 
 from routing_rules import find_sink_conflicts
-from pcm_taps import tap_sources
+from pcm_taps import tap_sources, tap_bus_id
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus, additive_mix
 from audio_util import AudioProcessor, pcm_level, update_level, apply_gain
 
@@ -98,6 +98,9 @@ class BusManager:
         # Invariant: mutated only from the single bus-tick thread. Do not
         # append or clear from HTTP handlers, link readers, or any other thread.
         self._pcm_tick = []
+        # Final (processed + delayed) output of every bus this tick, by bus
+        # id. Bus-following PCM taps (SDR1/SDR2) read from here.
+        self._bus_final_tick = {}
         self._mp3_tick = []
         self._bus_levels = {}       # bus_id → audio level (0-100) for routing page
 
@@ -1368,6 +1371,7 @@ class BusManager:
         proc_cfg = bus_cfg
         mixed = _processed_audio if _processed_audio is not None else bus_output.mixed_audio
         if mixed is not None:
+            self._bus_final_tick[bus_id] = mixed
             if proc_cfg.get('pcm', False):
                 # Stage for per-tick mixing — actual queue.append + WS push
                 # happens once at end of tick after all buses have delivered.
@@ -1615,6 +1619,7 @@ class BusManager:
             # whole tick so deliver / listen-tick code observes a stable
             # view of routing + config + sink target refs.
             ctx = self._build_tick_context()
+            self._bus_final_tick.clear()
             for bus_id, bus in self._busses.items():
                 try:
                     # Skip muted busses
@@ -1706,11 +1711,23 @@ class BusManager:
             # never both. Mixing them meant pressing AS1 also brought in every
             # bus with 'P' set, which is not what "monitor this node" means.
             # Selecting a tap therefore discards this tick's bus contributions.
+            # Bus-following taps (SDR tuners, tap_from_bus=True) carry the
+            # PROCESSED output of the bus the source is routed to — the same
+            # audio a 'P' sink on that bus would get, so the bus's G/H/L/N/D
+            # buttons are audible. Other taps (AllStar nodes) carry their own
+            # queue.
             _taps = [src for src in tap_sources(gw) if src.pcm_tap]
             if _taps:
                 self._pcm_tick.clear()
                 for _plg in _taps:
-                    _tapped = _plg.take_tap()
+                    if getattr(_plg, 'tap_from_bus', False):
+                        _bid = tap_bus_id(self._busses, _plg)
+                        _plg.tap_bus = _bid
+                        _tapped = self._bus_final_tick.get(_bid) if _bid else None
+                        if _tapped:
+                            _plg.tap_chunks += 1
+                    else:
+                        _tapped = _plg.take_tap()
                     if _tapped:
                         self._pcm_tick.append(_tapped)
 

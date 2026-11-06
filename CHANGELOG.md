@@ -4,6 +4,22 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Changed — SDR1 / SDR2 taps carry the processed bus audio
+
+The SDR1 / SDR2 monitor buttons used to play the tuner's own chunk, taken
+before the bus. So the routing page's G / H / L / N / D buttons on that bus
+made no difference to what you heard. A tap now carries the final output of
+the bus the tuner is routed to (gate, HPF, LPF, notch, denoise and the bus
+delay), which is the same audio a P sink on that bus gets. If a tuner is on
+more than one bus, the tap follows the first one in routing order. The
+AS1 / AS2 taps are unchanged.
+
+`pcm_taps.tap_bus_id()` finds the bus. It has to check every place a bus
+type keeps a source. A solo bus holds a routed source in `_tx_sources` (or
+as its `_radio`), not in `source_slots`, and the first version checked only
+`source_slots`. So SDR1, which is on a solo bus, was silent while SDR2 on a
+listen bus worked. `/sdrstatus` adds `tunerN_tap_bus`.
+
 ## [5.3.0] -- 2026-11-06
 
 You can now listen to either SDR tuner on its own from any page, the same way
