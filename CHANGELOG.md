@@ -44,6 +44,17 @@ behaved the same. The cause is not proven.
 - `sample_rate` is written to rtl_airband's config as whole Hz.
 - The single and dual menus and Auto Center offer only 2.0 MS/s.
 
+### Docs
+
+- `docs/web-ui.md` describes the four monitor taps: exclusivity, why a tap
+  copies the chunk instead of taking it from the bus, when the SDR buttons
+  appear, and the control and status endpoints.
+- `docs/radio-plugins.md` said single-tuner mode could cover 10.66 MHz. It
+  runs at 2.0 MS/s (about 2 MHz), and the section now says why only that rate
+  is offered and mentions the SDR monitor buttons.
+- README *What's new* gains v5.1, v5.2 and v5.3. The list had gone from v5.0
+  straight back to v4.6.
+
 ## [5.2.0] -- 2026-11-05
 
 The SDR's audio filters do something now, and single-tuner mode can reach
