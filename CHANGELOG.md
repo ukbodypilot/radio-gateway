@@ -4,6 +4,35 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Fixed — occasional audio drops with denoise (D) on two buses
+
+With DeepFilterNet on both SDR buses there were occasional short drops.
+Either bus on its own was clean. The `rg_denoise_apply_ms` histogram showed
+it: chunks over 50 ms happened only with both on (14 in 13 minutes), never
+with one. There were two causes:
+
+- Every DeepFilterNet stream shared one class-wide ONNX session with two
+  threads. Two bus workers then made concurrent calls on that one session,
+  which on a 4-core box sometimes pushed a chunk past the 50 ms tick. Each
+  stream now builds its own single-threaded session. That costs about 4 ms
+  per chunk (19.7 against 15.5 ms median) and one more copy of the 16 MB
+  model per denoising bus.
+- The tick gave the worker one tick per chunk. On a miss it played the
+  current chunk dry and the late denoised one on the next tick, so the audio
+  skipped and repeated. The input queue also held only 2 chunks and dropped
+  audio silently.
+
+The tick now hands chunk N to the worker and plays chunk N−2: denoised if
+the worker has finished it, otherwise that same chunk dry. Order never
+changes and the worker has 100 ms. Buses with D on are 50 ms more delayed
+than before (100 ms in all). When a bus goes quiet, `AudioProcessor.flush()`
+plays out what is still held, on solo and listen buses only. Turning D back
+on, or a gap of more than 0.5 s, starts clean instead of replaying old audio.
+
+New counter `rg_denoise_late_total{bus,engine}` counts chunks that missed
+their slot and played dry. It was zero after the fix with both SDR buses
+denoising.
+
 ### Changed — SDR1 / SDR2 taps carry the processed bus audio
 
 The SDR1 / SDR2 monitor buttons used to play the tuner's own chunk, taken

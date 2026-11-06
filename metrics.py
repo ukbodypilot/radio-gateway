@@ -112,6 +112,13 @@ denoise_apply_ms = Histogram(
     registry=REGISTRY,
 )
 
+denoise_late_total = Counter(
+    'rg_denoise_late_total',
+    'Chunks played DRY because the denoise worker missed its slot',
+    ['bus', 'engine'],
+    registry=REGISTRY,
+)
+
 gc_pause_ms = Histogram(
     'rg_gc_pause_ms',
     'Garbage-collection stop-the-world pause per generation, milliseconds',

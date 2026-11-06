@@ -1048,16 +1048,12 @@ class BusManager:
                 # saved value is rejected without killing the bus.
                 proc.set_dfn_engine(str(proc_cfg.get('dfn_engine', 'rnnoise')))
                 self._bus_processors[bus_id] = proc
-                # Eagerly construct the denoise stream so ORT session
-                # setup + warmup (80 frames inside _ensure_session) runs
-                # synchronously at startup instead of landing on the first
-                # live audio tick. Silently skipped if denoise is off or
-                # the engine isn't available.
+                # Start the denoise worker now: it builds its own stream
+                # (for DFN3, a private ONNX session + 80-frame warmup) on its
+                # own thread, so that cost lands neither on startup nor on
+                # the first live audio tick.
                 if proc.enable_dfn:
-                    from audio_util import make_denoise_stream
-                    _ds = make_denoise_stream(proc.dfn_engine)
-                    if _ds is not None:
-                        proc.dfn_stream = _ds
+                    proc._dn_ensure_worker()
                 _tags = [k.upper() if k != 'dfn' else f"DFN({proc.dfn_engine})"
                          for k in ('gate', 'hpf', 'lpf', 'notch', 'dfn')
                          if proc_cfg.get(k)]
@@ -1159,6 +1155,19 @@ class BusManager:
             for sink_id in list(bus_output.audio):
                 if bus_output.audio[sink_id] is not None:
                     bus_output.audio[sink_id] = _processed_audio
+        elif (_proc and bus_output.audio
+              and isinstance(self._busses.get(bus_id), (SoloBus, ListenBus))):
+            # Bus went quiet: play out what the denoise delay line still
+            # holds (the last DN_LAG chunks of the burst) instead of
+            # stranding it. Solo/listen buses send ONE mix to every sink and
+            # key .audio by sink even when the values are None, so this
+            # reaches the same sinks. Repeater buses route per side — never
+            # fill their sinks blindly.
+            _flushed = _proc.flush()
+            if _flushed is not None:
+                _processed_audio = _flushed
+                for sink_id in list(bus_output.audio):
+                    bus_output.audio[sink_id] = _flushed
 
         # Output delay buffer — delays the bus output before sink delivery.
         # delay_ms is stored in bus_cfg and updated live by the routing UI

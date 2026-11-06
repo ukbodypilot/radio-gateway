@@ -407,8 +407,13 @@ class _DFN3Stream:
     frames, runs each through the ONNX graph with a persistent state vector,
     emits 480-sample enhanced frames back. ~10 ms intrinsic algorithmic delay.
 
-    The ONNX session is shared class-wide; each instance carries its own
-    state vector so multiple buses / the ASR path don't bleed into each other.
+    Each instance owns its OWN single-threaded ONNX session (and state
+    vector). It used to share one class-wide intra=2 session: two buses
+    denoising at once then ran concurrent run() calls on one session and its
+    thread pool, and on this 4-core box the contention pushed occasional
+    chunks past the 50 ms tick (measured 2026-11-06: 14 chunks >50 ms in 13
+    min with both SDR buses on, zero with either alone). intra=1 costs ~4 ms
+    per chunk (19.7 vs 15.5 ms median) and makes each bus's cost predictable.
     """
 
     native_rate = 48000
@@ -421,8 +426,7 @@ class _DFN3Stream:
     # chorus/reverb smear exactly as users reported.
     dry_delay_samples = 1440
 
-    _sess = None          # shared onnxruntime InferenceSession
-    _lock = None          # init lock — build session once across threads
+    _lock = None          # class lock — guards the one-shot model download
     _download_thread = None   # background download worker (one-shot)
 
     @classmethod
@@ -457,60 +461,52 @@ class _DFN3Stream:
         return False
 
     @classmethod
-    def _ensure_session(cls):
-        if cls._sess is not None:
-            return
+    def _new_session(cls):
+        """Build + warm a private session for one stream. Runs on the
+        stream's denoise worker thread, never the bus tick."""
         # Refuse to block the caller on download — that's the bus tick's
         # nightmare. Kick off a background fetch instead and fail fast so
         # the denoise engine reports "unavailable yet" until the file lands.
         if not cls._kick_background_download():
             raise RuntimeError('DFN3 model downloading — try again shortly')
-        import threading
-        if cls._lock is None:
-            cls._lock = threading.Lock()
-        with cls._lock:
-            if cls._sess is not None:
-                return
-            path = _dfn3_ensure_model()
-            import time as _t, onnxruntime as ort
-            opts = ort.SessionOptions()
-            # intra=2 lets a single DFN call use two cores — cuts per-call
-            # time ~30-40% on multi-core hardware. Trade-off is slightly
-            # less predictable latency and higher peak CPU, both acceptable
-            # given we now run per-stream workers (so multiple buses also
-            # parallelise). inter stays at 1 — DFN is a deep sequential
-            # graph, no benefit from parallel op dispatch.
-            opts.intra_op_num_threads = 2
-            opts.inter_op_num_threads = 1
-            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-            opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-            cls._sess = ort.InferenceSession(
-                path, sess_options=opts, providers=['CPUExecutionProvider'])
-            # ORT spends the first handful of inference calls doing graph
-            # finalisation / thread-pool binding / CPU-cache population —
-            # we've seen the first ~50 frames run 5-10× slower than steady
-            # state, which is exactly the bus-tick spike that caused the
-            # reported "first few minutes of SDR stutters". Warm up
-            # synchronously here so the first real audio frame flies.
-            _t0 = _t.monotonic()
-            _warmup_state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
-            _warmup_atten = np.array(18.0, dtype=np.float32)
-            # Mixed amplitude noise to exercise the DF path, not just the
-            # cheap "all silence" branch.
-            import numpy as _np
-            _rng = _np.random.default_rng(0)
-            for _i in range(80):
-                _frame = (_rng.standard_normal(_DFN3_FRAME_SIZE).astype(np.float32)
-                          * (0.1 if _i % 4 else 0.001))
-                _out, _warmup_state, _ = cls._sess.run(
-                    None,
-                    {'input_frame': _frame, 'states': _warmup_state,
-                     'atten_lim_db': _warmup_atten})
-            _dur = (_t.monotonic() - _t0) * 1000
-            print(f"  [DFN3] ONNX session ready (intra=2, warmup {_dur:.0f}ms / 80 frames)")
+        path = _dfn3_ensure_model()
+        import time as _t, onnxruntime as ort
+        opts = ort.SessionOptions()
+        # intra=1: one core per stream. See the class docstring — a
+        # shared intra=2 session made concurrent buses contend. inter
+        # stays at 1 — DFN is a deep sequential graph.
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess = ort.InferenceSession(
+            path, sess_options=opts, providers=['CPUExecutionProvider'])
+        # ORT spends the first handful of inference calls doing graph
+        # finalisation / thread-pool binding / CPU-cache population —
+        # we've seen the first ~50 frames run 5-10× slower than steady
+        # state, which is exactly the bus-tick spike that caused the
+        # reported "first few minutes of SDR stutters". Warm up
+        # synchronously here so the first real audio frame flies.
+        _t0 = _t.monotonic()
+        _warmup_state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
+        _warmup_atten = np.array(18.0, dtype=np.float32)
+        # Mixed amplitude noise to exercise the DF path, not just the
+        # cheap "all silence" branch.
+        import numpy as _np
+        _rng = _np.random.default_rng(0)
+        for _i in range(80):
+            _frame = (_rng.standard_normal(_DFN3_FRAME_SIZE).astype(np.float32)
+                      * (0.1 if _i % 4 else 0.001))
+            _out, _warmup_state, _ = sess.run(
+                None,
+                {'input_frame': _frame, 'states': _warmup_state,
+                 'atten_lim_db': _warmup_atten})
+        _dur = (_t.monotonic() - _t0) * 1000
+        print(f"  [DFN3] ONNX session ready (intra=1, warmup {_dur:.0f}ms / 80 frames)")
+        return sess
 
     def __init__(self, atten_lim_db=18.0):
-        self._ensure_session()
+        self._sess = self._new_session()
         self._state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
         # atten_lim_db caps how hard the model can attenuate a frame. 0 =
         # unlimited (pumping on marginal signals); typical real-world use
@@ -535,8 +531,8 @@ class _DFN3Stream:
         self._atten_lim = np.array(float(atten_lim_db), dtype=np.float32)
 
     def close(self):
-        # Nothing to release per-instance — the shared session stays alive.
-        # The state array and buffer are normal numpy objects, GC handles them.
+        # Drop the private session; state + buffer are plain numpy objects.
+        self._sess = None
         self._state = None
         self._buf = np.empty(0, dtype=np.int16)
 
@@ -556,8 +552,7 @@ class _DFN3Stream:
 
         out_chunks = []
         last_lsnr = self.last_lsnr
-        _sess = type(self)._sess
-        _run = _sess.run
+        _run = self._sess.run
         _state = self._state
         _atten = self._atten_lim
         for i in range(n_frames):
@@ -754,20 +749,27 @@ class AudioProcessor:
         self.notch_state = None
         self.gate_envelope = 0.0
         self.dfn_stream = None
-        # Off-tick denoise worker. _apply_dfn pushes raw audio into
-        # _dn_in_queue and pops the previous tick's denoised audio from
-        # _dn_out_queue, so the heavy neural inference doesn't happen on
-        # the bus tick thread. Cost: one-tick latency (~50 ms) on the
-        # listener audio path; benefit: bus tick stays under budget even
-        # when multiple buses run DFN3. Lazy-started on first _apply_dfn
-        # when DFN is enabled.
+        # Off-tick denoise worker + fixed-lag delay line (see _apply_dfn).
+        # The tick hands chunk N to the worker and emits chunk N-DN_LAG:
+        # the denoised copy if the worker finished it, else the DRY copy of
+        # that same chunk. Output order never changes, the worker gets
+        # DN_LAG ticks (100 ms) instead of one, and a late chunk is a brief
+        # un-denoised chunk rather than a skip-and-repeat.
         import collections as _c
-        self._dn_queue_in = _c.deque(maxlen=2)   # raw (pcm_bytes, mix, engine, atten)
-        self._dn_queue_out = _c.deque(maxlen=2)  # denoised pcm_bytes
+        self._dn_queue_in = _c.deque(maxlen=8)   # (seq, pcm, mix, atten, engine)
+        self._dn_wet = {}                        # seq -> denoised pcm (worker writes)
+        self._dn_line = _c.deque()               # (seq, dry pcm, sent_to_worker)
+        self._dn_seq = 0
+        self._dn_last_call = 0.0
+        self._dn_was_enabled = False
         self._dn_lock = None                     # threading.Lock — lazy init
         self._dn_evt = None                      # threading.Event — lazy init
         self._dn_thread = None
         self._dn_running = False
+        # Instrumentation (also rg_denoise_late_total).
+        self.dn_chunks = 0          # chunks emitted from the delay line
+        self.dn_late = 0            # ...of which played dry: worker missed the slot
+        self.dn_wet_discarded = 0   # denoised results that arrived after their slot
 
     def set_dfn_engine(self, engine):
         """Switch denoise engine. Signals the worker to rebuild the stream
@@ -803,7 +805,24 @@ class AudioProcessor:
                 pass
             self._dn_thread = None
         self._dn_queue_in.clear()
-        self._dn_queue_out.clear()
+        self._dn_reset_line()
+
+    # Ticks of delay the denoise worker is given (2 x 50 ms). One tick was
+    # the original budget; a chunk over 50 ms then fell back to dry OUT OF
+    # ORDER (current chunk dry, stale wet chunk next tick).
+    DN_LAG = 2
+    # A gap this long between calls (bus muted, D toggled off, bus idle
+    # without flush) means the delay line holds stale audio — drop it.
+    DN_STALE_S = 0.5
+
+    def _dn_reset_line(self):
+        """Discard the delay line and any pending denoised results."""
+        self._dn_line.clear()
+        if self._dn_lock is not None:
+            with self._dn_lock:
+                self._dn_wet.clear()
+        else:
+            self._dn_wet.clear()
 
     def process(self, pcm_data):
         """Run the full processing chain on PCM data. Order:
@@ -821,8 +840,18 @@ class AudioProcessor:
             processed = self._apply_hpf(processed)
 
         if self.enable_dfn:
+            if not self._dn_was_enabled:
+                # D just switched on: start clean, and get the worker
+                # building its engine now rather than on the first chunk.
+                self._dn_reset_line()
+                self._dn_ensure_worker()
             processed = self._apply_dfn(processed)
+        self._dn_was_enabled = self.enable_dfn
 
+        return self._post_dfn(processed)
+
+    def _post_dfn(self, processed):
+        """The stages after DFN: LPF → Notch → Noise Gate."""
         if self.enable_lpf:
             processed = self._apply_lpf(processed)
 
@@ -833,6 +862,16 @@ class AudioProcessor:
             processed = self._apply_noise_gate(processed)
 
         return processed
+
+    def flush(self):
+        """Next chunk still held in the denoise delay line, run through the
+        post-DFN stages — or None. The bus manager calls this on ticks where
+        the bus produced no audio, so the last DN_LAG chunks of a burst
+        still play instead of being stranded (and later discarded)."""
+        if not (self.enable_dfn and self._dn_line):
+            return None
+        self._dn_last_call = _time.monotonic()
+        return self._post_dfn(self._dn_take())
 
     def get_active_list(self):
         """Return list of active filter names for status display."""
@@ -927,65 +966,87 @@ class AudioProcessor:
             return pcm_data
 
     def _apply_dfn(self, pcm_data):
-        """Enqueue this tick's audio for off-tick denoise and return the
-        previous tick's denoised result.
+        """Hand this tick's chunk to the off-tick denoise worker and return
+        the chunk from DN_LAG ticks ago — denoised if the worker finished
+        it, else that same chunk dry.
 
         The heavy neural inference happens on self._dn_thread so the bus
-        tick never blocks on ONNX. Trade-off: one-tick (~50 ms) of extra
-        end-to-end latency on the listener audio path. In exchange the bus
-        tick stays under budget even when multiple buses run DFN3.
+        tick never blocks on ONNX. Cost: DN_LAG ticks (~100 ms) of latency
+        on a bus with D on. In exchange the worker has 100 ms per chunk, and
+        a miss can never reorder audio: the old one-tick design returned the
+        CURRENT chunk dry on a miss and the stale wet one next tick — an
+        audible skip-and-repeat (seen as "drops" with two DFN buses on).
 
-        Contract preserved: block-in = block-out, same pcm_data type.
-        Startup: no denoised output available yet → emit dry for the first
-        1–2 ticks, then steady-state matches the tick rate.
+        Contract preserved: block-in = block-out, same pcm_data type. Until
+        the line fills (start, after a reset) it emits silence, DN_LAG ticks.
 
-        Silence short-circuit: continuous-feed sources (e.g. AIOC radios
-        with zero-fill during squelch-closed) hammer the worker with pure
-        zero PCM every tick. RNNoise still pays the FFT + RNN cost per
-        frame, and DFN3 pays a full ONNX run. Skip the worker entirely
-        when the frame is below -60 dBFS and emit dry — a tiny bit of
-        stream-state drift on silence is inaudible when speech resumes.
+        Silence short-circuit: chunks below dfn_bypass_db (default -60
+        dBFS) are not sent to the worker — RNNoise/DFN3 would pay a full
+        frame cost on squelch zero-fill. They still go through the delay
+        line (dry), so timing stays constant across squelch transitions.
         """
-        # Silence short-circuit. pcm_rms is cheap (a single numpy RMS).
-        # Threshold is per-bus configurable (dfn_bypass_db, default -60
-        # dBFS ≈ RMS 32.7 on int16 — the historical hardcoded value).
-        # Anything under it is treated as "no energy" — feeding the
-        # denoiser is wasted CPU.
-        # Ordering matters: the worker pipeline is one tick delayed, so a
-        # bare "return dry" here stranded the final wet speech chunk in
-        # _dn_queue_out and replayed it, stale, at the next squelch
-        # opening. Pop any pending wet output first — the speech tail
-        # lands in order and the queue is empty when audio resumes.
+        now = _time.monotonic()
+        if now - self._dn_last_call > self.DN_STALE_S:
+            self._dn_reset_line()
+        self._dn_last_call = now
+
+        send = True
         try:
             _bypass_rms = 32767.0 * (10.0 ** (
                 float(getattr(self, 'dfn_bypass_db', -60.0)) / 20.0))
             if pcm_rms(pcm_data) < _bypass_rms:
-                if self._dn_lock is not None:
-                    with self._dn_lock:
-                        if self._dn_queue_out:
-                            return self._dn_queue_out.popleft()
-                return pcm_data
+                send = False
         except Exception:
             log_exc()
 
-        self._dn_ensure_worker()
-        # Snapshot params — mix, engine, atten can all change mid-flight
-        # from the HTTP/MCP threads; capturing at enqueue time keeps the
-        # tick's decision stable through the denoise pipeline.
-        wet = max(0.0, min(1.0, float(getattr(self, 'dfn_mix', 0.5))))
-        atten = float(getattr(self, 'dfn_atten_db', 18.0))
-        engine = self.dfn_engine
-        try:
-            with self._dn_lock:
-                self._dn_queue_in.append((pcm_data, wet, atten, engine))
+        seq = self._dn_seq
+        self._dn_seq += 1
+        if send:
+            self._dn_ensure_worker()
+            # Snapshot params — mix, engine, atten can all change mid-flight
+            # from the HTTP/MCP threads; capturing at enqueue time keeps the
+            # tick's decision stable through the denoise pipeline.
+            wet = max(0.0, min(1.0, float(getattr(self, 'dfn_mix', 0.5))))
+            atten = float(getattr(self, 'dfn_atten_db', 18.0))
+            try:
+                with self._dn_lock:
+                    self._dn_queue_in.append((seq, pcm_data, wet, atten, self.dfn_engine))
                 self._dn_evt.set()
-                if self._dn_queue_out:
-                    return self._dn_queue_out.popleft()
-        except Exception as e:
-            print(f"[DFN] {self.name}: enqueue error — {e}")
-        # No denoised output ready yet (cold start / worker behind) —
-        # pass-through dry so the audio path never gaps.
-        return pcm_data
+            except Exception as e:
+                print(f"[DFN] {self.name}: enqueue error — {e}")
+                send = False
+        self._dn_line.append((seq, pcm_data, send))
+
+        if len(self._dn_line) <= self.DN_LAG:
+            return b'\x00' * len(pcm_data)
+        return self._dn_take()
+
+    def _dn_take(self):
+        """Pop the oldest delay-line chunk: denoised if ready, else dry."""
+        seq, dry, sent = self._dn_line.popleft()
+        self.dn_chunks += 1
+        if not sent:
+            return dry
+        out = None
+        if self._dn_lock is not None:
+            with self._dn_lock:
+                out = self._dn_wet.pop(seq, None)
+                # Anything older than this slot can never be played.
+                stale = [k for k in self._dn_wet if k < seq]
+                for k in stale:
+                    del self._dn_wet[k]
+            self.dn_wet_discarded += len(stale)
+        if out is not None:
+            return out
+        self.dn_late += 1
+        try:
+            import metrics as _m
+            _m.denoise_late_total.labels(
+                bus=getattr(self, 'name', 'unknown'),
+                engine=self.dfn_engine or 'unknown').inc()
+        except Exception:
+            log_exc()
+        return dry
 
     def _dn_ensure_worker(self):
         """Lazy-start the per-bus denoise worker thread on first use."""
@@ -1003,16 +1064,23 @@ class AudioProcessor:
         self._dn_thread.start()
 
     def _dn_worker_loop(self):
-        """Per-bus denoise worker: pulls raw audio from _dn_queue_in,
-        runs the engine, pushes denoised output to _dn_queue_out.
+        """Per-bus denoise worker: pulls (seq, audio) from _dn_queue_in,
+        runs the engine, stores the result in _dn_wet[seq].
 
-        Owns `dfn_stream` — AudioProcessor.dfn_stream is deprecated in
-        favour of this local; only the worker touches the stream state
-        so there's no cross-thread synchronisation needed on the state
-        tensors that carry recurrent model history.
+        Owns its denoise stream (and, for DFN3, that stream's private ONNX
+        session) — only the worker touches the stream state, so there's no
+        cross-thread synchronisation needed on the recurrent model history.
+        The stream is built up front for the current engine, so session
+        build + warmup happens here before the first real chunk arrives.
         """
         stream = None
         current_engine = None
+        try:
+            if self.enable_dfn:
+                stream = make_denoise_stream(self.dfn_engine)
+                current_engine = self.dfn_engine if stream is not None else None
+        except Exception:
+            log_exc()
         while self._dn_running:
             self._dn_evt.wait(timeout=0.5)
             self._dn_evt.clear()
@@ -1021,7 +1089,7 @@ class AudioProcessor:
                     if not self._dn_queue_in:
                         break
                     item = self._dn_queue_in.popleft()
-                pcm_data, wet, atten, engine = item
+                seq, pcm_data, wet, atten, engine = item
                 # Rebuild stream if engine changed (or first call).
                 if stream is None or engine != current_engine:
                     if stream is not None:
@@ -1034,7 +1102,7 @@ class AudioProcessor:
                         # flowing; the pass-through mirrors the old
                         # "downgrade and stop trying" behaviour.
                         with self._dn_lock:
-                            self._dn_queue_out.append(pcm_data)
+                            self._dn_wet[seq] = pcm_data
                         continue
                 _t0 = _time.monotonic()
                 try:
@@ -1061,7 +1129,7 @@ class AudioProcessor:
                 except Exception:
                     log_exc()
                 with self._dn_lock:
-                    self._dn_queue_out.append(out_bytes)
+                    self._dn_wet[seq] = out_bytes
         # Shutdown — release the stream.
         if stream is not None:
             try: stream.close()
