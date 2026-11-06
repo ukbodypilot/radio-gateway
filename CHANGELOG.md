@@ -4,6 +4,99 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.2.0] -- 2026-11-05
+
+The SDR's audio filters do something now, and single-tuner mode can reach
+them. Windows gets a desktop client with a packaged exe, remote audio copes
+with senders that go quiet, and a few fixes from running 5.1.
+
+### Fixed — the SDR LPF/HPF never filtered anything
+
+The SDR page's LPF and HPF fields were written into the rtl_airband config,
+but rtl_airband v6 only hands `lowpass`/`highpass` to its LAME MP3 encoder
+(`output.cpp`, `airlame_init`). Its PulseAudio output, which is what the
+gateway reads, is never filtered, so hiss above 2.5 kHz came straight
+through whatever the fields said.
+
+- **The gateway filters each tuner itself.** A 4th-order Butterworth
+  low-pass (24 dB/octave) and a 2nd-order high-pass run on each tuner's
+  audio, driven by the same fields. At the default 100–2500 Hz, 5 kHz is
+  more than 20 dB down and 7 kHz more than 30 dB. 0 turns a side off.
+- **HPF/LPF apply live.** Changing either field sends a new
+  `set_voice_filter` command. The filter changes on the next audio chunk,
+  with no rtl_airband restart and no audio gap.
+- **Counters in `/sdrstatus`:** `tunerN_voice_filter` (for example
+  `"100-2500 Hz"` or `"off"`), `tunerN_voice_filter_rebuilds` and
+  `tunerN_voice_filter_errors`.
+
+### Fixed — channel bandwidth was a 12 GHz filter
+
+rtl_airband reads a decimal `bandwidth` as MHz. Dual mode wrote
+`bandwidth = 12000.0`, so Ch BW never narrowed anything. It's written as a
+whole number of Hz now, and the field is capped at 15 kHz (rtl_airband's NFM
+audio rate is 16 kHz). `notch`, `notch_q` and `ampfactor` are always written
+as decimals, because rtl_airband rejects a `notch_q` whose type doesn't
+match `notch`, and JSON turns `30.0` into `30`.
+
+### Added — per-channel filters in single-tuner mode
+
+- Each channel row has a **Filters** panel: Amp, HPF, LPF, Ch BW, Notch,
+  Notch Q, De-emphasis (or the device's setting) and Continuous output. The
+  plugin already supported all of these per channel, but the page only
+  showed frequency, mode, squelch and label.
+- Apply & Restart used to rebuild channels from those four fields and drop
+  everything else; it keeps them now. Adding or removing a channel no longer
+  throws away unsaved edits in the other rows.
+- 750 µs is a De-emphasis option on all three tau menus.
+
+### Added — Windows desktop client
+
+- `windows_audio_gui.py`, a customtkinter front end for the existing engine
+  in `windows_audio_client.py`: device menus with live swap, meters, mic
+  gain / duck / voice effect, hold-to-talk with an optional global hotkey,
+  WAV recording and a tray icon. The console client is unchanged.
+- A Stats tab: TX/RX throughput, gateway round trip and jitter, level
+  history, TX loop time, xruns and queue depths, CPU per thread, memory and
+  GPU load. Controls and Stats sit side by side on wide windows.
+- `build_windows_client.ps1` builds a one-file `RadioGatewayClient.exe`. The
+  exe loads the client code from `%LOCALAPPDATA%\RadioGatewayClient\app`, so
+  the gateway's self-update can replace it, and falls back to the bundled
+  copy if an update fails to import.
+- Starting the exe quits any copy already running. A saved audio device
+  that's missing is never swapped for a stand-in. The gateway box remembers
+  recent gateways and can auto-connect on start.
+- While idle (program feed off, PTT released) the client sends a 2-byte
+  keepalive once a second instead of ~768 kbps of zeros.
+
+### Fixed
+
+- **Remote audio RX tolerates silence-suppressed senders.** Keepalive frames
+  reset the idle timeout (now 5 s) without reaching the queue or meter. The
+  jitter buffer re-primes after 0.75 s of silence, and the meter decays when
+  starved.
+- **Remote audio TX dials the connected RX peer's address**, falling back to
+  `REMOTE_AUDIO_HOST`, which went stale when the client's DHCP lease moved.
+- **AIOC PTT recovers after USB re-enumeration.** The AIOC sometimes comes
+  back as a new hidraw node; the old handle then failed every PTT with "No
+  such device" until a restart. The plugin reopens the handle when a write
+  fails.
+- **The fleet manager's daily run can reach the web API again.** Since 5.1's
+  default login its curls got 401. Each one-shot run now gets a 0600 curl
+  auth file (`GW_CURL_AUTH`), deleted afterwards.
+- The status email shows SDR2 and AllStar node lines; the manager alert
+  email lists up to 30 findings, not 10.
+- CI installs soundfile and scipy, which the web server and the SDR filter
+  test import.
+
+### Upgrading to 5.2.0
+
+- **SDR audio sounds different at the default settings.** The 100–2500 Hz
+  band that was always in the fields is applied now, so there's noticeably
+  less hiss and a little less top end. Raise LPF (up to 8000) or set it to 0
+  for the old sound. A gateway restart loads the new plugin.
+- If you raised De-emphasis to fight hiss, try lowering it again; the
+  low-pass does that job without dulling the voice as much.
+
 ## [5.1.0] -- 2026-10-23
 
 The security half of the 2026-10-22 review. The web UI has a login and
