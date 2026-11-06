@@ -1668,22 +1668,12 @@ class UsrpPlugin:
         elif action == 'pcm_tap':
             # Monitor this node in the browser PCM stream. Deliberately does
             # NOT touch routing — a listen button should not rewrite the graph.
-            want = str(on).lower() not in ('0', 'false', 'off', '')
-            self.pcm_tap = want
-            if not want:
-                self._tap_queue.clear()
-            else:
-                # Exclusive: PCM main, AS1 or AS2 — never two nodes at once.
-                # Enabling one clears the others so the stream carries a single
-                # identifiable source.
-                gw = getattr(self, '_gateway', None)   # set in setup(); NOT self.gateway
-                for _pid, _plg in (getattr(gw, '_external_plugins', {}) or {}).items():
-                    if _plg is not self and getattr(_plg, 'pcm_tap', False):
-                        _plg.pcm_tap = False
-                        try:
-                            _plg._tap_queue.clear()
-                        except Exception:
-                            pass
+            # Exclusive across AS1/AS2/SDR1/SDR2 — enabling one clears the
+            # others so the stream carries a single identifiable source.
+            # set_tap walks every tappable source (pcm_taps.tap_sources), so
+            # this also clears an SDR tap. _gateway, NOT self.gateway.
+            from pcm_taps import set_tap, parse_on
+            set_tap(getattr(self, '_gateway', None), self, parse_on(on))
             res = {'ok': True, 'pcm_tap': self.pcm_tap}
         else:
             return self._send_json(req, {'ok': False, 'error': f'bad action: {action}'}, 400)

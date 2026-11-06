@@ -17,6 +17,7 @@ import time
 import numpy as np
 
 from routing_rules import find_sink_conflicts
+from pcm_taps import tap_sources
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus, additive_mix
 from audio_util import AudioProcessor, pcm_level, update_level, apply_gain
 
@@ -1705,8 +1706,7 @@ class BusManager:
             # never both. Mixing them meant pressing AS1 also brought in every
             # bus with 'P' set, which is not what "monitor this node" means.
             # Selecting a tap therefore discards this tick's bus contributions.
-            _taps = [pl for pl in getattr(gw, '_external_plugins', {}).values()
-                     if getattr(pl, 'pcm_tap', False)]
+            _taps = [src for src in tap_sources(gw) if src.pcm_tap]
             if _taps:
                 self._pcm_tick.clear()
                 for _plg in _taps:

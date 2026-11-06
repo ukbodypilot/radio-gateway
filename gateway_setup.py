@@ -43,7 +43,7 @@ def setup_sdr(gw):
         from plugins.sdr import SDRPlugin
         print("Initializing SDR plugin (RSPduo dual tuner)...")
         gw.sdr_plugin = SDRPlugin()
-        if gw.sdr_plugin.setup(gw.config):
+        if gw.sdr_plugin.setup(gw.config, gw):
             for _t in [gw.sdr_plugin.get_tuner(1), gw.sdr_plugin.get_tuner(2)]:
                 if _t:
                     _t._stream_trace = gw._stream_trace

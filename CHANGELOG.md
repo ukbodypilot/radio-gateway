@@ -4,6 +4,24 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+### Added — SDR1 / SDR2 monitor taps in the shell bar
+
+Two more buttons next to AS1 / AS2 that play one SDR tuner on its own in the
+browser PCM stream. They work the same way as the AllStar taps: the tap is
+filled in `get_chunk()` from the chunk the bus is already pulling (after
+boost, the HPF/LPF and the audio processor), so it never takes audio away
+from the bus. Turning one on doesn't change `/routing`.
+
+All four taps are exclusive now. `pcm_taps.py` holds the single list of
+tappable sources, and both the tick loop and every control endpoint use it.
+Before this, the AllStar endpoint only looked at `_external_plugins`, so it
+could not have turned off an SDR tap. A tuner only has audio while it is
+routed to a bus, because unrouted tuners have their parec stopped. So the
+button only shows while that tuner is capturing, and `/sdrcmd {cmd: pcm_tap}`
+refuses a tuner that isn't running, rather than lighting a button that plays
+nothing. `/sdrstatus` reports `tunerN_pcm_tap` and a `tunerN_tap_chunks`
+counter.
+
 ## [5.2.0] -- 2026-11-05
 
 The SDR's audio filters do something now, and single-tuner mode can reach

@@ -11,6 +11,7 @@ See docs/mixer-v2-design.md for architecture.
 """
 
 from log_util import log_exc
+import collections
 import json
 import os
 import queue as _queue_mod
@@ -194,6 +195,14 @@ class _TunerCapture:
         self._underruns = 0
         self._last_get_time = 0.0
         self._get_gaps = []  # recent gaps > 60ms
+        # Browser PCM monitor tap (SDR1/SDR2 buttons, see pcm_taps.py). Filled
+        # in get_chunk() with the chunk the bus is being served — NOT by a
+        # second get_chunk() call, which would pop _chunk_queue and steal
+        # audio from the bus. Bounded at ~200 ms so a stalled browser can't
+        # grow it. Only fills while capture runs, i.e. while routed to a bus.
+        self.pcm_tap = False
+        self._tap_queue = collections.deque(maxlen=4)
+        self.tap_chunks = 0            # chunks handed to the tap (status)
 
     def setup(self):
         """Start parec subprocess and reader thread. Returns True on success."""
@@ -376,6 +385,7 @@ class _TunerCapture:
                     _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
                     _st.record(_sid, 'zerofill', mono_silence,
                                self._chunk_queue.qsize(), 'underrun')
+                self._feed_tap(mono_silence)
                 return mono_silence
             return None
 
@@ -446,7 +456,20 @@ class _TunerCapture:
             _sid = 'sdr2_rx' if '2' in self.name else 'sdr1_rx'
             _st.record(_sid, 'get_chunk', raw, self._chunk_queue.qsize())
 
+        self._feed_tap(raw)
         return raw
+
+    def _feed_tap(self, raw):
+        if self.pcm_tap and raw:
+            self._tap_queue.append(raw)
+            self.tap_chunks += 1
+
+    def take_tap(self):
+        """One tapped chunk for the browser PCM monitor, or None."""
+        try:
+            return self._tap_queue.popleft()
+        except IndexError:
+            return None
 
     def cleanup(self):
         """Stop parec and reader thread, drain queue for clean restart."""
@@ -583,6 +606,7 @@ class SDRPlugin:
         self._channels_path = None
 
         # Tuner captures
+        self._gateway = None  # set in setup(); used only by the PCM tap
         self._tuner1 = None  # master
         self._tuner2 = None  # slave
 
@@ -635,13 +659,14 @@ class SDRPlugin:
     def setup(self, config, gateway=None):
         """Initialize the SDR plugin: load settings, start rtl_airband, open audio captures.
 
-        ``gateway`` is accepted for parity with the new plugin contract; the
-        SDR plugin doesn't need it (rtl_airband + PipeWire is self-contained),
-        so we ignore it.
+        ``gateway`` is kept only so the PCM tap can clear other taps
+        (pcm_taps.set_tap); audio itself is self-contained (rtl_airband +
+        PipeWire).
         """
         if isinstance(config, dict):
             # Called from link endpoint style — not our use case
             return False
+        self._gateway = gateway
 
         self._config = config
         self._gateway_dir = os.path.dirname(
@@ -973,7 +998,32 @@ class SDRPlugin:
             return self._update_single_channel(cmd.get('index', -1), cmd)
         elif action == 'set_voice_filter':
             return self._set_voice_filter(cmd)
+        elif action == 'pcm_tap':
+            return self._set_pcm_tap(cmd)
         return {"ok": False, "error": f"unknown command: {action}"}
+
+    def _set_pcm_tap(self, cmd):
+        """Monitor one tuner in the browser PCM stream (SDR1/SDR2 buttons).
+
+        Does NOT touch routing. Exclusive with AS1/AS2 and the other tuner —
+        see pcm_taps.set_tap. Refuses when the tuner's capture isn't running
+        (not routed to any bus): the tap is filled from what the bus pulls, so
+        it would light the button and play nothing.
+        """
+        from pcm_taps import set_tap, parse_on
+        try:
+            n = int(cmd.get('tuner', 1))
+        except (ValueError, TypeError):
+            return {'ok': False, 'error': 'tuner must be 1 or 2'}
+        tuner = self.get_tuner(n) if n in (1, 2) else None
+        if tuner is None:
+            return {'ok': False, 'error': f'SDR{n} not available', 'pcm_tap': False}
+        want = parse_on(cmd.get('on', ''))
+        if want and not tuner.active:
+            return {'ok': False, 'pcm_tap': False,
+                    'error': f'SDR{n} capture is not running (not routed to a bus)'}
+        set_tap(getattr(self, '_gateway', None), tuner, want)
+        return {'ok': True, 'tuner': n, 'pcm_tap': tuner.pcm_tap}
 
     def _set_voice_filter(self, cmd):
         """Change a tuner's HPF/LPF live -- no rtl_airband restart.
@@ -1023,19 +1073,25 @@ class SDRPlugin:
             d['audio_level'] = self._tuner1.audio_level
             d['tuner1_muted'] = self._tuner1.muted
             d['tuner1_active'] = self._tuner1.active
+            d['tuner1_pcm_tap'] = self._tuner1.pcm_tap
+            d['tuner1_tap_chunks'] = self._tuner1.tap_chunks
         else:
             d['audio_level'] = 0
             d['tuner1_muted'] = True
             d['tuner1_active'] = False
+            d['tuner1_pcm_tap'] = False
 
         if self._tuner2:
             d['audio_level2'] = self._tuner2.audio_level
             d['tuner2_muted'] = self._tuner2.muted
             d['tuner2_active'] = self._tuner2.active
+            d['tuner2_pcm_tap'] = self._tuner2.pcm_tap
+            d['tuner2_tap_chunks'] = self._tuner2.tap_chunks
         else:
             d['audio_level2'] = 0
             d['tuner2_muted'] = True
             d['tuner2_active'] = False
+            d['tuner2_pcm_tap'] = False
 
         d['master_ducking_slave'] = self._master_has_signal_hyst
 

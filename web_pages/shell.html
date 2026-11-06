@@ -298,8 +298,10 @@
       <button id="ws-btn" class="rb rb-caps rb-sm" onclick="toggleWS()"><span class="icon icon-play"></span> PCM</button>
       <input id="ws-vol" type="range" min="0" max="100" value="50" aria-label="PCM stream volume" oninput="setWSVol(this.value)">
       <button id="mic-btn" type="button" class="rb rb-caps rb-sm" title="Hold to talk (or hold Space)"><span class="icon icon-mic"></span> MIC</button>
-      <button id="as1-btn" class="rb rb-caps rb-sm" onclick="toggleAsTap('usrp',this)" title="Monitor AllStar 1 in the PCM stream" style="display:none">AS1</button>
-      <button id="as2-btn" class="rb rb-caps rb-sm" onclick="toggleAsTap('usrp2',this)" title="Monitor AllStar 2 in the PCM stream" style="display:none">AS2</button>
+      <button id="as1-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('as1-btn')" title="Monitor AllStar 1 in the PCM stream" style="display:none">AS1</button>
+      <button id="as2-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('as2-btn')" title="Monitor AllStar 2 in the PCM stream" style="display:none">AS2</button>
+      <button id="sdr1-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('sdr1-btn')" title="Monitor SDR1 in the PCM stream" style="display:none">SDR1</button>
+      <button id="sdr2-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('sdr2-btn')" title="Monitor SDR2 in the PCM stream" style="display:none">SDR2</button>
     </span>
   </div>
 </div>
@@ -613,8 +615,8 @@ function stopWS() {
   _wb.classList.remove('connecting', 'live');
   // Stopping the player stops any node tap too. The tap exists only to feed
   // this stream, so leaving it on would keep a node feeding audio nobody is
-  // listening to — and the AS button would claim "live" with the player shut.
-  clearAsTaps();
+  // listening to — and the tap button would claim "live" with the player shut.
+  clearPcmTaps();
 }
 
 // Slider value and TX duck are two independent inputs to one gain, so both go
@@ -661,7 +663,7 @@ function _micBtn() { return document.getElementById('mic-btn'); }
 // Duck every local output for the duration of the hold. On a speakerphone the
 // gateway's own playback is acoustically coupled straight back into the mic,
 // so the operator hears themselves returned. Two outputs to silence: the PCM
-// player's gain node — which also covers the AS1/AS2 taps, since those feed
+// player's gain node — which also covers the AS1/AS2/SDR1/SDR2 taps, since those feed
 // the node's RX audio INTO the PCM stream rather than playing separately —
 // and the MP3 <audio> element.
 //
@@ -1024,61 +1026,88 @@ function updateNavFromStatus(s) {
   _navShow('nav-adsb', s.adsb_enabled !== false);
 }
 
-// Turn off every node tap. Called when the PCM player stops — see stopWS.
-// Silent no-op when nothing is tapped, so it is safe on every stop.
-function clearAsTaps() {
-  ['usrp', 'usrp2'].forEach(function (pid) {
-    var btn = document.getElementById(pid === 'usrp' ? 'as1-btn' : 'as2-btn');
-    if (!btn || !btn.classList.contains('live')) return;   // nothing to do
-    fetch('/' + pid + '/control', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action: 'pcm_tap', on: '0'})
-    }).then(function () { _refreshAsTaps(); }).catch(function () {});
+// Monitor taps: AS1/AS2 (AllStar nodes) and SDR1/SDR2 (tuners). Each feeds one
+// source straight into the PCM stream without touching /routing, so listening
+// never rewrites the graph. Exclusive server-side (pcm_taps.py): enabling one
+// clears the rest, and while one is on the stream carries ONLY that source.
+// The SDR taps exist only while that tuner's capture runs, i.e. while it is
+// routed to some bus — the tap is fed from what the bus pulls.
+var _PCM_TAPS = [
+  {btn: 'as1-btn',  status: '/usrp/status',  ctl: '/usrp/control',  key: 'pcm_tap',
+   body: function (on) { return {action: 'pcm_tap', on: on}; },
+   shown: function (s) { return true; }},
+  {btn: 'as2-btn',  status: '/usrp2/status', ctl: '/usrp2/control', key: 'pcm_tap',
+   body: function (on) { return {action: 'pcm_tap', on: on}; },
+   shown: function (s) { return true; }},
+  {btn: 'sdr1-btn', status: '/sdrstatus', ctl: '/sdrcmd', key: 'tuner1_pcm_tap',
+   body: function (on) { return {cmd: 'pcm_tap', tuner: 1, on: on}; },
+   shown: function (s) { return !s.error && (s.tuner1_active || s.tuner1_pcm_tap); }},
+  {btn: 'sdr2-btn', status: '/sdrstatus', ctl: '/sdrcmd', key: 'tuner2_pcm_tap',
+   body: function (on) { return {cmd: 'pcm_tap', tuner: 2, on: on}; },
+   shown: function (s) { return !s.error && (s.tuner2_active || s.tuner2_pcm_tap); }}
+];
+
+function _tapPost(t, on) {
+  return fetch(t.ctl, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(t.body(on))
   });
 }
 
-// AS1/AS2 monitor taps. These feed the node's RX audio straight into the PCM
-// stream — they do NOT touch /routing, so listening never rewrites the graph.
-// Both can be on at once; the tick loop mixes them like any other contributor.
-function toggleAsTap(pid, btn) {
+// Turn off every tap. Called when the PCM player stops — see stopWS.
+// Silent no-op when nothing is tapped, so it is safe on every stop.
+function clearPcmTaps() {
+  _PCM_TAPS.forEach(function (t) {
+    var btn = document.getElementById(t.btn);
+    if (!btn || !btn.classList.contains('live')) return;   // nothing to do
+    _tapPost(t, '0').then(function () { _refreshPcmTaps(); }).catch(function () {});
+  });
+}
+
+function togglePcmTap(btnId) {
+  var t = _PCM_TAPS.filter(function (x) { return x.btn === btnId; })[0];
+  var btn = document.getElementById(btnId);
+  if (!t || !btn) return;
   var want = !btn.classList.contains('live');
-  fetch('/' + (pid === 'usrp' ? 'usrp' : pid) + '/control', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({action: 'pcm_tap', on: want ? '1' : '0'})
-  })
+  _tapPost(t, want ? '1' : '0')
     .then(function (r) { return r.json(); })
     .then(function (d) {
-      // Re-read BOTH buttons from the server rather than toggling only the one
-      // clicked. The taps are mutually exclusive server-side, so enabling AS1
-      // silently clears AS2 — without this the other button kept showing lit
-      // until the next 15 s refresh.
-      _refreshAsTaps();
+      if (d && d.ok === false && d.error) btn.title = d.error;
+      // Re-read EVERY button from the server rather than toggling only the
+      // one clicked: enabling one tap silently clears the others server-side.
+      _refreshPcmTaps();
       // The tap only produces sound if the PCM player is actually running.
       if (d && d.pcm_tap && !_wsPlaying) startWS();
     })
-    .catch(function () { _refreshAsTaps(); });
+    .catch(function () { _refreshPcmTaps(); });
 }
 
-// Show a button per discovered instance and reflect the server's tap state, so
-// a reload does not show a tap as off while audio is still flowing.
-function _refreshAsTaps() {
-  [['usrp', 'as1-btn'], ['usrp2', 'as2-btn']].forEach(function (pair) {
-    var btn = document.getElementById(pair[1]);
-    if (!btn) return;
-    fetch('/' + pair[0] + '/status')
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        if (!s) { btn.style.display = 'none'; return; }
+// Show a button per available source and reflect the server's tap state, so
+// a reload does not show a tap as off while audio is still flowing. Each
+// status URL is fetched once per refresh even though SDR1/SDR2 share one.
+function _refreshPcmTaps() {
+  var byUrl = {};
+  _PCM_TAPS.forEach(function (t) { (byUrl[t.status] = byUrl[t.status] || []).push(t); });
+  Object.keys(byUrl).forEach(function (url) {
+    var group = byUrl[url];
+    function apply(s) {
+      group.forEach(function (t) {
+        var btn = document.getElementById(t.btn);
+        if (!btn) return;
+        if (!s || !t.shown(s)) { btn.style.display = 'none'; btn.classList.remove('live'); return; }
         btn.style.display = '';
-        btn.classList.toggle('live', !!s.pcm_tap);
-      })
-      .catch(function () { btn.style.display = 'none'; });
+        btn.classList.toggle('live', !!s[t.key]);
+      });
+    }
+    fetch(url)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(apply)
+      .catch(function () { apply(null); });
   });
 }
-setInterval(_refreshAsTaps, 15000);
-_refreshAsTaps();
+setInterval(_refreshPcmTaps, 15000);
+_refreshPcmTaps();
 
 // AllStar entries come from /usrp/nodes — discovered plugin instances get
 // menu items automatically instead of hardcoded "AllStar 1/2" links.
