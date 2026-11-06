@@ -4,6 +4,12 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.3.0] -- 2026-11-06
+
+You can now listen to either SDR tuner on its own from any page, the same way
+as the AllStar nodes, and the SDR page no longer offers sample rates that give
+choppy audio or no audio at all.
+
 ### Added — SDR1 / SDR2 monitor taps in the shell bar
 
 Two more buttons next to AS1 / AS2 that play one SDR tuner on its own in the
@@ -21,6 +27,22 @@ button only shows while that tuner is capturing, and `/sdrcmd {cmd: pcm_tap}`
 refuses a tuner that isn't running, rather than lighting a button that plays
 nothing. `/sdrstatus` reports `tunerN_pcm_tap` and a `tunerN_tap_chunks`
 counter.
+
+### Fixed — SDR sample rates that dropped audio or gave none
+
+rtl_airband steps `round(sample_rate / 16000)` input samples for each NFM
+audio sample. At 1 MS/s that gives 15873 Hz audio, which drops, and at
+500 kS/s it gives 16129 Hz, which chops. Both rates were on the menu. The
+single-tuner zero-IF rates (every rate except 2.0 MS/s) were measured on the
+RSPduo. At 384 kS/s both channels read about −75 dBFS, against about −33 at
+2 MS/s low-IF, so the squelch never opened and no audio came out. 768 kS/s
+behaved the same. The cause is not proven.
+
+- `sample_rate_problem()` checks a rate against the driver, the 16 kHz audio
+  rate and zero-IF. Apply refuses a bad rate and says why. A bad rate saved
+  by an older version falls back to 2 MS/s and logs a warning.
+- `sample_rate` is written to rtl_airband's config as whole Hz.
+- The single and dual menus and Auto Center offer only 2.0 MS/s.
 
 ## [5.2.0] -- 2026-11-05
 

@@ -98,6 +98,28 @@ connect to `/ws_monitor` any more.
   channel names) are escaped before `innerHTML` — fleet machines are trusted,
   but their status payloads shouldn't be an injection vector into the
   gateway UI.
+- **Monitor taps — AS1 / AS2 / SDR1 / SDR2.** These buttons beside PCM play
+  one source on its own through the PCM stream, and start the player if it
+  isn't running. They never touch `/routing`: a listen button should not
+  rewrite the graph. The rules, all in `pcm_taps.py`:
+  - **Exclusive.** While a tap is on, the stream carries only that source,
+    not the buses with `P` set. Turning on one tap turns off the other three.
+    The tick loop and every control endpoint use the same `tap_sources()`
+    list, so a new kind of tappable source is added in one place.
+  - **Copied, never popped.** Each source puts a copy of the chunk it already
+    produced into a separate queue capped at 4 chunks (AllStar in its RX path,
+    SDR in `get_chunk()` after boost, filters and processing). A second
+    `get_audio()` would take chunks away from the bus.
+  - **SDR buttons show only while that tuner is capturing.** An unrouted
+    tuner has its parec stopped, so `/sdrcmd {cmd: "pcm_tap"}` refuses it
+    rather than lighting a button that plays nothing.
+  - **Stopping the PCM player turns off any tap** (`stopWS`, so it covers
+    every stop path). The buttons are re-read from the server after each
+    click and every 15 s, never assumed.
+  - Control: `/usrp[2]/control {action: "pcm_tap", on}` and
+    `/sdrcmd {cmd: "pcm_tap", tuner: 1|2, on}`. State: `pcm_tap` in
+    `/usrp[2]/status`, and `tunerN_pcm_tap` / `tunerN_tap_chunks` in
+    `/sdrstatus`.
 - The shell's **MIC** button is hold-to-talk, not a latch: press (or hold
   Space while the shell has focus) keys, release unkeys. The mic stream and
   `/ws_mic` socket linger 30 s after release so a follow-up over doesn't

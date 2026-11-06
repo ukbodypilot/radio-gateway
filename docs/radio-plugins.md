@@ -66,10 +66,14 @@ SDRplay RSPduo via the SDRplay API + `rtl_airband` for AM/NBFM/WBFM demod and au
 
 | Mode | Behaviour | CPU |
 |------|-----------|-----|
-| **Single tuner, multi-channel** | One tuner up to 10.66 MHz wide bandwidth; up to 2 demod channels within that range. CTCSS gating per channel. | -57 % vs dual |
+| **Single tuner, multi-channel** | One tuner at 2.0 MS/s (about 2 MHz wide); up to 2 demod channels within that range. CTCSS gating per channel. | -57 % vs dual |
 | **Dual tuner, master/slave** | Two independent tuners (e.g. one VHF, one UHF). Independent center freq, gain, AGC. | higher |
 
 **Channel processing** — each demodulated channel has its own AudioProcessor (gate / HPF / LPF / notch / boost) inside the SDR plugin before it hits the routing graph. Add or remove channels from the UI; the rtl_airband config is rewritten and the process restarted automatically.
+
+**Sample rate** — 2.0 MS/s only, in both modes. rtl_airband steps `round(rate / 16000)` input samples for each audio sample, so 1 MS/s and 500 kS/s give off-rate audio (drops, chops), and the RSPduo's single-tuner zero-IF rates gave no usable audio (about 42 dB down). Apply refuses any other rate and says why (`sample_rate_problem()`).
+
+**Monitoring** — the **SDR1** / **SDR2** buttons in the shell bar play one tuner on its own through the PCM stream, without changing routing; the tuner must be routed to a bus. See [web-ui.md](web-ui.md).
 
 **Web UI**: `/sdr` — mode selector, per-tuner controls, per-channel signal meters and config. Frequency entry accepts plain decimal MHz (`146.520`).
 
