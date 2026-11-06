@@ -106,10 +106,14 @@ connect to `/ws_monitor` any more.
     not the buses with `P` set. Turning on one tap turns off the other three.
     The tick loop and every control endpoint use the same `tap_sources()`
     list, so a new kind of tappable source is added in one place.
-  - **Copied, never popped.** Each source puts a copy of the chunk it already
-    produced into a separate queue capped at 4 chunks (AllStar in its RX path,
-    SDR in `get_chunk()` after boost, filters and processing). A second
-    `get_audio()` would take chunks away from the bus.
+  - **Copied, never popped.** A tap never makes a second `get_audio()` call,
+    which would take chunks away from the bus. AllStar puts a copy of each RX
+    chunk into a separate queue capped at 4 chunks.
+  - **SDR taps play the tuner's bus, processed.** SDR1 / SDR2 carry the final
+    output of the bus the tuner is routed to (that bus's G / H / L / N / D and
+    delay), the same audio a `P` sink on it gets, so the processing buttons
+    are audible. A tuner on two buses follows the first in routing order
+    (`pcm_taps.tap_bus_id()`).
   - **SDR buttons show only while that tuner is capturing.** An unrouted
     tuner has its parec stopped, so `/sdrcmd {cmd: "pcm_tap"}` refuses it
     rather than lighting a button that plays nothing.
@@ -118,7 +122,7 @@ connect to `/ws_monitor` any more.
     click and every 15 s, never assumed.
   - Control: `/usrp[2]/control {action: "pcm_tap", on}` and
     `/sdrcmd {cmd: "pcm_tap", tuner: 1|2, on}`. State: `pcm_tap` in
-    `/usrp[2]/status`, and `tunerN_pcm_tap` / `tunerN_tap_chunks` in
+    `/usrp[2]/status`, and `tunerN_pcm_tap` / `tunerN_tap_chunks` / `tunerN_tap_bus` in
     `/sdrstatus`.
 - The shell's **MIC** button is hold-to-talk, not a latch: press (or hold
   Space while the shell has focus) keys, release unkeys. The mic stream and

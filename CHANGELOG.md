@@ -4,6 +4,12 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.3.1] -- 2026-11-06
+
+The SDR1 / SDR2 monitor buttons now play what the bus sends out, so the
+routing page's processing buttons can be heard on them. Denoise on two buses
+at once no longer gives occasional drops.
+
 ### Fixed — occasional audio drops with denoise (D) on two buses
 
 With DeepFilterNet on both SDR buses there were occasional short drops.
