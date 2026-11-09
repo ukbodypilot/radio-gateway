@@ -156,6 +156,10 @@ class EchoLinkSource(AudioSource):
 
 
 
+class _ClientUnreachable(Exception):
+    """connect() to the remote-audio client failed; already reported."""
+
+
 class RemoteAudioServer:
     """Connects out to a remote client and sends mixed audio over TCP.
 
@@ -171,6 +175,8 @@ class RemoteAudioServer:
         self.port = int(config.REMOTE_AUDIO_PORT)
         self.connected = False
         self.client_address = None  # "host:port" when connected
+        self.connect_failures = 0         # failed connect() attempts, lifetime
+        self._unreachable_since = None    # time.time() of the current outage
         # Optional callable returning the IP of the connected RX peer. The RX
         # and TX ends are the same machine, so when it is connected we dial
         # it rather than trust REMOTE_AUDIO_HOST, which goes stale when the
@@ -215,7 +221,24 @@ class RemoteAudioServer:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2.0)
                 dest = self._dest_host()
-                sock.connect((dest, self.port))
+                try:
+                    sock.connect((dest, self.port))
+                except OSError as e:
+                    # Client PC off/asleep/not running: expected, not an
+                    # error. Say so once per outage, not every retry.
+                    sock.close()
+                    self.connect_failures += 1
+                    if not self._unreachable_since:
+                        self._unreachable_since = time.time()
+                        print(f"\n[RemoteAudio] Client {dest}:{self.port} unreachable "
+                              f"({type(e).__name__}); retrying, backing off to "
+                              f"{self._RECONNECT_MAX:.0f}s")
+                    raise _ClientUnreachable() from None
+                if self._unreachable_since:
+                    print(f"\n[RemoteAudio] Client back after "
+                          f"{time.time() - self._unreachable_since:.0f}s "
+                          f"({self.connect_failures} failed attempts so far)")
+                    self._unreachable_since = None
                 delay = self._reconnect_interval  # connected: next outage starts fast again
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 sock.setblocking(False)  # non-blocking so send_audio never stalls audio loop
@@ -240,6 +263,8 @@ class RemoteAudioServer:
                                 break  # clean close
                     except Exception:
                         break  # error = dead
+            except _ClientUnreachable:
+                pass
             except Exception:
                 log_exc()
             finally:
