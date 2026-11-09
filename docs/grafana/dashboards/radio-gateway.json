@@ -1,5 +1,7 @@
 {
-  "annotations": {"list": []},
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -9,69 +11,463 @@
     {
       "type": "timeseries",
       "title": "Bus audio level",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "rg_bus_audio_level", "legendFormat": "{{bus}}", "refId": "A"}],
-      "fieldConfig": {"defaults": {"min": 0, "max": 1, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10}}}
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rg_bus_audio_level",
+          "legendFormat": "{{bus}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "PTT activity",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "id": 2,
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "rg_bus_ptt_active", "legendFormat": "{{bus}}", "refId": "A"}],
-      "fieldConfig": {"defaults": {"min": 0, "max": 1, "custom": {"drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 30}}}
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rg_bus_ptt_active",
+          "legendFormat": "{{bus}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 30
+          }
+        }
+      }
     },
     {
       "type": "stat",
       "title": "Link endpoints up",
-      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 8},
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "id": 3,
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "rg_link_endpoint_up", "legendFormat": "{{endpoint}}", "refId": "A"}],
-      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}},
-      "options": {"colorMode": "background", "graphMode": "none"}
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rg_link_endpoint_up",
+          "legendFormat": "{{endpoint}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none"
+      }
     },
     {
       "type": "timeseries",
       "title": "Stream throughput (kbps)",
-      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 8},
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "id": 4,
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "rate(rg_stream_bytes_sent_total[1m]) * 8 / 1000", "legendFormat": "{{stream}}", "refId": "A"}],
-      "fieldConfig": {"defaults": {"unit": "Kbits", "custom": {"drawStyle": "line", "fillOpacity": 20}}}
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(rg_stream_bytes_sent_total[1m]) * 8 / 1000",
+          "legendFormat": "{{stream}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Kbits",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20
+          }
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Transcription throughput",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
       "id": 5,
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"expr": "rate(rg_transcription_dispatched_total[1m]) * 60", "legendFormat": "{{engine}} dispatched/min", "refId": "A"},
-        {"expr": "rg_transcription_inflight", "legendFormat": "{{engine}} inflight", "refId": "B"}
+        {
+          "expr": "rate(rg_transcription_dispatched_total[1m]) * 60",
+          "legendFormat": "{{engine}} dispatched/min",
+          "refId": "A"
+        },
+        {
+          "expr": "rg_transcription_inflight",
+          "legendFormat": "{{engine}} inflight",
+          "refId": "B"
+        }
       ],
-      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10}}}
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Transcription latency p95",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
       "id": 6,
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, engine) (rate(rg_transcription_seconds_bucket[5m])))", "legendFormat": "{{engine}} p95", "refId": "A"}],
-      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 10}}}
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, engine) (rate(rg_transcription_seconds_bucket[5m])))",
+          "legendFormat": "{{engine}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "CPU (% of one core)",
+      "id": 7,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Gateway vs host CPU",
+      "description": "100% = one full core. The host has several cores, so host busy can exceed 100%.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(rg_process_cpu_seconds_total[1m]) * 100",
+          "legendFormat": "gateway",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(rg_host_cpu_seconds_total{mode!~\"idle|iowait\"}[1m])) * 100",
+          "legendFormat": "host busy (all cores)",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(rg_helper_cpu_seconds_total[1m])) * 100",
+          "legendFormat": "helper processes",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Gateway CPU by thread (top 10)",
+      "description": "Threads sharing a name (per-connection, numbered) are summed. Short-lived threads are only in the gateway total.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "id": 9,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, rate(rg_thread_cpu_seconds_total[1m]) * 100)",
+          "legendFormat": "{{thread}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Helper process CPU",
+      "description": "rtl_airband, SDRplay API, ffmpeg/lame encoders, parec captures, direwolf...",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(rg_helper_cpu_seconds_total[1m]) * 100",
+          "legendFormat": "{{proc}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Denoise CPU by bus",
+      "description": "Time spent inside the denoise engine. Zero while the bus is squelched (silence bypasses it).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(rg_denoise_apply_ms_sum[1m]) / 10",
+          "legendFormat": "{{bus}} ({{engine}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ],
   "refresh": "5s",
   "schemaVersion": 39,
-  "tags": ["radio-gateway"],
-  "time": {"from": "now-30m", "to": "now"},
+  "tags": [
+    "radio-gateway"
+  ],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "",
   "title": "Radio Gateway",
   "uid": "radio-gateway",
-  "version": 1
+  "version": 2
 }

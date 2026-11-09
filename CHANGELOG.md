@@ -4,6 +4,20 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Remote audio: an offline client is no longer logged as an error.** The
+  server's connect loop logged every timed-out retry as a swallowed exception
+  (a line every 5 min all night while the client PC was off). It now prints
+  one line when the client becomes unreachable and one when it is back.
+
+- **CPU metrics + Grafana CPU row.** `/metrics` now exports
+  `rg_process_cpu_seconds_total` (plus memory/fds), `rg_thread_cpu_seconds_total{thread}`
+  (numbered and per-connection threads collapsed to one label),
+  `rg_helper_cpu_seconds_total{proc}` / `rg_helper_processes{proc}` for
+  rtl_airband, the SDRplay API, ffmpeg, lame, parec, direwolf..., and
+  `rg_host_cpu_seconds_total{mode}`. The dashboard gains four panels: gateway
+  vs host, by thread, helper processes, and denoise CPU by bus. About 5 ms per
+  scrape.
+
 - **SDR daily restart.** `SDR_DAILY_RESTART_TIME` (HH:MM local, default
   `04:00`, empty = never) runs the same full rtl_airband + SDRplay API restart
   as the Restart button once a day. It waits up to 15 min for both tuners to

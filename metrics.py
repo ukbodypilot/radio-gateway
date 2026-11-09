@@ -8,8 +8,13 @@ callbacks. Labels stay low-cardinality (bus/engine/endpoint), never
 per-utterance.
 """
 
+import os
+import re
+import threading
+
 from log_util import log_exc
 from prometheus_client import (
+    ProcessCollector,
     CollectorRegistry,
     Counter,
     Gauge,
@@ -19,6 +24,10 @@ from prometheus_client import (
 )
 
 REGISTRY = CollectorRegistry()
+
+# rg_process_cpu_seconds_total, _resident_memory_bytes, _open_fds, ... for
+# the gateway process itself (includes CPU of threads that have exited).
+ProcessCollector(namespace='rg', registry=REGISTRY)
 
 bus_audio_level = Gauge(
     'rg_bus_audio_level',
@@ -152,6 +161,126 @@ def _refresh_host_telemetry():
             fan_rpm.labels(fan='primary').set(rpm)
     except Exception:
         log_exc()
+
+
+# ── CPU by thread / helper process / host (read from /proc on scrape) ──
+
+_CLK_TCK = os.sysconf('SC_CLK_TCK') if hasattr(os, 'sysconf') else 100
+
+# External processes the gateway starts or depends on. Matched on
+# /proc/<pid>/comm (truncated to 15 chars by the kernel).
+HELPER_PROCS = ('rtl_airband', 'sdrplay_apiServ', 'ffmpeg', 'lame', 'parec',
+                'direwolf', 'pw-cat', 'pw-record', 'arecord', 'aplay')
+
+_IP_RE = re.compile(r'[-_ ]?\d{1,3}(?:\.\d{1,3}){3}.*$')
+_TAIL_NUM_RE = re.compile(r'[-_ ]\d+$')
+_ANON_RE = re.compile(r'^Thread-\d+ \((.+)\)$')
+
+
+def thread_label(name):
+    """Collapse a thread name to a low-cardinality label: per-connection
+    and numbered threads ('LinkReader-192.168.2.141', 'Thread-53
+    (audio_loop)', 'loop-enc-7') share one series."""
+    m = _ANON_RE.match(name)
+    if m:
+        name = m.group(1)
+    elif re.fullmatch(r'Thread-\d+', name):
+        return 'anonymous'
+    name = _TAIL_NUM_RE.sub('', _IP_RE.sub('', name))
+    return name or 'anonymous'
+
+
+def _stat_cpu_s(path):
+    """utime+stime in seconds from a /proc stat file, or None."""
+    try:
+        with open(path) as f:
+            fields = f.read().rsplit(')', 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / _CLK_TCK
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+class _CpuCollector:
+    """Thread, helper-process and host CPU, sampled at scrape time.
+
+    rg_thread_cpu_seconds_total{thread} sums the LIVE threads that share a
+    label; a thread exiting makes it step down, which rate() reads as a
+    counter reset. Exited threads' CPU stays in rg_process_cpu_seconds_total.
+    """
+
+    def describe(self):
+        return []
+
+    def collect(self):
+        from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
+        threads = CounterMetricFamily(
+            'rg_thread_cpu_seconds', 'CPU time of live gateway threads, by thread name',
+            labels=['thread'])
+        helpers = CounterMetricFamily(
+            'rg_helper_cpu_seconds', 'CPU time of helper processes, by command',
+            labels=['proc'])
+        helper_n = GaugeMetricFamily(
+            'rg_helper_processes', 'Running helper processes, by command',
+            labels=['proc'])
+        host = CounterMetricFamily(
+            'rg_host_cpu_seconds', 'Host CPU time (all cores), by mode',
+            labels=['mode'])
+        try:
+            names = {t.native_id: t.name for t in threading.enumerate()
+                     if getattr(t, 'native_id', None)}
+            per = {}
+            for tid in os.listdir('/proc/self/task'):
+                cpu = _stat_cpu_s(f'/proc/self/task/{tid}/stat')
+                if cpu is None:
+                    continue
+                name = names.get(int(tid))
+                if name is None:
+                    try:
+                        with open(f'/proc/self/task/{tid}/comm') as f:
+                            name = f.read().strip()
+                    except OSError:
+                        continue
+                lbl = thread_label(name)
+                per[lbl] = per.get(lbl, 0.0) + cpu
+            for lbl, cpu in per.items():
+                threads.add_metric([lbl], cpu)
+        except Exception:
+            log_exc()
+        try:
+            tot = {p: 0.0 for p in HELPER_PROCS}
+            cnt = {p: 0 for p in HELPER_PROCS}
+            for pid in os.listdir('/proc'):
+                if not pid.isdigit():
+                    continue
+                try:
+                    with open(f'/proc/{pid}/comm') as f:
+                        comm = f.read().strip()
+                except OSError:
+                    continue
+                if comm in tot:
+                    cpu = _stat_cpu_s(f'/proc/{pid}/stat')
+                    if cpu is not None:
+                        tot[comm] += cpu
+                        cnt[comm] += 1
+            for p in HELPER_PROCS:
+                if cnt[p]:
+                    helpers.add_metric([p], tot[p])
+                helper_n.add_metric([p], cnt[p])
+        except Exception:
+            log_exc()
+        try:
+            with open('/proc/stat') as f:
+                vals = f.readline().split()[1:]
+            modes = ('user', 'nice', 'system', 'idle', 'iowait', 'irq', 'softirq', 'steal')
+            for mode, v in zip(modes, vals):
+                host.add_metric([mode], int(v) / _CLK_TCK)
+        except Exception:
+            log_exc()
+        return [threads, helpers, helper_n, host]
+
+
+if os.path.isdir('/proc/self/task'):
+    REGISTRY.register(_CpuCollector())
 
 
 def render() -> tuple[bytes, str]:
