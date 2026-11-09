@@ -4,6 +4,11 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.3.2] -- 2026-11-09
+
+The SDR restarts itself once a day, the gateway's CPU use is now graphed in
+Grafana, and an offline remote-audio client no longer fills the log.
+
 - **Remote audio: an offline client is no longer logged as an error.** The
   server's connect loop logged every timed-out retry as a swallowed exception
   (a line every 5 min all night while the client PC was off). It now prints
