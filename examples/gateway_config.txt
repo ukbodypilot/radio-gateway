@@ -324,6 +324,10 @@ SDR_MODE = dual
 # Which SDR ducks the other: sdr1 / sdr2 / equal
 SDR_PRIORITY_ORDER = sdr1
 
+# Daily restart of rtl_airband + the SDRplay API (HH:MM local, empty = never).
+# Waits up to 15 min for both tuners to go quiet first. Cuts SDR audio ~15 s.
+SDR_DAILY_RESTART_TIME = 04:00
+
 # ─── Per-source processing overrides (applies to BOTH SDRs) ───
 # When unset, SDR sources use the global [processing] settings.
 SDR_PROC_ENABLE_HPF = true

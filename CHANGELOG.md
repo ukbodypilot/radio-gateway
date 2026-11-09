@@ -4,6 +4,13 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **SDR daily restart.** `SDR_DAILY_RESTART_TIME` (HH:MM local, default
+  `04:00`, empty = never) runs the same full rtl_airband + SDRplay API restart
+  as the Restart button once a day. It waits up to 15 min for both tuners to
+  go quiet first; a manual restart in progress counts for the day. SDR status
+  reports `daily_restart_count`, `daily_restart_last` and
+  `daily_restart_deferred_s`.
+
 ## [5.3.1] -- 2026-11-06
 
 The SDR1 / SDR2 monitor buttons now play what the bus sends out, so the

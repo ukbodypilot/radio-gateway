@@ -150,6 +150,7 @@ DEFAULTS = {
     'SDR2_WATCHDOG_TIMEOUT': 10,
     'SDR2_WATCHDOG_MAX_RESTARTS': 5,
     'SDR2_WATCHDOG_MODPROBE': False,
+    'SDR_DAILY_RESTART_TIME': '04:00',  # HH:MM local: daily rtl_airband + sdrplay restart; empty = never
     'SDR_PRIORITY_ORDER': 'sdr1',    # which SDR ducks the other: sdr1 / sdr2 / equal
     # Signal Detection Hysteresis (prevents stuttering from rapid on/off)
     'SIGNAL_ATTACK_TIME': 0.25,  # Seconds of CONTINUOUS signal required before a source switch is allowed
@@ -706,7 +707,7 @@ LAYOUT = [
         'SDR2_DISPLAY_GAIN', 'SDR2_AUDIO_BOOST', 'SDR2_BUFFER_MULTIPLIER',
         'SDR2_WATCHDOG_TIMEOUT', 'SDR2_WATCHDOG_MAX_RESTARTS', 'SDR2_WATCHDOG_MODPROBE',
         'SDR2_MUTE_DEFAULT',
-        'SDR_PRIORITY_ORDER',
+        'SDR_PRIORITY_ORDER', 'SDR_DAILY_RESTART_TIME',
     ]),
     ('switching', 'Signal Detection & Switching', [
         'SIGNAL_ATTACK_TIME', 'SIGNAL_RELEASE_TIME', 'SWITCH_PADDING_TIME',

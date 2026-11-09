@@ -45,6 +45,29 @@ _DRIVER_FIXED_RATES_SINGLE = (62500, 96000, 125000, 192000, 250000, 384000,
 _DRIVER_FIXED_RATES_DUAL = (62500, 125000, 250000, 500000, 1000000, 2000000)
 
 
+def parse_hhmm(value):
+    """'HH:MM' -> (h, m), or None for empty / malformed (= feature off)."""
+    try:
+        h, m = (int(x) for x in str(value).strip().split(':'))
+    except (ValueError, TypeError):
+        return None
+    if 0 <= h < 24 and 0 <= m < 60:
+        return h, m
+    return None
+
+
+def daily_restart_due(now, hhmm, last_date):
+    """True once per local day, from HH:MM onwards, if not yet done today.
+
+    `now` is a datetime, `hhmm` a (h, m) tuple, `last_date` the date of the
+    last scheduled restart (or None). A gateway started after HH:MM does
+    not restart straight away: setup() seeds last_date with today.
+    """
+    if hhmm is None or last_date == now.date():
+        return False
+    return (now.hour, now.minute) >= hhmm
+
+
 def _rate_hz(mhz):
     return int(round(float(mhz) * 1e6))
 
@@ -590,6 +613,13 @@ class SDRPlugin:
         self._gateway_dir = None
         self._channels_path = None
 
+        # Scheduled daily rtl_airband + sdrplay restart (SDR_DAILY_RESTART_TIME)
+        self._restart_lock = threading.Lock()
+        self._daily_restart_last_date = None
+        self._daily_restart_count = 0
+        self._daily_restart_last = None      # 'YYYY-mm-dd HH:MM:SS ok|error...'
+        self._daily_restart_deferred_s = 0
+
         # Tuner captures
         self._gateway = None  # set in setup(); used only by the PCM tap
         self._tuner1 = None  # master
@@ -807,6 +837,14 @@ class SDRPlugin:
                     log_exc()
         threading.Thread(target=_link_guard_loop, daemon=True, name="SDR-LinkGuard").start()
 
+        # Daily restart: the RSPduo / sdrplay API degrades over days (looping,
+        # broken audio on 2026-11-06, cleared only by an SDR restart).
+        if parse_hhmm(config.SDR_DAILY_RESTART_TIME) is not None:
+            import datetime
+            self._daily_restart_last_date = datetime.date.today()
+            threading.Thread(target=self._daily_restart_loop, daemon=True,
+                             name="SDR-DailyRestart").start()
+
         return success
 
     def _guard_sdr_links(self):
@@ -953,9 +991,8 @@ class SDRPlugin:
         elif action == 'tune2':
             return self._apply_settings_sdr2(**{k: v for k, v in cmd.items() if k != 'cmd'})
         elif action == 'restart':
-            if self._sdr_mode == 'single':
-                return self._restart_rtl_airband_single()
-            return self._restart_rtl_airband()
+            with self._restart_lock:
+                return self._restart_now()
         elif action == 'stop':
             self._stop_rtl_airband()
             return {"ok": True}
@@ -986,6 +1023,51 @@ class SDRPlugin:
         elif action == 'pcm_tap':
             return self._set_pcm_tap(cmd)
         return {"ok": False, "error": f"unknown command: {action}"}
+
+    def _restart_now(self):
+        """Full restart for the current mode. Caller holds _restart_lock."""
+        if self._sdr_mode == 'single':
+            return self._restart_rtl_airband_single()
+        return self._restart_rtl_airband()
+
+    # Wait for both tuners to go quiet before the daily restart, but never
+    # longer than this, so a stuck-open squelch can't postpone it forever.
+    DAILY_RESTART_MAX_DEFER_S = 900
+    DAILY_RESTART_QUIET_LEVEL = 5
+
+    def _tuners_busy(self):
+        return any(t is not None and t.audio_level > self.DAILY_RESTART_QUIET_LEVEL
+                   for t in (self._tuner1, self._tuner2))
+
+    def _daily_restart_loop(self):
+        import datetime
+        while True:
+            time.sleep(30)
+            try:
+                hhmm = parse_hhmm(self._config.SDR_DAILY_RESTART_TIME)
+                if not daily_restart_due(datetime.datetime.now(), hhmm,
+                                         self._daily_restart_last_date):
+                    continue
+                waited = 0
+                while self._tuners_busy() and waited < self.DAILY_RESTART_MAX_DEFER_S:
+                    time.sleep(5)
+                    waited += 5
+                self._daily_restart_deferred_s = waited
+                self._daily_restart_last_date = datetime.date.today()
+                if not self._restart_lock.acquire(blocking=False):
+                    continue  # a manual restart is running; that counts
+                try:
+                    print(f"  [SDR] Scheduled daily restart (deferred {waited}s for signal)")
+                    res = self._restart_now()
+                finally:
+                    self._restart_lock.release()
+                self._daily_restart_count += 1
+                stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self._daily_restart_last = (f"{stamp} ok" if res.get('ok')
+                                            else f"{stamp} error: {res.get('error')}")
+                print(f"  [SDR] Daily restart: {self._daily_restart_last}")
+            except Exception:
+                log_exc()
 
     def _set_pcm_tap(self, cmd):
         """Monitor one tuner in the browser PCM stream (SDR1/SDR2 buttons).
@@ -1053,6 +1135,10 @@ class SDRPlugin:
         d = {key: getattr(self, key) for key in self._SETTING_KEYS}
         d['process_alive'] = alive
         d['plugin'] = self.name
+        d['daily_restart_time'] = self._config.SDR_DAILY_RESTART_TIME if self._config else ''
+        d['daily_restart_count'] = self._daily_restart_count
+        d['daily_restart_last'] = self._daily_restart_last
+        d['daily_restart_deferred_s'] = self._daily_restart_deferred_s
 
         if self._tuner1:
             d['audio_level'] = self._tuner1.audio_level
