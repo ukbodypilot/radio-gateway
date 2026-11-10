@@ -19,6 +19,30 @@ import json
 import threading
 import time
 import logging
+from queue import Full as _queue_full
+
+# Caught-and-carried-on exceptions are reported through log_exc(): one line
+# per call site per 5 minutes. On the gateway that is log_util's; an endpoint
+# gets this module without log_util, so it carries a minimal copy.
+try:
+    from log_util import log_exc
+except Exception:
+    _log_exc_last = {}
+
+    def log_exc(key=None, interval=300.0):
+        try:
+            import sys as _sys
+            exc = _sys.exc_info()[1]
+            if key is None:
+                f = _sys._getframe(1)
+                key = f"{os.path.basename(f.f_code.co_filename)}:{f.f_lineno} in {f.f_code.co_name}"
+            now = time.monotonic()
+            if now - _log_exc_last.get(key, -interval) < interval:
+                return
+            _log_exc_last[key] = now
+            print(f"[swallowed] {key}: {type(exc).__name__}: {exc}"[:400], flush=True)
+        except Exception:
+            pass
 
 log = logging.getLogger("GatewayLink")
 
@@ -586,8 +610,10 @@ class _EndpointConn:
         if not evict:
             try:
                 self._send_queue.put_nowait(frame_data)
+            except _queue_full:
+                pass  # queue full — drop rather than block the caller
             except Exception:
-                pass
+                log_exc()
             return
         for _ in range(self._send_queue.maxsize + 1):
             try:
@@ -839,8 +865,10 @@ class GatewayLinkServer:
                 continue
             try:
                 ep._send_queue.put_nowait(frame_data)
-            except Exception:
+            except _queue_full:
                 pass  # queue full — drop
+            except Exception:
+                log_exc()
 
     def send_audio_to(self, name, pcm):
         """Send PCM audio to a specific endpoint by name."""
@@ -970,7 +998,7 @@ class GatewayLinkServer:
                 try:
                     self._on_disconnect(name)
                 except Exception:
-                    pass
+                    log_exc()
 
     def _accept_loop(self):
         """Accept thread: wait for incoming connections."""
@@ -1177,7 +1205,7 @@ class GatewayLinkServer:
                                 import metrics as _m
                                 _m.link_endpoint_ping_ms.labels(endpoint=ep.name).set(ep.ping_ms)
                             except Exception:
-                                pass
+                                log_exc()
                         elif cmd_name not in ('status', 'ping'):
                             # Suppress per-cmd ACK lines for high-volume
                             # routine commands (knob chase, periodic state)
@@ -1250,7 +1278,7 @@ class GatewayLinkServer:
                     try:
                         self._on_disconnect(ep_name)
                     except Exception:
-                        pass
+                        log_exc()
 
     def _heartbeat_loop(self):
         """Send heartbeat every 5s to all endpoints; detect dead peers."""
@@ -1297,7 +1325,7 @@ class GatewayLinkServer:
                     _m.link_endpoint_up.labels(endpoint=ep.name).set(
                         0 if ep.name in _dead_names else 1)
             except Exception:
-                pass
+                log_exc()
 
 
 # ---------------------------------------------------------------------------
@@ -2045,7 +2073,7 @@ class RadioPlugin:
                 stats['cpu_pct'] = 0.0
             cls._prev_cpu = (total, idle)
         except Exception:
-            pass
+            log_exc()
         try:
             mem = {}
             with open('/proc/meminfo') as f:
@@ -2060,7 +2088,7 @@ class RadioPlugin:
                 stats['ram_mb'] = round((total - avail) / 1048576)
                 stats['ram_total_mb'] = round(total / 1048576)
         except Exception:
-            pass
+            log_exc()
         try:
             st = os.statvfs('/')
             total = st.f_blocks * st.f_frsize
@@ -2069,11 +2097,11 @@ class RadioPlugin:
                 stats['disk_pct'] = round((1 - free / total) * 100, 1)
                 stats['disk_free_gb'] = round(free / 1073741824, 1)
         except Exception:
-            pass
+            log_exc()
         try:
             with open('/sys/class/thermal/thermal_zone0/temp') as f:
                 stats['cpu_temp_c'] = round(int(f.read().strip()) / 1000, 1)
-        except Exception:
+        except (OSError, ValueError):  # no thermal zone on this board
             pass
         try:
             with open('/proc/net/route') as f:
@@ -2093,12 +2121,12 @@ class RadioPlugin:
                         stats['net_ip'] = line.split()[1].split('/')[0]
                         break
         except Exception:
-            pass
+            log_exc()
         try:
             import socket
             stats['hostname'] = socket.gethostname()
         except Exception:
-            pass
+            log_exc()
         return stats
 
     _prev_cpu = None
@@ -2235,7 +2263,7 @@ class AudioPlugin(RadioPlugin):
                     if line and line[0].isdigit() and name_match.lower() in line.lower():
                         return int(line.split()[0])
         except Exception:
-            pass
+            log_exc()
         return None
 
     def _arecord_reader(self):
@@ -2609,7 +2637,7 @@ class AIOCPlugin(AudioPlugin):
                             aioc_hw = f'plughw:{card_num},0'
                             break
             except Exception:
-                pass
+                log_exc()
             config['device'] = aioc_hw or 'All-In-One'
             if aioc_hw:
                 print(f"  [Link] AIOCPlugin: found AIOC at {aioc_hw}")

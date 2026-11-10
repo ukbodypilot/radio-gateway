@@ -68,6 +68,15 @@ NUM_PAGES = len(PAGE_NAMES)
 backlight_on = True
 force_refresh = False
 
+# log_exc comes from gateway_link (which falls back to its own copy when the
+# gateway's log_util is not on this machine). An endpoint still running an
+# older gateway_link has neither; stay quiet there rather than fail to start.
+try:
+    from gateway_link import log_exc
+except Exception:
+    def log_exc(*_a, **_k):
+        pass
+
 def _init_backlight_pwm():
     """Backlight init — no-op, HAT backlight is hardwired."""
     pass
@@ -99,7 +108,7 @@ def get_ip(iface):
             if line.startswith('inet '):
                 return line.split()[1].split('/')[0]
     except Exception:
-        pass
+        log_exc()
     return None
 
 
@@ -236,7 +245,7 @@ def get_d75_info():
                     if len(freqs) >= 2:
                         info['freq_b'] = freqs[1]
     except Exception:
-        pass
+        log_exc()
     return info
 
 
@@ -349,7 +358,7 @@ def page_status(draw):
         h, m = up // 3600, (up % 3600) // 60
         draw.text((L, HEIGHT - 12), f'Up:{h}h{m:02d}m', font=FONT, fill=GREY)
     except Exception:
-        pass
+        log_exc()
 
 
 _net_prev = {}  # {iface: (rx_bytes, tx_bytes, timestamp)}
@@ -506,7 +515,7 @@ def page_audio(draw):
                     slow = line.split('slow_read=')[1].split()[0] if 'slow_read=' in line else '?'
                 break
     except Exception:
-        pass
+        log_exc()
 
     draw.text((L, y), f'Reads:  {reads}', font=FONT, fill=WHITE)
     y += 11

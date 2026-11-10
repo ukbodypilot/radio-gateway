@@ -40,6 +40,65 @@ remembers where you were, and a phone layout that fits the screen.
   unstyled form fields rendered as white boxes; six pages scrolled sideways
   on a phone.
 
+### Fixed — filters ran ~13x slower on silence
+
+A squelched SDR delivers exact zeros. The Butterworth voice filter's state
+(and the per-source HPF / LPF / notch state) then decayed into subnormal
+floats and stuck there, so every later silent chunk was filtered in
+microcode: 1.27 ms per chunk instead of 0.1 ms, and 60% of the BusManager
+tick thread in a live profile. `audio_util.settle_filter_state` zeroes a
+state that has decayed below 1e-20. Audio output is bit-identical.
+
+### Fixed — concurrent bus reloads
+
+`BusManager.reload()` was not serialised. Two link endpoints registering
+together (or an endpoint and a routing save) interleaved their stop / clear
+/ start steps: seen 2026-11-08 as "Bus reload error: dictionary changed
+size during iteration", and able to leave two tick threads mixing at once.
+Reloads now hold a lock, and a tick thread that has been replaced exits
+instead of resuming. New counters `rg_bus_reloads_total` and
+`rg_bus_stale_tick_exits_total`.
+
+### Fixed — Broadcastify "list index out of range"
+
+A server that closed the connection without replying raised IndexError
+while the rejection was being reported, hiding the cause. It now reports
+"Icecast rejected: no reply".
+
+
+### Changed — swallowed exceptions around real work are now logged
+
+55 `except Exception: pass` blocks that wrapped real work now call
+`log_exc()` (one line per call site per 5 minutes): KV4P transmit encode
+and receive decode, bus shutdown (which unkeys PTT), link disconnect
+callbacks, loop recorder retention deletes, endpoint and Windows client
+settings saves, endpoint status collection, audio restart teardown. The
+three queue-full handlers now pass only on `queue.Full`. About 150 remain
+on purpose: closing sockets, killing helpers and removing temp files.
+
+Endpoints get `gateway_link.py` without `log_util`, so it carries a minimal
+`log_exc` of its own; endpoint plugins import it from there.
+
+
+### Added — login throttling and an access record for the web UI
+
+Basic auth answered password guesses as fast as they arrived, and nothing
+recorded who logged in. A client that sends 5 different wrong passwords
+within 10 minutes is now refused with 429 for 1 minute, doubling on each
+repeat up to 1 hour, and stays refused even if it then sends the right one.
+Through the tunnel the client is Cloudflare's `Cf-Connecting-Ip` (an IPv6
+client is its /64); this machine is never blocked.
+
+Only different wrong passwords count. A request with no credentials is not
+a failure, and a dashboard tab left open across a password change repeats
+one stale password and is not locked out.
+
+The gateway log gets a `[WebAccess]` line for the first login from each
+client per day, the first wrong password, and every block. No credentials
+are logged. Counters: `rg_web_auth_failures_total`,
+`rg_web_auth_blocks_total`, `rg_web_auth_refused_blocked_total`.
+
+
 ## [5.3.2] -- 2026-11-09
 
 The SDR restarts itself once a day, the gateway's CPU use is now graphed in

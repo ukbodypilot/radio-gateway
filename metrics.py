@@ -187,6 +187,36 @@ gc_pause_overrun_total = Counter(
     registry=REGISTRY,
 )
 
+web_auth_failures_total = Counter(
+    'rg_web_auth_failures_total',
+    'Web UI requests that sent a wrong username or password',
+    registry=REGISTRY,
+)
+
+web_auth_blocks_total = Counter(
+    'rg_web_auth_blocks_total',
+    'Times a client was blocked for repeated wrong passwords',
+    registry=REGISTRY,
+)
+
+web_auth_refused_blocked_total = Counter(
+    'rg_web_auth_refused_blocked_total',
+    'Requests refused because the client was serving a login block',
+    registry=REGISTRY,
+)
+
+bus_reloads_total = Counter(
+    'rg_bus_reloads_total',
+    'Completed BusManager reloads (routing save, endpoint registration)',
+    registry=REGISTRY,
+)
+
+bus_stale_tick_exits_total = Counter(
+    'rg_bus_stale_tick_exits_total',
+    'Tick threads that exited because a newer tick thread had replaced them',
+    registry=REGISTRY,
+)
+
 
 def _refresh_host_telemetry():
     """Sample CPU temp + fan RPM lazily on scrape. Cheap (~ms): reads

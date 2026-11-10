@@ -40,6 +40,15 @@ _FREQ_RANGES = {
 }
 
 
+# log_exc comes from gateway_link (which falls back to its own copy when the
+# gateway's log_util is not on this machine). An endpoint still running an
+# older gateway_link has neither; stay quiet there rather than fail to start.
+try:
+    from gateway_link import log_exc
+except Exception:
+    def log_exc(*_a, **_k):
+        pass
+
 def _cfg(d, key, default=None):
     """Read either an unprefixed key ('port') or KV4P_-prefixed legacy key."""
     if key in d:
@@ -258,7 +267,7 @@ class KV4PPlugin(RadioPlugin):
             display_gain = float(_cfg(self._cfg_dict, 'audio_display_gain', 1.0))
             self.audio_level = pcm_level(pcm_data, self.audio_level, gain=display_gain)
         except Exception:
-            pass
+            log_exc()
 
         if self.audio_boost != 1.0:
             arr = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
@@ -272,7 +281,7 @@ class KV4PPlugin(RadioPlugin):
             try:
                 self._recording_file.write(pcm_data)
             except Exception:
-                pass
+                log_exc()
 
         return pcm_data, False
 
@@ -286,17 +295,17 @@ class KV4PPlugin(RadioPlugin):
             try:
                 self.tx_audio_level = pcm_level(pcm_48k, self.tx_audio_level)
             except Exception:
-                pass
+                log_exc()
             while len(buf) >= frame_bytes:
                 try:
                     opus_frame = self._encoder.encode(buf[:frame_bytes], 1920)
                     self._radio.send_audio(opus_frame)
                 except Exception:
-                    pass
+                    log_exc()
                 buf = buf[frame_bytes:]
             self._tx_buf = buf
         except Exception:
-            pass
+            log_exc()
 
     def _validate_freq(self, freq):
         lo, hi = _FREQ_RANGES.get(self._rf_module, (0, 9999))
@@ -341,7 +350,8 @@ class KV4PPlugin(RadioPlugin):
             self._high_power = bool(cmd.get('high', True))
             if self._radio:
                 try: self._radio.set_power(self._high_power)
-                except Exception: pass
+                except Exception:
+                    log_exc()
             self._status_dirty = True
             return {"ok": True}
         if action == 'boost':
@@ -488,12 +498,12 @@ class KV4PPlugin(RadioPlugin):
             try:
                 self.audio_level = pcm_level(pcm, self.audio_level)
             except Exception:
-                pass
+                log_exc()
             if len(self._chunk_queue) >= self._chunk_queue.maxlen:
                 self._chunk_queue.popleft()
             self._chunk_queue.append(pcm)
         except Exception:
-            pass
+            log_exc()
 
     def _on_smeter(self, rssi):
         self._signal = rssi

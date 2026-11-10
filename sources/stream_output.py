@@ -240,7 +240,11 @@ class StreamOutputSource:
             resp_str = resp.decode(errors='replace')
             if '200' not in resp_str.split('\n')[0]:
                 print(f"  ⚠ Broadcastify: Icecast rejected connection: {resp_str.strip()}")
-                self._note_error(f"Icecast rejected: {resp_str.splitlines()[0].strip()}")
+                # An empty reply (server closed without answering) has no
+                # first line; indexing it raised IndexError and the log said
+                # "list index out of range" instead of what happened.
+                _first = (resp_str.splitlines() or ['no reply'])[0].strip() or 'no reply'
+                self._note_error(f"Icecast rejected: {_first}")
                 # "403 Mountpoint in use" is not a real failure — it means the
                 # server has not yet reaped OUR previous source connection, so
                 # retrying sooner cannot possibly work. Flag it so the reconnect

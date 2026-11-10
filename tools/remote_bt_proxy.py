@@ -61,6 +61,15 @@ AUDIO_FRAME_SIZE    = 48     # bytes per SCO frame (D75 uses 48-byte SCO frames)
 
 _AF_BLUETOOTH = 31   # same as socket.AF_BLUETOOTH
 
+# log_exc comes from gateway_link (which falls back to its own copy when the
+# gateway's log_util is not on this machine). An endpoint still running an
+# older gateway_link has neither; stay quiet there rather than fail to start.
+try:
+    from gateway_link import log_exc
+except Exception:
+    def log_exc(*_a, **_k):
+        pass
+
 def _sco_connect(sock, mac, timeout=8.0):
     """Connect a BTPROTO_SCO socket by calling libc connect() via ctypes.
 
@@ -550,7 +559,7 @@ class SerialManager:
                     with self._state_lock:
                         self.beacon_type = int(val)
         except Exception:
-            pass
+            log_exc()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -603,7 +612,7 @@ class AudioManager:
                     subprocess.run(['hcitool', 'cmd', '0x3f', '0x1c', '0x01', '0x02', '0x00', '0x00', '0x00'],
                                    capture_output=True, timeout=3)
             except Exception:
-                pass
+                log_exc()
 
             # SCO socket — must be BEFORE CKPD
             print(f"[Audio] Connecting SCO...")
@@ -856,7 +865,7 @@ class AudioServer:
                 except (ConnectionResetError, BrokenPipeError, OSError):
                     break
         except Exception:
-            pass
+            log_exc()
         print(f"[AudioTCP] Client disconnected: {addr}")
 
 

@@ -1121,7 +1121,7 @@ class App(ctk.CTk):
             if m and int(m.group(1)) >= 520 and int(m.group(2)) >= 480:
                 c["window_geometry"] = geo     # skip pre-map sizes like 200x200
         except Exception:
-            pass
+            wac.log_exc()
         c["mic_vol"] = self.vals["mic_vol"]
         c["duck_pct"] = self.vals["duck_pct"]
         c["effect_index"] = self.vals["effect_index"]
@@ -1132,7 +1132,7 @@ class App(ctk.CTk):
         try:
             wac.save_config(c)
         except Exception:
-            pass
+            wac.log_exc()
 
     def quit_app(self):
         if self._closing:
@@ -1142,7 +1142,7 @@ class App(ctk.CTk):
         try:
             self._save_cfg()
         except Exception:
-            pass
+            wac.log_exc()
         if self.eng is not None:
             self.eng["running"] = False
         for h in self.hotkey_hooks:

@@ -21,7 +21,7 @@ import time
 import numpy as np
 
 from audio_bus import DuckGroup, check_signal_instant, mix_audio_streams
-from audio_util import AudioProcessor, rms_to_level, update_level
+from audio_util import AudioProcessor, rms_to_level, settle_filter_state, update_level
 from plugins._base import (
     CAPABILITY_AUDIO_RX, CAPABILITY_FREQUENCY, CAPABILITY_STATUS,
 )
@@ -159,6 +159,7 @@ class _VoiceFilter:
                 return arr
             from scipy.signal import sosfilt
             y, self._zi = sosfilt(self._sos, arr.astype(np.float64), zi=self._zi)
+            settle_filter_state(self._zi)
             return np.clip(y, -32768, 32767).astype(np.int16)
         except Exception:
             self.errors += 1

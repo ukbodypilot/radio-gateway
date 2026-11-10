@@ -610,6 +610,27 @@ def make_denoise_stream(engine='rnnoise'):
         return None
 
 
+# ── IIR filter state ────────────────────────────────────────────────────────
+
+# Anything this small is far below one int16 step and will never be heard.
+_FILTER_STATE_FLOOR = 1e-20
+
+
+def settle_filter_state(zi):
+    """Zero an IIR filter state that has decayed to nothing.
+
+    Fed exact digital silence (a squelched SDR), a filter's state decays
+    into subnormal floats and then sticks there (~5e-323) instead of
+    reaching zero. Arithmetic on subnormals is done in microcode, so every
+    later silent chunk costs many times a normal one: measured live
+    2026-11-09, sosfilt on silence was 60% of the BusManager tick thread.
+    Output is unchanged; the discarded state is hundreds of dB down.
+    """
+    if zi is not None and zi.size and float(np.abs(zi).max()) < _FILTER_STATE_FLOOR:
+        zi.fill(0.0)
+    return zi
+
+
 # ── Level metering ──────────────────────────────────────────────────────────
 
 def pcm_rms(pcm_bytes):
@@ -907,6 +928,7 @@ class AudioProcessor:
                 self.highpass_state = lfilter_zi(b, a) * 0.0
 
             filtered, self.highpass_state = lfilter(b, a, samples, zi=self.highpass_state)
+            settle_filter_state(self.highpass_state)
             return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
         except Exception:
             return pcm_data
@@ -933,6 +955,7 @@ class AudioProcessor:
                 self.lowpass_state = lfilter_zi(b, a) * 0.0
 
             filtered, self.lowpass_state = lfilter(b, a, samples, zi=self.lowpass_state)
+            settle_filter_state(self.lowpass_state)
             return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
         except Exception:
             return pcm_data
@@ -961,6 +984,7 @@ class AudioProcessor:
                 self.notch_state = lfilter_zi(b, a) * 0.0
 
             filtered, self.notch_state = lfilter(b, a, samples, zi=self.notch_state)
+            settle_filter_state(self.notch_state)
             return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
         except Exception:
             return pcm_data

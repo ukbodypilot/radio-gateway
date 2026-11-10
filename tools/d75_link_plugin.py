@@ -41,6 +41,15 @@ LINK_RATE = 48000
 RESAMPLE_RATIO = LINK_RATE // SCO_RATE  # 6
 
 
+# log_exc comes from gateway_link (which falls back to its own copy when the
+# gateway's log_util is not on this machine). An endpoint still running an
+# older gateway_link has neither; stay quiet there rather than fail to start.
+try:
+    from gateway_link import log_exc
+except Exception:
+    def log_exc(*_a, **_k):
+        pass
+
 def _upsample_np(data_8k, prev_last=0.0):
     """Upsample 8kHz 16-bit PCM to 48kHz using numpy interpolation.
 
@@ -515,7 +524,7 @@ class D75Plugin(RadioPlugin):
                 stats['cpu_pct'] = 0.0
             cls._prev_cpu = (total, idle)
         except Exception:
-            pass
+            log_exc()
         try:
             mem = {}
             with open('/proc/meminfo') as f:
@@ -530,14 +539,14 @@ class D75Plugin(RadioPlugin):
             stats['ram_mb'] = (total - avail) // 1024
             stats['ram_total_mb'] = total // 1024
         except Exception:
-            pass
+            log_exc()
         try:
             import shutil
             st = shutil.disk_usage('/')
             stats['disk_pct'] = round(100.0 * st.used / st.total) if st.total else 0
             stats['disk_free_gb'] = round(st.free / (1024**3), 1)
         except Exception:
-            pass
+            log_exc()
         try:
             for zp in sorted(__import__('glob').glob('/sys/class/thermal/thermal_zone*/temp')):
                 with open(zp) as f:
@@ -545,7 +554,7 @@ class D75Plugin(RadioPlugin):
                 if t > 0:
                     stats['cpu_temp_c'] = round(t, 1)
                     break
-        except Exception:
+        except (OSError, ValueError):  # no thermal zone on this board
             pass
         try:
             with open('/proc/net/route') as f:
@@ -565,12 +574,12 @@ class D75Plugin(RadioPlugin):
                         stats['net_ip'] = line.split()[1].split('/')[0]
                         break
         except Exception:
-            pass
+            log_exc()
         try:
             import socket
             stats['hostname'] = socket.gethostname()
         except Exception:
-            pass
+            log_exc()
         return stats
 
     # -- Internal: memory scan --

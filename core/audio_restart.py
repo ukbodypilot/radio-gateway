@@ -58,8 +58,8 @@ class _AudioRestartMixin:
                 try:
                     self.input_stream.stop_stream()
                     self.input_stream.close()
-                except:
-                    pass  # Ignore all errors during close
+                except Exception:
+                    log_exc()  # Ignore all errors during close
             
             # Small delay to let ALSA settle
             time.sleep(0.2)
@@ -155,22 +155,22 @@ class _AudioRestartMixin:
                 try:
                     self.input_stream.stop_stream()
                     self.input_stream.close()
-                except:
-                    pass
+                except Exception:
+                    log_exc()
             
             if self.output_stream:
                 try:
                     self.output_stream.stop_stream()
                     self.output_stream.close()
-                except:
-                    pass
+                except Exception:
+                    log_exc()
             
             # Terminate PyAudio
             if self.pyaudio_instance:
                 try:
                     self.pyaudio_instance.terminate()
-                except:
-                    pass
+                except Exception:
+                    log_exc()
             
             time.sleep(0.5)  # Give ALSA time to clean up
             

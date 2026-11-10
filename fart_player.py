@@ -30,6 +30,8 @@ _MIXKIT_FART_IDS = [3041, 3043, 3050, 3051, 3052, 3053, 3054, 3055, 3056,
 _AUDIO_EXTS = ('*.mp3', '*.wav', '*.ogg', '*.flac', '*.m4a')
 
 
+from log_util import log_exc
+
 def list_farts():
     out = []
     for ext in _AUDIO_EXTS:
@@ -55,6 +57,7 @@ def ensure_samples():
                 f.write(data)
             os.replace(tmp, dst)
         except Exception:
+            log_exc()
             continue
 
 

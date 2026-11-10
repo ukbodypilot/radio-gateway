@@ -9,7 +9,10 @@ import os
 import socketserver
 import sys
 
+import time
+
 from log_util import log_exc
+from web import auth_guard
 
 # web_pages/ lives at the repo root, one level up from this package.
 _REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -168,11 +171,48 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _client_identity(self):
+        """(address, how it reached us) for throttling and the access log.
+
+        cloudflared connects from localhost and Cloudflare sets
+        Cf-Connecting-Ip, so that header is believed only on a loopback
+        connection. A LAN client sending it is still keyed by its socket
+        address; otherwise it could dodge the throttle by changing a header.
+        """
+        addr = self.client_address[0]
+        if addr in ('127.0.0.1', '::1'):
+            if self._via_tunnel():
+                return (self.headers.get('Cf-Connecting-Ip') or 'tunnel-unknown').strip(), 'tunnel'
+            return addr, 'local'
+        return addr, 'lan'
+
+    def _access_note(self, msg):
+        ua = ''.join(ch if ' ' <= ch <= '~' else '?' for ch in self.headers.get('User-Agent', ''))[:80]
+        print(f"  [WebAccess] {msg} | {self.command} {self.path.split('?', 1)[0][:60]} | {ua or 'no user agent'}")
+
+    def _count_auth(self, name):
+        try:
+            import metrics as _m
+            getattr(_m, name).inc()
+        except Exception:
+            log_exc()
+
     def _check_auth(self):
         if not self.password:
             return True
         import base64
+        guard = auth_guard.GUARD
+        addr, via = self._client_identity()
+        key = auth_guard.client_key(addr)
+        now = time.monotonic()
         auth = self.headers.get('Authorization', '')
+        # A blocked client is refused before its credentials are looked at;
+        # checking them would let the guessing carry on through the block.
+        wait = guard.blocked_for(key, now) if auth else 0.0
+        if wait > 0:
+            self._count_auth('web_auth_refused_blocked_total')
+            self._send_too_many(wait)
+            return False
         if not auth.startswith('Basic '):
             self._send_auth_required()
             return False
@@ -183,11 +223,35 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
             import hmac
             if (hmac.compare_digest(user, self.username)
                     and hmac.compare_digest(pw, self.password)):
+                if guard.success(key, now):
+                    self._access_note(f"login from {addr} ({via})")
                 return True
         except Exception:
             log_exc()
+        fails, block, first = guard.failure(
+            key, now, token=auth_guard.attempt_token(auth), exempt=(via == 'local'))
+        self._count_auth('web_auth_failures_total')
+        if block:
+            self._count_auth('web_auth_blocks_total')
+            self._access_note(f"BLOCKED {addr} ({via}) for {block:.0f}s after {fails} different wrong passwords")
+            self._send_too_many(block)
+            return False
+        if first and fails == 1:
+            self._access_note(f"wrong password from {addr} ({via})")
         self._send_auth_required()
         return False
+
+    def _send_too_many(self, wait):
+        try:
+            body = b'Too many failed logins. Try again later.'
+            self.send_response(429)
+            self.send_header('Retry-After', str(int(wait) + 1))
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_auth_required(self):
         self.send_response(401)

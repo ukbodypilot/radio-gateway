@@ -66,6 +66,29 @@ import time
 import wave
 from datetime import datetime
 
+# Caught-and-carried-on exceptions are reported through log_exc(): one line
+# per call site per 5 minutes. The Windows client ships as two files without the
+# gateway's log_util, so it carries a minimal copy.
+try:
+    from log_util import log_exc
+except Exception:
+    _log_exc_last = {}
+
+    def log_exc(key=None, interval=300.0):
+        try:
+            import sys as _sys
+            exc = _sys.exc_info()[1]
+            if key is None:
+                f = _sys._getframe(1)
+                key = f"{os.path.basename(f.f_code.co_filename)}:{f.f_lineno} in {f.f_code.co_name}"
+            now = time.monotonic()
+            if now - _log_exc_last.get(key, -interval) < interval:
+                return
+            _log_exc_last[key] = now
+            print(f"[swallowed] {key}: {type(exc).__name__}: {exc}"[:400], flush=True)
+        except Exception:
+            pass
+
 try:
     import sounddevice as sd
 except ImportError:
@@ -1440,7 +1463,7 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
         try:
             save_config(cfg)
         except Exception:
-            pass
+            log_exc()
 
     _open_capture(in_dev_index, in_dev_name)
 
@@ -1600,7 +1623,7 @@ def _tx_thread_func(state, cfg, gateway_host, tx_port, in_dev_index, in_dev_name
                     wav_writer.writeframesraw(pcm)
                     state["tx_wav_bytes"] = state.get("tx_wav_bytes", 0) + len(pcm)
                 except Exception:
-                    pass
+                    log_exc()
 
             # Compute level for display (always — even when offline)
             state["tx_db"] = rms_db(pcm)
@@ -1770,7 +1793,7 @@ def _mic_thread_func(state, cfg, mic_dev_index, mic_dev_name, mic_fifo):
         try:
             save_config(cfg)
         except Exception:
-            pass
+            log_exc()
 
     try:
         _open_mic(mic_dev_index, mic_dev_name)
@@ -1870,7 +1893,7 @@ def _rx_thread_func(state, cfg, rx_port, out_dev_index, out_dev_name):
         try:
             save_config(cfg)
         except Exception:
-            pass
+            log_exc()
         return True
 
     try:
@@ -2526,7 +2549,7 @@ def main():
         try:
             save_config(cfg)
         except Exception:
-            pass
+            log_exc()
         if check_for_update(gateway_host, web_port):
             relaunch()
 
@@ -2535,7 +2558,7 @@ def main():
     try:
         UPDATE_STATE["version"] = _local_version()
     except Exception:
-        pass
+        log_exc()
 
     # --- Audio devices ------------------------------------------------------
     # in_dev = program feed; mic = operator microphone (voice effects applied
@@ -2620,7 +2643,7 @@ def main():
         try:
             save_config(cfg)
         except Exception:
-            pass
+            log_exc()
 
 
 if __name__ == "__main__":

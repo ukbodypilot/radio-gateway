@@ -37,6 +37,15 @@ sys.path.insert(0, _project_dir)
 from gateway_link import RadioPlugin
 
 
+# log_exc comes from gateway_link (which falls back to its own copy when the
+# gateway's log_util is not on this machine). An endpoint still running an
+# older gateway_link has neither; stay quiet there rather than fail to start.
+try:
+    from gateway_link import log_exc
+except Exception:
+    def log_exc(*_a, **_k):
+        pass
+
 def _pcm_peak_pct(pcm: bytes, prev: int = 0) -> int:
     """Cheap S16_LE peak level estimator (0-100) with a fast-attack /
     slow-decay smoothing. Inline so the endpoint side doesn't need the
@@ -1278,7 +1287,7 @@ def _find_alsa_card(keywords=('IC-7100', 'ICOM', 'icom', 'IC7100')) -> str | Non
                         card_num = parts[1].rstrip(':')
                         return f'hw:{card_num},0'
     except Exception:
-        pass
+        log_exc()
     return None
 
 
@@ -2592,7 +2601,7 @@ class IC7100Plugin(RadioPlugin):
                                 self._civ.set_mode(self._tnc_saved_mode,
                                                    int(self._tnc_saved_filter))
                         except Exception:
-                            pass
+                            log_exc()
                     self._tnc_saved_mode = None
                     return {"ok": False, "error": "direwolf failed to start"}
                 self._direwolf = runner
@@ -2847,7 +2856,7 @@ class IC7100Plugin(RadioPlugin):
                         # cycle). Cheap; runs at ~3 Hz on RX.
                         self._civ.get_smeter()
                     except Exception:
-                        pass
+                        log_exc()
                     if self._civ.squelch_open != prev_sq \
                             or self._civ.smeter != prev_sm:
                         self._status_dirty = True

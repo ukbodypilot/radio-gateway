@@ -50,6 +50,15 @@ except ImportError as e:
     sys.exit(1)
 
 
+# log_exc comes from gateway_link (which falls back to its own copy when the
+# gateway's log_util is not on this machine). An endpoint still running an
+# older gateway_link has neither; stay quiet there rather than fail to start.
+try:
+    from gateway_link import log_exc
+except Exception:
+    def log_exc(*_a, **_k):
+        pass
+
 def _link_secret():
     """This endpoint's link key: $RADIO_GATEWAY_LINK_SECRET (how the gateway
     hands it to the kv4p endpoints it starts), or the link_secret file the
@@ -548,7 +557,7 @@ def main():
                         with open(_settings_path, 'w') as f:
                             json.dump(_settings, f, indent=2)
                     except Exception:
-                        pass
+                        log_exc()
                     return url
         except Exception as e:
             print(f"  [Link] Drive URL fetch failed: {e}")

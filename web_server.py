@@ -8,6 +8,8 @@ import threading as _thr
 from config_format import format_config_value
 import config_schema
 from gateway_link import ws_encode, WS_OP_BINARY
+from log_util import log_exc
+from queue import Full as _queue_full
 
 # ============================================================================
 # WEB CONFIGURATION UI
@@ -540,8 +542,10 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
             for sock, send_q in self._ws_clients:
                 try:
                     send_q.put_nowait(frame)
-                except Exception:
+                except _queue_full:
                     pass  # queue full — drop frame rather than block audio loop
+                except Exception:
+                    log_exc()
 
     def _start_encoder(self):
         """Start the shared FFmpeg MP3 encoder and reader thread."""

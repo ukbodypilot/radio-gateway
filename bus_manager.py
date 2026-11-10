@@ -77,6 +77,14 @@ class BusManager:
         self._bus_delay_bufs = {}  # id → deque of pcm bytes (post-processed output delay)
         self._running = False
         self._thread = None
+        # Serialises reload(). Link endpoints register on their own threads
+        # and the routing page reloads from an HTTP thread; two reloads
+        # interleaving cleared the bus dict under a running tick ("dictionary
+        # changed size during iteration", 2026-11-08) and could leave two
+        # tick threads mixing at once.
+        self._reload_lock = threading.RLock()
+        self.reloads = 0            # instrumentation: completed reloads
+        self.stale_tick_exits = 0   # tick threads that found themselves superseded
         self._config_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'routing_config.json')
         self._tick_interval = 0.05  # 50ms = 20 ticks/sec (matches main loop)
@@ -740,7 +748,7 @@ class BusManager:
                 try:
                     _bus.shutdown()
                 except Exception:
-                    pass
+                    log_exc()
         for t in self._sink_threads.values():
             if t.is_alive():
                 t.join(timeout=0.5)
@@ -774,21 +782,28 @@ class BusManager:
     def reload(self):
         """Reload config and recreate busses."""
         # Unkey all auto-PTT endpoints before tearing down buses
-        self._release_all_ptt()
-        self.stop()
-        # Stop every per-bus denoise worker before dropping the processors.
-        # Without this the old AudioProcessor's _dn_thread stays alive as a
-        # daemon — wakes every 500 ms, finds an empty queue, goes back to
-        # sleep — so each reload leaks a thread. They don't burn CPU but
-        # accumulate across many reloads.
-        for _proc in self._bus_processors.values():
+        with self._reload_lock:
+            self._release_all_ptt()
+            self.stop()
+            # Stop every per-bus denoise worker before dropping the processors.
+            # Without this the old AudioProcessor's _dn_thread stays alive as a
+            # daemon — wakes every 500 ms, finds an empty queue, goes back to
+            # sleep — so each reload leaks a thread. They don't burn CPU but
+            # accumulate across many reloads.
+            for _proc in self._bus_processors.values():
+                try:
+                    _proc._dn_stop_worker()
+                except Exception:
+                    log_exc()
+            self._bus_processors.clear()
+            self._busses.clear()
+            self.start()
+            self.reloads += 1
             try:
-                _proc._dn_stop_worker()
+                import metrics as _m
+                _m.bus_reloads_total.inc()
             except Exception:
                 log_exc()
-        self._bus_processors.clear()
-        self._busses.clear()
-        self.start()
 
     def _release_all_ptt(self):
         """Send PTT-off to all endpoints with active auto-PTT."""
@@ -1593,7 +1608,20 @@ class BusManager:
         _prev_tick_time = _next_tick
         _tick_num = 0
 
+        # A tick thread that outlives stop()'s 2 s join (stalled in a sink)
+        # must not resume beside its replacement once start() sets _running
+        # again, so it also checks that it is still the current thread.
+        _me = threading.current_thread()
         while self._running:
+            if self._thread is not _me:
+                self.stale_tick_exits += 1
+                try:
+                    import metrics as _m
+                    _m.bus_stale_tick_exits_total.inc()
+                except Exception:
+                    log_exc()
+                print("  [BusManager] superseded tick thread exiting")
+                break
             _tick_num += 1
             # ── Timing: sleep until next tick, accumulate (never reset) ──
             _now = time.monotonic()

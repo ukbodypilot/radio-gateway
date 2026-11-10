@@ -617,7 +617,7 @@ class LoopRecorder:
                 try:
                     os.unlink(os.path.join(bus_dir, fname))
                 except Exception:
-                    pass
+                    log_exc()
 
     # -- Bulk operations ----------------------------------------------------
 
