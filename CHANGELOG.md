@@ -2,10 +2,12 @@
 
 All notable changes to Radio Gateway.
 
-## [Unreleased]
+## [5.4.0] -- 2026-11-09
 
 The web UI gets history: charts and timelines on most pages, a shell that
-remembers where you were, and a phone layout that fits the screen.
+remembers where you were, and a phone layout that fits the screen. A code
+review fixed a filter slowdown on silence and a bus reload race, and the
+web login now throttles password guessing and records who logs in.
 
 - **Shell.** The address tracks the open page (`#/routing`), so a reload or a
   bookmark returns to it. Menus open on hover and close when you click into

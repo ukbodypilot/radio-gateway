@@ -48,6 +48,7 @@ More screenshots in `docs/screenshots/`.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Highlights:
 
+- **v5.4.0** (2026-11-09) — Web UI overhaul: history charts on most pages (Overview trends and activity timeline, endpoint link and ping history, Fleet Manager run history, TX Log bars and heat map, GPS sky plot, SDR channel activity), deep links, hover menus, phone layout, peak-hold meters. Filters no longer run ~13x slower on a squelched SDR; concurrent bus reloads are serialised. The web login blocks repeated wrong passwords and logs each new client.
 - **v5.3.2** (2026-11-09) — SDR restarts itself daily at `SDR_DAILY_RESTART_TIME` (default 04:00, waits for the tuners to go quiet). CPU by process, thread, helper and host on `/metrics` and a CPU row in Grafana. An offline remote-audio client is logged once per outage, not every retry.
 - **v5.3.1** (2026-11-06) — SDR1 / SDR2 taps play the tuner's bus after its processing, so G / H / L / N / D are audible on them. Denoise (D) on two buses no longer gives occasional drops: each bus has its own denoise session and 100 ms to finish each chunk.
 - **v5.3** (2026-11-06) — SDR1 / SDR2 monitor taps beside AS1 / AS2: listen to either tuner on its own from any page. AS1, AS2, SDR1 and SDR2 are one exclusive set. The SDR page offers only 2.0 MS/s, because the other rates gave choppy audio (1 MS/s, 500 kS/s) or none (single-tuner zero-IF).
