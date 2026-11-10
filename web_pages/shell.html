@@ -2,7 +2,7 @@
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dell - Radio Gateway</title>
+<title>Radio Gateway</title>
 <link rel="preload" href="/pages/fonts/JetBrainsMono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/pages/common.css">
 <style>
@@ -61,6 +61,14 @@
     padding: var(--s-1) 0;
   }
   .nav-group.open > .nav-drop { display: block; }
+  /* Mouse users: menus open on hover, so reaching a page is one click, not
+     two. .nav-suppress hides the menu after a pick until the pointer leaves
+     (otherwise it would sit over the page that was just opened). Touch
+     devices have no hover and keep the tap-to-open path. */
+  @media (hover: hover) and (pointer: fine) {
+    .nav-group:hover:not(.nav-suppress) > .nav-drop { display: block; }
+    .nav-group:hover:not(.nav-suppress) > .nav-label { color: var(--t-accent); }
+  }
   .nav-drop a {
     display: block;
     padding: var(--s-1) var(--s-3) !important;
@@ -188,6 +196,15 @@
   .sb-bar-tx { bottom: 2px;
                background: var(--t-err); color: var(--t-err); }
 
+  /* Peak-hold tick: marks the loudest recent level for ~1.5 s so a short
+     burst is still readable after the bar has fallen back. */
+  #shell-bars .sb-peak {
+    position: absolute; width: 2px; margin-left: -1px; left: 0;
+    height: calc(50% - 3px); top: 2px;
+    background: var(--t-text); opacity: 0; z-index: 3; pointer-events: none;
+  }
+  #shell-bars .sb-peak.tx { top: auto; bottom: 2px; }
+  #shell-bars .sb-peak.one { height: auto; top: 2px; bottom: 2px; }
   #shell-bars .mute-ind {
     color: var(--t-err);
     font-weight: 700;
@@ -195,11 +212,49 @@
     letter-spacing: 0.1em;
   }
 
+  /* Gateway not answering /status: the strip is showing stale levels. */
+  #shell-bars.stale .sb-track { opacity: 0.35; }
+
   /* Mobile: let bars scroll off screen */
   @media (max-width: 768px) {
     body { height: auto; overflow: auto; }
-    #shell-bars { flex-shrink: 1; }
     #shell-frame { flex: none; height: calc(100vh - 78px); }
+
+    /* Header becomes three tidy rows instead of a ragged wrap:
+       identity plate / five equal menu buttons / audio controls (the audio
+       row scrolls sideways rather than pushing the page wider). */
+    #shell-bar { padding: var(--s-1) var(--s-2); }
+    .shell-nav { width: 100%; row-gap: var(--s-1); }
+    .id-cluster.shell-id { flex: 1 0 100%; justify-content: center; }
+    .shell-nav > .nav-group { flex: 1 1 0; text-align: center; }
+    .shell-nav > .nav-group > .nav-label {
+      display: block; font-size: var(--f-sm); letter-spacing: 0.04em;
+      padding: var(--s-2) 0; white-space: nowrap;
+    }
+    .nav-group > .nav-label::after { display: none; }
+    .nav-drop { text-align: left; min-width: 150px; }
+    .nav-drop a { padding: var(--s-2) var(--s-3) !important; }
+    /* Right-hand menus open leftwards so they stay on screen. */
+    .shell-nav > .nav-group:nth-of-type(n+5) > .nav-drop { left: auto; right: 0; }
+    .shell-pcm {
+      flex: 1 0 100%; min-width: 0; margin-left: 0; padding-left: 0; border-left: none;
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .shell-pcm::-webkit-scrollbar { display: none; }
+    .shell-pcm .rb { flex-shrink: 0; padding: 6px var(--s-2); }
+    .shell-pcm input[type="range"] { flex-shrink: 0; width: 64px; }
+
+    /* Meters: two columns with stretchy tracks (was one fixed-width column
+       that took half the screen). */
+    #shell-bars {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: var(--s-1) var(--s-3);
+      padding: var(--s-2);
+      min-height: 0;
+    }
+    #shell-bars .sb { min-width: 0; gap: var(--s-1); }
+    #shell-bars .sb-label { min-width: 0; width: 5.6em; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.04em; }
+    #shell-bars .sb-track { flex: 1 1 0; width: auto; min-width: 0; height: 14px; }
   }
 
   /* Header identity cluster — sits directly after the nav groups (left-packed),
@@ -306,7 +361,7 @@
   </div>
 </div>
 <div id="shell-bars"></div>
-<iframe id="shell-frame" name="content" src="/dashboard"></iframe>
+<iframe id="shell-frame" name="content" title="Page content"></iframe>
 <script src="/pages/common.js"></script>
 <script>
 
@@ -315,7 +370,27 @@ function setActive(el) {
   el.classList.add('active');
   // Close all dropdowns after clicking a link
   document.querySelectorAll('.nav-group').forEach(function(g){ g.classList.remove('open'); });
+  var grp = el.closest('.nav-group');
+  if (grp) grp.classList.add('nav-suppress');
+  _syncGroupAria();
 }
+document.querySelectorAll('.nav-group').forEach(function(g) {
+  g.addEventListener('mouseleave', function() {
+    g.classList.remove('nav-suppress');
+    // With a mouse the menu follows the pointer; don't leave a clicked-open
+    // one stranded after the pointer has gone.
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) { g.classList.remove('open'); _syncGroupAria(); }
+  });
+});
+function _closeNav() {
+  document.querySelectorAll('.nav-group').forEach(function(g){ g.classList.remove('open'); });
+  _syncGroupAria();
+}
+// A click inside the page iframe never reaches this document, so an open
+// menu used to stay open over the page. The shell window loses focus when
+// the iframe takes it — close on that.
+window.addEventListener('blur', _closeNav);
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') _closeNav(); });
 function _syncGroupAria() {
   document.querySelectorAll('.nav-group').forEach(function(x) {
     var l = x.querySelector('.nav-label');
@@ -365,7 +440,7 @@ tickClock();
 function loadIdentity() {
   fetch('/sysinfo').then(function(r){return r.json();}).then(function(s) {
     var name = s.gateway_name || s.hostname || '';
-    if (name) document.getElementById('id-site').textContent = name;
+    if (name) { document.getElementById('id-site').textContent = name; _siteName = name; _syncTitle(); }
     var call = (s.callsign || '').trim();
     var callEl = document.getElementById('id-call');
     var sepEl  = document.getElementById('id-call-sep');
@@ -377,12 +452,27 @@ function loadIdentity() {
       callEl.style.display = 'none';
       sepEl.style.display = 'none';
     }
-    var led = document.getElementById('id-led');
-    led.classList.remove('stale','dead');
-  }).catch(function(){
-    var led = document.getElementById('id-led');
-    led.classList.remove('stale'); led.classList.add('dead');
-  });
+  }).catch(function(){});
+}
+// Health LED follows the 1 Hz /status poll (it used to follow the 60 s
+// /sysinfo poll, so a dead gateway looked healthy for up to a minute while
+// the meters sat frozen). >4 s without an answer = stale, >12 s = dead.
+var _lastStatusAt = Date.now();
+setInterval(function() {
+  var age = Date.now() - _lastStatusAt;
+  var led = document.getElementById('id-led');
+  led.classList.toggle('stale', age > 4000 && age <= 12000);
+  led.classList.toggle('dead', age > 12000);
+  led.title = age > 12000 ? 'Gateway not responding' : age > 4000 ? 'Gateway slow to respond' : 'Gateway healthy';
+  document.getElementById('shell-bars').classList.toggle('stale', age > 4000);
+}, 1000);
+var _siteName = '';
+function _syncTitle() {
+  var a = document.querySelector('.shell-nav a.active');
+  var parts = [];
+  if (a) parts.push(a.textContent.trim());
+  parts.push(_siteName || 'Radio Gateway');
+  document.title = parts.join(' \u00b7 ');
 }
 setInterval(loadIdentity, 60000);
 loadIdentity();
@@ -436,12 +526,24 @@ function stopStream() {
 }
 function setVolume(v) {
   if (_audio) _audio.volume = v / 100;
+  _saveVol('vol-slider', v);
 }
+// Volumes survive a reload (per browser). Storage can be unavailable in
+// private windows — the sliders just fall back to their 50% default.
+function _saveVol(id, v) { try { localStorage.setItem('rg.' + id, String(v)); } catch(e) {} }
+['vol-slider', 'ws-vol'].forEach(function(id) {
+  try {
+    var v = parseInt(localStorage.getItem('rg.' + id), 10);
+    if (v >= 0 && v <= 100) document.getElementById(id).value = v;
+  } catch(e) {}
+});
 
 // Highlight nav on iframe load
 document.getElementById('shell-frame').addEventListener('load', function() {
   try {
-    var path = this.contentWindow.location.pathname;
+    var loc = this.contentWindow.location;
+    var path = loc.pathname;
+    if (loc.protocol === 'about:') return;
     document.querySelectorAll('.shell-nav a').forEach(function(a) {
       a.classList.toggle('active', a.getAttribute('href') === path);
     });
@@ -449,8 +551,29 @@ document.getElementById('shell-frame').addEventListener('load', function() {
     document.querySelectorAll('.nav-group').forEach(function(g) {
       g.classList.toggle('has-active', !!g.querySelector('a.active'));
     });
+    // Mirror the page into the shell URL (#/routing) so a reload or a
+    // bookmark returns to the same page instead of always the dashboard.
+    var want = '#' + path + loc.search;
+    if (location.hash !== want) history.replaceState(null, '', want);
+    _syncTitle();
   } catch(e) {}
 });
+// Only same-site paths are accepted from the hash — never a full URL.
+function _hashPath() {
+  var h = decodeURIComponent(location.hash.slice(1));
+  return /^\/(?!\/)[\w\-.\/]*(\?[\w\-.=&%]*)?$/.test(h) ? h : '';
+}
+(function() {
+  var fr = document.getElementById('shell-frame');
+  fr.src = _hashPath() || '/dashboard';
+  window.addEventListener('hashchange', function() {
+    var p = _hashPath();
+    try {
+      var cur = fr.contentWindow.location.pathname + fr.contentWindow.location.search;
+      if (p && p !== cur) fr.contentWindow.location.replace(p);
+    } catch(e) {}
+  });
+})();
 
 // --- Low-latency WebSocket PCM player ---
 var _ws = null;
@@ -637,6 +760,7 @@ function _wsApplyGain() {
 
 function setWSVol(v) {
   _wsApplyGain();
+  _saveVol('ws-vol', v);
 }
 
 // --- Browser Mic → WebMicSource (hold-to-talk) ---
@@ -867,9 +991,9 @@ function _sbEnsure(key, label) {
   if (r) return r;
   var row = document.createElement('div'); row.className = 'sb';
   row.innerHTML = '<span class="sb-label">'+label+'</span>'
-                + '<span class="sb-track"><span class="sb-bar"></span></span>'
+                + '<span class="sb-track"><span class="sb-bar"></span><span class="sb-peak"></span></span>'
                 + '<span class="mute-ind" style="display:none">M</span>';
-  r = { row: row, bar: row.children[1].firstChild, mute: row.children[2] };
+  r = { row: row, bar: row.children[1].firstChild, peak: row.children[1].children[1], mute: row.children[2] };
   _sbRows[key] = r;
   return r;
 }
@@ -880,6 +1004,8 @@ function _sbUpdate(key, label, raw, cls, ducked, muted) {
   _sbTarget[key] = Math.min(Math.max(raw || 0, 0), 100);
   if (r.bar.dataset.cls !== cls || r.bar.dataset.ducked !== String(!!ducked)) {
     r.bar.className = 'sb-bar ' + (ducked ? 'sb-ducked-bar' : cls);
+    // Peak tick sits in the same lane as its bar (receive = top, others = bottom).
+    r.peak.className = 'sb-peak' + ((ducked || cls === 'sb-in') ? '' : ' tx');
     r.bar.dataset.cls = cls;
     r.bar.dataset.ducked = String(!!ducked);
     r.bar.style.transition = 'none';   // rAF drives clip-path directly
@@ -898,9 +1024,11 @@ function _sbEnsureDual(key, label) {
   row.innerHTML = '<span class="sb-label">'+label+'</span>'
                 + '<span class="sb-track" style="position:relative">'
                 +   '<span class="sb-bar-rx"></span><span class="sb-bar-tx"></span>'
+                +   '<span class="sb-peak"></span><span class="sb-peak tx"></span>'
                 + '</span>'
                 + '<span class="mute-ind" style="display:none">M</span>';
-  r = { row: row, rxBar: row.children[1].children[0], txBar: row.children[1].children[1], mute: row.children[2] };
+  var _t = row.children[1].children;
+  r = { row: row, rxBar: _t[0], txBar: _t[1], rxPeak: _t[2], txPeak: _t[3], mute: row.children[2] };
   _sbDualRows[key] = r;
   return r;
 }
@@ -929,14 +1057,26 @@ function _sbUpdateDual(key, label, rxRaw, txRaw, muted) {
     if (Math.abs(diff) < 0.05) return target;
     return cur + diff * (diff > 0 ? ATTACK : DECAY);
   }
+  // Peak hold: jump up with the bar, hold 1.5 s, then fall slowly.
+  var HOLD_MS = 1500, _pk = {};
+  function peak(key, el, level, now) {
+    var p = _pk[key] || (_pk[key] = {v: 0, at: 0});
+    if (level >= p.v) { p.v = level; p.at = now; }
+    else if (now - p.at > HOLD_MS) p.v = Math.max(level, p.v - 0.8);
+    // Only show the tick when it sits clear of the bar's own leading edge.
+    var show = p.v > 2 && p.v - level > 1.5;
+    el.style.opacity = show ? '0.85' : '0';
+    if (show) el.style.left = p.v + '%';
+  }
   function tick() {
-    var k;
+    var k, now = performance.now();
     for (k in _sbRows) {
       var t = _sbTarget[k] || 0;
       var c = _sbCurrent[k] || 0;
       var n = step(c, t);
       _sbCurrent[k] = n;
       _sbRows[k].bar.style.clipPath = 'inset(0 ' + (100 - n) + '% 0 0)';
+      peak(k, _sbRows[k].peak, n, now);
     }
     for (k in _sbDualRows) {
       var tt = _sbDualTarget[k] || {rx:0, tx:0};
@@ -946,6 +1086,8 @@ function _sbUpdateDual(key, label, rxRaw, txRaw, muted) {
       _sbDualCurrent[k] = cc;
       _sbDualRows[k].rxBar.style.clipPath = 'inset(0 ' + (100 - cc.rx) + '% 0 0)';
       _sbDualRows[k].txBar.style.clipPath = 'inset(0 ' + (100 - cc.tx) + '% 0 0)';
+      peak(k + ':rx', _sbDualRows[k].rxPeak, cc.rx, now);
+      peak(k + ':tx', _sbDualRows[k].txPeak, cc.tx, now);
     }
     requestAnimationFrame(tick);
   }
@@ -959,6 +1101,7 @@ createPoller('/status', 1000, function(s) {
     if (_fr && _fr.contentWindow) {
       try { _fr.contentWindow.postMessage({type: 'rg-status', status: s}, location.origin); } catch(e) {}
     }
+    _lastStatusAt = Date.now();
     updateNavFromStatus(s);
     _sbOrder = [];
     // Dual-lane bars: each full-duplex radio gets its own RX+TX compound bar.
@@ -989,10 +1132,10 @@ createPoller('/status', 1000, function(s) {
     var container = document.getElementById('shell-bars');
     var want = {}; _sbOrder.forEach(function(k){ want[k] = true; });
     Object.keys(_sbRows).forEach(function(k){
-      if (!want[k]) { _sbRows[k].row.remove(); delete _sbRows[k]; delete _sbSmooth[k]; }
+      if (!want[k]) { _sbRows[k].row.remove(); delete _sbRows[k]; delete _sbTarget[k]; delete _sbCurrent[k]; }
     });
     Object.keys(_sbDualRows).forEach(function(k){
-      if (!want[k]) { _sbDualRows[k].row.remove(); delete _sbDualRows[k]; delete _sbDualSmooth[k]; }
+      if (!want[k]) { _sbDualRows[k].row.remove(); delete _sbDualRows[k]; delete _sbDualTarget[k]; delete _sbDualCurrent[k]; }
     });
     for (var i=0; i<_sbOrder.length; i++) {
       var row = (_sbRows[_sbOrder[i]] || _sbDualRows[_sbOrder[i]]).row;

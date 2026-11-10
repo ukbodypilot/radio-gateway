@@ -33,6 +33,10 @@
   .rpt-entry:last-child { border-bottom: none; }
   .rpt-header { display: flex; align-items: center; gap: var(--s-2); cursor: pointer;
                 user-select: none; }
+  .rpt-task   { font-weight: 700; flex: 0 0 4.5em; }
+  .rpt-ts     { color: var(--t-text-dim); font-size: var(--f-xs); white-space: nowrap; flex-shrink: 0;
+                font-variant-numeric: tabular-nums; }
+  .rpt-header:hover { background: var(--t-panel); }
   .rpt-body   { margin: var(--s-1) 0 0 var(--s-4); display: none; }
   .rpt-body.open { display: block; }
   .rpt-body ul { margin: 0; padding-left: 1.2em; }
@@ -44,7 +48,23 @@
 
   .badge-running { color: var(--t-warn); }
 
-  input[type="time"].ctrl-input { width: 96px; }
+  .health-head  { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); margin-bottom: var(--s-2); }
+  .health-tally { font-size: var(--f-xs); color: var(--t-text-dim); }
+  .health-tally b { font-weight: 600; color: var(--t-text); }
+  .health-strip { display: flex; gap: 2px; height: 26px; align-items: stretch; }
+  .health-strip button { flex: 1 1 0; min-width: 0; padding: 0; border: none; border-radius: 2px; cursor: pointer;
+                         background: var(--t-ok); opacity: 0.55; }
+  /* Shape as well as colour: problems are full-height, healthy runs shorter,
+     daily runs carry a top notch — readable without colour vision. */
+  .health-strip button.ok   { margin-top: 10px; }
+  .health-strip button.warn { background: var(--t-warn); opacity: 0.9; margin-top: 4px; }
+  .health-strip button.err  { background: var(--t-err); opacity: 1; }
+  .health-strip button.daily { border-top: 2px solid var(--t-text); }
+  .health-strip button:hover, .health-strip button:focus-visible { opacity: 1; outline: 1px solid var(--t-text); outline-offset: 1px; }
+  .health-ends  { display: flex; justify-content: space-between; font-size: 10px; color: var(--t-text-mute); margin-top: var(--s-1); }
+  .rpt-entry.hit { background: var(--t-panel-hi); }
+
+  input[type="time"].ctrl-input { width: 124px; }
 </style>
 </head>
 <body>
@@ -97,6 +117,16 @@
   </div>
 </div>
 
+<!-- Health history: one block per run, oldest left, newest right -->
+<div class="mgr-section" id="health-section" style="display:none">
+  <div class="health-head">
+    <span class="mgr-section-title" style="margin:0">Run history</span>
+    <span class="health-tally" id="health-tally"></span>
+  </div>
+  <div class="health-strip" id="health-strip"></div>
+  <div class="health-ends"><span id="health-from"></span><span>click a block to open that report</span><span id="health-to"></span></div>
+</div>
+
 <!-- Reports -->
 <div style="font-size:var(--f-xs);color:var(--t-text-dim);flex-shrink:0">Reports — newest first</div>
 <div id="report-box" class="report-box">
@@ -104,6 +134,7 @@
 </div>
 
 <script src="/pages/common.js"></script>
+<script src="/pages/charts.js"></script>
 <script>
 function toggleManager() {
   var btn = document.getElementById('mgr-toggle');
@@ -170,6 +201,7 @@ function loadReports() {
   fetch('/manager/reports').then(function(r){return r.json();}).then(function(reports){
     var box = document.getElementById('report-box');
     if (!reports.length) { box.innerHTML = '<span class="dim">No reports yet.</span>'; return; }
+    renderHealth(reports);
     var html = '';
     for (var i = reports.length - 1; i >= 0; i--) {
       var r = reports[i] || {};
@@ -178,11 +210,11 @@ function loadReports() {
       var findingsHtml = '';
       try { findingsHtml = _renderFindings(r.findings); }
       catch (e) { findingsHtml = '<div class="err">Render error: ' + _esc(e.message) + '</div>'; }
-      html += '<div class="rpt-entry">'
+      html += '<div class="rpt-entry" id="rpt-' + i + '">'
             + '<div class="rpt-header" onclick="toggleRpt(this)">'
             + '<span class="dot ' + cls + '">&#x25cf;</span>'
-            + '<b>' + _esc(r.task || '') + '</b>'
-            + '<span style="color:var(--t-text-dim);font-size:var(--f-xs)">' + _esc(r.ts || '') + '</span>'
+            + '<span class="rpt-task">' + _esc(r.task || '') + '</span>'
+            + '<span class="rpt-ts" title="' + _esc(r.ts || '') + '">' + _esc(_fmtTs(r.ts)) + '</span>'
             + '<span class="' + cls + '" style="font-size:var(--f-xs)">' + _esc(r.summary || '') + '</span>'
             + '</div>'
             + (findingsHtml ? '<div class="rpt-body">' + findingsHtml + '</div>' : '')
@@ -196,6 +228,54 @@ function loadReports() {
   });
 }
 
+// Reports carry ISO stamps, some with a zone suffix; show "Nov 09 06:03"
+// in local time (the full stamp stays in the tooltip).
+function _fmtTs(ts) {
+  if (!ts) return '';
+  var d = new Date(ts);
+  if (isNaN(d)) return ts;
+  var M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  function p(n) { return String(n).padStart(2, '0'); }
+  return M + ' ' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+// One block per run. The list below is newest-first; the strip reads
+// left-to-right in time like every other timeline in the UI.
+var _SEV = {ok: ['ok', 'healthy'], warning: ['warn', 'warning'], elevated: ['err', 'elevated']};
+function renderHealth(reports) {
+  var strip = document.getElementById('health-strip'), n = {ok: 0, warn: 0, err: 0};
+  strip.innerHTML = '';
+  reports.forEach(function(r, i) {
+    r = r || {};
+    var s = _SEV[r.severity] || _SEV.ok;
+    n[s[0]]++;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = s[0] + (r.task === 'daily' ? ' daily' : '');
+    var label = (r.task || 'run') + ' \u00b7 ' + s[1];
+    b.setAttribute('aria-label', _fmtTs(r.ts) + ' ' + label);
+    var show = function() {
+      var rc = b.getBoundingClientRect();
+      RGC.tip.show('<b>' + RGC.esc(label) + '</b><span>' + RGC.esc(_fmtTs(r.ts)) + '</span>', rc.left + rc.width / 2, rc.top);
+    };
+    b.addEventListener('pointerenter', show);
+    b.addEventListener('focus', show);
+    b.addEventListener('pointerleave', RGC.tip.hide);
+    b.addEventListener('blur', RGC.tip.hide);
+    b.addEventListener('click', function() {
+      var e = document.getElementById('rpt-' + i); if (!e) return;
+      document.querySelectorAll('.rpt-entry.hit').forEach(function(x){ x.classList.remove('hit'); });
+      e.classList.add('hit');
+      var body = e.querySelector('.rpt-body'); if (body) body.classList.add('open');
+      e.scrollIntoView({block: 'center', behavior: 'smooth'});
+    });
+    strip.appendChild(b);
+  });
+  document.getElementById('health-tally').innerHTML =
+    '<b>' + n.ok + '</b> healthy \u00b7 <b>' + n.warn + '</b> warning \u00b7 <b>' + n.err + '</b> elevated';
+  document.getElementById('health-from').textContent = _fmtTs((reports[0] || {}).ts);
+  document.getElementById('health-to').textContent = _fmtTs((reports[reports.length - 1] || {}).ts);
+  document.getElementById('health-section').style.display = '';
+}
 function toggleRpt(hdr) {
   var body = hdr.nextElementSibling;
   if (body && body.classList.contains('rpt-body')) body.classList.toggle('open');

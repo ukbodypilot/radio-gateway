@@ -4,6 +4,42 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+The web UI gets history: charts and timelines on most pages, a shell that
+remembers where you were, and a phone layout that fits the screen.
+
+- **Shell.** The address tracks the open page (`#/routing`), so a reload or a
+  bookmark returns to it. Menus open on hover and close when you click into
+  the page. The health LED follows the 1 s status poll instead of a 60 s one.
+  MP3/PCM volumes are remembered. Meters gain a peak-hold tick. On a phone the
+  header is three rows and the meters two columns. Fixed: removing a meter row
+  referenced two undefined variables.
+- **Overview.** Trend tiles for CPU, temperature, RAM, network and gateway
+  memory, and an Activity timeline: audio per recorded bus (from the loop
+  recorder) and up/down per endpoint and for the gateway (from Prometheus),
+  over 1 h / 6 h / 24 h.
+- **Dashboard pages.** Tabs across Overview / Endpoints / Services / Operate.
+  Endpoint cards: one row per direction (level, mute, gain), a gain readout
+  that follows the slider, gauges for CPU/temp/RAM/disk, a 24 h link strip and
+  a ping trend. Services: ADS-B trend lines, loop-recorder retention gauges.
+- **Fleet Manager.** A run-history strip, one block per report; click a block
+  to open that report. Timestamps read `Nov 09 06:03`.
+- **TX Log.** Transmissions-per-day bars (click a day to jump to it) and a
+  weekday-by-hour heat map, from the new `GET /transcription/stats?days=N`.
+  Rows older than today show their date.
+- **GPS.** A sky plot of satellite positions. A signal of 30 dB-Hz or more now
+  counts as strong; the old cut-off of 35 painted a healthy fix amber.
+- **SDR.** A Channel Activity timeline per recorded SDR bus.
+- **New metrics**, sampled on scrape: `rg_host_mem_pct`, `rg_host_net_rx_bps`,
+  `rg_host_net_tx_bps`, `rg_adsb_aircraft`, `rg_adsb_msg_rate`, and
+  `rg_link_endpoint_ping_ms` per endpoint. Until the gateway has been
+  restarted with these, the matching charts show only what the page has seen
+  since it was opened.
+- `web_pages/charts.js`: a small dependency-free chart kit (sparkline, strip
+  timeline, histogram, shared tooltip) used by all of the above.
+- Fixed: Transcribe and TX Log threw `openNav is not defined` on every load;
+  unstyled form fields rendered as white boxes; six pages scrolled sideways
+  on a phone.
+
 ## [5.3.2] -- 2026-11-09
 
 The SDR restarts itself once a day, the gateway's CPU use is now graphed in

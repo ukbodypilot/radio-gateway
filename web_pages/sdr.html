@@ -225,6 +225,21 @@
   .sect-head.mb-2 { margin-bottom:var(--s-2); }
   .half-grid { display:grid; grid-template-columns:1fr 1fr; gap:var(--s-3); }
   .check-grid.mt-1 { margin-top:var(--s-1); }
+  .sa-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--s-2); }
+  .sa-head .sect-head { margin:0; }
+  .sa-row { display:grid; grid-template-columns:9.5em minmax(0,1fr) 5.5em; gap:var(--s-2); align-items:center; margin:3px 0; }
+  .sa-name { font-size:var(--f-xs); font-weight:600; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sa-freq { color:var(--t-accent); font-weight:400; }
+  .sa-sum  { color:var(--t-text-dim); font-size:var(--f-xs); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .sa-axis { margin-left:calc(9.5em + var(--s-2)); margin-right:calc(5.5em + var(--s-2)); }
+  /* Phone: side-by-side blocks stack instead of pushing the page wide.
+     Kept last so it wins over the base grid rules above. */
+  @media (max-width:700px) {
+    .status-row, .dual-grid, .half-grid { grid-template-columns:minmax(0,1fr); }
+    .f-row .ctl { min-width:0; }
+    .ch-row { flex-wrap:wrap; }
+    .ch-freq { width:96px; }
+  }
 </style>
 </head>
 <body>
@@ -235,6 +250,18 @@
   <button id="mode-btn-dual" class="mode-btn active" onclick="switchMode('dual')">Dual Tuner (Master/Slave)</button>
   <button id="mode-btn-single" class="mode-btn" onclick="switchMode('single')">Single Tuner (Multi-Channel)</button>
   <span id="mode-switch-status" class="mode-status"></span>
+</div>
+
+<!-- Channel activity (both modes) -->
+<div class="status-card mb-3" id="sdr-act-card" style="display:none">
+  <div class="sa-head">
+    <h3 class="sect-head">Channel Activity</h3>
+    <span class="rgc-range" id="sdr-act-range" role="group" aria-label="Time window">
+      <button type="button" data-h="1">1h</button><button type="button" data-h="6">6h</button><button type="button" data-h="24">24h</button>
+    </span>
+  </div>
+  <div id="sdr-act-rows"></div>
+  <div class="rgc-axis sa-axis" id="sdr-act-axis"></div>
 </div>
 
 <div id="dual-mode-ui">
@@ -653,6 +680,7 @@
 </div><!-- end single-mode-ui -->
 
 <script src="/pages/common.js"></script>
+<script src="/pages/charts.js"></script>
 <script>
 var initialLoad = true;
 var currentMode = 'dual';
@@ -1311,6 +1339,42 @@ createPoller('/sdrstatus', 1000, function(d) {
     if (initialLoad) { loadSettingsToUI(d); initialLoad = false; }
   }
 });
+
+// ── Channel activity ────────────────────────────────────────────────────────
+// When each recorded SDR bus had audio, from the loop recorder's stored
+// waveform — so the depth is the recorder's retention, and a bus that is
+// not being recorded has no row.
+var SA_BINS = 240, _saHours = 6, _saTimer = null, _saGen = 0;
+try { var _sh = parseInt(localStorage.getItem('rg.sdrActHours'), 10); if (_sh === 1 || _sh === 6 || _sh === 24) _saHours = _sh; } catch (e) {}
+function sdrActLoad() {
+  var gen = ++_saGen, end = Date.now(), start = end - _saHours * 3600000;
+  document.querySelectorAll('#sdr-act-range button').forEach(function(b) { b.classList.toggle('on', parseInt(b.getAttribute('data-h'), 10) === _saHours); });
+  RGC.loopActivity(start, end, SA_BINS).then(function(rows) {
+    if (gen !== _saGen) return;
+    rows = rows.filter(function(r) { return /^sdr/i.test(r.id); });
+    var card = document.getElementById('sdr-act-card'), box = document.getElementById('sdr-act-rows');
+    card.style.display = rows.length ? '' : 'none';
+    if (!rows.length) return;
+    box.innerHTML = rows.map(function(r) {
+      return '<div class="sa-row"><span class="sa-name">' + RGC.esc(r.name) + (r.freq ? ' <span class="sa-freq">' + RGC.esc(r.freq) + '</span>' : '')
+           + '</span><span class="sa-strip"></span><span class="sa-sum">' + (r.busyPct == null ? 'no data' : r.busyPct.toFixed(r.busyPct < 10 ? 1 : 0) + '% busy') + '</span></div>';
+    }).join('');
+    box.querySelectorAll('.sa-strip').forEach(function(el, i) {
+      RGC.strip(el, {start: start, end: end, bins: rows[i].bins,
+        paint: function(b) { return b > 0 ? {color: '--t-accent', alpha: Math.min(1, 0.3 + b / 70)} : null; },
+        describe: function(b) { return b > 0 ? 'audio, peak ' + b + '%' : 'quiet'; }});
+    });
+    RGC.timeAxis(document.getElementById('sdr-act-axis'), start, end);
+  });
+  clearTimeout(_saTimer);
+  _saTimer = setTimeout(sdrActLoad, _saHours === 1 ? 30000 : _saHours === 6 ? 120000 : 300000);
+}
+document.getElementById('sdr-act-range').addEventListener('click', function(e) {
+  var h = parseInt(e.target.getAttribute('data-h'), 10); if (!h) return;
+  _saHours = h; try { localStorage.setItem('rg.sdrActHours', String(h)); } catch (x) {}
+  sdrActLoad();
+});
+sdrActLoad();
 </script>
 </body>
 </html>

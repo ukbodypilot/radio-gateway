@@ -15,6 +15,7 @@
 <div class="panel" id="system-panel">
   <div class="panel-head"><h2 class="panel-title">System</h2></div>
   <div id="sysinfo">Loading...</div>
+  <div class="trend-grid" id="trend-grid" aria-label="Trends, last hour"></div>
 </div>
 
 <!-- ═══ Gateway status flags ═══ -->
@@ -42,7 +43,26 @@
   </div>
 </div>
 
+<!-- ═══ Activity — who was busy, and what was connected, over time ═══ -->
+<div class="panel" id="activity-panel">
+  <div class="panel-head">
+    <h2 class="panel-title">Activity</h2>
+    <span class="rgc-range" id="act-range" role="group" aria-label="Time window">
+      <button type="button" data-h="1">1h</button><button type="button" data-h="6">6h</button><button type="button" data-h="24">24h</button>
+    </span>
+  </div>
+  <div id="act-rows"><div class="empty"><span class="empty-hint">Loading history&hellip;</span></div></div>
+  <div class="rgc-axis act-axis" id="act-axis"></div>
+  <div class="act-legend">
+    <span><i style="background:var(--t-accent)"></i>audio on the bus (brighter = louder)</span>
+    <span><i style="background:var(--t-ok);opacity:.6"></i>connected</span>
+    <span><i style="background:var(--t-err)"></i>down</span>
+    <span><i style="background:#05080b;border:1px solid var(--t-border)"></i>no data</span>
+  </div>
+</div>
+
 <script src="/pages/common.js"></script>
+<script src="/pages/charts.js"></script>
 <script src="/pages/dash.js"></script>
 <script>
 // ── Annunciator chip update ──
@@ -51,6 +71,14 @@ function setChip(id, state, val, live) {
   var el = document.getElementById(id); if (!el) return;
   var cls = 'chip ' + state + (live ? ' live' : '');
   if (el.className !== cls) el.className = cls;
+  // Remember when a lamp last changed colour (since this page was opened)
+  // and say so on hover — a lamp that just went green reads differently
+  // from one that has been green all day.
+  if (el._state !== undefined && el._state !== state) el._changed = Date.now();
+  el._state = state;
+  var word = {ok: 'OK', warn: 'warning', err: 'fault', off: 'off'}[state] || state;
+  el.title = el.querySelector('.chip-name').textContent + ': ' + word
+           + (el._changed ? ' \u2014 changed at ' + RGC.fmtClock(el._changed, true) : ' \u2014 no change since this page was opened');
   setText(el.querySelector('.chip-val'), val);
 }
 
@@ -117,7 +145,138 @@ createPoller('/sysinfo',2000,function(s){
   if(s.uptime)h+='<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
   h+='</div>';
   if(h!==_lastSysinfoHTML){_lastSysinfoHTML=h;document.getElementById('sysinfo').innerHTML=h;}
+  trendFeed(s);
 });
+
+// ── Trend tiles ─────────────────────────────────────────────────────────────
+// Each tile shows the last hour. History comes from Prometheus where the
+// gateway records the metric; where it does not (yet), the tile draws what
+// this page has seen since it was opened and says so in its tooltip.
+function _kb(v){ return fmtBytes(v); }
+var TRENDS = [
+  {id:'cpu',  name:'CPU',       q:'100*(1-sum(rate(rg_host_cpu_seconds_total{mode="idle"}[2m]))/sum(rate(rg_host_cpu_seconds_total[2m])))',
+   live:function(s){return s.cpu_pct;}, fmt:function(v){return v.toFixed(1)+'%';}, min:0, max:100},
+  {id:'temp', name:'CPU temp',  q:'rg_cpu_temp_c', color:'var(--t-warn)',
+   live:function(s){var t=s.temps||[];for(var i=0;i<t.length;i++)if(/core/i.test(t[i].label))return t[i].temp;return NaN;},
+   fmt:function(v){return v.toFixed(0)+'\u00b0C';}, minSpan:10},
+  {id:'ram',  name:'RAM',       q:'rg_host_mem_pct',
+   live:function(s){return s.mem_pct;}, fmt:function(v){return v.toFixed(1)+'%';}, min:0, max:100},
+  {id:'rx',   name:'Net down',  q:'rg_host_net_rx_bps', color:'var(--t-ok)',
+   live:function(s){return s.net_rx_bps;}, fmt:_kb, min:0, minSpan:1024},
+  {id:'tx',   name:'Net up',    q:'rg_host_net_tx_bps', color:'var(--t-ok)',
+   live:function(s){return s.net_tx_bps;}, fmt:_kb, min:0, minSpan:1024},
+  {id:'gwmem',name:'Gateway memory', q:'rg_process_resident_memory_bytes/1048576',
+   live:function(){return NaN;}, fmt:function(v){return v.toFixed(0)+' MB';}, minSpan:50}
+];
+(function(){
+  var g=document.getElementById('trend-grid'), h='';
+  TRENDS.forEach(function(t){
+    h+='<div class="trend" id="trend-'+t.id+'"><div class="trend-head"><span class="trend-name">'+t.name
+      +'</span><span class="trend-val">--</span></div><div class="trend-spark"></div></div>';
+    t.roll=RGC.rolling(1800); t.hist=null;
+  });
+  g.innerHTML=h;
+})();
+function trendDraw(t){
+  var el=document.getElementById('trend-'+t.id), pts=t.hist||t.roll.points();
+  el.title=t.hist?'Last hour':'Since this page was opened (no stored history for this yet)';
+  RGC.spark(el.querySelector('.trend-spark'), pts, {fmt:t.fmt, color:t.color, min:t.min, max:t.max, minSpan:t.minSpan});
+  var last=pts.length?pts[pts.length-1][1]:NaN;
+  setText(el.querySelector('.trend-val'), isFinite(last)?t.fmt(last):'--');
+}
+function trendFeed(s){
+  TRENDS.forEach(function(t){
+    var v=t.live(s);
+    t.roll.push(v);
+    // Keep the newest sample current between history refreshes.
+    if(t.hist&&isFinite(v)) t.hist[t.hist.length-1]=[Date.now(),v];
+    trendDraw(t);
+  });
+}
+function trendHistory(){
+  var end=Date.now()/1000;
+  TRENDS.forEach(function(t){
+    RGC.prom(t.q,end-3600,end,30).then(function(res){
+      t.hist=(res.length&&res[0].points.length>1)?res[0].points:null;
+      trendDraw(t);
+    });
+  });
+}
+trendHistory(); setInterval(trendHistory,60000);
+
+// ── Activity timeline ───────────────────────────────────────────────────────
+// Audio rows come from the loop recorder's stored waveform (one row per
+// recorded bus). Connection rows come from Prometheus (rg_link_endpoint_up
+// per endpoint, `up` for the gateway process itself).
+var ACT_BINS=240, _actHours=1, _actTimer=null, _actGen=0;
+try{ var _ah=parseInt(localStorage.getItem('rg.actHours'),10); if(_ah===1||_ah===6||_ah===24)_actHours=_ah; }catch(e){}
+function actPaintAudio(b){ return b>0?{color:'--t-accent',alpha:Math.min(1,0.3+b/70)}:null; }
+function actPaintUp(b){ return b>=0.5?{color:'--t-ok',alpha:0.55}:{color:'--t-err',alpha:1}; }
+function actLoad(){
+  var gen=++_actGen, end=Date.now(), start=end-_actHours*3600000, binMs=(end-start)/ACT_BINS;
+  document.querySelectorAll('#act-range button').forEach(function(b){ b.classList.toggle('on', parseInt(b.getAttribute('data-h'),10)===_actHours); });
+  var audio=fetch('/loop/buses').then(function(r){return r.json();}).then(function(buses){
+    return Promise.all((buses||[]).map(function(b){
+      return fetch('/loop/waveform?bus='+encodeURIComponent(b.id)+'&start='+(start/1000)+'&end='+(end/1000))
+        .then(function(r){return r.json();}).then(function(w){
+          var bins=new Array(ACT_BINS), busy=0, total=0, res=(w.resolution||1)*1000, pk=w.peaks||[];
+          for(var i=0;i<pk.length;i++){
+            var t=w.start*1000+i*res, k=Math.floor((t-start)/binMs);
+            if(k<0||k>=ACT_BINS) continue;
+            if(bins[k]===undefined||pk[i]>bins[k]) bins[k]=pk[i];
+            total++; if(pk[i]>0) busy++;
+          }
+          return {name:b.name||b.id, sub:b.freq?b.freq+' MHz':'', bins:bins, paint:actPaintAudio,
+                  describe:function(v){return v>0?'audio, peak '+v+'%':'quiet';},
+                  sum:total?(busy/total*100).toFixed(busy/total<0.1?1:0)+'% busy':'no data'};
+        }).catch(function(){return null;});
+    }));
+  }).catch(function(){return [];});
+  function upRows(q,nameOf){
+    return RGC.prom(q,start/1000,end/1000,binMs/1000).then(function(res){
+      return res.map(function(r){
+        var bins=new Array(ACT_BINS), up=0, n=0;
+        r.points.forEach(function(p){
+          var k=Math.min(ACT_BINS-1,Math.max(0,Math.floor((p[0]-start)/binMs)));
+          bins[k]=bins[k]===undefined?p[1]:Math.min(bins[k],p[1]);
+        });
+        for(var i=0;i<ACT_BINS;i++) if(bins[i]!==undefined){ n++; if(bins[i]>=0.5) up++; }
+        return {name:nameOf(r.metric), sub:'', bins:bins, paint:actPaintUp,
+                describe:function(v){return v>=0.5?'connected':'down';},
+                sum:n?(up/n*100).toFixed(up===n?0:1)+'% up':'no data'};
+      });
+    });
+  }
+  Promise.all([audio, upRows('min_over_time(rg_link_endpoint_up['+Math.max(15,Math.round(binMs/1000))+'s])',function(m){return m.endpoint||'endpoint';}),
+               upRows('min_over_time(up{job="radio-gateway"}['+Math.max(15,Math.round(binMs/1000))+'s])',function(){return 'Gateway';})])
+  .then(function(r){
+    if(gen!==_actGen) return;   // a newer window was picked meanwhile
+    var groups=[['Audio',r[0].filter(Boolean)],['Connections',r[2].concat(r[1])]], box=document.getElementById('act-rows'), h='', rows=[];
+    groups.forEach(function(g){
+      if(!g[1].length) return;
+      h+='<div class="act-group">'+g[0]+'</div>';
+      g[1].forEach(function(row){
+        h+='<div class="act-row"><span class="act-name" title="'+esc(row.name+(row.sub?' \u2014 '+row.sub:''))+'">'+esc(row.name)
+          +'</span><span class="act-strip"></span><span class="act-sum">'+esc(row.sum)+'</span></div>';
+        rows.push(row);
+      });
+    });
+    if(!rows.length){ box.innerHTML='<div class="empty"><span class="empty-hint">No history available \u2014 needs the loop recorder or Prometheus</span></div>'; return; }
+    box.innerHTML=h;
+    box.querySelectorAll('.act-strip').forEach(function(el,i){
+      RGC.strip(el,{start:start,end:end,bins:rows[i].bins,paint:rows[i].paint,describe:rows[i].describe});
+    });
+    RGC.timeAxis(document.getElementById('act-axis'),start,end);
+  });
+  clearTimeout(_actTimer);
+  _actTimer=setTimeout(actLoad,_actHours===1?30000:_actHours===6?120000:300000);
+}
+document.getElementById('act-range').addEventListener('click',function(e){
+  var h=parseInt(e.target.getAttribute('data-h'),10); if(!h) return;
+  _actHours=h; try{localStorage.setItem('rg.actHours',String(h));}catch(x){}
+  actLoad();
+});
+actLoad();
 
 // ── Slow chips (10s): workers, loop, GPS, ADS-B, USB/IP, automation ──
 // since=2100 → status only, skips the transcript payload we don't need here.

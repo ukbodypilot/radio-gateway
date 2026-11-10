@@ -111,7 +111,7 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
 
 /* ── Loop recorder rows ── */
 .loop-list { display:flex; flex-direction:column; gap:var(--s-1); }
-.loop-bus  { display:flex; gap:var(--s-3); align-items:center; padding:2px 0; font-size:var(--f-sm); }
+.loop-bus  { display:flex; flex-wrap:wrap; gap:0 var(--s-3); align-items:center; padding:2px 0; font-size:var(--f-sm); }
 .loop-bus .lb-name { color:var(--t-text); min-width:80px; }
 .loop-bus .lb-meta { color:var(--t-text-dim); min-width:60px; }
 .loop-bus .lb-disk { color:var(--t-ok); min-width:55px; }
@@ -173,7 +173,30 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
   body.cols2 { column-count:2; column-gap:var(--s-4); column-fill:balance; }
   body.cols2 #top-panel, body.cols2 #toast-container { column-span:all; }
   body.cols2 .panel { break-inside:avoid; display:block; }
+  body.cols2 .dash-tabs { column-span:all; }
+  /* Space panels from below, not above: a top margin survives at the top of
+     the first column but is dropped at a column break, which left the two
+     columns starting at different heights. */
+  body.cols2 .panel { margin-top:0; margin-bottom:var(--s-3); }
 }
+
+/* ── Sub-page tabs — injected by dash.js on all four dashboard pages so the
+   current page is visible and its siblings are one click away. ── */
+.dash-tabs { display:flex; gap:2px; border-bottom:1px solid var(--t-border); margin-bottom:var(--s-3); overflow-x:auto; scrollbar-width:none; }
+.dash-tabs a {
+  padding:var(--s-1) var(--s-4); color:var(--t-text-dim); white-space:nowrap;
+  font-size:var(--f-xs); font-weight:600; letter-spacing:0.08em; text-transform:uppercase;
+  border-bottom:2px solid transparent; margin-bottom:-1px;
+}
+.dash-tabs a:hover { color:var(--t-text); text-decoration:none; }
+.dash-tabs a.active { color:var(--t-accent); border-bottom-color:var(--t-accent); }
+.dash-tabs + .panel { margin-top:0; }
+@media (max-width:480px) { .dash-tabs a { flex:1; text-align:center; padding:var(--s-2) var(--s-1); letter-spacing:0.04em; } }
+
+/* System panel: wider cells so two-value readouts (Disk I/O, Net) fit
+   without their halves colliding. */
+#sysinfo .st-row { grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); }
+.st-item .st-fixed { flex-shrink:0; }
 
 /* ── Link endpoint level bars + controls ── */
 .link-body { display:flex; gap:var(--s-3); align-items:flex-start; }
@@ -189,11 +212,16 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
 .link-fill.rx { background:var(--t-ok); }
 .link-fill.tx { background:var(--t-err); }
 .link-ctrl-sep { border-top:1px solid var(--t-border); margin-top:var(--s-2); padding-top:var(--s-2); }
-.link-mute { width:3em; padding:var(--s-1); font-size:var(--f-xs); border:1px solid var(--t-border);
+.link-mute { width:4.2em; padding:var(--s-1); font-size:var(--f-xs); border:1px solid var(--t-border);
              border-radius:var(--r-sm); background:var(--t-btn); color:var(--t-text); cursor:pointer; }
 .link-mute.on { background:color-mix(in srgb,var(--t-err) 20%,var(--t-panel)); border-color:var(--t-err); color:var(--t-err); }
-.link-gain-val { color:var(--t-text-dim); font-size:var(--f-xs); width:3.5em; font-variant-numeric:tabular-nums; }
-.link-slider   { flex:1; }
+.link-gain-val { color:var(--t-text-dim); font-size:var(--f-xs); width:4em; text-align:right; font-variant-numeric:tabular-nums; }
+.link-slider   { width:160px; }
+/* One row per direction: label, level bar, then that direction's mute +
+   gain. (Was four rows — two bars, then two anonymous "Mute" sliders.) */
+.link-row.link-dir { flex-wrap:wrap; }
+.link-row.link-dir .link-bar { flex:1 1 180px; }
+.link-ctl { display:flex; align-items:center; gap:var(--s-2); flex:0 0 auto; }
 .link-row.mt-1 { margin-top:var(--s-1); }
 .link-meta { font-size:var(--f-xs); color:var(--t-text-dim); margin-bottom:var(--s-2); }
 
@@ -216,7 +244,8 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
   padding:var(--s-1) var(--s-2); font-family:inherit; font-size:var(--f-sm);
 }
 textarea.ctrl-input { width:100%; box-sizing:border-box; padding:var(--s-2); resize:vertical; }
-.ctrl-field { display:flex; gap:var(--s-1); align-items:center; }
+.ctrl-field { display:flex; gap:var(--s-1); align-items:center; min-width:0; }
+.ctrl-field > select.ctrl-input { min-width:0; }
 .ctrl-field label { color:var(--t-text-dim); font-size:var(--f-xs); white-space:nowrap; }
 .ctrl-field label.w4 { width:4em; }
 .ctrl-field label.w3 { width:3em; }
@@ -257,3 +286,48 @@ details.tx-opts summary::before { content:'▶ '; }
 details[open].tx-opts summary::before { content:'▼ '; }
 details.tx-opts summary:hover { color:var(--t-text); }
 details.tx-opts .tx-opts-body { display:flex; flex-direction:column; gap:var(--s-1); margin-top:var(--s-1); }
+
+/* ── Overview: trend tiles + activity timeline ── */
+.trend-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:var(--s-2);
+              margin-top:var(--s-3); padding-top:var(--s-3); border-top:1px solid var(--t-border); }
+.trend { background:var(--t-btn); border:1px solid var(--t-border); border-radius:var(--r-sm); padding:var(--s-2) var(--s-2) 0; overflow:hidden; }
+.trend-head { display:flex; justify-content:space-between; align-items:baseline; gap:var(--s-2); padding:0 var(--s-1); }
+.trend-name { color:var(--t-text-dim); font-size:var(--f-xs); font-weight:600; letter-spacing:0.06em; text-transform:uppercase; }
+.trend-val  { font-size:var(--f-base); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.trend .rgc-spark { margin:var(--s-1) calc(-1 * var(--s-2)) 0; }
+.act-row { display:grid; grid-template-columns:7.5em minmax(0,1fr) 6.5em; gap:var(--s-2); align-items:center; margin:3px 0; }
+.act-name { color:var(--t-text); font-size:var(--f-xs); font-weight:600; letter-spacing:0.04em; text-align:right;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.act-sum  { color:var(--t-text-dim); font-size:var(--f-xs); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.act-group { color:var(--t-text-mute); font-size:10px; letter-spacing:0.1em; text-transform:uppercase; margin:var(--s-2) 0 2px; }
+.act-group:first-child { margin-top:0; }
+.act-axis { margin-left:calc(7.5em + var(--s-2)); margin-right:calc(6.5em + var(--s-2)); }
+.act-legend { display:flex; flex-wrap:wrap; gap:var(--s-1) var(--s-4); margin-top:var(--s-2); color:var(--t-text-dim); font-size:var(--f-xs); }
+.act-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; vertical-align:-1px; margin-right:var(--s-1); }
+@media (max-width:600px) {
+  .act-row { grid-template-columns:5.2em minmax(0,1fr); }
+  .act-sum { display:none; }
+  .act-axis { margin-left:calc(5.2em + var(--s-2)); margin-right:0; }
+}
+
+/* ── Endpoint cards: gauges + history line ── */
+.mini-bar { display:inline-block; width:44px; height:5px; background:#05080b; border:1px solid var(--t-border);
+            border-radius:var(--r-sm); overflow:hidden; flex-shrink:0; }
+.mini-bar i { display:block; height:100%; background:var(--t-ok); }
+.mini-bar i.yellow { background:var(--t-warn); }
+.mini-bar i.red    { background:var(--t-err); }
+.ep-hist { display:grid; grid-template-columns:auto minmax(0,1fr) 5.5em auto 150px 4.5em; gap:var(--s-2); align-items:center;
+           margin-top:var(--s-2); }
+.ep-hist-lbl { color:var(--t-text-dim); font-size:var(--f-xs); letter-spacing:0.06em; text-transform:uppercase; }
+.ep-hist-sum { color:var(--t-text-dim); font-size:var(--f-xs); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ep-hist-strip.rgc-strip { height:12px; }
+.ep-hist-ping.rgc-spark { height:20px; }
+@media (max-width:700px) {
+  .ep-hist { grid-template-columns:auto minmax(0,1fr) 5.5em; }
+}
+
+/* ── Services: ADS-B trends, loop retention gauge ── */
+.adsb-trends { display:grid; grid-template-columns:1fr 1fr; gap:var(--s-3); margin-top:var(--s-2); }
+.adsb-cap { display:flex; justify-content:space-between; color:var(--t-text-dim); font-size:10px; letter-spacing:0.06em; text-transform:uppercase; }
+.adsb-cap span + span { color:var(--t-text-mute); text-transform:none; letter-spacing:0; }
+.adsb-trends .rgc-spark { height:32px; }

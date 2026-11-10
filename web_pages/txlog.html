@@ -38,6 +38,23 @@
   .answer-box.error    { color: var(--t-err-soft);  border-left: 3px solid var(--t-err); }
   .answer-box.ok       { border-left: 3px solid var(--t-ok); }
 
+  .act-panel {
+    display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--s-4);
+    background: var(--t-panel); border: 1px solid var(--t-border); border-radius: var(--r-md);
+    padding: var(--s-2) var(--s-3) var(--s-3); flex-shrink: 0;
+  }
+  @media (max-width: 800px) { .act-panel { grid-template-columns: minmax(0, 1fr); } }
+  .act-cap { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-2);
+             color: var(--t-text-dim); font-size: var(--f-xs); text-transform: uppercase; letter-spacing: .06em;
+             margin-bottom: var(--s-2); }
+  .act-note { color: var(--t-text-mute); font-size: 10px; text-transform: none; letter-spacing: 0; }
+  .act-ends { display: flex; justify-content: space-between; font-size: 10px; color: var(--t-text-mute); margin-top: var(--s-1); }
+  #act-bars.rgc-bars { height: 84px; }
+  .heat { display: grid; grid-template-columns: 2.4em repeat(24, minmax(0, 1fr)); gap: 2px; font-size: 10px; color: var(--t-text-mute); }
+  .heat .hc { height: 10px; border-radius: 1px; background: var(--t-accent); }
+  .heat .hc.z { background: #05080b; outline: 1px solid var(--t-border); outline-offset: -1px; }
+  .heat .hc:hover { outline: 1px solid var(--t-text); }
+  .heat .hl { line-height: 10px; }
   .history-panel {
     display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
     background: var(--t-panel); border: 1px solid var(--t-border);
@@ -133,7 +150,7 @@
 </head>
 <body>
 <script src="/pages/common.js"></script>
-<script>openNav();</script>
+<script src="/pages/charts.js"></script>
 
 <div class="query-panel">
   <div class="query-row">
@@ -163,6 +180,19 @@
 <div id="sticky-player" class="sticky-player empty">
   <audio id="hit-audio" controls preload="none"></audio>
   <span id="sp-meta" class="sp-meta">no clip loaded</span>
+</div>
+
+<!-- Activity: when the channels are busy -->
+<div class="act-panel" id="act-panel" style="display:none">
+  <div class="act-col act-days">
+    <div class="act-cap"><span>Transmissions per day</span><span id="act-range" class="act-note"></span></div>
+    <div id="act-bars"></div>
+    <div class="act-ends"><span id="act-from"></span><span class="act-note">click a day to jump to it</span><span id="act-to"></span></div>
+  </div>
+  <div class="act-col act-heat">
+    <div class="act-cap"><span>Busy hours</span><span class="act-note">weekday &times; hour, same period</span></div>
+    <div id="act-heat" class="heat"></div>
+  </div>
 </div>
 
 <div class="history-panel">
@@ -203,9 +233,100 @@ function _esc(s) {
   return d.innerHTML;
 }
 
+// Today's rows show the time alone; anything older carries its date, so a
+// log that has not been written for a while does not read as "last night".
 function _fmtTime(ts) {
-  var d = new Date(ts * 1000);
-  return d.toTimeString().slice(0, 8);
+  var d = new Date(ts * 1000), t = d.toTimeString().slice(0, 8);
+  return d.toDateString() === new Date().toDateString() ? t : RGC.fmtDay(ts * 1000) + ' ' + t;
+}
+
+// ── Activity charts ─────────────────────────────────────────────────────────
+// Hourly counts come from /transcription/stats. A gateway that predates that
+// route answers 404; the page then builds the same buckets from the newest
+// 2,000 rows so the charts still work (over a shorter span).
+var ACT_DAYS = 30;
+function actLoad() {
+  fetch('/transcription/stats?days=' + ACT_DAYS)
+    .then(function(r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function(s) { actRender(s.buckets || [], s.newest || 0, false); })
+    .catch(function() {
+      var map = {}, newest = 0;
+      function page(off) {
+        return fetch('/transcription/log?limit=500&offset=' + off).then(function(r) { return r.json(); }).then(function(d) {
+          var rows = d.rows || [];
+          rows.forEach(function(r) {
+            var h = Math.floor(r.ts / 3600) * 3600;
+            (map[h] = map[h] || [h, 0, 0])[1]++; map[h][2] += r.duration || 0;
+            if (r.ts > newest) newest = r.ts;
+          });
+          if (rows.length === 500 && off < 1500) return page(off + 500);
+        });
+      }
+      page(0).then(function() {
+        var b = Object.keys(map).map(function(k) { return map[k]; }).sort(function(a, c) { return a[0] - c[0]; });
+        actRender(b, newest, true);
+      }).catch(function(){});
+    });
+}
+function actRender(buckets, newest, partial) {
+  var panel = document.getElementById('act-panel');
+  if (!buckets.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  // Day bins in local time, ending on the day of the newest entry.
+  var end = new Date(newest * 1000); end.setHours(24, 0, 0, 0);
+  var first = new Date(buckets[0][0] * 1000); first.setHours(0, 0, 0, 0);
+  var nDays = Math.min(ACT_DAYS, Math.max(1, Math.round((end - first) / 86400000)));
+  var days = [], heat = [], i;
+  for (i = 0; i < nDays; i++) {
+    var d0 = new Date(end); d0.setDate(d0.getDate() - (nDays - i));
+    days.push({t0: d0.getTime(), v: 0, secs: 0});
+  }
+  for (i = 0; i < 7 * 24; i++) heat.push(0);
+  buckets.forEach(function(b) {
+    var d = new Date(b[0] * 1000);
+    for (var k = days.length - 1; k >= 0; k--) if (b[0] * 1000 >= days[k].t0) { days[k].v += b[1]; days[k].secs += b[2]; break; }
+    if (b[0] * 1000 >= days[0].t0) heat[((d.getDay() + 6) % 7) * 24 + d.getHours()] += b[1];
+  });
+  days.forEach(function(d) {
+    d.label = RGC.fmtDay(d.t0) + ' \u00b7 ' + Math.round(d.secs / 60) + ' min of audio';
+  });
+  RGC.bars(document.getElementById('act-bars'), days, {
+    fmt: function(v) { return v + (v === 1 ? ' transmission' : ' transmissions'); },
+    onClick: function(day) {
+      // Rows are newest-first: skip everything newer than the end of that day.
+      var cut = day.t0 + 86400000, newer = 0;
+      buckets.forEach(function(b) { if (b[0] * 1000 >= cut) newer += b[1]; });
+      loadPage(newer);
+      document.querySelector('.history-panel').scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+  });
+  document.getElementById('act-from').textContent = RGC.fmtDay(days[0].t0);
+  document.getElementById('act-to').textContent = RGC.fmtDay(days[days.length - 1].t0);
+  document.getElementById('act-range').textContent = partial ? 'newest 2,000 entries' : nDays + ' days to ' + RGC.fmtDay(newest * 1000);
+  // Heat map: one hue, darker-to-brighter = more traffic; empty hours stay dark.
+  var max = Math.max.apply(null, heat), DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], h = '', c;
+  for (var r = 0; r < 7; r++) {
+    h += '<span class="hl">' + DOW[r] + '</span>';
+    for (c = 0; c < 24; c++) {
+      var v = heat[r * 24 + c];
+      h += '<span class="hc' + (v ? '' : ' z') + '" data-t="' + DOW[r] + ' ' + String(c).padStart(2, '0') + ':00" data-v="' + v + '"'
+         + (v ? ' style="opacity:' + (0.18 + 0.82 * v / max).toFixed(2) + '"' : '') + '></span>';
+    }
+  }
+  h += '<span></span>';
+  for (c = 0; c < 24; c++) h += '<span>' + (c % 6 === 0 ? String(c).padStart(2, '0') : '') + '</span>';
+  var box = document.getElementById('act-heat');
+  box.innerHTML = h;
+  if (!box._bound) {
+    box._bound = true;
+    box.addEventListener('pointermove', function(e) {
+      var t = e.target.getAttribute && e.target.getAttribute('data-t');
+      if (!t) { RGC.tip.hide(); return; }
+      var v = e.target.getAttribute('data-v'), rc = e.target.getBoundingClientRect();
+      RGC.tip.show('<b>' + v + (v === '1' ? ' transmission' : ' transmissions') + '</b><span>' + t + '</span>', rc.left + rc.width / 2, rc.top);
+    });
+    box.addEventListener('pointerleave', RGC.tip.hide);
+  }
 }
 
 function loadPage(offset) {
@@ -282,6 +403,7 @@ function submitQuery() {
 }
 
 loadPage(0);
+actLoad(); setInterval(actLoad, 300000);
 
 // Auto-refresh: only when on page 0 and there are actually new entries
 setInterval(function() {

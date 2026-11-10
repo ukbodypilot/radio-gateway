@@ -243,6 +243,24 @@ a:hover { text-decoration: underline; }
 
 /* Form controls */
 input, select, textarea, button { font-family: inherit; }
+/* Dark native widgets: scrollbars, select popups, date/time pickers. */
+:root { color-scheme: dark; }
+/* Baseline for text-like fields. :where() keeps specificity at zero, so any
+   page or class rule still wins — this only catches fields a page left
+   unstyled, which otherwise render as white browser-default boxes. */
+:where(input:not([type="range"], [type="checkbox"], [type="radio"], [type="file"], [type="color"], [type="button"], [type="submit"]), select, textarea) {
+  background: var(--t-btn);
+  color: var(--t-text);
+  border: 1px solid var(--t-border);
+  border-radius: var(--r-sm);
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--f-sm);
+}
+:where(input, select, textarea):focus-visible { outline: none; border-color: var(--t-accent); }
+:where(input, select, textarea)::placeholder { color: var(--t-text-mute); }
+:where(select) { max-width: 100%; }
+:where(button, select, summary, label[for], input[type="checkbox"], input[type="radio"]):not(:disabled) { cursor: pointer; }
+:where(button, input, select, textarea):disabled { opacity: 0.5; cursor: not-allowed; }
 input[type="range"] { accent-color: var(--t-accent); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
 .tgl { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--f-sm); color: var(--t-text-dim); cursor: pointer; user-select: none; }
@@ -625,3 +643,39 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
 .ann-file { color: var(--t-text-mute); }
 .ann-live { color: var(--t-ok); margin-left: auto; }
 .ann-msg  { width: 100%; box-sizing: border-box; resize: vertical; }
+
+/* ── Chart kit (charts.js) ─────────────────────────────────────────────── */
+.rgc-tip {
+  position: fixed; z-index: 1000; display: none; pointer-events: none;
+  background: var(--t-panel-hi); border: 1px solid var(--t-border-hi); border-radius: var(--r-md);
+  padding: var(--s-1) var(--s-2); font-size: var(--f-xs); line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5); white-space: nowrap;
+}
+.rgc-tip b { display: block; color: var(--t-text); font-weight: 600; }
+.rgc-tip span { color: var(--t-text-dim); }
+.rgc-spark, .rgc-strip { position: relative; display: block; touch-action: pan-y; }
+.rgc-spark { height: 40px; }
+.rgc-spark svg { display: block; width: 100%; height: 100%; }
+.rgc-spark.rgc-empty::after {
+  content: 'collecting\2026'; position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--t-text-mute); font-size: var(--f-xs);
+}
+.rgc-strip { height: 16px; background: #05080b; border: 1px solid var(--t-border); border-radius: var(--r-sm); overflow: hidden; }
+.rgc-strip canvas { display: block; width: 100%; height: 100%; }
+.rgc-cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--t-text); opacity: 0.5; display: none; pointer-events: none; }
+.rgc-dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%;
+           background: currentColor; border: 2px solid var(--t-panel); display: none; pointer-events: none; }
+.rgc-bars { display: flex; align-items: flex-end; gap: 2px; height: 56px; touch-action: pan-y; }
+.rgc-bar { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
+.rgc-bar.click { cursor: pointer; }
+.rgc-bar i { display: block; width: 100%; background: currentColor; opacity: 0.6; border-radius: 2px 2px 0 0; }
+.rgc-bar:hover i { opacity: 1; }
+.rgc-bar.sel i { opacity: 1; box-shadow: 0 0 0 1px var(--t-text); }
+.rgc-axis { position: relative; height: 16px; font-size: 10px; color: var(--t-text-mute); font-variant-numeric: tabular-nums; }
+.rgc-axis span { position: absolute; top: 2px; padding-left: 3px; border-left: 1px solid var(--t-border-hi); white-space: nowrap; }
+/* Window picker shared by chart panels */
+.rgc-range { display: inline-flex; gap: 2px; }
+.rgc-range button { font: inherit; font-size: var(--f-xs); padding: 1px var(--s-2); background: transparent; color: var(--t-text-dim);
+                    border: 1px solid transparent; border-radius: var(--r-sm); }
+.rgc-range button:hover { color: var(--t-text); }
+.rgc-range button.on { color: var(--t-accent); border-color: var(--t-border-hi); background: var(--t-btn); }

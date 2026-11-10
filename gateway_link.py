@@ -1170,6 +1170,14 @@ class GatewayLinkServer:
                                 _ev.set()
                         if cmd_name == 'ping' and ep._ping_sent > 0:
                             ep.ping_ms = round((time.monotonic() - ep._ping_sent) * 1000, 1)
+                            # Same guard as link_endpoint_up below: this
+                            # module also runs on endpoints, which have no
+                            # metrics module, so a failed import is expected.
+                            try:
+                                import metrics as _m
+                                _m.link_endpoint_ping_ms.labels(endpoint=ep.name).set(ep.ping_ms)
+                            except Exception:
+                                pass
                         elif cmd_name not in ('status', 'ping'):
                             # Suppress per-cmd ACK lines for high-volume
                             # routine commands (knob chase, periodic state)

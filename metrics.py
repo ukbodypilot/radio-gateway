@@ -8,9 +8,11 @@ callbacks. Labels stay low-cardinality (bus/engine/endpoint), never
 per-utterance.
 """
 
+import json
 import os
 import re
 import threading
+import time
 
 from log_util import log_exc
 from prometheus_client import (
@@ -93,6 +95,45 @@ link_audio_underruns_total = Counter(
     registry=REGISTRY,
 )
 
+link_endpoint_ping_ms = Gauge(
+    'rg_link_endpoint_ping_ms',
+    'Gateway-link endpoint ping round-trip time in milliseconds',
+    ['endpoint'],
+    registry=REGISTRY,
+)
+
+# Host and ADS-B gauges below exist so the dashboard can chart an hour of
+# history; they are sampled on scrape in _refresh_dashboard_history().
+host_mem_pct = Gauge(
+    'rg_host_mem_pct',
+    'Host memory in use, percent ((MemTotal - MemAvailable) / MemTotal)',
+    registry=REGISTRY,
+)
+
+host_net_rx_bps = Gauge(
+    'rg_host_net_rx_bps',
+    'Host network receive rate in bytes/second, all interfaces except lo',
+    registry=REGISTRY,
+)
+
+host_net_tx_bps = Gauge(
+    'rg_host_net_tx_bps',
+    'Host network transmit rate in bytes/second, all interfaces except lo',
+    registry=REGISTRY,
+)
+
+adsb_aircraft = Gauge(
+    'rg_adsb_aircraft',
+    'Aircraft heard by dump1090 in the last 60 seconds',
+    registry=REGISTRY,
+)
+
+adsb_msg_rate = Gauge(
+    'rg_adsb_msg_rate',
+    'ADS-B messages per second decoded by dump1090',
+    registry=REGISTRY,
+)
+
 cpu_temp_c = Gauge(
     'rg_cpu_temp_c',
     'CPU temperature in Celsius',
@@ -161,6 +202,71 @@ def _refresh_host_telemetry():
             fan_rpm.labels(fan='primary').set(rpm)
     except Exception:
         log_exc()
+
+
+# Paths are module attributes so tests can point them at fixtures.
+_MEMINFO_PATH = '/proc/meminfo'
+_NETDEV_PATH = '/proc/net/dev'
+_ADSB_JSON_PATH = '/run/dump1090-fa/aircraft.json'
+_prev_net = None       # (monotonic, rx_bytes, tx_bytes)
+_prev_adsb = None      # (monotonic, messages)
+
+
+def _refresh_dashboard_history():
+    """Sample memory, network and ADS-B on scrape (reads three small files).
+
+    Fed from the scrape, never from a web request handler: a gauge fed by
+    /sysinfo or /adsbstatus would only move while a dashboard was open.
+    Rates are averaged over the interval since the previous scrape; the
+    first scrape only primes the counters. Each source fails independently
+    and leaves its gauge at the previous value.
+    """
+    global _prev_net, _prev_adsb
+    now = time.monotonic()
+    try:
+        mem = {}
+        with open(_MEMINFO_PATH) as f:
+            for line in f:
+                key, _, rest = line.partition(':')
+                if key in ('MemTotal', 'MemAvailable'):
+                    mem[key] = int(rest.split()[0])
+        if mem.get('MemTotal'):
+            host_mem_pct.set(round(
+                100.0 * (mem['MemTotal'] - mem.get('MemAvailable', 0)) / mem['MemTotal'], 1))
+    except Exception:
+        log_exc()
+    try:
+        rx = tx = 0
+        with open(_NETDEV_PATH) as f:
+            for line in f:
+                if ':' not in line:
+                    continue
+                iface, rest = line.split(':', 1)
+                if iface.strip() == 'lo':
+                    continue
+                parts = rest.split()
+                rx += int(parts[0])
+                tx += int(parts[8])
+        if _prev_net and now > _prev_net[0]:
+            dt = now - _prev_net[0]
+            # A counter that went backwards (interface re-created) is a reset,
+            # not negative traffic.
+            host_net_rx_bps.set(round(max(0, rx - _prev_net[1]) / dt))
+            host_net_tx_bps.set(round(max(0, tx - _prev_net[2]) / dt))
+        _prev_net = (now, rx, tx)
+    except Exception:
+        log_exc()
+    if os.path.exists(_ADSB_JSON_PATH):
+        try:
+            with open(_ADSB_JSON_PATH) as f:
+                ac = json.load(f)
+            adsb_aircraft.set(sum(1 for a in ac.get('aircraft', []) if a.get('seen', 999) < 60))
+            msgs = ac.get('messages', 0)
+            if _prev_adsb and now > _prev_adsb[0]:
+                adsb_msg_rate.set(round(max(0, msgs - _prev_adsb[1]) / (now - _prev_adsb[0]), 1))
+            _prev_adsb = (now, msgs)
+        except Exception:
+            log_exc()
 
 
 # ── CPU by thread / helper process / host (read from /proc on scrape) ──
@@ -286,4 +392,5 @@ if os.path.isdir('/proc/self/task'):
 def render() -> tuple[bytes, str]:
     """Return (body, content_type) for the /metrics endpoint."""
     _refresh_host_telemetry()
+    _refresh_dashboard_history()
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST

@@ -290,6 +290,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     }
     _GET_PREFIX = (
         ('/pages/',               'g:handle_pages'),
+        ('/transcription/stats',  'g:handle_transcription_stats'),
         ('/transcription/log',    'g:handle_transcription_log'),
         ('/transcript_search',    'g:handle_transcript_search'),
         ('/loopaudio',            'g:handle_loopaudio'),

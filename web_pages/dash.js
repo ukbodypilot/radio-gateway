@@ -105,3 +105,20 @@ function sysBar(pct, tone) {
   var toneCls = tone ? (' tone-' + tone) : '';
   return '<span class="bar-pct">'+p+'%</span><span class="bar bar-rx'+toneCls+'" style="width:'+w+'px"></span>';
 }
+
+// ── Sub-page tabs ───────────────────────────────────────────────────────────
+(function() {
+  var pages = [['/dashboard','Overview'], ['/dashboard/endpoints','Endpoints'],
+               ['/dashboard/services','Services'], ['/dashboard/operate','Operate']];
+  var here = location.pathname.replace(/\/$/, '');
+  var nav = document.createElement('nav');
+  nav.className = 'dash-tabs';
+  nav.setAttribute('aria-label', 'Dashboard pages');
+  pages.forEach(function(p) {
+    var a = document.createElement('a');
+    a.href = p[0]; a.textContent = p[1];
+    if (p[0] === here) { a.className = 'active'; a.setAttribute('aria-current', 'page'); }
+    nav.appendChild(a);
+  });
+  document.body.insertBefore(nav, document.body.firstChild);
+})();

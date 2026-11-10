@@ -223,6 +223,28 @@ def handle_transcription_log(handler, parent):
         pass
 
 
+def handle_transcription_stats(handler, parent):
+    """GET /transcription/stats?days=30 — hourly counts for the TX Log charts."""
+    days = 30
+    try:
+        qs = handler.path.split('?', 1)[1] if '?' in handler.path else ''
+        for part in qs.split('&'):
+            if part.startswith('days='):
+                days = max(1, min(366, int(part[5:])))
+    except Exception:
+        log_exc()
+    tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
+    data = tl.get_hourly_stats(days) if tl else {'newest': 0, 'total': 0, 'bucket': 3600, 'buckets': []}
+    try:
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        handler.send_header('Cache-Control', 'no-cache')
+        handler.end_headers()
+        handler.wfile.write(json_mod.dumps(data).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
 def handle_loopaudio(handler, parent):
     """GET /loopaudio?bus=<id>&ts=<epoch>
 

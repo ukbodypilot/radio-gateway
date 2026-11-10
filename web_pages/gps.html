@@ -73,7 +73,22 @@
   .gps-row.mt-2 { margin-top:var(--s-2); }
   .panel-title-accent.mb-1 { margin-bottom:var(--s-1); }
   .panel-title-accent.mb-2 { margin-bottom:var(--s-2); }
-  .sat-scroll { max-height:280px; overflow-y:auto; }
+  .sat-scroll { max-height:300px; overflow-y:auto; min-width:0; }
+  /* Sky plot: centre = straight overhead, rim = horizon, north up. */
+  .sat-layout { display:grid; grid-template-columns:minmax(200px,260px) minmax(0,1fr); gap:var(--s-4); align-items:start; }
+  @media (max-width:700px) { .sat-layout { grid-template-columns:minmax(0,1fr); } .sky-wrap { max-width:300px; margin:0 auto; } }
+  .sky { display:block; width:100%; height:auto; }
+  .sky .ring { fill:none; stroke:var(--t-border-hi); stroke-width:1; }
+  .sky .rim  { fill:#05080b; stroke:var(--t-border-hi); stroke-width:1; }
+  .sky .axis { stroke:var(--t-border); stroke-width:1; }
+  .sky text  { fill:var(--t-text-dim); font-size:9px; font-family:inherit; text-anchor:middle; dominant-baseline:central; }
+  .sky text.prn { fill:var(--t-text); font-size:8px; }
+  .sky .sat { stroke:var(--t-panel); stroke-width:2; cursor:default; }
+  .sky .sat.ok { fill:var(--t-ok); } .sky .sat.warn { fill:var(--t-warn); }
+  .sky .sat.err { fill:var(--t-err); } .sky .sat.mute { fill:var(--t-text-mute); }
+  .sky-key { display:flex; flex-wrap:wrap; gap:2px var(--s-3); justify-content:center; margin-top:var(--s-1); font-size:10px; color:var(--t-text-dim); }
+  .sky-key i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+  .k-ok { background:var(--t-ok); } .k-warn { background:var(--t-warn); } .k-err { background:var(--t-err); } .k-mute { background:var(--t-text-mute); }
   .gps-input.w-60 { width:60px; }
   .gps-input.w-70 { width:70px; }
   .leaflet-bar .gps-recenter {
@@ -115,8 +130,14 @@
 
     <div class="panel">
       <div class="panel-title-accent mb-1">Satellites in View</div>
-      <div id="gps-sat-chart" class="sat-scroll">
-        <span class="gps-label">Waiting for data...</span>
+      <div class="sat-layout">
+        <div class="sky-wrap">
+          <svg id="gps-sky" class="sky" viewBox="-110 -110 220 220" role="img" aria-label="Sky plot: satellite positions by compass bearing and elevation"></svg>
+          <div class="sky-key"><span><i class="k-ok"></i>strong &ge;30</span><span><i class="k-warn"></i>fair 20&ndash;29</span><span><i class="k-err"></i>weak</span><span><i class="k-mute"></i>not tracked</span></div>
+        </div>
+        <div id="gps-sat-chart" class="sat-scroll">
+          <span class="gps-label">Waiting for data...</span>
+        </div>
       </div>
     </div>
   </div>
@@ -141,6 +162,7 @@
   </div>
 </div>
 
+<script src="/pages/charts.js"></script>
 <script>
 var _map = L.map('gps-map').setView([33.7455, -117.8677], 14);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -251,7 +273,9 @@ function updateGps() {
     for (var i = 0; i < sats.length; i++) {
       var s = sats[i];
       var pct = Math.min(100, Math.round(s.snr * 100 / 50));
-      var cls = s.snr === 0 ? 'mute' : s.snr >= 35 ? '' : s.snr >= 20 ? 'warn' : 'err';
+      // 30 dB-Hz and up is a strong signal (the old 35 cut-off painted a
+      // perfectly healthy 12-satellite fix entirely amber).
+      var cls = s.snr === 0 ? 'mute' : s.snr >= 30 ? '' : s.snr >= 20 ? 'warn' : 'err';
       ch += '<div class="sat-bar">';
       ch += '<span class="sat-prn">PRN ' + s.prn + '</span>';
       ch += '<div class="sat-track"><div class="sat-fill ' + cls + '" style="width:' + pct + '%;"></div></div>';
@@ -260,6 +284,7 @@ function updateGps() {
     }
     if (!ch) ch = '<span class="gps-label">No satellites in view</span>';
     document.getElementById('gps-sat-chart').innerHTML = ch;
+    drawSky(sats);
 
   }).catch(function(){});
 }
@@ -275,5 +300,41 @@ _recenterBtn.onAdd = function() {
   return d;
 };
 _recenterBtn.addTo(_map);
+
+// ── Sky plot ────────────────────────────────────────────────────────────────
+// Polar view of the sky: bearing clockwise from north, elevation from the
+// rim (horizon, 0°) to the centre (overhead, 90°). Signal strength is the
+// dot colour AND the tooltip/legend text.
+var _skySats = [];
+function drawSky(sats) {
+  var svg = document.getElementById('gps-sky'); if (!svg) return;
+  var R = 90, h = '<circle class="rim" r="' + R + '"/><circle class="ring" r="' + (R * 2 / 3) + '"/><circle class="ring" r="' + (R / 3) + '"/>'
+        + '<line class="axis" x1="-' + R + '" x2="' + R + '" y1="0" y2="0"/><line class="axis" y1="-' + R + '" y2="' + R + '" x1="0" x2="0"/>'
+        + '<text y="-' + (R + 10) + '">N</text><text x="' + (R + 10) + '">E</text><text y="' + (R + 10) + '">S</text><text x="-' + (R + 10) + '">W</text>'
+        + '<text x="4" y="-' + (R * 2 / 3 + 6) + '" style="text-anchor:start;font-size:7px">30\u00b0</text>'
+        + '<text x="4" y="-' + (R / 3 + 6) + '" style="text-anchor:start;font-size:7px">60\u00b0</text>';
+  _skySats = [];
+  // Weak signals first so strong ones draw on top where dots overlap.
+  sats.slice().sort(function(a, b) { return a.snr - b.snr; }).forEach(function(s) {
+    if (s.elevation == null || s.azimuth == null) return;
+    var r = (90 - Math.max(0, Math.min(90, s.elevation))) / 90 * R, a = s.azimuth * Math.PI / 180;
+    var x = r * Math.sin(a), y = -r * Math.cos(a);
+    var cls = s.snr === 0 ? 'mute' : s.snr >= 30 ? 'ok' : s.snr >= 20 ? 'warn' : 'err';
+    h += '<circle class="sat ' + cls + '" data-i="' + _skySats.length + '" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="5.5"/>'
+       + '<text class="prn" x="' + x.toFixed(1) + '" y="' + (y - 10).toFixed(1) + '">' + s.prn + '</text>';
+    _skySats.push({s: s, word: {ok: 'strong', warn: 'fair', err: 'weak', mute: 'not tracked'}[cls]});
+  });
+  svg.innerHTML = h;
+  if (svg._bound) return;
+  svg._bound = true;
+  svg.addEventListener('pointermove', function(e) {
+    var i = e.target.getAttribute && e.target.getAttribute('data-i');
+    if (i == null) { RGC.tip.hide(); return; }
+    var o = _skySats[+i], rc = e.target.getBoundingClientRect();
+    RGC.tip.show('<b>PRN ' + o.s.prn + ' \u00b7 ' + o.s.snr + ' dB-Hz (' + o.word + ')</b><span>bearing ' + o.s.azimuth + '\u00b0, elevation ' + o.s.elevation + '\u00b0</span>',
+                 rc.left + rc.width / 2, rc.top);
+  });
+  svg.addEventListener('pointerleave', RGC.tip.hide);
+}
 </script>
 </body></html>

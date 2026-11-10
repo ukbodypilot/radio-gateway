@@ -46,7 +46,7 @@
   /* VFO grid */
   .vfo-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
     gap: var(--s-3);
     margin-bottom: var(--s-3);
   }
@@ -297,6 +297,10 @@
   .slider-stack { margin-bottom: var(--s-2); }
   .icon-row.mt-3 { margin-top: var(--s-3); }
   .ptt-spacer { height: 10px; }
+  /* Phone: stack the paired panels (kept last so it wins over the grids above). */
+  @media (max-width: 700px) {
+    .common-grid, .mem-grid { grid-template-columns: minmax(0, 1fr); }
+  }
 </style>
 </head><body>
 

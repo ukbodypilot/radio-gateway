@@ -31,6 +31,7 @@
 </div>
 
 <script src="/pages/common.js"></script>
+<script src="/pages/charts.js"></script>
 <script src="/pages/dash.js"></script>
 <script>
 // ══ Gateway Link ═══════════════════════════════════════════════════════════
@@ -41,7 +42,13 @@ function linkPttToggle(ep) {
   if(window._linkPttState[ep]===undefined){ for(var i=0;i<window._lastLinkEndpoints.length;i++){if(window._lastLinkEndpoints[i].name===ep){window._linkPttState[ep]=window._lastLinkEndpoints[i].ptt_active;break;}} }
   var next=!window._linkPttState[ep]; window._linkPttState[ep]=next; linkCmd(ep,{cmd:'ptt',state:next});
 }
-function linkGain(ep,cmd,db){ linkCmd(ep,{cmd:cmd,db:parseInt(db)}); }
+function fmtDb(v){ v=parseInt(v)||0; return (v>0?'+':'')+v+' dB'; }
+// The readout follows the thumb while dragging (it used to change only when
+// the card was next rebuilt, so it showed the old value mid-drag).
+function linkGain(ep,cmd,db,el){
+  linkCmd(ep,{cmd:cmd,db:parseInt(db)});
+  if(el&&el.nextElementSibling) el.nextElementSibling.textContent=fmtDb(db);
+}
 function linkMuteToggle(ep,dir){ postJson('/mixer',{action:'toggle',source:'link_'+dir+':'+ep}).catch(function(){}); }
 function restartEndpoint(name) {
   if(!confirm('Restart endpoint "'+name+'"?')) return;
@@ -84,14 +91,28 @@ function _epCardSkeleton(le) {
     + '<button class="rb rb-sm" title="Reboot host" aria-label="Reboot '+esc(ename)+' host" onclick="rebootEndpointHost(\''+esc(ename)+'\')" style="margin-left:2px">&#x23FB;</button>'
     + '</span></div>'
     + '<div class="st-row" id="ep-status-'+sid+'"></div>'
+    + '<div class="ep-hist" id="ep-hist-'+sid+'">'
+    +   '<span class="ep-hist-lbl">24h link</span><span class="ep-hist-strip"></span><span class="ep-hist-sum">--</span>'
+    +   '<span class="ep-hist-lbl">Ping</span><span class="ep-hist-ping"></span><span class="ep-hist-sum ep-ping-now">--</span>'
+    + '</div>'
     + '<div class="link-ctrl-sep link-body">';
   if (le.capabilities && le.capabilities.ptt)
     h += '<button onclick="linkPttToggle(&quot;'+esc(ename)+'&quot;)" class="'+(le.ptt_active?'link-ptt on':'link-ptt')+'">'+(le.ptt_active?'PTT ON':'PTT')+'</button>';
   h += '<div class="link-col">'
-    + '<div class="link-row"><span class="link-label">RX</span><div class="link-bar vu vu-tone-mono" data-vu-rx="'+esc(ename)+'"><div class="link-fill rx"></div></div></div>'
-    + '<div class="link-row"><span class="link-label">TX</span><div class="link-bar vu vu-tone-mono" data-vu-tx="'+esc(ename)+'"><div class="link-fill tx"></div></div></div>'
-    + '<div class="link-row mt-1"><button onclick="linkMuteToggle(&quot;'+esc(ename)+'&quot;,&quot;rx&quot;)" class="'+(le.rx_muted?'link-mute on':'link-mute')+'" aria-label="Mute '+esc(ename)+' RX">Mute</button><input type="range" min="-20" max="20" step="1" value="'+rxGain+'" class="link-slider" aria-label="'+esc(ename)+' RX gain" oninput="linkGain(&quot;'+esc(ename)+'&quot;,&quot;rx_gain&quot;,this.value)"><span class="link-gain-val">'+rxGain+' dB</span></div>'
-    + '<div class="link-row"><button onclick="linkMuteToggle(&quot;'+esc(ename)+'&quot;,&quot;tx&quot;)" class="'+(le.tx_muted?'link-mute on':'link-mute')+'" aria-label="Mute '+esc(ename)+' TX">Mute</button><input type="range" min="-20" max="20" step="1" value="'+txGain+'" class="link-slider" aria-label="'+esc(ename)+' TX gain" oninput="linkGain(&quot;'+esc(ename)+'&quot;,&quot;tx_gain&quot;,this.value)"><span class="link-gain-val">'+txGain+' dB</span></div>'
+    + '<div class="link-row link-dir"><span class="link-label">RX</span>'
+    +   '<div class="link-bar vu vu-tone-mono" data-vu-rx="'+esc(ename)+'"><div class="link-fill rx"></div></div>'
+    +   '<span class="link-ctl">'
+    +     '<button onclick="linkMuteToggle(&quot;'+esc(ename)+'&quot;,&quot;rx&quot;)" class="'+(le.rx_muted?'link-mute on':'link-mute')+'" aria-pressed="'+(le.rx_muted?'true':'false')+'" aria-label="Mute '+esc(ename)+' RX" title="Mute RX">'+(le.rx_muted?'Muted':'Mute')+'</button>'
+    +     '<input type="range" min="-20" max="20" step="1" value="'+rxGain+'" class="link-slider" aria-label="'+esc(ename)+' RX gain" title="RX gain" oninput="linkGain(&quot;'+esc(ename)+'&quot;,&quot;rx_gain&quot;,this.value,this)">'
+    +     '<span class="link-gain-val">'+fmtDb(rxGain)+'</span>'
+    +   '</span></div>'
+    + '<div class="link-row link-dir"><span class="link-label">TX</span>'
+    +   '<div class="link-bar vu vu-tone-mono" data-vu-tx="'+esc(ename)+'"><div class="link-fill tx"></div></div>'
+    +   '<span class="link-ctl">'
+    +     '<button onclick="linkMuteToggle(&quot;'+esc(ename)+'&quot;,&quot;tx&quot;)" class="'+(le.tx_muted?'link-mute on':'link-mute')+'" aria-pressed="'+(le.tx_muted?'true':'false')+'" aria-label="Mute '+esc(ename)+' TX" title="Mute TX">'+(le.tx_muted?'Muted':'Mute')+'</button>'
+    +     '<input type="range" min="-20" max="20" step="1" value="'+txGain+'" class="link-slider" aria-label="'+esc(ename)+' TX gain" title="TX gain" oninput="linkGain(&quot;'+esc(ename)+'&quot;,&quot;tx_gain&quot;,this.value,this)">'
+    +     '<span class="link-gain-val">'+fmtDb(txGain)+'</span>'
+    +   '</span></div>'
     + '</div></div>';
   return h;
 }
@@ -100,7 +121,9 @@ function _epStatusRow(le) {
   var est = le.endpoint_status || {};
   var it = [];
   // Percentage readout with green/amber/red thresholds (warn, err).
-  function pct(v, warn, err) { return stVal(v + '%', v > err ? 'red' : v > warn ? 'yellow' : 'green'); }
+  // Each gets a small gauge beside the number so four endpoints can be compared at a glance.
+  function gauge(frac, tone) { return '<span class="mini-bar"><i class="'+tone+'" style="width:'+Math.round(Math.min(Math.max(frac,0),1)*100)+'%"></i></span>'; }
+  function pct(v, warn, err) { var c = v > err ? 'red' : v > warn ? 'yellow' : 'green'; return stVal(v + '%', c) + gauge(v/100, c); }
   if(est.model) it.push(stItem('Type', stVal(esc(est.model), 'white')));
   if(est.hostname) it.push(stItem('Host', stVal(esc(est.hostname), 'white')));
   if(le.addr) it.push(stItem('IP', stVal(esc(le.addr.split(':')[0]), 'white')));
@@ -125,7 +148,8 @@ function _epStatusRow(le) {
   if(est.rx_gain_db!==undefined) it.push(stItem('RX', stVal((est.rx_gain_db>=0?'+':'')+est.rx_gain_db.toFixed(1)+' dB', 'white')));
   if(est.tx_gain_db!==undefined) it.push(stItem('TX', stVal((est.tx_gain_db>=0?'+':'')+est.tx_gain_db.toFixed(1)+' dB', 'white')));
   if(est.cpu_pct!==undefined) it.push(stItem('CPU', pct(est.cpu_pct, 50, 80)));
-  if(est.cpu_temp_c!==undefined) it.push(stItem('Temp', stVal(est.cpu_temp_c+'&deg;', est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')));
+  if(est.cpu_temp_c!==undefined) it.push(stItem('Temp', stVal(est.cpu_temp_c+'&deg;', est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')
+       + gauge((est.cpu_temp_c-30)/60, est.cpu_temp_c>70?'red':est.cpu_temp_c>55?'yellow':'green')));
   if(est.ram_pct!==undefined) it.push(stItem('RAM', pct(est.ram_pct, 70, 85)));
   if(est.disk_pct!==undefined) it.push(stItem('Disk', pct(est.disk_pct, 75, 90)));
   if(est.uptime!==undefined) it.push(stItem('Up', stVal(Math.floor(est.uptime/3600)+'h'+Math.floor((est.uptime%3600)/60)+'m', 'white')));
@@ -186,12 +210,60 @@ createStatusPoller(function(s) {
       var eh = _epStatusRow(le);
       if (_lastEpStatusHTML[sid] !== eh) { _lastEpStatusHTML[sid] = eh; row.innerHTML = eh; }
     }
+    epHistDraw(le, sid);
     var _rxEl = document.querySelector('[data-vu-rx="' + le.name + '"]');
     var _txEl = document.querySelector('[data-vu-tx="' + le.name + '"]');
     if (_rxEl && window.RG && RG.vu) RG.vu.set(_rxEl, le.level || 0);
     if (_txEl && window.RG && RG.vu) RG.vu.set(_txEl, le.tx_level || 0);
   }
 });
+
+// ── Per-endpoint history: 24 h link strip + ping trend ──────────────────────
+// Link state comes from Prometheus (rg_link_endpoint_up). Ping history uses
+// rg_link_endpoint_ping_ms when the gateway records it, otherwise what this
+// page has seen since it was opened.
+var EP_BINS = 240, _epUp = {}, _epUpWin = null, _epPingHist = {}, _epPingRoll = {}, _epPingAt = {};
+function epHistLoad() {
+  var end = Date.now(), start = end - 86400000, binMs = (end - start) / EP_BINS;
+  RGC.prom('min_over_time(rg_link_endpoint_up[' + Math.round(binMs / 1000) + 's])', start / 1000, end / 1000, binMs / 1000).then(function(res) {
+    _epUp = {}; _epUpWin = {start: start, end: end};
+    res.forEach(function(r) {
+      var bins = new Array(EP_BINS), up = 0, n = 0;
+      r.points.forEach(function(p) {
+        var k = Math.min(EP_BINS - 1, Math.max(0, Math.floor((p[0] - start) / binMs)));
+        bins[k] = bins[k] === undefined ? p[1] : Math.min(bins[k], p[1]);
+      });
+      for (var i = 0; i < EP_BINS; i++) if (bins[i] !== undefined) { n++; if (bins[i] >= 0.5) up++; }
+      _epUp[r.metric.endpoint] = {bins: bins, sum: n ? (up / n * 100).toFixed(up === n ? 0 : 1) + '% up' : 'no data', drawn: false};
+    });
+  });
+  RGC.prom('rg_link_endpoint_ping_ms', end / 1000 - 3600, end / 1000, 30).then(function(res) {
+    _epPingHist = {};
+    res.forEach(function(r) { if (r.points.length > 1) _epPingHist[r.metric.endpoint] = r.points; });
+  });
+}
+epHistLoad(); setInterval(epHistLoad, 300000);
+function epHistDraw(le, sid) {
+  var box = document.getElementById('ep-hist-' + sid); if (!box) return;
+  var stripEl = box.querySelector('.ep-hist-strip'), u = _epUp[le.name];
+  // Redraw when new data arrived or the card skeleton was rebuilt.
+  if (u && (!u.drawn || !stripEl._rgc)) {
+    u.drawn = true;
+    RGC.strip(stripEl, {start: _epUpWin.start, end: _epUpWin.end, bins: u.bins,
+      paint: function(b){ return b >= 0.5 ? {color: '--t-ok', alpha: 0.55} : {color: '--t-err', alpha: 1}; },
+      describe: function(b){ return b >= 0.5 ? 'connected' : 'down'; }});
+    setText(box.querySelector('.ep-hist-sum'), u.sum);
+  }
+  var roll = _epPingRoll[le.name] || (_epPingRoll[le.name] = RGC.rolling(720));
+  var now = Date.now();
+  if (le.ping_ms >= 0 && now - (_epPingAt[le.name] || 0) >= 5000) {
+    _epPingAt[le.name] = now; roll.push(le.ping_ms);
+    var pingEl = box.querySelector('.ep-hist-ping');
+    pingEl.title = _epPingHist[le.name] ? 'Last hour' : 'Since this page was opened';
+    RGC.spark(pingEl, _epPingHist[le.name] || roll.points(), {fmt: function(v){ return v.toFixed(1) + ' ms'; }, min: 0, minSpan: 5});
+    setText(box.querySelector('.ep-ping-now'), le.ping_ms + ' ms');
+  }
+}
 
 // ══ Transcribe workers ══════════════════════════════════════════════════════
 // Same card grammar as the link endpoints above: head with identity tags,

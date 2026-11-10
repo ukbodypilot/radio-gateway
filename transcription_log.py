@@ -5,6 +5,8 @@ import subprocess
 import threading
 import time
 
+from log_util import log_exc
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcriptions (
     id       INTEGER PRIMARY KEY,
@@ -151,6 +153,37 @@ class TranscriptionLog:
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
             except Exception:
                 return []
+
+    def get_hourly_stats(self, days: int = 30) -> dict:
+        """Per-hour transmission counts for the `days` ending at the newest row.
+
+        The window is anchored on the newest stored row, not on the clock, so
+        a log that stopped being written months ago still charts its last
+        `days` of traffic instead of an empty window.
+
+        Returns {'newest', 'total', 'bucket', 'buckets': [[epoch, n, secs]]}
+        with one entry per non-empty hour, oldest first.
+        """
+        empty = {'newest': 0, 'total': 0, 'bucket': 3600, 'buckets': []}
+        if not self._conn:
+            return empty
+        days = max(1, min(366, int(days)))
+        with self._lock:
+            try:
+                newest, total = self._conn.execute(
+                    'SELECT MAX(ts), COUNT(*) FROM transcriptions').fetchone()
+                if not newest:
+                    return empty
+                cur = self._conn.execute(
+                    'SELECT CAST(ts / 3600 AS INTEGER) AS h, COUNT(*), '
+                    'COALESCE(SUM(duration), 0) FROM transcriptions '
+                    'WHERE ts >= ? GROUP BY h ORDER BY h',
+                    (newest - days * 86400,))
+                buckets = [[h * 3600, n, round(secs, 1)] for h, n, secs in cur.fetchall()]
+                return {'newest': newest, 'total': total, 'bucket': 3600, 'buckets': buckets}
+            except Exception:
+                log_exc()
+                return empty
 
     def search_keyword(self, query: str, limit: int = 200) -> dict:
         """FTS5 keyword search. Returns {'results': [...], 'error': str|None}.

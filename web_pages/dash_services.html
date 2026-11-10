@@ -88,6 +88,10 @@
     <div class="metric metric-lg"><span class="metric-label">Msg/s</span><span id="adsb-rate" class="metric-value">--</span></div>
     <div class="metric metric-lg"><span class="metric-label">Total</span><span id="adsb-messages" class="metric-value">--</span></div>
   </div>
+  <div class="adsb-trends">
+    <div><div class="adsb-cap"><span>Aircraft</span><span id="adsb-t1-note"></span></div><div id="adsb-spark-ac"></div></div>
+    <div><div class="adsb-cap"><span>Messages / s</span><span id="adsb-t2-note"></span></div><div id="adsb-spark-rate"></div></div>
+  </div>
   <div class="st-row">
     <div class="st-item"><span class="st-label">dump1090-fa:</span><span id="adsb-svc-d1090" class="st-val dot">&#x25cf;</span></div>
     <div class="st-item"><span class="st-label">Web:</span><span id="adsb-svc-web" class="st-val dot">&#x25cf;</span></div>
@@ -108,6 +112,7 @@
 </div>
 
 <script src="/pages/common.js"></script>
+<script src="/pages/charts.js"></script>
 <script src="/pages/dash.js"></script>
 <script>
 // Ghost a panel when its service is disabled — visible but clearly off.
@@ -219,7 +224,7 @@ createPoller('/loop/buses', 5000, function(buses){
     if(b.segments>0){var durSec=b.latest-b.earliest;durStr=Math.floor(durSec/3600)+'h '+Math.floor((durSec%3600)/60)+'m';}
     var diskStr=(b.disk_mb||0)>=1024?(b.disk_mb/1024).toFixed(1)+' GB':(b.disk_mb||0).toFixed(0)+' MB';
     var rateStr=(b.segments>0&&b.latest>b.earliest)?((b.disk_mb||0)/((b.latest-b.earliest)/3600)).toFixed(0)+' MB/h':'';
-    html+='<div class="loop-bus">'+dot+' <span class="lb-name">'+(b.name||b.id)+'</span><span class="lb-meta">'+b.segments+' segs</span><span class="lb-meta">'+durStr+'</span><span class="lb-disk">'+diskStr+'</span>'+(rateStr?'<span class="lb-rate">'+rateStr+'</span>':'')+'<span class="lb-ret">ret '+(b.retention_hours||24)+'h</span></div>';
+    html+='<div class="loop-bus">'+dot+' <span class="lb-name">'+(b.name||b.id)+'</span><span class="lb-meta">'+b.segments+' segs</span><span class="lb-meta">'+durStr+'</span><span class="mini-bar" title="'+durStr+' held of '+(b.retention_hours||24)+'h retention"><i style="width:'+(b.segments>0?Math.min(100,Math.round((b.latest-b.earliest)/36/(b.retention_hours||24))):0)+'%"></i></span><span class="lb-disk">'+diskStr+'</span>'+(rateStr?'<span class="lb-rate">'+rateStr+'</span>':'')+'<span class="lb-ret">ret '+(b.retention_hours||24)+'h</span></div>';
   }
   if(html!==_lastLoopHTML){_lastLoopHTML=html;document.getElementById('loop-buses').innerHTML=html;}
   var totalStr=totalMB>=1024?(totalMB/1024).toFixed(1)+' GB':totalMB.toFixed(0)+' MB';
@@ -304,12 +309,29 @@ createPoller('/gpsstatus', 3000, function(d){
   var mapLink=document.getElementById('gps-map-link');
   if(d.fix>0){mapLink.href='https://www.openstreetmap.org/?mlat='+d.lat+'&mlon='+d.lon+'#map=15/'+d.lat+'/'+d.lon;mapLink.style.display='';}else{mapLink.style.display='none';}
   var sats=d.satellites||[]; var ch='';
-  for(var i=0;i<sats.length;i++){var s=sats[i];var pct=Math.min(100,Math.round(s.snr*100/50));var fillCls=s.snr===0?'none':s.snr>=35?'':s.snr>=20?'mid':'low';ch+='<div class="sat-row"><span class="sat-prn">PRN '+s.prn+'</span><div class="sat-track"><div class="sat-fill '+fillCls+'" style="width:'+pct+'%"></div></div><span class="sat-snr">'+s.snr+'</span></div>';}
+  for(var i=0;i<sats.length;i++){var s=sats[i];var pct=Math.min(100,Math.round(s.snr*100/50));var fillCls=s.snr===0?'none':s.snr>=30?'':s.snr>=20?'mid':'low';ch+='<div class="sat-row"><span class="sat-prn">PRN '+s.prn+'</span><div class="sat-track"><div class="sat-fill '+fillCls+'" style="width:'+pct+'%"></div></div><span class="sat-snr">'+s.snr+'</span></div>';}
   if(!ch)ch='<div class="empty"><span class="empty-glyph">&#9675;</span>No satellites in view</div>';
   if(ch!==_lastGpsSatHTML){_lastGpsSatHTML=ch;document.getElementById('gps-sat-chart').innerHTML=ch;}
 });
 
 // ── ADS-B ──
+// ADS-B trends: Prometheus history when the gateway records it
+// (rg_adsb_aircraft / rg_adsb_msg_rate), otherwise what this page has seen.
+var _adsbRoll={ac:RGC.rolling(1200),rate:RGC.rolling(1200)}, _adsbHist={ac:null,rate:null};
+function adsbHistory(){
+  var end=Date.now()/1000;
+  [['ac','rg_adsb_aircraft'],['rate','rg_adsb_msg_rate']].forEach(function(p){
+    RGC.prom(p[1],end-3600,end,30).then(function(r){ _adsbHist[p[0]]=(r.length&&r[0].points.length>1)?r[0].points:null; });
+  });
+}
+adsbHistory(); setInterval(adsbHistory,60000);
+function adsbTrend(d){
+  _adsbRoll.ac.push(d.aircraft); _adsbRoll.rate.push(d.messages_rate);
+  RGC.spark(document.getElementById('adsb-spark-ac'),_adsbHist.ac||_adsbRoll.ac.points(),{fmt:function(v){return Math.round(v)+' aircraft';},min:0,minSpan:4});
+  RGC.spark(document.getElementById('adsb-spark-rate'),_adsbHist.rate||_adsbRoll.rate.points(),{fmt:function(v){return v.toFixed(1)+' msg/s';},min:0,minSpan:10});
+  setText(document.getElementById('adsb-t1-note'),_adsbHist.ac?'last hour':'since page opened');
+  setText(document.getElementById('adsb-t2-note'),_adsbHist.rate?'last hour':'since page opened');
+}
 createPoller('/adsbstatus',3000,function(d){
   setPanelOff('adsb-panel', !d.enabled);
   if(!d.enabled)return;
@@ -318,6 +340,7 @@ createPoller('/adsbstatus',3000,function(d){
   svcDot(document.getElementById('adsb-svc-web'),d.web);
   svcDot(document.getElementById('adsb-svc-fr24'),d.fr24feed);
   setFlash(document.getElementById('adsb-aircraft'),d.aircraft);
+  adsbTrend(d);
   setFlash(document.getElementById('adsb-messages'),d.messages.toLocaleString());
   document.getElementById('adsb-rate').textContent=d.messages_rate>0?d.messages_rate.toFixed(1):'0.0';
 });
