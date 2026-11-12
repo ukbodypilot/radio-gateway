@@ -25,6 +25,7 @@
     <button class="ctrl-btn" onclick="openAnnouncer()" title="Repeating message over the BGM bed">Msg</button>
   </div>
   <div class="bgm-row" id="bgm-row"></div>
+  <div class="np-panel" id="np-panel" hidden></div>
   <div class="smart-row" id="smart-announce-group">
     <button class="ctrl-btn" onclick="sendKey('[')"><span class="pb-key">Smart #1</span><span class="pb-name" id="smart-st-1"></span></button>
     <button class="ctrl-btn" onclick="sendKey(']')"><span class="pb-key">Smart #2</span><span class="pb-name" id="smart-st-2"></span></button>
@@ -199,7 +200,7 @@ function refreshSounds() {
 createStatusPoller(function(s) {
   handleNotifications(s);
   function showIf(id,cond){var e=document.getElementById(id);if(e)e.style.display=cond?'':'none';}
-  showIf('playback-panel', s.playback_enabled);
+  showIf('playback-panel', s.playback_enabled || !!s.netplayer);
   showIf('smart-announce-group', s.smart_announce_enabled);
   showIf('transmit-panel', s.tts_enabled);
 
@@ -243,6 +244,7 @@ createStatusPoller(function(s) {
   renderPlaybackGrid(s);
   syncLoopButton(s);
   renderBgm(s);
+  renderNetPlayer(s);
 });
 
 // ── Automation ──

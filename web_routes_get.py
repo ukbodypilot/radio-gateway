@@ -1222,6 +1222,8 @@ def handle_routing_levels(handler, parent):
             data['bgm'] = getattr(gw.bgm_source, 'audio_level', 0)
         if getattr(gw, 'announcer_source', None):
             data['announcer'] = getattr(gw.announcer_source, 'audio_level', 0)
+        if getattr(gw, 'netplayer_source', None):
+            data['netplayer'] = getattr(gw.netplayer_source, 'audio_level', 0)
         if getattr(gw, 'announce_input_source', None):
             data['announce'] = getattr(gw.announce_input_source, 'audio_level', 0)
         if getattr(gw, 'web_mic_source', None):

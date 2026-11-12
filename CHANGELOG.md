@@ -2,6 +2,20 @@
 
 All notable changes to Radio Gateway.
 
+## [Unreleased]
+
+- **Net Player.** A new routable source, `netplayer`, for the prepared opening
+  of a net (preamble, rules, check-in procedure) before going to open
+  discussion. Five file slots (start / stop / seek, with -10s / +10s and a
+  scrub bar) and five http(s) stream slots (start / stop). Slot choices are
+  remembered in `~/.config/radio-gateway/netplayer.json`. One item plays at a
+  time. Files are picked from `audio/net/` and can be uploaded from the Setup
+  dialog on the Operate and Controls pages (`POST /netplayer`,
+  `POST /netplayer/upload`). Like the announcer it is a ducker: RX and BGM on
+  the same bus get out of its way. Wire the **Net Player** node to a bus in
+  /routing to use it. A stream that never connects or goes quiet is dropped
+  with the reason shown, and ffmpeg only ever gets http/https.
+
 ## [5.4.0] -- 2026-11-09
 
 The web UI gets history: charts and timelines on most pages, a shell that

@@ -634,6 +634,21 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
   gap: 2px; padding: 2px var(--s-1); overflow: hidden;
 }
 
+/* Net Player — prerecorded net intros + streams. Reuses the .bgm-row pads. */
+.np-panel { margin-top: var(--s-2); display: flex; flex-direction: column; gap: 3px; }
+.np-panel[hidden] { display: none; }
+.np-tag { font-size: var(--f-xs); color: var(--t-text-dim); margin-top: var(--s-1); }
+.np-row { margin-top: 0; }
+.np-bar { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.np-seek { flex: 1 1 140px; min-width: 100px; }
+.np-time { font-size: var(--f-xs); color: var(--t-text-dim); font-variant-numeric: tabular-nums; }
+.np-err  { font-size: var(--f-xs); color: var(--t-err); }
+.np-setup-row { display: grid; grid-template-columns: 4.5em 1fr 1fr; gap: var(--s-1);
+                align-items: center; margin-bottom: var(--s-1); }
+.np-setup-row .ctrl-input { width: 100%; box-sizing: border-box; min-width: 0; }
+.np-setup-list { max-height: 52vh; overflow-y: auto; }
+@media (max-width: 520px) { .np-setup-row { grid-template-columns: 1fr; } }
+
 /* Per-bed announcer messages */
 .ann-list { display: flex; flex-direction: column; gap: var(--s-2); }
 .ann-row  { display: flex; flex-direction: column; gap: 2px; }

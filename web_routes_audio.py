@@ -84,6 +84,114 @@ def handle_bgm(handler, parent):
     return
 
 
+def _json_reply(handler, result, code=200):
+    handler.send_response(code)
+    handler.send_header('Content-Type', 'application/json')
+    handler.end_headers()
+    try:
+        handler.wfile.write(json_mod.dumps(result).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
+def handle_netplayer(handler, parent):
+    """POST /netplayer  {"action": ..., ...}
+
+    Actions:
+      status                              state only (also in /status)
+      play|stop|toggle {kind, slot}       kind is 'file' or 'stream'; stop with
+                                          no kind stops whatever is playing
+      seek {position} | {delta}           seconds; file playback only
+      set {kind, slot, value, label}      assign a file name / stream URL to a
+                                          slot (persisted); empty value clears
+    Every reply carries the full state plus the files available to assign.
+    """
+    src = getattr(parent.gateway, 'netplayer_source', None) if parent.gateway else None
+    if src is None:
+        _json_reply(handler, {'ok': False, 'error': 'net player not available'})
+        return
+    d = {}
+    try:
+        length = int(handler.headers.get('Content-Length', 0))
+        if length:
+            d = json_mod.loads(handler.rfile.read(min(length, 65536)).decode('utf-8') or '{}')
+    except Exception:
+        log_exc()
+    if not isinstance(d, dict):
+        d = {}
+    action = str(d.get('action') or 'status').lower()
+    kind, slot = d.get('kind'), d.get('slot')
+    ok, err = True, ''
+    if action == 'play':
+        ok, err = src.play(kind, slot)
+    elif action == 'toggle':
+        ok, err = src.toggle(kind, slot)
+    elif action == 'stop':
+        src.stop()
+    elif action == 'seek':
+        ok, err = src.seek(position=d.get('position'), delta=d.get('delta'))
+    elif action == 'set':
+        ok, err = src.configure(kind, slot, d.get('value'), d.get('label'))
+    elif action != 'status':
+        ok, err = False, f'unknown action {action!r}'
+    result = {'ok': ok, 'netplayer': src.state(), 'available_files': src.list_files()}
+    if err:
+        result['error'] = err
+    _json_reply(handler, result)
+
+
+def handle_netplayer_upload(handler, parent):
+    """POST /netplayer/upload?name=intro.mp3  — raw audio bytes as the body.
+
+    Raw body rather than multipart: no parser to get wrong, and the browser can
+    send a File straight from fetch(). Saved into the net player's directory
+    under a sanitised name; capped in size; written to a temp file first so a
+    dropped connection never leaves a half-file that looks assignable.
+    """
+    from urllib.parse import urlparse, parse_qs
+    from sources.netplayer import safe_filename, MAX_UPLOAD_BYTES
+    src = getattr(parent.gateway, 'netplayer_source', None) if parent.gateway else None
+    if src is None:
+        _json_reply(handler, {'ok': False, 'error': 'net player not available'})
+        return
+    name = safe_filename((parse_qs(urlparse(handler.path).query).get('name') or [''])[0])
+    if not name:
+        _json_reply(handler, {'ok': False, 'error': 'name must be an audio file name '
+                              '(mp3, wav, ogg, flac, m4a)'}, 400)
+        return
+    try:
+        length = int(handler.headers.get('Content-Length', 0))
+    except ValueError:
+        length = 0
+    if length <= 0 or length > MAX_UPLOAD_BYTES:
+        _json_reply(handler, {'ok': False, 'error': f'file must be 1 byte to '
+                              f'{MAX_UPLOAD_BYTES // (1024 * 1024)} MB'}, 413)
+        return
+    dest = src.file_path(name)
+    tmp = dest + '.partial'
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        left = length
+        with open(tmp, 'wb') as f:
+            while left > 0:
+                chunk = handler.rfile.read(min(left, 262144))
+                if not chunk:
+                    raise IOError('connection closed mid-upload')
+                f.write(chunk)
+                left -= len(chunk)
+        os.replace(tmp, dest)
+    except Exception as e:
+        log_exc()
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        _json_reply(handler, {'ok': False, 'error': f'upload failed: {e}'}, 500)
+        return
+    print(f"[NetPlayer] Uploaded {name} ({length // 1024} KB)")
+    _json_reply(handler, {'ok': True, 'name': name, 'available_files': src.list_files()})
+
+
 def handle_announcer(handler, parent):
     """GET/POST /announcer
 

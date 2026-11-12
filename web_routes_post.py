@@ -17,7 +17,7 @@ from web_routes_radio  import (
     handle_sdrcmd, handle_packet_cmd,
 )
 from web_routes_audio  import (
-    handle_testloop, handle_bgm, handle_announcer, handle_mixer, handle_proc_toggle,
+    handle_testloop, handle_bgm, handle_netplayer, handle_netplayer_upload, handle_announcer, handle_mixer, handle_proc_toggle,
     handle_tracecmd, handle_routing_cmd, handle_loop_export,
     handle_recordingsdelete,
 )

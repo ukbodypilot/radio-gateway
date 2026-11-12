@@ -10,6 +10,7 @@ The classes live in the ``sources`` package, one module per family:
     sources/web.py            WebMicSource, WebMonitorSource
     sources/stream_output.py  StreamOutputSource
     sources/bgm.py            BGMSource, AnnouncerSource
+    sources/netplayer.py      NetPlayerSource
 
 This module re-exports all of them so ``from audio_sources import X`` keeps
 working.
@@ -24,6 +25,7 @@ from sources.network import (
 from sources.web import WebMicSource, WebMonitorSource
 from sources.stream_output import StreamOutputSource
 from sources.bgm import BGMSource, AnnouncerSource
+from sources.netplayer import NetPlayerSource
 
 __all__ = [
     'AudioSource', 'bgm_files', 'bgm_path',
@@ -32,5 +34,5 @@ __all__ = [
     'LinkAudioSource', 'NetworkAnnouncementSource', 'MumbleSource',
     'WebMicSource', 'WebMonitorSource',
     'StreamOutputSource',
-    'BGMSource', 'AnnouncerSource',
+    'BGMSource', 'AnnouncerSource', 'NetPlayerSource',
 ]

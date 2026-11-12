@@ -453,6 +453,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         '/transcribe_worker/register': 'p:handle_transcribe_worker_register',
         '/testloop':                   'p:handle_testloop',
         '/bgm':                        'p:handle_bgm',
+        '/netplayer':                  'p:handle_netplayer',
         '/announcer':                  'p:handle_announcer',
         '/mixer':                      'p:handle_mixer',
         '/aitext':                     'p:handle_aitext',
@@ -486,7 +487,9 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         '/manager/run':                'p:handle_manager_run',
         '/manager/ack':                'p:handle_manager_ack',
     }
-    _POST_QEXACT = {}
+    _POST_QEXACT = {
+        '/netplayer/upload':           'p:handle_netplayer_upload',
+    }
     _POST_PREFIX = (
         ('/loop/',       'l:handle_loop_post'),
         ('/pat/',        'g:handle_pat_proxy'),

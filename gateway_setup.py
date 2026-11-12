@@ -121,8 +121,10 @@ def setup_playback(gw):
     gw.loop_playback_source = LoopPlaybackSource(gw)
     # BGM + Announcer are their own sources (own routing nodes) so the bed
     # and the repeating message can play at once and duck against each other.
-    from audio_sources import BGMSource, AnnouncerSource
+    from audio_sources import BGMSource, AnnouncerSource, NetPlayerSource
     gw.bgm_source = BGMSource(gw)
+    # Net Player: prerecorded net intros + network streams, its own routing node.
+    gw.netplayer_source = NetPlayerSource(gw)
     gw.announcer_source = AnnouncerSource(gw)
     try:
         import announcer

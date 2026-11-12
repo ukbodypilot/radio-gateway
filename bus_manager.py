@@ -622,6 +622,10 @@ class BusManager:
             source_map['bgm'] = (gw.bgm_source, 12, True)
         if getattr(gw, 'announcer_source', None):
             source_map['announcer'] = (gw.announcer_source, 1, False)
+        # Net Player is a ducker (not duckable): while an intro plays, RX and
+        # BGM on the same bus get out of its way, like the announcer.
+        if getattr(gw, 'netplayer_source', None):
+            source_map['netplayer'] = (gw.netplayer_source, 2, False)
         if getattr(gw, 'loop_playback_source', None):
             source_map['loop_playback'] = (gw.loop_playback_source, 10, True)
         if getattr(gw, 'web_mic_source', None):
@@ -1117,6 +1121,8 @@ class BusManager:
             return gw.bgm_source
         elif source_id == 'announcer' and getattr(gw, 'announcer_source', None):
             return gw.announcer_source
+        elif source_id == 'netplayer' and getattr(gw, 'netplayer_source', None):
+            return gw.netplayer_source
         elif source_id == 'playback' and getattr(gw, 'playback_source', None):
             return gw.playback_source
         elif source_id == 'loop_playback' and getattr(gw, 'loop_playback_source', None):

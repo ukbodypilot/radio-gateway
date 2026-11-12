@@ -263,6 +263,7 @@
       <button onclick="openAnnouncer()" title="Repeating message over the BGM bed">Msg</button>
     </div>
     <div class="bgm-row" id="bgm-row"></div>
+    <div class="np-panel" id="np-panel" hidden></div>
     <div class="smart-row" id="smart-announce-group">
       <button onclick="sendKey('[')">Smart #1</button>
       <button onclick="sendKey(']')">Smart #2</button>
@@ -525,9 +526,10 @@ createPoller('/status', 1000, function(s) {
   renderPlaybackGrid(s);
   syncLoopButton(s);
   renderBgm(s);
+  renderNetPlayer(s);
   // Show/hide sections
   function showIf(id, cond) { var e = document.getElementById(id); if (e) e.style.display = cond ? '' : 'none'; }
-  showIf('playback-group', s.playback_enabled);
+  showIf('playback-group', s.playback_enabled || !!s.netplayer);
   showIf('smart-announce-group', s.smart_announce_enabled);
   showIf('transmit-group', s.tts_enabled);
   // Populate voice dropdowns from server-provided list (engine-aware)

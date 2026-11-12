@@ -412,6 +412,7 @@ class _LifecycleMixin:
             (self.remote_audio_source, 'remote audio source', 'Remote audio source closed'),
             (self.remote_audio_server, 'remote audio server', 'Remote audio server closed'),
             (self.announce_input_source, 'announcement input', 'Announcement input closed'),
+            (getattr(self, 'netplayer_source', None), 'net player', 'Net player closed'),
         ):
             if obj:
                 step(what, lambda o=obj: o.cleanup(), done=done)

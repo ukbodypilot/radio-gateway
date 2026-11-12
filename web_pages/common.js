@@ -631,6 +631,257 @@ function toggleBgm(slot) {
     });
 }
 
+// ── Net Player (prerecorded net intros + network streams) ───────────────────
+// 5 file slots (start/stop/seek) and 5 stream slots (start/stop). One item
+// plays at a time. Slot assignments persist server-side
+// (~/.config/radio-gateway/netplayer.json). Like BGM, buttons paint from the
+// /status poll so every page agrees with the server.
+
+function _npFmt(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function _npPost(body) {
+  return fetch('/netplayer', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(function (r) { return r.json(); });
+}
+
+var _npLastErr = '';
+var _npState = null;     // last /status netplayer block, for the empty-slot check
+
+function renderNetPlayer(s) {
+  var panel = document.getElementById('np-panel');
+  if (!panel) return;
+  var np = s.netplayer;
+  _npState = np || null;
+  if (!np) { panel.hidden = true; return; }
+  panel.hidden = false;
+
+  var slotName = function (it, kind) {
+    var base = it.label || (kind === 'file' ? it.name.replace(/\.[^.]+$/, '')
+                                            : it.url.replace(/^https?:\/\//, ''));
+    return base ? base.substring(0, 11) : '—';
+  };
+  var key = np.files.map(function (f) { return f.slot + ':' + f.name + ':' + f.label; }).join(',') +
+            '|' + np.streams.map(function (f) { return f.slot + ':' + f.url + ':' + f.label; }).join(',');
+  if (panel.dataset.npKey !== key) {
+    panel.dataset.npKey = key;
+    var pads = function (items, kind, tag) {
+      return '<div class="np-tag">' + tag + '</div><div class="bgm-row np-row">' +
+        items.map(function (it) {
+          return '<button class="ctrl-btn" id="np-' + kind + '-' + it.slot + '" ' +
+                 'onclick="npToggle(\'' + kind + '\',' + it.slot + ')" ' +
+                 'aria-label="Net ' + kind + ' ' + it.slot + '">' +
+                 '<span class="pb-key">' + (kind === 'file' ? 'File ' : 'Stream ') + it.slot + '</span>' +
+                 '<span class="pb-name">' + _sbEsc(slotName(it, kind)) + '</span></button>';
+        }).join('') + '</div>';
+    };
+    panel.innerHTML =
+      pads(np.files, 'file', 'Net intro — files') +
+      '<div class="np-bar" id="np-transport" hidden>' +
+        '<button class="ctrl-btn" onclick="npSeekBy(-10)" aria-label="Back 10 seconds">&minus;10s</button>' +
+        '<input type="range" class="np-seek" id="np-seek" min="0" max="1" step="1" value="0" ' +
+          'aria-label="Seek">' +
+        '<button class="ctrl-btn" onclick="npSeekBy(10)" aria-label="Forward 10 seconds">+10s</button>' +
+        '<span class="np-time" id="np-time"></span>' +
+      '</div>' +
+      pads(np.streams, 'stream', 'Net intro — streams') +
+      '<div class="np-bar">' +
+        '<button class="ctrl-btn" onclick="npStop()" title="Stop the net player">Stop</button>' +
+        '<button class="ctrl-btn" onclick="openNetPlayerSetup()" ' +
+          'title="Choose the files and streams">Setup</button>' +
+        '<span class="np-err" id="np-err"></span>' +
+      '</div>';
+    var seek = document.getElementById('np-seek');
+    seek.addEventListener('input', function () { seek.dataset.drag = '1'; });
+    seek.addEventListener('change', function () {
+      _npPost({action: 'seek', position: parseFloat(seek.value)})
+        .then(function (d) { if (!d.ok && d.error) _sbNotify(d.error, 'error'); })
+        .catch(function (e) { _sbNotify('Seek failed: ' + e, 'error'); })
+        .then(function () { seek.dataset.drag = ''; });
+    });
+  }
+
+  var paint = function (it, kind) {
+    var btn = document.getElementById('np-' + kind + '-' + it.slot);
+    if (!btn) return;
+    var empty = kind === 'file' ? !it.name : !it.url;
+    btn.classList.toggle('muted', !!it.playing);
+    btn.classList.toggle('dim', empty || (kind === 'file' && !it.available));
+    var what = kind === 'file' ? it.name : it.url;
+    btn.title = empty ? 'Empty — click to choose a ' + kind
+      : (kind === 'file' && !it.available) ? it.name + ' not found in the net audio folder'
+      : what + (it.playing
+          ? (kind === 'stream' && it.state === 'connecting' ? ' — connecting…' : ' — playing') +
+            ' (click to stop)'
+          : ' — click to play');
+  };
+  np.files.forEach(function (f) { paint(f, 'file'); });
+  np.streams.forEach(function (f) { paint(f, 'stream'); });
+
+  var playing = np.files.filter(function (f) { return f.playing; })[0];
+  var tr = document.getElementById('np-transport');
+  if (tr) tr.hidden = !playing;
+  if (playing) {
+    var seek = document.getElementById('np-seek');
+    if (seek && seek.dataset.drag !== '1') {
+      seek.max = Math.max(1, Math.floor(playing.duration || 1));
+      seek.value = Math.floor(playing.position || 0);
+    }
+    var tm = document.getElementById('np-time');
+    if (tm) tm.textContent = _npFmt(playing.position) + ' / ' + _npFmt(playing.duration);
+  }
+
+  var err = document.getElementById('np-err');
+  if (err) err.textContent = np.error ||
+    ((np.active && np.active.routed === false)
+      ? 'Playing, but not routed \u2014 wire the Net Player node to a bus in /routing' : '');
+  if (np.error && np.error !== _npLastErr) _sbNotify('Net player: ' + np.error, 'error');
+  _npLastErr = np.error || '';
+}
+
+function npToggle(kind, slot) {
+  var s = _npState;
+  var list = s ? (kind === 'file' ? s.files : s.streams) : [];
+  var it = list.filter(function (x) { return x.slot === slot; })[0];
+  if (it && !(kind === 'file' ? it.name : it.url)) { openNetPlayerSetup(); return; }
+  _npPost({action: 'toggle', kind: kind, slot: slot})
+    .then(function (d) { if (!d.ok && d.error) _sbNotify(d.error, 'error'); })
+    .catch(function (e) { _sbNotify('Net player failed: ' + e, 'error'); });
+}
+
+function npStop() {
+  _npPost({action: 'stop'}).catch(function (e) { _sbNotify('Stop failed: ' + e, 'error'); });
+}
+
+function npSeekBy(delta) {
+  _npPost({action: 'seek', delta: delta})
+    .then(function (d) { if (!d.ok && d.error) _sbNotify(d.error, 'error'); })
+    .catch(function (e) { _sbNotify('Seek failed: ' + e, 'error'); });
+}
+
+function openNetPlayerSetup() {
+  _npPost({action: 'status'})
+    .then(function (d) {
+      if (!d.netplayer) { _sbNotify(d.error || 'Net player unavailable', 'error'); return; }
+      _npSetupDialog(d);
+    })
+    .catch(function (e) { _sbNotify('Net player unavailable: ' + e, 'error'); });
+}
+
+function _npSetupDialog(d) {
+  var old = document.getElementById('np-dlg');
+  if (old) old.remove();
+  var avail = d.available_files || [];
+
+  var fileOpts = function (cur) {
+    var names = avail.slice();
+    if (cur && names.indexOf(cur) < 0) names.push(cur);     // keep a missing file visible
+    return '<option value="">— empty —</option>' + names.map(function (n) {
+      return '<option value="' + _sbEsc(n) + '"' + (n === cur ? ' selected' : '') + '>' +
+             _sbEsc(n) + (avail.indexOf(n) < 0 ? ' (missing)' : '') + '</option>';
+    }).join('');
+  };
+
+  var frows = d.netplayer.files.map(function (f) {
+    return '<div class="np-setup-row">' +
+      '<span class="sb-sub" style="margin:0">File ' + f.slot + '</span>' +
+      '<select class="ctrl-input np-file" data-slot="' + f.slot + '">' + fileOpts(f.name) + '</select>' +
+      '<input class="ctrl-input np-flabel" data-slot="' + f.slot + '" maxlength="40" ' +
+        'placeholder="Label (optional)" value="' + _sbEsc(f.label) + '"></div>';
+  }).join('');
+  var srows = d.netplayer.streams.map(function (f) {
+    return '<div class="np-setup-row">' +
+      '<span class="sb-sub" style="margin:0">Stream ' + f.slot + '</span>' +
+      '<input class="ctrl-input np-url" data-slot="' + f.slot + '" maxlength="2000" ' +
+        'placeholder="https://…" value="' + _sbEsc(f.url) + '">' +
+      '<input class="ctrl-input np-slabel" data-slot="' + f.slot + '" maxlength="40" ' +
+        'placeholder="Label (optional)" value="' + _sbEsc(f.label) + '"></div>';
+  }).join('');
+
+  var dlg = document.createElement('dialog');
+  dlg.id = 'np-dlg';
+  dlg.className = 'sb-dialog';
+  dlg.innerHTML =
+    '<h3 class="sb-title">Net player</h3>' +
+    '<p class="sb-sub">Prerecorded net introductions. Route the <strong>Net Player</strong> ' +
+      'node in /routing. One item plays at a time.</p>' +
+    '<div class="sb-bar">' +
+      '<button type="button" class="sb-btn" id="np-upload">Upload audio…</button>' +
+      '<input type="file" id="np-file-in" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a" hidden>' +
+      '<span class="sb-sub" id="np-upmsg" style="margin:0"></span></div>' +
+    '<div class="np-setup-list">' + frows +
+      '<div class="np-tag">Streams (http / https)</div>' + srows + '</div>' +
+    '<div class="sb-foot">' +
+      '<button type="button" class="sb-btn" id="np-cancel">Cancel</button>' +
+      '<button type="button" class="sb-btn sb-primary" id="np-save">Save</button></div>';
+  document.body.appendChild(dlg);
+
+  var fileIn = dlg.querySelector('#np-file-in');
+  var upMsg = dlg.querySelector('#np-upmsg');
+  dlg.querySelector('#np-upload').onclick = function () { fileIn.click(); };
+  fileIn.onchange = function () {
+    var f = fileIn.files && fileIn.files[0];
+    if (!f) return;
+    upMsg.textContent = 'Uploading ' + f.name + '…';
+    fetch('/netplayer/upload?name=' + encodeURIComponent(f.name), {method: 'POST', body: f})
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok) { upMsg.textContent = res.error || 'Upload failed'; return; }
+        upMsg.textContent = 'Uploaded ' + res.name;
+        avail = res.available_files || avail;
+        dlg.querySelectorAll('select.np-file').forEach(function (sel) {
+          var cur = sel.value;
+          sel.innerHTML = fileOpts(cur);
+        });
+        // Offer it in the first empty slot so a fresh upload is one click from ready.
+        var empty = Array.prototype.filter.call(dlg.querySelectorAll('select.np-file'),
+                                                function (x) { return !x.value; })[0];
+        if (empty) empty.value = res.name;
+      })
+      .catch(function (e) { upMsg.textContent = 'Upload failed: ' + e; })
+      .then(function () { fileIn.value = ''; });
+  };
+
+  dlg.querySelector('#np-cancel').onclick = function () { dlg.close(); };
+  dlg.querySelector('#np-save').onclick = function () {
+    var btn = this, jobs = [];
+    var lbl = function (cls, slot) {
+      return dlg.querySelector('input.' + cls + '[data-slot="' + slot + '"]').value;
+    };
+    dlg.querySelectorAll('select.np-file').forEach(function (sel) {
+      jobs.push({action: 'set', kind: 'file', slot: +sel.dataset.slot, value: sel.value,
+                 label: lbl('np-flabel', sel.dataset.slot)});
+    });
+    dlg.querySelectorAll('input.np-url').forEach(function (inp) {
+      jobs.push({action: 'set', kind: 'stream', slot: +inp.dataset.slot, value: inp.value.trim(),
+                 label: lbl('np-slabel', inp.dataset.slot)});
+    });
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    var errors = [];
+    // Sequential: each set is a small disk write, and a slot whose assignment
+    // changed while playing stops the player — keep that ordering predictable.
+    jobs.reduce(function (p, job) {
+      return p.then(function () { return _npPost(job); })
+              .then(function (res) { if (!res.ok) errors.push(job.kind + ' ' + job.slot + ': ' + res.error); });
+    }, Promise.resolve())
+      .then(function () {
+        dlg.close();
+        if (errors.length) _sbNotify('Not saved — ' + errors.join('; '), 'error');
+        else _sbNotify('Net player saved');
+      })
+      .catch(function (e) { dlg.close(); _sbNotify('Save failed: ' + e, 'error'); });
+  };
+  dlg.addEventListener('close', function () { dlg.remove(); });
+  dlg.showModal();
+}
+
 // ── Announcer (repeating message over the BGM bed) ──────────────────────────
 // Text persists server-side (~/.config/radio-gateway/announcer.json), so it
 // survives restarts and is shared by every page.

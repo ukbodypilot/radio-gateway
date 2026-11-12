@@ -901,6 +901,9 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
             if getattr(gw, 'announcer_source', None):
                 sources.append({**{'id': 'announcer', 'name': 'Announcer', 'enabled': True,
                                 'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.announcer_source)})
+            if getattr(gw, 'netplayer_source', None):
+                sources.append({**{'id': 'netplayer', 'name': 'Net Player', 'enabled': True,
+                                'can_rx': False, 'can_tx': True, 'can_ptt': True}, **_src_info(gw.netplayer_source)})
             if getattr(gw, 'loop_playback_source', None):
                 sources.append({**{'id': 'loop_playback', 'name': 'Loop Playback', 'enabled': True,
                                 'can_rx': True, 'can_tx': False, 'can_ptt': False}, **_src_info(gw.loop_playback_source)})
