@@ -48,6 +48,7 @@ More screenshots in `docs/screenshots/`.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Highlights:
 
+- **v5.5.0** (2026-11-12) — Transcription runs on NVIDIA Parakeet (CPU, int8): far more of each over is transcribed, long transmissions included; Moonshine v2 is the lighter option and Moonshine v1 / Whisper are gone. New DP8 denoise engine (DPDFNet 8 kHz), the only one that keeps FM radio voice instead of gating it out with the noise. Net Player for prerecorded net intros and network streams.
 - **v5.4.0** (2026-11-09) — Web UI overhaul: history charts on most pages (Overview trends and activity timeline, endpoint link and ping history, Fleet Manager run history, TX Log bars and heat map, GPS sky plot, SDR channel activity), deep links, hover menus, phone layout, peak-hold meters. Filters no longer run ~13x slower on a squelched SDR; concurrent bus reloads are serialised. The web login blocks repeated wrong passwords and logs each new client.
 - **v5.3.2** (2026-11-09) — SDR restarts itself daily at `SDR_DAILY_RESTART_TIME` (default 04:00, waits for the tuners to go quiet). CPU by process, thread, helper and host on `/metrics` and a CPU row in Grafana. An offline remote-audio client is logged once per outage, not every retry.
 - **v5.3.1** (2026-11-06) — SDR1 / SDR2 taps play the tuner's bus after its processing, so G / H / L / N / D are audible on them. Denoise (D) on two buses no longer gives occasional drops: each bus has its own denoise session and 100 ms to finish each chunk.

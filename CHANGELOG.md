@@ -4,6 +4,8 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.5.0] -- 2026-11-12
+
 - **New denoise engine: DPDFNet 8 kHz (`dpdfnet`, "DP8" on /routing).** On our
   FM radio audio RNNoise and every 48 kHz model gated the *speech* out along
   with the noise (RNNoise's own VAD sat at 0.02-0.1 through clear speech; clean
