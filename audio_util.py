@@ -102,18 +102,21 @@ _warmup_gate_loop()
 
 # ── Neural denoise — engine-abstracted ──────────────────────────────────────
 #
-# Two engines are available:
+# Three engines are available:
 #   - 'rnnoise'       : tiny (~100 KB model), fast (<1 ms/frame), aggressive
 #                       broadband hiss cut. Default for existing deployments.
-#   - 'deepfilternet' : DFN3 (~9 MB ONNX), better speech preservation and
-#                       narrowband noise removal, ~2–4 ms/frame on Haswell.
+#   - 'deepfilternet' : DFN3 (~16 MB ONNX), 48 kHz, ~2–4 ms/frame on Haswell.
+#   - 'dpdfnet'       : DPDFNet 8 kHz (~10 MB ONNX), ~2.6 ms per 10 ms.
+#                       The only one that keeps narrowband FM radio voice:
+#                       on our audio RNNoise and the 48 kHz models gated the
+#                       speech out (2026-11-12). See _DPDFNet8kStream.
 #
-# Both implement the DenoiseStream duck-type:
-#     native_rate: int                              (48000 for both)
+# All implement the DenoiseStream duck-type:
+#     native_rate: int                              (48000 for all)
 #     process(samples_i16: np.ndarray) -> np.ndarray
 #     close() -> None
 #
-# Use make_denoise_stream('rnnoise'|'deepfilternet') to construct.
+# Use make_denoise_stream('rnnoise'|'deepfilternet'|'dpdfnet') to construct.
 # The JSON/API surface still uses the legacy key 'dfn' — it's no longer a
 # literal acronym but kept for config compatibility.
 
@@ -578,17 +581,179 @@ class _DFN3Stream:
         return _mix_with_dry_delay(self, samples_i16, mix)
 
 
+# ── DPDFNet 8 kHz (narrowband) streaming via onnxruntime ────────────────────
+#
+# Ceva's DPDFNet (DeepFilterNet2 + dual-path RNN blocks), the 2-block 8 kHz
+# model, Apache-2.0, bundled at tools/models/dpdfnet/ (see its README).
+# Why an 8 kHz model on a 48 kHz bus: measured 2026-11-12 on our own radio
+# audio, RNNoise and every 48 kHz model treated narrowband FM voice as noise
+# and gated it out (RNNoise's own VAD sat at 0.02-0.1 through clear speech),
+# while this telephone-band model kept speech level and still took the gaps
+# between overs to ~-93 dB. Radio voice has nothing above ~3 kHz, so running
+# the model at 8 kHz loses nothing. Fully wet sounded "really very good" by
+# ear (Robin, 2026-11-12). A level count flags ~10% of >-40 dB windows as cut
+# >20 dB, but that count can't tell inter-word hiss from speech; the drops
+# heard in the pip package's output were its per-chunk resampling, which this
+# wrapper doesn't have. Lower the mix only if a bus audibly clips words.
+#
+# Signature (one 10 ms hop per call, state carried across calls):
+#   inputs:  spec[1,1,81,2] (rfft of a 160-sample Vorbis-windowed frame,
+#            real/imag)   state_in[37860]
+#   outputs: spec_e[1,1,81,2]   state_out[37860]
+# The initial state is not zeros: the ERB/spectral normaliser seeds live in
+# the model metadata. The pip `dpdfnet` package is NOT used — it needs
+# librosa and resamples each chunk statelessly, which ticks at every chunk
+# boundary. Here 48k<->8k is a pair of stateful FIRs.
+
+_DPDFNET_MODEL = 'dpdfnet2_8khz.onnx'
+_DPDFNET_MODEL_SHA256 = (
+    '6218f1dbd6e4bac5768c63b7d899fe7b84b3788f2a35c4e246d4ab0946165c5d'
+)
+_DPDFNET_MODEL_SIZE = 10_188_357
+_DPDFNET_RATIO = 6                    # 48 kHz bus / 8 kHz model
+
+
+def _dpdfnet_model_path():
+    import os
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'tools', 'models', 'dpdfnet', _DPDFNET_MODEL)
+
+
+class _DPDFNet8kStream:
+    """Per-source DPDFNet 8 kHz denoise stream on a 48 kHz bus.
+
+    int16 in, int16 out. Output is the same length as the input whenever the
+    input is a multiple of 480 samples (every bus chunk is), because the
+    analysis buffer is primed with one hop of silence.
+    """
+
+    native_rate = 48000
+    # 2520 samples (52.5 ms), measured 2026-11-12 by cross-correlating real
+    # radio speech in vs out (identical in three windows, r = 0.92-0.99; an
+    # impulse is useless here, the model removes it as noise). It adds up:
+    # FIR group delays 2 x 60 + primed hop 480 + 160-sample window 960 + the
+    # model's 2-hop lookahead 960, all at 48 kHz. Dry path is delayed to match.
+    dry_delay_samples = 2520
+
+    _taps = None
+
+    def __init__(self):
+        import os
+        import onnxruntime as ort
+        from scipy.signal import firwin
+        path = _dpdfnet_model_path()
+        if not os.path.exists(path) or os.path.getsize(path) != _DPDFNET_MODEL_SIZE:
+            raise RuntimeError(f'DPDFNet model missing or wrong size at {path}')
+        opts = ort.SessionOptions()
+        # One core per stream, like DFN3: concurrent buses must not contend
+        # on a shared session's thread pool inside the 50 ms tick.
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self._sess = ort.InferenceSession(
+            path, sess_options=opts, providers=['CPUExecutionProvider'])
+        meta = self._sess.get_modelmeta().custom_metadata_map
+        self._win = int(meta['window_length'])       # 160
+        self._hop = int(meta['hop_length'])          # 80
+        n_erb = int(meta['erb_norm_state_size'])
+        n_spec = int(meta['spec_norm_state_size'])
+        init = np.zeros(int(meta['state_size']), dtype=np.float32)
+        init[:n_erb] = [float(v) for v in meta['erb_norm_init'].split(',')]
+        init[n_erb:n_erb + n_spec] = [float(v) for v in meta['spec_norm_init'].split(',')]
+        self._init_state = init
+        self._in_names = [i.name for i in self._sess.get_inputs()]
+        self._out_names = [o.name for o in self._sess.get_outputs()]
+        # Vorbis window — COLA at 50% overlap (w[n]^2 + w[n+hop]^2 == 1).
+        n = np.arange(self._win)
+        s = np.sin(0.5 * np.pi * (n + 0.5) / (self._win / 2))
+        self._window = np.sin(0.5 * np.pi * s * s).astype(np.float32)
+        if _DPDFNet8kStream._taps is None:
+            # resample_poly's own design for a factor of 6.
+            _DPDFNet8kStream._taps = firwin(
+                2 * 10 * _DPDFNET_RATIO + 1, 1.0 / _DPDFNET_RATIO,
+                window=('kaiser', 5.0)).astype(np.float32)
+        self._h = _DPDFNet8kStream._taps
+        self._dry_delay_buf = np.empty(0, dtype=np.int16)
+        self.reset()
+        # Warm the session so the first real frames don't stall the worker.
+        for _ in range(20):
+            self._frame(np.zeros(self._win, dtype=np.float32))
+        self.reset()
+
+    def reset(self):
+        self._state = self._init_state.copy()
+        self._dec_zi = np.zeros(len(self._h) - 1, dtype=np.float32)
+        self._int_zi = np.zeros(len(self._h) - 1, dtype=np.float32)
+        self._phase = 0
+        self._in8 = np.zeros(self._hop, dtype=np.float32)    # primed hop
+        self._ola = np.zeros(self._win, dtype=np.float32)
+
+    def set_atten_lim_db(self, atten_lim_db):
+        """No-op. DPDFNet's attenuation limit is a blend of the noisy and
+        enhanced spectra, which is the same thing as the bus's wet/dry mix."""
+        pass
+
+    def close(self):
+        self._sess = None
+
+    def __del__(self):
+        self.close()
+
+    def _frame(self, frame8):
+        spec = np.fft.rfft(frame8 * self._window)
+        spec_in = np.stack([spec.real, spec.imag], axis=-1).astype(np.float32)[None, None]
+        spec_e, self._state = self._sess.run(
+            self._out_names, {self._in_names[0]: spec_in, self._in_names[1]: self._state})
+        ri = spec_e[0, 0]
+        return (np.fft.irfft(ri[:, 0] + 1j * ri[:, 1], n=self._win)
+                * self._window).astype(np.float32)
+
+    def process(self, samples_i16):
+        if samples_i16.size == 0 or self._sess is None:
+            return np.empty(0, dtype=np.int16)
+        from scipy.signal import lfilter
+        x = samples_i16.astype(np.float32) / 32768.0
+        # 48k -> 8k: anti-alias FIR with carried state, keep every 6th sample
+        # at a phase that carries across calls.
+        y, self._dec_zi = lfilter(self._h, 1.0, x, zi=self._dec_zi)
+        y8 = y[self._phase::_DPDFNET_RATIO].astype(np.float32)
+        self._phase = (self._phase - len(x)) % _DPDFNET_RATIO
+        buf = np.concatenate([self._in8, y8])
+        out8 = []
+        pos = 0
+        win, hop = self._win, self._hop
+        while buf.size - pos >= win:
+            self._ola += self._frame(buf[pos:pos + win])
+            out8.append(self._ola[:hop].copy())
+            self._ola[:win - hop] = self._ola[hop:]
+            self._ola[win - hop:] = 0.0
+            pos += hop
+        self._in8 = buf[pos:].copy()
+        if not out8:
+            return np.empty(0, dtype=np.int16)
+        o8 = np.concatenate(out8)
+        # 8k -> 48k: zero-stuff, same FIR (x6 gain), carried state.
+        up = np.zeros(o8.size * _DPDFNET_RATIO, dtype=np.float32)
+        up[::_DPDFNET_RATIO] = o8 * _DPDFNET_RATIO
+        o48, self._int_zi = lfilter(self._h, 1.0, up, zi=self._int_zi)
+        return np.clip(o48 * 32768.0, -32768, 32767).astype(np.int16)
+
+    def process_mix(self, samples_i16, mix):
+        return _mix_with_dry_delay(self, samples_i16, mix)
+
+
 # Engine registry. Missing entries fall back cleanly via
 # make_denoise_stream() returning None.
 _DENOISE_ENGINES = {
     'rnnoise': _RNNoiseStream,
     'deepfilternet': _DFN3Stream,
+    'dpdfnet': _DPDFNet8kStream,
 }
 
 # Legal engine identifiers — consumers should validate user input against
 # this set before calling make_denoise_stream so typos become explicit errors
 # rather than silent "denoise turned off".
-DENOISE_ENGINE_IDS = ('rnnoise', 'deepfilternet')
+DENOISE_ENGINE_IDS = ('rnnoise', 'deepfilternet', 'dpdfnet')
 
 
 def make_denoise_stream(engine='rnnoise'):

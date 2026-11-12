@@ -398,36 +398,33 @@ else
     fi
 fi
 
-# Transcription engines. BOTH are needed: Moonshine is the default, but
-# Whisper is still a first-class choice in transcribe_engine._VALID_MODELS and
-# is offered in both model dropdowns on the /transcribe page — where it is in
-# fact the starred recommendation (whisper/medium.en locally,
-# whisper/large-v3-turbo for remote workers).
-#
-# 016defa ("asr: replace Whisper with Moonshine") swapped this pip line over
-# instead of adding to it, so from then until 2026-07-29 a fresh install could
-# not run any whisper/* model: picking one in the UI just failed. Moonshine
-# became the DEFAULT engine, not the only one.
-
-# Moonshine — default engine (CPU-efficient ONNX, ~60MB model)
+# Transcription engines. Moonshine v1 and Whisper were removed 2026-11-12
+# (Parakeet beat both on our radio audio); existing hosts may still have
+# useful-moonshine-onnx / faster-whisper installed, which is harmless.
 set +e
-if python3 -c "import moonshine_onnx" 2>/dev/null; then
-    echo "  ✓ useful-moonshine-onnx already installed"
+
+# Parakeet (NVIDIA TDT 0.6B v2, int8 ONNX) — parakeet/* model keys. Best
+# accuracy measured on our radio audio (2026-11-12). Default engine.
+# onnx-asr is pure Python on onnxruntime, no torch. [cpu] pulls onnxruntime —
+# which Silero VAD needs too, and which nothing else here installs since
+# useful-moonshine-onnx was dropped — and [hub] pulls huggingface-hub. The
+# ~630MB weights are fetched on first use, not here.
+if python3 -c "import onnx_asr, huggingface_hub, onnxruntime" 2>/dev/null; then
+    echo "  ✓ onnx-asr already installed"
 else
-    _pip useful-moonshine-onnx 2>/dev/null \
-        && echo "  ✓ useful-moonshine-onnx installed (default transcription engine)" \
-        || echo "  ⚠ Could not pip install useful-moonshine-onnx — transcription will not work"
+    _pip 'onnx-asr[cpu,hub]' 2>/dev/null \
+        && echo "  ✓ onnx-asr installed (parakeet/* model keys, default engine)" \
+        || echo "  ⚠ Could not pip install onnx-asr — transcription will not work"
 fi
 
-# faster-whisper — the alternative engine behind every whisper/* model key.
-# The package is small; the model weights (~500MB for medium.en) are fetched
-# lazily on first use, not here.
-if python3 -c "import faster_whisper" 2>/dev/null; then
-    echo "  ✓ faster-whisper already installed"
+# Moonshine v2 (moonshine-voice) — moonshine2/* model keys. Ships its own
+# libmoonshine.so (bundled ORT); weights (~100-300MB) fetched on first use.
+if python3 -c "import moonshine_voice" 2>/dev/null; then
+    echo "  ✓ moonshine-voice already installed"
 else
-    _pip faster-whisper 2>/dev/null \
-        && echo "  ✓ faster-whisper installed (whisper/* model keys)" \
-        || echo "  ⚠ Could not pip install faster-whisper — whisper/* models will not work"
+    _pip moonshine-voice 2>/dev/null \
+        && echo "  ✓ moonshine-voice installed (moonshine2/* model keys)" \
+        || echo "  ⚠ Could not pip install moonshine-voice — moonshine2/* models will not work"
 fi
 
 # Silero VAD — ML speech classifier (bundled ONNX model, ~2MB).
@@ -562,7 +559,7 @@ fi
 # ── protobuf pin repair — MUST be the last pip action in this step ──
 #
 # pymumble requires protobuf==3.12.2 exactly. onnxruntime (pulled in above by
-# useful-moonshine-onnx) requires a modern protobuf and pip happily upgrades
+# onnx-asr[cpu]; originally by useful-moonshine-onnx) requires a modern protobuf and pip happily upgrades
 # it to 7.x AFTER pymumble is already installed. protobuf 4+ refuses to load
 # pymumble's pre-generated mumble_pb2.py:
 #
@@ -574,8 +571,8 @@ fi
 # a clean Arch box 2026-07-29: run 1 ended on protobuf 7.35.1 (pymumble
 # broken), run 2 ended on 3.12.2 (everything working).
 #
-# 3.12.2 satisfies both at runtime: pymumble, onnxruntime and moonshine_onnx
-# all import fine on it (verified on the clean VM and on the live gateway,
+# 3.12.2 satisfies both at runtime: pymumble, onnxruntime, onnx_asr and
+# moonshine_voice all import fine on it (the last two checked 2026-11-12) (verified on the clean VM and on the live gateway,
 # which has been running 3.12.2 all along). So the resolution is to let the
 # ML stack install whatever it wants and then put the pin back.
 echo "  Verifying pymumble / protobuf compatibility..."
@@ -1921,18 +1918,16 @@ if [ -f "$GATEWAY_DIR/gateway_config.txt" ]; then
     if [ "$(_cfg_get ENABLE_TRANSCRIPTION)" = "true" ]; then
         _tmodel=$(_cfg_get TRANSCRIBE_MODEL)
         case "$_tmodel" in
-            whisper/*)
-                python3 -c "import faster_whisper" 2>/dev/null \
-                    && _hc_pass "faster-whisper importable (TRANSCRIBE_MODEL=$_tmodel)" \
-                    || { _hc_fail "TRANSCRIBE_MODEL=$_tmodel needs faster-whisper, which this"
-                         _hc_fail "  installer should have installed — the pip step above failed."
-                         _hc_fail "  Retry: pip install --break-system-packages faster-whisper"
-                         _hc_fail "  or switch to a moonshine/* model."; }
+            moonshine2/*)
+                python3 -c "import moonshine_voice" 2>/dev/null \
+                    && _hc_pass "moonshine-voice importable (TRANSCRIBE_MODEL=$_tmodel)" \
+                    || _hc_fail "TRANSCRIBE_MODEL=$_tmodel needs moonshine-voice — pip install --break-system-packages moonshine-voice"
                 ;;
             *)
-                python3 -c "import moonshine_onnx" 2>/dev/null \
-                    && _hc_pass "moonshine importable (TRANSCRIBE_MODEL=${_tmodel:-moonshine/base})" \
-                    || _hc_fail "TRANSCRIBE_MODEL=${_tmodel:-moonshine/base} needs useful-moonshine-onnx — not importable"
+                # Unset, parakeet/*, or a removed key (which falls back to Parakeet).
+                python3 -c "import onnx_asr, huggingface_hub" 2>/dev/null \
+                    && _hc_pass "onnx-asr importable (TRANSCRIBE_MODEL=${_tmodel:-parakeet/tdt-0.6b-v2})" \
+                    || _hc_fail "TRANSCRIBE_MODEL=${_tmodel:-parakeet/tdt-0.6b-v2} needs onnx-asr — pip install --break-system-packages 'onnx-asr[cpu,hub]'"
                 ;;
         esac
     fi

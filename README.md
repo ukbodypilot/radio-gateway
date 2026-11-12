@@ -26,7 +26,7 @@ More screenshots in `docs/screenshots/`.
 
 **Audio routing v2.0** — bus-based mixer with a visual drag-and-drop editor at `/routing`. Four bus types (Listen / Solo / Duplex / Simplex Repeater), per-bus processing chain (gate / HPF / LPF / notch / **neural denoise** with RNNoise *or* DeepFilterNet 3), per-bus PCM + MP3 streaming, NUL sink for recording-only paths. Independent TX/RX muting per radio.
 
-**Transcription** — distributed pool. Moonshine (linear cost, wins on short clips) + Whisper via faster-whisper (better accuracy on long clips), routed by clip length. Local engine or [remote workers](docs/transcription-pool.md) on other Linux boxes. Silero v5 VAD. Per-utterance frequency tagging and Mumble cross-posting and keyword email alerts.
+**Transcription** — distributed pool. NVIDIA Parakeet TDT 0.6B (int8 ONNX, CPU) by default, Moonshine v2 as the lighter option. Local engine or [remote workers](docs/transcription-pool.md) on other Linux boxes. Silero v5 VAD. Per-utterance frequency tagging and Mumble cross-posting and keyword email alerts.
 
 **Loop recorder** — per-bus continuous recording (1h – 7d retention), canvas waveform with click-to-play and drag-select export. Server-owned playback so it survives browser close.
 

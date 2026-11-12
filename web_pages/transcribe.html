@@ -351,7 +351,6 @@
     <div class="kv"><span class="k">Queue audio</span><span class="v" id="ps-queue-secs">0<span class="unit">s</span></span></div>
     <div class="kv"><span class="k">Lag (est.)</span><span class="v" id="ps-lag">—<span class="unit">s</span></span></div>
     <div class="kv"><span class="k">Gateway RAM</span><span class="v" id="ps-ram">—<span class="unit">MB</span></span></div>
-    <div class="kv"><span class="k">Split &lt;</span><span class="v" id="res-split">—<span class="unit">s</span></span></div>
   </div>
 
 </div>
@@ -366,14 +365,12 @@
 <div class="workers-foot" id="workers-foot" style="display:none">
   <span class="lbl">Switch all remote →</span>
   <select id="rw-model-sel" onchange="_rwModelDirty=true" style="background:var(--t-btn);color:var(--t-text);border:1px solid var(--t-border);padding:3px var(--s-2);font:inherit;font-size:var(--f-sm);">
-    <optgroup label="Whisper">
-      <option value="whisper/small.en">small.en</option>
-      <option value="whisper/medium.en">medium.en</option>
-      <option value="whisper/large-v3-turbo">large-v3-turbo ★</option>
+    <optgroup label="Parakeet">
+      <option value="parakeet/tdt-0.6b-v2">tdt-0.6b-v2 ★</option>
     </optgroup>
-    <optgroup label="Moonshine">
-      <option value="moonshine/tiny">tiny</option>
-      <option value="moonshine/base">base</option>
+    <optgroup label="Moonshine v2">
+      <option value="moonshine2/small">small</option>
+      <option value="moonshine2/medium">medium</option>
     </optgroup>
   </select>
   <button class="rb rb-sm rb-primary" onclick="switchRemoteModel()">Apply</button>
@@ -417,25 +414,15 @@
   <div class="ctrl-cell">
     <div class="ctrl-head"><span>Local model</span></div>
     <select id="st-model-sel" onchange="setConfig('model', this.value)">
-      <optgroup label="Moonshine">
-        <option value="moonshine/tiny">tiny (fastest)</option>
-        <option value="moonshine/base" selected>base (balanced)</option>
+      <optgroup label="Parakeet (best accuracy)">
+        <option value="parakeet/tdt-0.6b-v2" selected>tdt-0.6b-v2 ★</option>
       </optgroup>
-      <optgroup label="Whisper">
-        <option value="whisper/small.en">small.en</option>
-        <option value="whisper/medium.en">medium.en ★</option>
-        <option value="whisper/large-v3-turbo">large-v3-turbo</option>
+      <optgroup label="Moonshine v2">
+        <option value="moonshine2/small">small</option>
+        <option value="moonshine2/medium">medium (slower)</option>
       </optgroup>
     </select>
-    <div class="ctrl-hint">Change requires restart. Whisper needs faster-whisper installed.</div>
-  </div>
-
-  <div class="ctrl-cell">
-    <div class="ctrl-head"><span>Split threshold</span><span class="v" id="st-split-val">10.0s</span></div>
-    <input type="range" id="st-split" min="0" max="30" step="0.5" value="10"
-           oninput="document.getElementById('st-split-val').textContent=parseFloat(this.value).toFixed(1)+'s'"
-           onchange="setConfig('split_threshold_secs', this.value)">
-    <div class="ctrl-hint">Pool mode: clips under N sec → Moonshine; longer → Whisper. 0 = no routing.</div>
+    <div class="ctrl-hint">Change requires restart. Parakeet needs onnx-asr, Moonshine v2 needs moonshine-voice; first load downloads the model.</div>
   </div>
 
   <div class="ctrl-cell">
@@ -591,10 +578,6 @@ function poll() {
           document.getElementById('st-min-dur').value = s.min_duration;
           _set('st-dur-val', parseFloat(s.min_duration).toFixed(1) + 's');
         }
-        if (s.split_threshold_secs !== undefined) {
-          document.getElementById('st-split').value = s.split_threshold_secs;
-          _set('st-split-val', parseFloat(s.split_threshold_secs).toFixed(1) + 's');
-        }
         if (s.audio_boost) {
           document.getElementById('st-boost').value = s.audio_boost;
           _set('st-boost-val', s.audio_boost + '%');
@@ -603,13 +586,6 @@ function poll() {
         if (s.log_results !== undefined)      document.getElementById('st-log-results').checked = s.log_results;
         if (s.alert_keywords !== undefined)   document.getElementById('st-keywords').value = s.alert_keywords;
         if (s.mode)                           document.getElementById('st-mode').value = s.mode;
-      }
-
-      // Resources: split threshold (live update)
-      if (s.split_threshold_secs !== undefined) {
-        var spl = document.getElementById('res-split');
-        spl.innerHTML = parseFloat(s.split_threshold_secs).toFixed(1) + '<span class="unit">s</span>';
-        spl.className = 'v';
       }
 
       // Throughput

@@ -90,8 +90,8 @@ class BusManager:
         self._tick_interval = 0.05  # 50ms = 20 ticks/sec (matches main loop)
         # Tick at which the one-shot startup collect+freeze runs (see _tick_loop).
         # 1200 ticks = ~60 s: generous headroom over the ~2 s the transcriber
-        # needs to load Silero + Moonshine on its own thread, and over the
-        # "Loading moonshine/base... attempt 1/3" retry path, while still
+        # needs to load Silero + the ASR model on its own thread, and over the
+        # "Loading <model>... attempt 1/3" retry path, while still
         # landing well before the first gen-2 at tick 12000 (~10 min). Must
         # stay a multiple of 1200 so it consumes a gen-1 slot instead of
         # adding a collect.

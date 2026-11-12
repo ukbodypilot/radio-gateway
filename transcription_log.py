@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     freq     TEXT    NOT NULL DEFAULT '',
     text     TEXT    NOT NULL,
     duration REAL    NOT NULL DEFAULT 0.0,
-    bus      TEXT    NOT NULL DEFAULT ''
+    bus      TEXT    NOT NULL DEFAULT '',
+    model    TEXT    NOT NULL DEFAULT '',
+    proc_time REAL   NOT NULL DEFAULT 0.0
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts
     USING fts5(text, content=transcriptions, content_rowid=id);
@@ -40,7 +42,9 @@ Schema:
     source   TEXT,     -- radio source id, e.g. sdr1, sdr2, ftm, kv4p
     freq     TEXT,     -- frequency string, e.g. '446.760', '147.435'
     text     TEXT,     -- transcribed speech
-    duration REAL      -- audio clip duration in seconds
+    duration REAL,     -- audio clip duration in seconds
+    model    TEXT,     -- ASR model key, e.g. 'parakeet/tdt-0.6b-v2' ('' before 2026-11-12)
+    proc_time REAL     -- seconds the model took on this clip
   )
 
 Rules:
@@ -85,6 +89,14 @@ class TranscriptionLog:
             if 'bus' not in cols:
                 self._conn.execute(
                     "ALTER TABLE transcriptions ADD COLUMN bus TEXT NOT NULL DEFAULT ''")
+            # model/proc_time added 2026-11-12 so models can be compared from
+            # the DB. Older rows get '' / 0.0 — the model is unknown for them.
+            if 'model' not in cols:
+                self._conn.execute(
+                    "ALTER TABLE transcriptions ADD COLUMN model TEXT NOT NULL DEFAULT ''")
+            if 'proc_time' not in cols:
+                self._conn.execute(
+                    "ALTER TABLE transcriptions ADD COLUMN proc_time REAL NOT NULL DEFAULT 0.0")
         except sqlite3.Error as e:
             print(f'  [TxLog] migration error: {e}')
         self._conn.commit()
@@ -112,14 +124,16 @@ class TranscriptionLog:
         with self._lock:
             try:
                 self._conn.execute(
-                    'INSERT INTO transcriptions(ts, source, freq, text, duration, bus) '
-                    'VALUES (?,?,?,?,?,?)',
+                    'INSERT INTO transcriptions(ts, source, freq, text, duration, bus, model, proc_time) '
+                    'VALUES (?,?,?,?,?,?,?,?)',
                     (result['timestamp'],
                      result.get('source', ''),
                      result.get('freq', ''),
                      result['text'],
                      result.get('duration', 0.0),
-                     result.get('bus', ''))
+                     result.get('bus', ''),
+                     result.get('model', ''),
+                     result.get('proc_time', 0.0))
                 )
                 self._conn.commit()
             except Exception as e:

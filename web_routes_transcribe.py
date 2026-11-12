@@ -41,7 +41,7 @@ def handle_transcribe_worker_register(handler, parent):
     """POST /transcribe_worker/register
 
     Body: {"name": "macmini", "port": 9800, "url": "http://host:9800",
-           "model": "whisper/medium.en", ...}
+           "model": "parakeet/tdt-0.6b-v2", ...}
 
     `url` is optional — when absent it is derived from the connecting
     socket's address plus `port`, so a worker never has to know or
@@ -137,9 +137,6 @@ def handle_transcribe_config(handler, parent):
             result = {'ok': True}
         elif key == 'model':
             _v = str(value)
-            # Accept bare legacy keys and normalise them
-            if _v in ('tiny', 'base'):
-                _v = f'moonshine/{_v}'
             from transcriber import _VALID_MODELS
             if _v not in _VALID_MODELS:
                 result = {'ok': False, 'error': f'unknown model: {_v}'}
@@ -150,17 +147,6 @@ def handle_transcribe_config(handler, parent):
                 tx._model_size = _parts[1]
                 tx._save()
                 result = {'ok': True, 'note': 'model change takes effect on restart'}
-        elif key == 'split_threshold_secs':
-            try:
-                _v = float(value)
-                if _v < 0 or _v > 60:
-                    result = {'ok': False, 'error': 'must be 0-60 seconds'}
-                else:
-                    tx._split_threshold = _v
-                    tx._save()
-                    result = {'ok': True}
-            except (TypeError, ValueError) as e:
-                result = {'ok': False, 'error': str(e)}
         elif key == 'mode':
             _v = str(value).lower()
             if _v not in ('off', 'local', 'remote', 'pool'):

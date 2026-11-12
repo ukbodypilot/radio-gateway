@@ -35,13 +35,13 @@ EXPECTED_INSTALLER_ONLY = {
     # Bootstrap: needed before anything else can build. Not a runtime dep.
     'setuptools',
     # Re-pinned last by the pin-repair block to undo the upgrade that
-    # onnxruntime/faster-whisper force. Declared by pymumble, not by us.
+    # onnxruntime forces. Declared by pymumble, not by us.
     'protobuf',
     # Fallback PyPI name for pymumble-py3; requirements.txt lists the primary.
     'pymumble',
 }
 EXPECTED_REQUIREMENTS_ONLY = {
-    # Arrives transitively via useful-moonshine-onnx (and faster-whisper).
+    # Arrives transitively via onnx-asr[cpu].
     # Listed in requirements.txt so a manual install gets it explicitly.
     'onnxruntime',
 }

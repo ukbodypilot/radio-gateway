@@ -285,7 +285,7 @@ class _RoutingCmdsMixin:
         return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
     def _routing_cmd_set_dfn_engine(self, data, busses, connections):
-        # Per-bus denoise engine — 'rnnoise' | 'deepfilternet'.
+        # Per-bus denoise engine — 'rnnoise' | 'deepfilternet' | 'dpdfnet'.
         # AudioProcessor.set_dfn_engine drops the current stream so the
         # next audio chunk rebuilds with the new engine.
         from audio_util import DENOISE_ENGINE_IDS

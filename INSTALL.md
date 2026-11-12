@@ -99,7 +99,7 @@ The script is broken into 16 numbered phases (it prints `[ n/16 ]` as it goes):
 
 1. System packages (`pacman`/`apt`): Python, PortAudio, HIDAPI, libsndfile, FFmpeg, Opus, alsa-utils, git, Avahi; plus `cloudflared` if available.
 2. ALSA loopback module (`snd-aloop`): persistent load + validation.
-3. Python packages (see `requirements.txt`): numpy, scipy, pyaudio, pymumble, useful-moonshine-onnx + faster-whisper (transcription engines), silero-vad, pyrnnoise (denoise), `mcp<2`, etc. Then the KV4P-HT Python driver, cloned and installed editable at `~/kv4p-ht-python`, and the Kokoro TTS model files. The transcription pool can route between local and remote workers — see [docs/transcription-pool.md](docs/transcription-pool.md) for multi-machine deployment.
+3. Python packages (see `requirements.txt`): numpy, scipy, pyaudio, pymumble, onnx-asr + moonshine-voice (transcription engines), silero-vad, pyrnnoise (denoise), `mcp<2`, etc. Then the KV4P-HT Python driver, cloned and installed editable at `~/kv4p-ht-python`, and the Kokoro TTS model files. The transcription pool can route between local and remote workers — see [docs/transcription-pool.md](docs/transcription-pool.md) for multi-machine deployment.
 4. UDEV rules for AIOC and KV4P, and optionally CH340 USB relay modules.
 5. User added to `audio` + serial groups; realtime limits; an old `modprobe`/`nice` sudoers rule from earlier versions is removed. On a Raspberry Pi, a `/run/user` permissions fix.
 6. Optional, legacy: DarkIce. Not used by the default stream path.

@@ -688,9 +688,9 @@ STREAM_FLOW_STALE_AFTER = 15.0
 STREAM_ENCODER_WRITE_TIMEOUT = 1.0
 
 [transcription]
-# Live speech-to-text over received audio. Two engines are supported and both
-# are installed: Moonshine ONNX (CPU, the default) and faster-whisper. Silero
-# VAD does the segmentation for either.
+# Live speech-to-text over received audio. Parakeet (NVIDIA TDT 0.6B, int8
+# ONNX via onnx-asr) is the default; Moonshine v2 (moonshine-voice) is the
+# lighter alternative. Both run on CPU. Silero VAD does the segmentation.
 # Runtime settings edited on /transcribe are saved to .transcribe_settings.json
 # and OVERRIDE the values here — these are the first-boot defaults.
 #
@@ -704,17 +704,14 @@ ENABLE_TRANSCRIPTION = false
 #   pool   -> distribute across every known worker
 TRANSCRIBE_MODE = local
 
-# Valid keys (transcribe_engine._VALID_MODELS) — anything else silently falls
-# back to moonshine/base:
-#   moonshine/tiny, moonshine/base
-#   whisper/small.en, whisper/medium.en, whisper/large-v3-turbo
-# Moonshine is the DEFAULT engine, not the only one — both engines are
-# installed by scripts/install.sh (useful-moonshine-onnx for moonshine/*,
-# faster-whisper for whisper/*) and both are selectable on /transcribe.
-# Moonshine is much lighter; whisper/medium.en is more accurate and is the
-# starred pick in the UI. Whisper model weights (~500MB for medium.en) are
-# downloaded lazily on first use.
-TRANSCRIBE_MODEL = moonshine/base
+# Valid keys (transcribe_engine._VALID_MODELS) — anything else falls back to
+# parakeet/tdt-0.6b-v2 with a log line:
+#   parakeet/tdt-0.6b-v2
+#   moonshine2/small, moonshine2/medium
+# Moonshine v1 (moonshine/*) and Whisper (whisper/*) were removed 2026-11-12.
+# Weights download on first use (~630MB Parakeet, ~100-300MB Moonshine v2).
+# Inference uses half the cores; set env TRANSCRIBE_CPU_THREADS to override.
+TRANSCRIBE_MODEL = parakeet/tdt-0.6b-v2
 
 # Segmentation. VAD_THRESHOLD is Silero speech probability (0-1); audio is
 # boosted with a tanh soft-clip before VAD, because hard clipping breaks
@@ -723,10 +720,6 @@ TRANSCRIBE_MODEL = moonshine/base
 TRANSCRIBE_VAD_THRESHOLD = 0.5
 TRANSCRIBE_VAD_HOLD = 1.0
 TRANSCRIBE_MIN_DURATION = 0.5
-
-# Split segments longer than this (seconds) so a long transmission does not
-# block the queue waiting for one huge inference.
-TRANSCRIBE_SPLIT_THRESHOLD_SECS = 10.0
 
 # Where finished transcripts go
 TRANSCRIBE_FORWARD_MUMBLE = true

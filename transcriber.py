@@ -1,9 +1,10 @@
 """
-Radio Transcriber — VAD-gated voice-to-text using Moonshine + Silero VAD.
+Radio Transcriber — VAD-gated voice-to-text using Parakeet + Silero VAD.
 
 Taps audio from the gateway's mixer output. Silero VAD (speech classifier)
-decides when speech starts/stops. Buffered audio is transcribed with Moonshine
-(CPU-efficient ONNX ASR) when VAD closes, then stored with timestamp and
+decides when speech starts/stops. Buffered audio is transcribed with Parakeet
+or Moonshine v2 (CPU ONNX ASR, see transcribe_engine) when VAD closes, then
+stored with timestamp and
 source info.
 
 Results are served via HTTP for the web UI and optionally forwarded to
@@ -23,19 +24,18 @@ from audio_util import pcm_db
 
 # Silence huggingface_hub's unauthenticated-download warning — it fires on
 # every cache hit and clutters the gateway log. We don't need HF auth for
-# public Moonshine weights.
+# public Parakeet weights.
 logging.getLogger('huggingface_hub').setLevel(logging.ERROR)
 
 _SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                '.transcribe_settings.json')
 
-# Moonshine's encoder allocates proportional to input length. Hard-cap
-# utterance buffers at 60s (package asserts max 64s) to prevent OOM on stuck-
-# open VAD (squelched repeater, continuous tone). Between the soft and hard
+# ASR encoder memory grows with input length. Hard-cap utterance buffers at
+# 60s to bound it on a stuck-open VAD (squelched repeater, continuous tone). Between the soft and hard
 # cap, cut on the first probability dip to split at a natural pause rather
 # than mid-word.
 from transcribe_engine import (
-    _VALID_MODELS, LocalInferenceEngine, RemoteEngine, _pick_worker,
+    _VALID_MODELS, DEFAULT_MODEL, LocalInferenceEngine, RemoteEngine, _pick_worker,
 )  # re-exported so web_routes_post.py can still `from transcriber import _VALID_MODELS`
 
 _MAX_UTTERANCE_SECS = 60.0
@@ -226,9 +226,50 @@ def _save_settings(settings):
 
 
 def _resample_48k_to_16k(audio_48k_f32):
-    """Polyphase resample 48kHz float32 → 16kHz with proper anti-aliasing."""
+    """Polyphase resample 48kHz float32 → 16kHz with proper anti-aliasing.
+
+    Stateless — fine for a whole buffer. Do NOT call it per bus chunk: each
+    call zero-pads both ends, so a 50 ms chunk stream gets a filter transient
+    at every boundary (measured 37.6 dB SNR vs a whole-file resample). The
+    live feed uses _StreamDecimator instead.
+    """
     from scipy.signal import resample_poly
     return resample_poly(audio_48k_f32, 1, 3).astype(np.float32)
+
+
+class _StreamDecimator:
+    """Stateful 48 kHz → 16 kHz decimator for a chunked stream.
+
+    Same anti-alias FIR as resample_poly(…, 1, 3) uses, but the filter state
+    and the decimation phase carry across calls, so chunk boundaries are
+    seamless. Output equals filtering the concatenated stream (delayed by the
+    FIR's group delay, ~1 ms), regardless of how it was chunked.
+    """
+    __slots__ = ('_h', '_zi', '_phase')
+    _TAPS = None
+
+    def __init__(self):
+        if _StreamDecimator._TAPS is None:
+            from scipy.signal import firwin
+            # resample_poly's default design: Kaiser β=5, half-length 10*max(up,down).
+            _StreamDecimator._TAPS = firwin(
+                2 * 10 * 3 + 1, 1.0 / 3, window=('kaiser', 5.0)).astype(np.float32)
+        self._h = _StreamDecimator._TAPS
+        self.reset()
+
+    def reset(self):
+        self._zi = np.zeros(len(self._h) - 1, dtype=np.float32)
+        self._phase = 0
+
+    def process(self, x_48k):
+        from scipy.signal import lfilter
+        if len(x_48k) == 0:
+            return np.zeros(0, dtype=np.float32)
+        y, self._zi = lfilter(self._h, 1.0, x_48k.astype(np.float32), zi=self._zi)
+        out = y[self._phase::3]
+        # Index of the next kept sample, relative to the start of the next chunk.
+        self._phase = (self._phase - len(x_48k)) % 3
+        return out.astype(np.float32)
 
 
 class _SileroVAD:
@@ -323,19 +364,20 @@ class _StreamState:
     each other's audio or VAD timing.
     """
     __slots__ = (
-        'vad',
+        'vad', 'decimator',
         'frame_acc', 'audio_buf_16k', 'audio_buf_samples', 'buf_start_time',
         'vad_open', 'vad_close_time',
         'vad_last_prob', 'vad_prob_env', 'vad_prob_peak', 'vad_envelope',
         'upstream_counts', 'last_upstream_source',
         # Per-stream feed queue + worker. One thread per bus so the VAD /
-        # resample / Moonshine-dispatch work for different buses can run
+        # resample / ASR-dispatch work for different buses can run
         # in parallel rather than serialising through a single worker.
         'feed_queue', 'feed_lock', 'feed_evt', 'feed_thread',
     )
 
     def __init__(self):
         self.vad = _SileroVAD()
+        self.decimator = _StreamDecimator()
         self.frame_acc = np.zeros(0, dtype=np.float32)
         self.audio_buf_16k = []
         self.audio_buf_samples = 0
@@ -358,7 +400,7 @@ class _StreamState:
 
 
 class RadioTranscriber:
-    """Silero-gated, Moonshine-powered audio transcription engine.
+    """Silero-gated, Parakeet-powered audio transcription engine.
 
     Holds a dict of per-bus _StreamState instances so multiple buses wired to
     the transcription sink get independent VAD + attribution. Shared config
@@ -423,10 +465,13 @@ class RadioTranscriber:
             'per_stream_ms': {},      # {source_id: cumulative ms in _process_feed}
         }
 
-        _raw_model = str(_saved.get('model', getattr(config, 'TRANSCRIBE_MODEL', 'moonshine/base')))
-        if _raw_model in ('tiny', 'base'):
-            _raw_model = f'moonshine/{_raw_model}'
-        self._model_key = _raw_model if _raw_model in _VALID_MODELS else 'moonshine/base'
+        _raw_model = str(_saved.get('model', config.TRANSCRIBE_MODEL))
+        if _raw_model not in _VALID_MODELS:
+            # Moonshine v1 / Whisper keys were removed 2026-11-12.
+            print(f"  [Transcribe] Model '{_raw_model}' is no longer supported; "
+                  f"using {DEFAULT_MODEL}")
+            _raw_model = DEFAULT_MODEL
+        self._model_key = _raw_model
 
         # Mode: off / local / remote / pool
         _saved_mode = _saved.get('mode', str(getattr(config, 'TRANSCRIBE_MODE', 'local') or 'local').lower())
@@ -479,11 +524,6 @@ class RadioTranscriber:
                         if self._pool and isinstance(self._pool[0], LocalInferenceEngine)
                         else 'remote')
 
-        # Length-based routing in pool mode.  0 = disabled (least-busy only).
-        # >0: clips under N seconds prefer Moonshine engines, >= N prefer Whisper.
-        self._split_threshold = float(_saved.get(
-            'split_threshold_secs',
-            getattr(config, 'TRANSCRIBE_SPLIT_THRESHOLD_SECS', 10.0) or 10.0))
         self._sample_rate = int(getattr(config, 'AUDIO_RATE', 48000))
         self._forward_mumble = _saved.get('forward_mumble', bool(getattr(config, 'TRANSCRIBE_FORWARD_MUMBLE', True)))
         self._keyword_last_sent = {}    # keyword -> monotonic time of last email
@@ -520,7 +560,6 @@ class RadioTranscriber:
             'model': self._model_key,
             'mode': self._mode,
             'remote_urls': ','.join(self._remote_urls),
-            'split_threshold_secs': self._split_threshold,
             'vad_threshold': self._vad_threshold,
             'vad_hold': self._vad_hold_time,
             'min_duration': self._min_duration,
@@ -671,7 +710,7 @@ class RadioTranscriber:
         """Enqueue 48kHz 16-bit PCM onto this bus's per-stream feed queue.
         Called from the bus tick; returns in microseconds so the tick meets
         its 50 ms budget. Each bus gets its own worker thread so VAD /
-        resample / Moonshine-dispatch work for different buses parallelises.
+        resample / ASR-dispatch work for different buses parallelises.
         """
         if not self._enabled or not self._vad_ready:
             return
@@ -766,9 +805,11 @@ class RadioTranscriber:
         # denoise stage here so users have exactly one knob per bus.
         arr_48k_i16 = np.frombuffer(pcm_48k, dtype=np.int16)
 
-        # Convert to float32 [-1, 1] and resample once.
+        # Convert to float32 [-1, 1] and resample once, carrying filter state
+        # across chunks (a stateless per-chunk resample ticks every 50 ms).
         arr_48k = arr_48k_i16.astype(np.float32) / 32768.0
-        arr_16k = _resample_48k_to_16k(arr_48k)
+        arr_16k = (stream.decimator.process(arr_48k) if stream is not None
+                   else _resample_48k_to_16k(arr_48k))
         if self._audio_boost != 1.0:
             # Soft-clip via tanh: preserves headroom and avoids the square-wave
             # harmonics that hard-clipping introduces, which Silero's v5 model
@@ -843,7 +884,7 @@ class RadioTranscriber:
             if _us:
                 stream.upstream_counts[_us] = stream.upstream_counts.get(_us, 0) + 1
 
-            # Hard 60s cap — force close to stay under Moonshine's 64s limit.
+            # Hard 60s cap — force close to bound ASR memory.
             if stream.audio_buf_samples >= self._max_samples_16k:
                 self._submit_utterance(stream, source_id)
                 return
@@ -969,7 +1010,6 @@ class RadioTranscriber:
             'pending': len(self._pending),
             'pending_audio_secs': round(sum(item['duration'] for item in self._pending), 1),
             'inflight': sum(getattr(e, '_inflight', 0) for e in _pool_snapshot),
-            'split_threshold_secs': self._split_threshold,
             'ram_mb': _get_rss_mb(),
             'total_transcriptions': len(self._results),
             'streams': streams_payload,
@@ -1177,9 +1217,7 @@ class RadioTranscriber:
                 while self._pending and self._running:
                     _item = self._pending.popleft()
                     with self._pool_lock:
-                        _eng = _pick_worker(list(self._pool),
-                                            _item.get('duration', 0.0),
-                                            self._split_threshold)
+                        _eng = _pick_worker(list(self._pool))
                     if _eng is None:
                         # Pool is empty — every worker expired or none has
                         # registered yet. Drop the utterance (queueing it
@@ -1248,6 +1286,10 @@ class RadioTranscriber:
                     'freq': freq_tag,
                     'source': _tag_id or item.get('source_id', ''),
                     'bus': item.get('source_id', ''),
+                    # Which model produced this text, so models can be compared
+                    # from the DB after a switch. RemoteEngine reports its
+                    # worker's model_key once it has polled /status.
+                    'model': getattr(engine, 'model_key', '') or '',
                     'time_str': time.strftime('%H:%M:%S', time.localtime(item['start_time'])),
                 }
             # Track per-engine ratio (LocalInferenceEngine only — RemoteEngine

@@ -303,7 +303,8 @@
     user-select: none;
     touch-action: manipulation;
   }
-  .dfn-engine-pill[data-engine="deepfilternet"] {
+  .dfn-engine-pill[data-engine="deepfilternet"],
+  .dfn-engine-pill[data-engine="dpdfnet"] {
     color: var(--t-accent);
     border-color: var(--t-accent);
   }
@@ -480,6 +481,15 @@
 <script src="/pages/dagre.min.js"></script>
 <script src="/pages/common.js"></script>
 <script>
+// Denoise engines, in pill-cycle order. Ids must match audio_util.DENOISE_ENGINE_IDS.
+// DPDFNet is the 8 kHz narrowband model — the one that keeps FM radio voice
+// (RNNoise and the 48 kHz models gate it out). Fully wet sounds good.
+var _DFN_ENGINES = {
+  rnnoise:       {label: 'RNN', name: 'RNNoise',              next: 'deepfilternet'},
+  deepfilternet: {label: 'DFN', name: 'DeepFilterNet',        next: 'dpdfnet'},
+  dpdfnet:       {label: 'DP8', name: 'DPDFNet 8 kHz',        next: 'rnnoise'}
+};
+
 var editor;
 var _state = {};
 var _nodeMap = {}; // id -> drawflow node id
@@ -855,15 +865,15 @@ function rebuildEditor() {
       + (function() {
           var mix = (proc.dfn_mix !== undefined) ? proc.dfn_mix : 0.5;
           var pct = Math.round(mix * 100);
-          var eng = (proc.dfn_engine === 'deepfilternet') ? 'deepfilternet' : 'rnnoise';
-          var engLabel = (eng === 'deepfilternet') ? 'DFN' : 'RNN';
+          var eng = _DFN_ENGINES[proc.dfn_engine] ? proc.dfn_engine : 'rnnoise';
+          var engLabel = _DFN_ENGINES[eng].label;
           var cls = 'dfn-mix-row' + (proc.dfn ? '' : ' dim-op');
           var atten = (proc.dfn_atten_db !== undefined) ? proc.dfn_atten_db : 18;
           var attenHidden = (eng === 'deepfilternet') ? '' : ' style="display:none"';
           return '<div class="' + cls + '" id="dfn-mix-row-' + b.id + '">'
             + '<button class="dfn-engine-pill" id="dfn-engine-' + b.id + '" '
             +   'data-engine="' + eng + '" '
-            +   'title="Click to swap denoise engine (RNNoise ↔ DeepFilterNet)" '
+            +   'title="Click to cycle denoise engine (RNNoise → DeepFilterNet → DPDFNet 8 kHz)" '
             +   'onmousedown="event.stopPropagation()" '
             +   'onpointerdown="event.stopPropagation()" '
             +   'ontouchstart="event.stopPropagation()" '
@@ -1364,12 +1374,12 @@ function setDfnMix(busId, value, isLive) {
   }
 }
 
-// Cycle the denoise engine on a bus (RNNoise ↔ DeepFilterNet).
+// Cycle the denoise engine on a bus.
 function toggleDfnEngine(busId) {
   var pill = document.getElementById('dfn-engine-' + busId);
   if (!pill) return;
   var cur = pill.getAttribute('data-engine') || 'rnnoise';
-  var next = (cur === 'rnnoise') ? 'deepfilternet' : 'rnnoise';
+  var next = (_DFN_ENGINES[cur] || _DFN_ENGINES.rnnoise).next;
   fetch('/routing/cmd', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1378,12 +1388,12 @@ function toggleDfnEngine(busId) {
     .then(function(d) {
       if (d.ok) {
         pill.setAttribute('data-engine', d.engine);
-        pill.textContent = (d.engine === 'deepfilternet') ? 'DFN' : 'RNN';
+        pill.textContent = (_DFN_ENGINES[d.engine] || _DFN_ENGINES.rnnoise).label;
         // Show/hide the DFN-only atten cap input so it only surfaces for
         // the engine it applies to.
         var attenWrap = document.getElementById('dfn-atten-wrap-' + busId);
         if (attenWrap) attenWrap.style.display = (d.engine === 'deepfilternet') ? '' : 'none';
-        setStatus(busId + ': engine → ' + (d.engine === 'deepfilternet' ? 'DeepFilterNet' : 'RNNoise'));
+        setStatus(busId + ': engine → ' + (_DFN_ENGINES[d.engine] || _DFN_ENGINES.rnnoise).name);
       } else {
         setStatus('engine swap failed: ' + (d.error || 'unknown'), true);
       }

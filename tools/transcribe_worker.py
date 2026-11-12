@@ -2,7 +2,7 @@
 """
 Remote transcription worker.
 
-Loads Moonshine or Whisper, serves inference over HTTP so the gateway can
+Loads Parakeet or Moonshine v2, serves inference over HTTP so the gateway can
 offload ASR to a separate machine.  VAD always runs on the gateway; only
 the ASR inference step is remote.
 
@@ -17,9 +17,9 @@ worker's address. The gateway reads the address off the socket, so DHCP
 moves resolve themselves on the next heartbeat.
 
 Usage:
-  python3 transcribe_worker.py --model moonshine/base --port 9800
-  python3 transcribe_worker.py --model whisper/medium.en --port 9800
-  python3 transcribe_worker.py --model whisper/medium.en \
+  python3 transcribe_worker.py --model parakeet/tdt-0.6b-v2 --port 9800
+  python3 transcribe_worker.py --model moonshine2/small --port 9800
+  python3 transcribe_worker.py --model parakeet/tdt-0.6b-v2 \
       --gateway http://192.168.2.140:8080 --name macmini
 """
 
@@ -41,7 +41,7 @@ for _search in (_HERE, _PARENT):
         sys.path.insert(0, _search)
         break
 
-from transcribe_engine import LocalInferenceEngine, _VALID_MODELS  # noqa: E402
+from transcribe_engine import LocalInferenceEngine, _VALID_MODELS, DEFAULT_MODEL  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Global state (set up in main, read-only after model loaded)
@@ -359,7 +359,7 @@ def _switch_model(model_key):
 
 def main():
     parser = argparse.ArgumentParser(description='Radio gateway transcription worker')
-    parser.add_argument('--model', default='moonshine/base',
+    parser.add_argument('--model', default=DEFAULT_MODEL,
                         help=f'Model key: {", ".join(sorted(_VALID_MODELS))}')
     parser.add_argument('--port', type=int, default=9800,
                         help='HTTP port to listen on (default 9800)')
@@ -385,6 +385,12 @@ def main():
     args = parser.parse_args()
 
     model_key = args.model
+    if model_key.startswith(('moonshine/', 'whisper/')):
+        # Removed 2026-11-12. Fall back rather than exit, so a deployed unit
+        # still passing an old --model keeps serving instead of crash-looping.
+        print(f'[worker] Model {model_key!r} was removed; using {DEFAULT_MODEL}. '
+              f'Update the --model in this worker\'s service unit.', flush=True)
+        model_key = DEFAULT_MODEL
     if model_key not in _VALID_MODELS:
         print(f'[worker] Unknown model {model_key!r}. '
               f'Valid: {", ".join(sorted(_VALID_MODELS))}', flush=True)

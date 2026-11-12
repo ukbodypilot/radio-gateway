@@ -13,7 +13,7 @@
 # re-pin). That means these two lists are maintained by hand and can drift —
 # which has bitten twice, both times as a package the code imports being
 # absent from the installer while the failure stayed invisible:
-# faster-whisper (every whisper/* model failed to load) and
+# faster-whisper (every whisper/* model failed to load, before it was removed) and
 # prometheus-client (instrumentation silently no-opped, /metrics 500'd).
 #
 # After editing EITHER file, run:
@@ -70,15 +70,14 @@ prometheus-client
 # ── MCP server (Claude AI control) ───────────────────────────
 mcp<2                   # mcp_server uses mcp.server.fastmcp, which 2.x removed
 
-# ── Speech transcription (Moonshine + Whisper + Silero VAD) ──
-# Moonshine runs on onnxruntime (no torch); Silero VAD ships a bundled
-# ONNX model and uses onnxruntime directly.
-# BOTH engines are supported and both are selectable on /transcribe:
-# useful-moonshine-onnx backs the moonshine/* model keys (the default) and
-# faster-whisper backs the whisper/* keys. Install both, or picking a
-# whisper/* model in the UI fails at load time.
-useful-moonshine-onnx
-faster-whisper
+# ── Speech transcription (Parakeet + Moonshine v2 + Silero VAD) ──
+# All CPU, no torch. Silero VAD ships a bundled ONNX model and uses
+# onnxruntime directly. Moonshine v1 and Whisper were removed 2026-11-12.
+# parakeet/* keys (default; NVIDIA Parakeet TDT int8 ONNX, weights fetched on
+# first use). [cpu] brings onnxruntime, [hub] brings huggingface-hub.
+onnx-asr[cpu,hub]
+# moonshine2/* keys (Moonshine v2, own bundled runtime)
+moonshine-voice
 silero-vad
 onnxruntime
 

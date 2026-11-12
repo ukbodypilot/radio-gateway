@@ -2,7 +2,7 @@
 Transcription inference engines — shared by transcriber.py (gateway) and
 transcribe_worker.py (remote worker).
 
-LocalInferenceEngine  — loads Moonshine or Whisper in-process.
+LocalInferenceEngine  — loads Parakeet or Moonshine v2 in-process.
 RemoteEngine          — POSTs VAD-gated utterances to a transcribe_worker HTTP
                         endpoint and returns the text response.  Status is
                         polled in a background thread so the gateway dashboard
@@ -21,10 +21,35 @@ import time
 import urllib.request
 import urllib.error
 
+# Moonshine v1 (moonshine/*) and Whisper (whisper/*) were removed 2026-11-12:
+# on real radio clips Parakeet recovered 1054 words to Moonshine base's 736 at
+# the same speed, and v1 returned 13 words for a 50 s transmission the others
+# got ~180 from. A saved key for a removed model falls back to DEFAULT_MODEL.
 _VALID_MODELS = frozenset({
-    'moonshine/tiny', 'moonshine/base',
-    'whisper/small.en', 'whisper/medium.en', 'whisper/large-v3-turbo',
+    # NVIDIA Parakeet TDT 0.6B v2, English, int8 ONNX via `onnx-asr`.
+    'parakeet/tdt-0.6b-v2',
+    # Moonshine v2 (Feb 2026, `moonshine-voice` package, own C++/ORT runtime).
+    'moonshine2/small', 'moonshine2/medium',
 })
+DEFAULT_MODEL = 'parakeet/tdt-0.6b-v2'
+
+
+def _cpu_threads() -> int:
+    """Inference thread count: env override, else half the cores.
+
+    Saturating every core starves the gateway's audio threads on the host and
+    thermally throttles a passively-cooled worker (the 2013 Mac Mini), which
+    ends up slower than running on fewer threads. TRANSCRIBE_CPU_THREADS wins;
+    WHISPER_CPU_THREADS is still read because existing worker units set it.
+    """
+    import os as _os
+    _default = max(1, (_os.cpu_count() or 4) // 2)
+    _raw = _os.environ.get('TRANSCRIBE_CPU_THREADS') or _os.environ.get('WHISPER_CPU_THREADS')
+    try:
+        return max(1, int(_raw)) if _raw else _default
+    except ValueError:
+        return _default
+
 
 _STATUS_POLL_INTERVAL = 10  # seconds between /status polls on remote worker
 
@@ -83,20 +108,13 @@ def _host_fan_rpm():
 # Local engine
 # ---------------------------------------------------------------------------
 
-def _pick_worker(pool: list, duration: float = 0.0, split_threshold: float = 0.0):
-    """Return the engine for this utterance.
+def _pick_worker(pool: list):
+    """Return the least-busy ready engine for the next utterance.
 
     Skips engines that aren't ready (e.g. unreachable remote workers) so we
-    degrade gracefully — e.g. if the long-tier remote is offline, long clips
-    fall back to the local Moonshine rather than silently dropping into a
-    failed HTTP POST.
-
-    With split_threshold=0 (disabled): least-busy among ready workers.
-    With split_threshold>0: route by clip length.  Short clips (< threshold)
-    prefer Moonshine engines (no fixed-window cost); long clips prefer Whisper
-    engines (30s encoder cost amortises better).  Within the chosen tier, pick
-    least-busy.  Soft fallback to the other tier if the preferred is empty
-    (covers tier-down case).
+    degrade gracefully. Both remaining model families handle short and long
+    clips alike, so there is no routing by clip length any more (that split
+    existed only to keep short clips off Whisper's fixed 30 s window).
     """
     if not pool:
         return None
@@ -105,28 +123,23 @@ def _pick_worker(pool: list, duration: float = 0.0, split_threshold: float = 0.0
         # Nothing ready — return least-busy from the full pool. The transcribe
         # call will fail, but at least we tried and the error is visible.
         return min(pool, key=lambda e: e._inflight)
-    if split_threshold <= 0:
-        return min(ready, key=lambda e: e._inflight)
-    short_tier = [e for e in ready if e.engine == 'moonshine']
-    long_tier = [e for e in ready if e.engine == 'whisper']
-    preferred = short_tier if duration < split_threshold else long_tier
-    fallback = long_tier if duration < split_threshold else short_tier
-    candidates = preferred or fallback or ready
-    return min(candidates, key=lambda e: e._inflight)
+    return min(ready, key=lambda e: e._inflight)
 
 
 class LocalInferenceEngine:
-    """Loads and runs Moonshine or Whisper inference in-process."""
+    """Loads and runs Parakeet or Moonshine v2 in-process."""
 
     def __init__(self, model_key: str):
-        if '/' not in model_key:
-            model_key = f'moonshine/{model_key}'
-        self.model_key = model_key if model_key in _VALID_MODELS else 'moonshine/base'
+        self.model_key = model_key if model_key in _VALID_MODELS else DEFAULT_MODEL
         _parts = self.model_key.split('/', 1)
-        self.engine = _parts[0]      # 'moonshine' | 'whisper'
-        self.model_size = _parts[1]  # e.g. 'base', 'medium.en'
+        self.engine = _parts[0]      # 'parakeet' | 'moonshine2'
+        self.model_size = _parts[1]  # e.g. 'tdt-0.6b-v2', 'small'
         self._model = None
-        self._tokenizer = None
+        # The moonshine-voice transcriber is one native handle; the dispatcher
+        # can run several utterances on this engine at once, and the C API
+        # does not promise that is safe. Parakeet's ORT sessions are
+        # thread-safe and stay unlocked.
+        self._call_lock = threading.Lock()
         self._inflight = 0           # in-flight requests (for pool dispatch)
         self._dispatched = 0         # gateway-side completed call count
         self._proc_sum = 0.0         # sum of proc_time across dispatched calls
@@ -134,23 +147,25 @@ class LocalInferenceEngine:
 
     def load(self):
         """Load the model. Raises on failure."""
-        if self.engine == 'moonshine':
-            from moonshine_onnx import MoonshineOnnxModel, load_tokenizer
-            self._model = MoonshineOnnxModel(model_name=f'moonshine/{self.model_size}')
-            self._tokenizer = load_tokenizer()
-        elif self.engine == 'whisper':
-            from faster_whisper import WhisperModel
-            # cpu_threads via env so it's tunable per-host. Defaults to half
-            # the CPU count — saturating every thread on a passively-cooled
-            # box (e.g. the 2013 Mac Mini) triggers thermal throttling that
-            # actually slows inference compared to running on fewer threads.
-            import os as _os
-            _default_threads = max(1, (_os.cpu_count() or 4) // 2)
-            _threads = int(_os.environ.get('WHISPER_CPU_THREADS', _default_threads))
-            self._model = WhisperModel(
-                self.model_size, device='cpu', compute_type='int8',
-                cpu_threads=_threads)
-            self._tokenizer = None
+        if self.engine == 'moonshine2':
+            # Weights (~100-300 MB) download to ~/.cache/moonshine_voice on
+            # first load and are reused after. English models are MIT.
+            from moonshine_voice import Transcriber, get_model_for_language, ModelArch
+            _arch = {'small': ModelArch.SMALL_STREAMING,
+                     'medium': ModelArch.MEDIUM_STREAMING}[self.model_size]
+            _path, _arch = get_model_for_language('en', _arch)
+            self._model = Transcriber(_path, _arch)
+        elif self.engine == 'parakeet':
+            # ~630 MB int8 ONNX from Hugging Face (istupakov export), cached
+            # under ~/.cache/huggingface after the first load.
+            import onnx_asr
+            import onnxruntime as ort
+            _opts = ort.SessionOptions()
+            _opts.intra_op_num_threads = _cpu_threads()
+            _opts.inter_op_num_threads = 1
+            self._model = onnx_asr.load_model(
+                f'nemo-parakeet-{self.model_size}', quantization='int8',
+                sess_options=_opts, providers=['CPUExecutionProvider'])
         else:
             raise ValueError(f'Unknown engine: {self.engine}')
 
@@ -165,20 +180,13 @@ class LocalInferenceEngine:
         """Transcribe float32 16 kHz audio → text string."""
         if self._model is None:
             return ''
-        if self.engine == 'moonshine':
-            tokens = _moonshine_generate_no_repeat(
-                self._model, audio_16k.astype(np.float32)[None, :])
-            decoded = self._tokenizer.decode_batch([tokens])
-            return decoded[0] if decoded else ''
-        elif self.engine == 'whisper':
-            # beam_size=1 (greedy) + without_timestamps cuts decoder cost
-            # ~30% with negligible accuracy loss for short radio clips.
-            # We use wall-clock VAD timestamps, not Whisper's per-segment ones,
-            # so without_timestamps has no impact on the log/DB.
-            segments, _ = self._model.transcribe(
-                audio_16k.astype(np.float32), beam_size=1, language='en',
-                condition_on_previous_text=False, without_timestamps=True)
-            return ' '.join(seg.text.strip() for seg in segments)
+        if self.engine == 'moonshine2':
+            with self._call_lock:
+                transcript = self._model.transcribe_without_streaming(
+                    audio_16k.astype(np.float32).tolist(), 16000)
+            return ' '.join(l.text.strip() for l in transcript.lines if l.text and l.text.strip())
+        elif self.engine == 'parakeet':
+            return self._model.recognize(audio_16k.astype(np.float32), sample_rate=16000) or ''
         return ''
 
     def record_stat(self, duration: float, proc_time: float):
@@ -202,7 +210,11 @@ class LocalInferenceEngine:
         }
 
     def stop(self):
-        pass
+        if self.engine == 'moonshine2' and self._model is not None:
+            try:
+                self._model.close()
+            except Exception:
+                log_exc()
 
 
 # ---------------------------------------------------------------------------
@@ -317,79 +329,3 @@ class RemoteEngine:
         except Exception:
             with self._lock:
                 self._poll_ok = False
-
-
-# ---------------------------------------------------------------------------
-# Moonshine greedy decoder (no-repeat n-gram + loop detection)
-# ---------------------------------------------------------------------------
-
-def _moonshine_generate_no_repeat(model, audio, max_len=192, no_repeat_ngram_size=3):
-    """Greedy decode with logit masking that forbids completing any recent
-    n-gram, plus low-diversity / repeating-bigram early-exit.
-
-    Extracted from RadioTranscriber so it can be shared with the remote worker.
-    Mirrors MoonshineOnnxModel.generate() — same encoder pass, same KV-cache
-    plumbing, same EOS check — but adds repetition guards between decoder.run()
-    and argmax.
-    """
-    m = model
-    encoder_inputs = dict(input_values=audio)
-    audio_attention_mask = np.ones_like(audio, dtype=np.int64)
-    if 'attention_mask' in m.encoder_input_names:
-        encoder_inputs = dict(attention_mask=audio_attention_mask, **encoder_inputs)
-    last_hidden_state = m.encoder.run(None, encoder_inputs)[0]
-
-    past_key_values = {
-        f'past_key_values.{i}.{a}.{b}': np.zeros(
-            (0, m.num_key_value_heads, 1, m.head_dim), dtype=np.float32)
-        for i in range(m.num_layers)
-        for a in ('decoder', 'encoder')
-        for b in ('key', 'value')
-    }
-    tokens = [m.decoder_start_token_id]
-    input_ids = [tokens]
-    for i in range(max_len):
-        use_cache_branch = i > 0
-        decoder_inputs = dict(
-            input_ids=input_ids,
-            encoder_hidden_states=last_hidden_state,
-            use_cache_branch=[use_cache_branch],
-            **past_key_values,
-        )
-        if 'encoder_attention_mask' in m.decoder_input_names:
-            decoder_inputs = dict(
-                encoder_attention_mask=audio_attention_mask, **decoder_inputs)
-
-        logits, *present_key_values = m.decoder.run(None, decoder_inputs)
-        step_logits = logits[0, -1]
-
-        # 1) No-repeat n-gram masking.
-        if no_repeat_ngram_size > 1 and len(tokens) >= no_repeat_ngram_size - 1:
-            prefix = tuple(tokens[-(no_repeat_ngram_size - 1):])
-            for j in range(len(tokens) - no_repeat_ngram_size + 1):
-                if tuple(tokens[j:j + no_repeat_ngram_size - 1]) == prefix:
-                    banned = int(tokens[j + no_repeat_ngram_size - 1])
-                    step_logits[banned] = -np.inf
-
-        next_token = int(step_logits.argmax())
-        tokens.append(next_token)
-
-        if next_token == m.eos_token_id:
-            break
-
-        # 2) Loop-detection early exit.
-        if len(tokens) >= 10:
-            tail = tokens[-10:]
-            if len(set(tail)) <= 2:
-                break
-            bg = (tokens[-2], tokens[-1])
-            if sum(1 for k in range(len(tail) - 1)
-                   if (tail[k], tail[k + 1]) == bg) >= 3:
-                break
-
-        input_ids = [[next_token]]
-        for k, v in zip(past_key_values.keys(), present_key_values):
-            if not use_cache_branch or 'decoder' in k:
-                past_key_values[k] = v
-
-    return tokens

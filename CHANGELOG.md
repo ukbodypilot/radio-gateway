@@ -4,6 +4,46 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **New denoise engine: DPDFNet 8 kHz (`dpdfnet`, "DP8" on /routing).** On our
+  FM radio audio RNNoise and every 48 kHz model gated the *speech* out along
+  with the noise (RNNoise's own VAD sat at 0.02-0.1 through clear speech; clean
+  TTS speech, band-limited speech, MP3'd speech and any level all passed, so
+  it is the radio voice itself it rejects). DPDFNet's narrowband model kept
+  speech level and took the gaps between overs to about -93 dB, and sounds
+  good fully wet. Apache-2.0
+  model bundled at `tools/models/dpdfnet/` (10 MB); loaded with onnxruntime
+  directly, with stateful 48k<->8k FIRs (the pip package resamples each chunk
+  statelessly). ~13 ms per 50 ms chunk, 1 thread; dry-path delay 2520 samples,
+  measured on speech. `tests/test_dpdfnet_stream.py`.
+- **Transcription engines replaced.** `parakeet/tdt-0.6b-v2` (NVIDIA Parakeet,
+  int8 ONNX via `onnx-asr[cpu,hub]`) is the new default, with
+  `moonshine2/small` / `moonshine2/medium` (Moonshine v2 via `moonshine-voice`)
+  as the lighter option. **Moonshine v1 (`moonshine/*`) and Whisper
+  (`whisper/*`) are removed**: on 402 s of real radio clips Parakeet recovered
+  1054 words vs Moonshine base's 736 at the same speed, and v1 returned 13
+  words for a 50 s transmission the others got ~180 from. A saved or
+  configured old key falls back to Parakeet with a log line, on the gateway
+  and on remote workers (so a worker unit still passing `--model
+  whisper/medium.en` keeps serving instead of crash-looping). Weights download
+  on first load (~630 MB / ~100-300 MB). Inference uses half the cores;
+  `TRANSCRIBE_CPU_THREADS` overrides (`WHISPER_CPU_THREADS` still honoured).
+- **Split-threshold routing removed.** It existed to keep short clips off
+  Whisper's 30 s window; both remaining engines handle any length, so the pool
+  now just picks the least-busy ready worker. `TRANSCRIBE_SPLIT_THRESHOLD_SECS`
+  and the /transcribe slider are gone.
+- **install.sh: onnxruntime now comes from `onnx-asr[cpu]`.** It used to arrive
+  only as a dependency of `useful-moonshine-onnx`; without the `[cpu]` extra a
+  fresh install would have had no onnxruntime and Silero VAD would not load.
+- **Fix: per-chunk resample ticked every 50 ms.** The transcription feed ran a
+  stateless `resample_poly` on each bus chunk, leaving a filter transient at
+  every boundary (37.6 dB SNR). Each stream now has a stateful decimator with
+  the same filter; output no longer depends on chunking.
+- **Fix: Moonshine cut off long transmissions.** The decoder had a flat
+  192-token budget (~30-40 s of speech) against a 60 s utterance cap. The budget
+  now scales with clip length.
+- **Transcripts record their model.** New `model` and `proc_time` columns in
+  `transcriptions.db` (migrated in place; older rows are '' / 0.0).
+
 - **Net Player.** A new routable source, `netplayer`, for the prepared opening
   of a net (preamble, rules, check-in procedure) before going to open
   discussion. Five file slots (start / stop / seek, with -10s / +10s and a

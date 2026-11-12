@@ -252,7 +252,7 @@ def bus_toggle_processing(bus_id: str, filter_name: str) -> str:
                      'hpf'   — high-pass filter
                      'lpf'   — low-pass filter
                      'notch' — notch filter
-                     'dfn'   — neural denoise (RNNoise)
+                     'dfn'   — neural denoise (engine set per bus)
                      'pcm'   — feed PCM stream output
                      'mp3'   — feed MP3 stream output
                      'vad'   — VAD (voice activity detection) gate
@@ -311,7 +311,11 @@ def bus_set_denoise_engine(bus_id: str, engine: str) -> str:
 
     Args:
         bus_id: Bus id (e.g. 'main'). Run routing_status to list buses.
-        engine: 'rnnoise' (tiny, aggressive) or 'deepfilternet' (speech-preserving).
+        engine: 'rnnoise' (tiny, aggressive), 'deepfilternet' (DFN3, 48 kHz) or
+                'dpdfnet' (DPDFNet 8 kHz narrowband). On FM radio voice only
+                'dpdfnet' keeps the speech — RNNoise and the 48 kHz models gate
+                it out (measured 2026-11-12). Fully wet sounds good by ear;
+                lower the mix only if words get clipped.
 
     The swap is live — the next audio chunk rebuilds the denoise stream
     with the chosen engine. Existing enable/mix state is preserved.

@@ -1,19 +1,29 @@
 # Transcription Pool
 
-The gateway's transcription system is multi-machine. VAD runs locally; ASR inference can run locally, on a remote worker, or be routed between both by clip length. This doc covers the architecture, configuration, deployment of a remote worker, telemetry, and tuning.
+The gateway's transcription system is multi-machine. VAD runs locally; ASR inference can run locally, on remote workers, or across both. This doc covers the architecture, configuration, deployment of a remote worker, telemetry, and tuning.
 
-## Why a pool?
+## Engines
 
-The two ASR engine families have opposite cost profiles:
+| Model key | Package | Notes |
+|-----------|---------|-------|
+| `parakeet/tdt-0.6b-v2` (default) | `onnx-asr[cpu,hub]` | NVIDIA Parakeet TDT 0.6B, English, int8 ONNX. ~630 MB weights from Hugging Face on first load |
+| `moonshine2/small`, `moonshine2/medium` | `moonshine-voice` | Moonshine v2 streaming models, own bundled runtime. ~100-300 MB on first load |
 
-| Engine | Cost model | Wins on |
-|--------|-----------|---------|
-| **Moonshine** (tiny / base) | Linear with clip length, no fixed window | Short utterances (callsigns, brief replies) |
-| **Whisper** (small.en / medium.en / large-v3-turbo) | ~30-second encoder cost per call + decode | Longer transmissions where accuracy matters |
+Both cost linearly with clip length (no fixed window) and handle short and long clips alike, so the dispatcher just balances load. Moonshine v1 (`moonshine/*`) and Whisper (`whisper/*`) were removed 2026-11-12; a saved or configured key for either falls back to Parakeet with a log line, on the gateway and on workers.
 
-Whisper was trained on fixed 30-second windows. A 1-second clip gets padded with 29 seconds of silence and the encoder still chews through all 30 seconds — so a single short clip on Whisper takes about the same wall-clock as a 30-second clip. That's wasteful when 70% of your utterances are short callsigns.
+Measured 2026-11-12 on 43 VAD-cut clips (402 s) from the loop recordings, i5-4590 host
+(RTF = processing time / audio time, lower is faster; 4 threads unless noted):
 
-The pool dispatcher solves this by routing each utterance to the engine that fits it. Plus you can scale horizontally by adding more remote workers, and the system degrades gracefully if a worker disappears.
+| Model | RTF | Words recovered | 50 s clip |
+|-------|-----|-----------------|-----------|
+| moonshine/base (removed) | 0.11 | 736 | 13 words (collapses) |
+| moonshine2/small | 0.18 | 1034 | 177 |
+| moonshine2/medium | 0.25 | 985 | 170 |
+| parakeet/tdt-0.6b-v2 | 0.11 (0.18 at the default 2 threads) | 1054 | 183 |
+
+Local inference uses half the cores by default; override with the env var `TRANSCRIBE_CPU_THREADS` (`WHISPER_CPU_THREADS` is still honoured for existing worker units).
+
+A pool lets you scale horizontally by adding remote workers, and degrades gracefully if a worker disappears.
 
 ## Architecture
 
@@ -58,18 +68,12 @@ Set via `TRANSCRIBE_MODE` in `gateway_config.txt`:
 | `remote` | — | Yes | All utterances POSTed to remote workers |
 | `pool` | Yes | Yes | Both available; dispatcher routes per utterance |
 
-## Routing strategies
+## Routing
 
-The dispatcher's selection algorithm:
+1. **Filter to ready workers** — engines whose model is loaded and (for remote) whose last `/status` poll succeeded. An unreachable remote is skipped, so its clips fall back to the local engine instead of POSTing into the void.
+2. **Pick least-busy** — by `_inflight` counter.
 
-1. **Filter to ready workers** — engines whose model is loaded and (for remote) whose last `/status` poll succeeded. An unreachable remote is skipped, so a long clip falls back to the local engine instead of POSTing into the void.
-2. **Length-based tiering** (when `TRANSCRIBE_SPLIT_THRESHOLD_SECS > 0`):
-   - Clip duration < threshold → prefer engines with `engine='moonshine'`
-   - Clip duration ≥ threshold → prefer engines with `engine='whisper'`
-   - Soft fallback to the other tier if the preferred is empty
-3. **Within the chosen tier, pick least-busy** — by `_inflight` counter
-
-When `TRANSCRIBE_SPLIT_THRESHOLD_SECS = 0` the engine type is ignored and least-busy across the whole pool wins.
+(Routing by clip length existed to keep short clips off Whisper's fixed 30 s window. It went with Whisper; `TRANSCRIBE_SPLIT_THRESHOLD_SECS` is no longer read.)
 
 ## Gateway config
 
@@ -79,25 +83,20 @@ ENABLE_TRANSCRIPTION = true
 # Mode: off | local | remote | pool
 TRANSCRIBE_MODE = pool
 
-# Local engine model (engine/size). When mode is local or pool, this is what
-# runs inside the gateway process. Whisper requires faster-whisper installed.
-TRANSCRIBE_MODEL = moonshine/base
+# Local engine model. When mode is local or pool, this is what runs inside
+# the gateway process. A /transcribe page choice overrides it.
+TRANSCRIBE_MODEL = parakeet/tdt-0.6b-v2
 
-# Remote worker URLs — comma-separated. When mode is remote or pool, each URL
-# is a transcribe_worker.py instance reachable over HTTP.
-TRANSCRIBE_REMOTE_URLS = http://192.168.2.143:9800
-
-# Length-based routing threshold in seconds (pool mode only).
-#   0  = least-busy across whole pool, no length routing
-#   >0 = clips under N sec → Moonshine tier, longer → Whisper tier
-TRANSCRIBE_SPLIT_THRESHOLD_SECS = 10
+# Remote worker URLs — comma-separated. Only needed to pin a worker; workers
+# started with --gateway register themselves.
+TRANSCRIBE_REMOTE_URLS =
 ```
 
 All other transcription settings (VAD threshold, audio boost, alert keywords, Mumble forwarding) live in `.transcribe_settings.json` and are edited via the `/transcribe` page.
 
 ## Remote worker
 
-`tools/transcribe_worker.py` is a self-contained HTTP server that wraps `LocalInferenceEngine`. Drop it on any Linux box with Python 3.10+ and either `useful-moonshine-onnx` or `faster-whisper` installed.
+`tools/transcribe_worker.py` is a self-contained HTTP server that wraps `LocalInferenceEngine`. Drop it on any Linux box with Python 3.10+ and `onnx-asr[cpu,hub]` (and `moonshine-voice` for `moonshine2/*`) installed.
 
 ### Deployment
 
@@ -105,16 +104,16 @@ All other transcription settings (VAD threshold, audio boost, alert keywords, Mu
 # On the remote host
 mkdir -p ~/transcribe
 # (scp transcribe_engine.py + transcribe_worker.py here)
-pip install --break-system-packages useful-moonshine-onnx faster-whisper
+pip install --break-system-packages 'onnx-asr[cpu,hub]' moonshine-voice
 
 # Manual smoke test — --gateway makes the worker announce itself
-python3 -u transcribe_worker.py --model whisper/medium.en --port 9800 \
+python3 -u transcribe_worker.py --model parakeet/tdt-0.6b-v2 --port 9800 \
     --gateway http://192.168.2.140:8080 --name macmini
 ```
 
 You should see:
 ```
-[worker] Loading whisper/medium.en...
+[worker] Loading parakeet/tdt-0.6b-v2...
 [worker] Registering with gateway http://192.168.2.140:8080 as macmini
 [worker] Listening on 0.0.0.0:9800
 [worker] Registered with gateway http://192.168.2.140:8080 as macmini (status=registered, url=http://192.168.2.143:9800, ttl=90s)
@@ -181,8 +180,8 @@ After=network.target
 
 [Service]
 WorkingDirectory=/home/user/transcribe
-Environment=WHISPER_CPU_THREADS=4
-ExecStart=/usr/bin/python3 -u transcribe_worker.py --model whisper/medium.en --port 9800 \
+Environment=TRANSCRIBE_CPU_THREADS=4
+ExecStart=/usr/bin/python3 -u transcribe_worker.py --model parakeet/tdt-0.6b-v2 --port 9800 \
     --gateway http://192.168.2.140:8080 --name macmini
 Restart=on-failure
 RestartSec=10
@@ -208,7 +207,7 @@ journalctl --user -u transcribe-worker -f
 - 503 if model isn't loaded yet
 
 `POST /model`
-- Body: `{"model": "whisper/large-v3-turbo"}`
+- Body: `{"model": "moonshine2/small"}`
 - Async — returns `202 Accepted` immediately, loads in background, stats reset, old model released via `malloc_trim`
 - Failure surfaces in next `/status` call as `last_switch_error`
 
@@ -233,8 +232,8 @@ Per-engine fields surface in `/transcriptions` → `status.workers[]`:
 | Field | Local | Remote | Meaning |
 |-------|-------|--------|---------|
 | `type` | `local` | `remote` | Source location |
-| `model_key` | ✓ | ✓ | e.g. `moonshine/base`, `whisper/medium.en` |
-| `engine` | ✓ | ✓ | `moonshine` or `whisper` — used by length-based routing |
+| `model_key` | ✓ | ✓ | e.g. `parakeet/tdt-0.6b-v2`, `moonshine2/small` |
+| `engine` | ✓ | ✓ | `parakeet` or `moonshine2` |
 | `model_loaded` | ✓ | ✓ | Ready to process |
 | `reachable` | — | ✓ | Last `/status` poll succeeded |
 | `inflight` | ✓ | ✓ | Currently being processed |
@@ -251,9 +250,9 @@ These render as cards in the Workers row of the `/transcribe` page with the unif
 
 Two gotchas surfaced building this:
 
-**Memory leaks on model swap** — Python `gc.collect()` is necessary but not sufficient on Linux. faster-whisper's CTranslate2 backend allocates in native heap which Python doesn't free back to the OS without explicit `malloc_trim(0)` via libc. The worker calls this after every swap. Without it, repeated model switches accumulated ~1.5 GB per swap.
+**Memory leaks on model swap** — Python `gc.collect()` is necessary but not sufficient on Linux. Native inference runtimes (ONNX Runtime; CTranslate2 when Whisper was here) allocate in native heap which Python doesn't free back to the OS without explicit `malloc_trim(0)` via libc. The worker calls this after every swap. Without it, repeated model switches accumulated ~1.5 GB per swap.
 
-**Thermal throttling on passively cooled CPUs** — `faster-whisper.WhisperModel` defaults to using every CPU thread. On a fanless or marginally-cooled CPU (e.g. 2013 Mac Mini i7-3720QM) this pushed package temp to 102°C and triggered severe thermal throttling — inference actually ran *slower* with all threads than at half-thread count. The worker reads `WHISPER_CPU_THREADS` from env (default = `cpu_count() // 2`); start at 4 on a quad-core box and adjust based on temp readings in the Workers row.
+**Thermal throttling on passively cooled CPUs** — inference runtimes default to using every CPU thread. On a fanless or marginally-cooled CPU (e.g. 2013 Mac Mini i7-3720QM) this pushed package temp to 102°C and triggered severe thermal throttling — inference actually ran *slower* with all threads than at half-thread count. The worker reads `TRANSCRIBE_CPU_THREADS` (or legacy `WHISPER_CPU_THREADS`) from env (default = `cpu_count() // 2`); start at 4 on a quad-core box and adjust based on temp readings in the Workers row.
 
 ## Out-of-order completion handling
 
@@ -263,9 +262,8 @@ Pool dispatch means a long utterance sent to worker A can finish after a shorter
 
 | Scenario | Behaviour |
 |----------|-----------|
-| Remote down, short clip | Goes to local Moonshine — no change |
-| Remote down, long clip | Falls back to local Moonshine (with worse fit) — clip still gets transcribed |
-| Local broken, short clip | Falls back to remote — clip still gets transcribed |
+| Remote down | Goes to the local engine — clip still gets transcribed |
+| Local broken | Goes to a remote worker — clip still gets transcribed |
 | All engines unhealthy | Dispatcher picks least-busy anyway so the error appears in logs rather than being hidden |
 | Worker crashes mid-request | HTTP error surfaces in gateway log; engine flagged unreachable on next poll cycle |
 | Model swap fails | `last_switch_error` populated for next `/status` poll; old model keeps serving |
