@@ -196,8 +196,14 @@ Then:
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now transcribe-worker
-journalctl --user -u transcribe-worker -f
+journalctl --user-unit transcribe-worker -f
 ```
+
+Use `--user-unit`, not `--user -u`. With journald on `Storage=volatile` (RAM
+only, as on the macmini and the gateway box to spare their SSDs) user units
+are not split into a per-user journal file, so `journalctl --user` finds
+nothing, or only a stale file left from before the switch. `--user-unit`
+filters the system journal and works with either storage mode.
 
 ### HTTP interface
 

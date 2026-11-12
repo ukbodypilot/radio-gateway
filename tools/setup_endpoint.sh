@@ -470,9 +470,9 @@ if ! $DRY_RUN; then
             echo "Useful commands:"
             echo "  systemctl --user status $SVC_NAME    # check status"
             echo "  systemctl --user restart $SVC_NAME   # restart"
-            echo "  journalctl --user -u $SVC_NAME -f    # follow logs"
+            echo "  journalctl --user-unit $SVC_NAME -f  # follow logs (works with volatile journald too)"
         else
-            warn "Service failed to start — check: journalctl --user -u $SVC_NAME"
+            warn "Service failed to start — check: journalctl --user-unit $SVC_NAME"
         fi
     fi
 fi
