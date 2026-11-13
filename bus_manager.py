@@ -73,8 +73,7 @@ class BusManager:
         self.config = gateway.config
         self._busses = {}          # id → AudioBus instance
         self._bus_processors = {}  # id → AudioProcessor instance
-        self._bus_config = {}      # id → bus config dict (processing, pcm, mp3, vad)
-        self._bus_delay_bufs = {}  # id → deque of pcm bytes (post-processed output delay)
+        self._bus_config = {}      # id → bus config dict (processing, pcm, mp3, loop)
         self._running = False
         self._thread = None
         # Serialises reload(). Link endpoints register on their own threads
@@ -556,28 +555,6 @@ class BusManager:
         """Check if a bus is muted."""
         return self._bus_config.get(bus_id, {}).get('muted', False)
 
-    def get_bus_stream_flags(self):
-        """Return per-bus stream flags from routing config.
-
-        Returns dict: {bus_id: {'pcm': bool, 'mp3': bool, 'vad': bool}}
-        Includes ALL busses (including 'listen' type).
-        """
-        flags = {}
-        try:
-            with open(self._config_path) as f:
-                data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return flags
-        for bus_cfg in data.get('busses', []):
-            bus_id = bus_cfg['id']
-            proc = bus_cfg.get('processing', {})
-            flags[bus_id] = {
-                'pcm': proc.get('pcm', False),
-                'mp3': proc.get('mp3', False),
-                'vad': proc.get('vad', False),
-            }
-        return flags
-
     def sync_listen_bus(self):
         """Reconcile primary listen bus sources with routing config.
 
@@ -1045,15 +1022,14 @@ class BusManager:
             proc_cfg = bus_cfg.get('processing', {})
             proc_cfg['muted'] = bus_cfg.get('muted', False)
             self._bus_config[bus_id] = proc_cfg
-            # The bus noise gate ('gate') was replaced by AGC on 2026-11-13;
-            # a stale 'gate' key in routing_config.json is ignored. Source-
+            # The bus noise gate ('gate') was replaced by AGC and the notch
+            # removed on 2026-11-13; stale 'gate'/'notch' keys are ignored. Source-
             # level gates (TH-9800, SDR, KV4P, D75) are untouched.
-            if any(proc_cfg.get(k) for k in ('agc', 'hpf', 'lpf', 'notch', 'dfn')):
+            if any(proc_cfg.get(k) for k in ('agc', 'hpf', 'lpf', 'dfn')):
                 proc = AudioProcessor(f"bus_{bus_id}", self.config)
                 proc.enable_agc = proc_cfg.get('agc', False)
                 proc.enable_hpf = proc_cfg.get('hpf', False)
                 proc.enable_lpf = proc_cfg.get('lpf', False)
-                proc.enable_notch = proc_cfg.get('notch', False)
                 proc.enable_dfn = proc_cfg.get('dfn', False)
                 proc.dfn_mix = max(0.0, min(1.0, float(proc_cfg.get('dfn_mix', 0.5))))
                 # Denoise bypass threshold (dBFS). Missing key → -60
@@ -1073,7 +1049,7 @@ class BusManager:
                 if proc.enable_dfn:
                     proc._dn_ensure_worker()
                 _tags = [k.upper() if k != 'dfn' else f"DFN({proc.dfn_engine})"
-                         for k in ('hpf', 'lpf', 'notch', 'dfn', 'agc')
+                         for k in ('hpf', 'lpf', 'dfn', 'agc')
                          if proc_cfg.get(k)]
                 print(f"  [BusManager] {bus_name}: processing [{' '.join(_tags)}]")
 
@@ -1188,36 +1164,6 @@ class BusManager:
                 _processed_audio = _flushed
                 for sink_id in list(bus_output.audio):
                     bus_output.audio[sink_id] = _flushed
-
-        # Output delay buffer — delays the bus output before sink delivery.
-        # delay_ms is stored in bus_cfg and updated live by the routing UI
-        # slider. Applies to the processed audio when a processor exists,
-        # otherwise to the raw bus mix (previously the delay silently did
-        # nothing on buses without processing, and crashed the tick on buses
-        # with it — bytes has no .copy(), and the fill threshold compared
-        # sample counts against byte counts).
-        delay_ms = bus_cfg.get('delay_ms', 0)
-        _delay_input = _processed_audio if _processed_audio is not None else bus_output.mixed_audio
-        if delay_ms > 0 and _delay_input is not None:
-            delay_bytes = int(delay_ms * 48) * 2  # 48 samples/ms @ 48kHz, 2 bytes/sample
-            buf = self._bus_delay_bufs.setdefault(bus_id, collections.deque())
-            buf.append(_delay_input)
-            buffered = sum(len(c) for c in buf)
-            if buffered > delay_bytes:
-                # Drain excess chunks when slider is moved left at runtime
-                while len(buf) > 1 and buffered - len(buf[0]) > delay_bytes:
-                    buffered -= len(buf.popleft())
-                _delayed = buf.popleft()
-            else:
-                # Buffer still filling — send silence to sinks
-                _delayed = b'\x00' * len(_delay_input)
-            _processed_audio = _delayed
-            for sink_id in list(bus_output.audio):
-                if bus_output.audio[sink_id] is not None:
-                    bus_output.audio[sink_id] = _delayed
-        else:
-            # Delay disabled — clear any stale buffer so it doesn't replay on re-enable
-            self._bus_delay_bufs.pop(bus_id, None)
 
         # Listen bus: decay sink levels when no audio
         if _is_listen and bus_output.mixed_audio is None:

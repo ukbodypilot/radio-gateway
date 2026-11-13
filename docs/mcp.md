@@ -1,6 +1,6 @@
 # MCP Server
 
-`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **165 tools** across status, radios, routing, transcription, packet, fleet management, and more.
+`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **164 tools** across status, radios, routing, transcription, packet, fleet management, and more.
 
 The Fleet Manager's hourly/daily Claude runs use these tools internally — the gateway itself reads its own state through this surface.
 
@@ -39,7 +39,7 @@ re-key until key requests pause for 5 s.
 | **KV4P HT** | `kv4p_status`, `kv4p_command` |
 | **AllStar / USRP** | `usrp_nodes`, `usrp_status`, `usrp_connect`, `usrp_disconnect`, `usrp_disconnect_all`, `usrp_links`, `usrp_node_stats` |
 | **SDR** | `sdr_tune`, `sdr_single_tune`, `sdr_restart`, `sdr_stop`, `sdr_set_mode`, `sdr_add_channel`, `sdr_remove_channel` |
-| **Routing** | `routing_status`, `routing_levels`, `routing_connect`, `routing_disconnect`, `bus_create`, `bus_delete`, `bus_mute`, `bus_rename`, `sink_mute`, `bus_toggle_processing`, `set_gain`, `bus_set_denoise_mix`, `bus_set_denoise_bypass`, `bus_set_delay`, `speaker_mode`, `mixer_control` (legacy per-source mixer) |
+| **Routing** | `routing_status`, `routing_levels`, `routing_connect`, `routing_disconnect`, `bus_create`, `bus_delete`, `bus_mute`, `bus_rename`, `sink_mute`, `bus_toggle_processing`, `set_gain`, `bus_set_denoise_mix`, `bus_set_denoise_bypass`, `speaker_mode`, `mixer_control` (legacy per-source mixer) |
 | **Loop recorder** | `loop_recorder_status`, `loop_recorder_toggle`, `loop_recorder_retention`, `loop_recorder_summary`, `loop_recorder_activity`, `loop_recorder_export`, `loop_recorder_delete_all`, `loop_recorder_archive_all`, `loop_recorder_download_all`, `loop_playback_control`, `test_loop_toggle` |
 | **Transcription** | `transcription_status`, `transcription_workers`, `transcription_config`, `transcription_log_query`, `transcription_log_recent`, `transcription_search` |
 | **Repeaters / GPS** | `nearby_repeaters`, `repeater_info`, `repeater_tune`, `repeater_refresh`, `gps_status`, `gps_set_position`, `gps_switch_mode` |
@@ -98,6 +98,7 @@ shorter than what the panels send; those extra commands are still UI-only.
 - `broadcastify_control` (start/stop/restart) went with the dead DarkIce control code. Use `broadcastify_status`, and the fleet manager's `restart-stream` action for a reconnect.
 - `voice_view`, `voice_status`, `voice_send` went with the `/voice` page (2026-09-23). Claude Code's own remote control replaces it.
 - `telegram_reply`, `telegram_status`, `telegram_logs` went with the Telegram bot. Alerts are emailed instead (see [Fleet Manager](fleet-manager.md)); for an interactive session use Claude Code's remote control.
+- `bus_set_delay` went with the per-bus output delay (2026-11-13): no bus had ever used it, and no reason for it was ever recorded.
 - `bus_set_denoise_engine` and `bus_set_denoise_atten` went with the RNNoise and DeepFilterNet3 engines (2026-11-13). DPDFNet 8 kHz is the only engine, and it has no attenuation cap; use `bus_set_denoise_mix`.
 
 ## Architecture

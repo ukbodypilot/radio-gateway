@@ -4,7 +4,7 @@ The TH-9800 radio uses multiple hardware interfaces:
 - AIOC USB device for audio I/O (PyAudio) and PTT (HID GPIO)
 - RadioCATClient for radio control (TCP to external th9800-cat.service)
 - Relay controllers for alternative PTT and radio power button
-- AudioProcessor for RX processing (gate/HPF/LPF/notch)
+- AudioProcessor for RX processing (gate/HPF/LPF)
 
 This plugin owns all TH-9800 hardware. The gateway core just ticks busses
 and delivers audio to sinks.
@@ -948,7 +948,4 @@ class TH9800Plugin:
         p.hpf_cutoff = getattr(self._config, 'HIGHPASS_CUTOFF', 300)
         p.enable_lpf = getattr(self._config, 'ENABLE_LOWPASS', False)
         p.lpf_cutoff = getattr(self._config, 'LOWPASS_CUTOFF', 3000)
-        p.enable_notch = getattr(self._config, 'ENABLE_NOTCH', False)
-        p.notch_freq = getattr(self._config, 'NOTCH_FREQ', 1000)
-        p.notch_q = getattr(self._config, 'NOTCH_Q', 10.0)
 

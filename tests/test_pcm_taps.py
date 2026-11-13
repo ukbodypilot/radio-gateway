@@ -2,7 +2,7 @@
 """PCM monitor taps: AS1/AS2/SDR1/SDR2 shell-bar buttons.
 
 An SDR tap carries the PROCESSED output of the bus its tuner is routed to
-(the bus's gate/HPF/LPF/notch/denoise), never a second get_chunk() call.
+(the bus's HPF/LPF/denoise/AGC), never a second get_chunk() call.
 Taps are exclusive across kinds: enabling an SDR tap clears an AllStar tap and
 vice versa — before pcm_taps.py the AllStar endpoint only walked
 _external_plugins and could never have cleared an SDR tap. A tap on a tuner
@@ -105,7 +105,6 @@ bm._bus_final_tick = {}
 bm._pcm_tick, bm._mp3_tick = [], []
 bm._bus_processors = {'b': types.SimpleNamespace(process=lambda raw: b'P' + raw)}
 bm._bus_config = {'b': {}}
-bm._bus_delay_bufs = {}
 bm._listen_bus_id = None
 bm._meters = collections.defaultdict(int)
 bm._link_tx_meters = {}

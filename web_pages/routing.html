@@ -9,16 +9,12 @@
 <style>
   body { padding: 0; margin: 0; overflow: hidden; }
 
-  /* Node height shared by sources, sinks and busses — see .drawflow-node.
-     56px is the height the source/sink nodes already used; a DFN-enabled bus
-     carries an extra mix row and will exceed it, which is the one case the
-     rows cannot be made to match without hiding content. */
-  /* Floor for any node whose content does not already exceed it. Sources and
-     sinks sit ABOVE this (content-driven), so raising it only lifts the nodes
-     resting on the floor — currently the listen busses. Solo busses carry an
-     extra .dfn-mix-row for the delay slider and stay taller regardless; that
-     row is the one height difference no floor can reconcile. */
-  :root { --node-h: 64px; }
+  /* One outer size for every node — sources, busses and sinks — so the
+     auto-arranged columns and rows line up (2026-11-13). 81px is what all
+     three kinds measure in Chromium with the 8px vertical frame padding set
+     on .drawflow-node; 224px fits the bus button row with the output socket
+     clear. */
+  :root { --node-h: 81px; --node-w: 224px; }
   #drawflow {
     width: 100%;
     height: calc(100vh - 40px);
@@ -43,31 +39,35 @@
        three together, which is the point. */
     min-height: var(--node-h);
     box-sizing: border-box;
+    /* Drawflow's default is 15px all round; 30px of blank top+bottom was
+       more than the title line itself. Sides stay 15px (socket clearance). */
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
-  /* Bus nodes need more horizontal room than sources/sinks — their content
-     row holds 9 proc buttons + separator + mute button, and the rightmost
-     mute was overlapping the output socket on the old 230 px width. Tighter
-     vertical padding on title/box + compact proc buttons + tight mix row
-     shaves ~10 px off the DFN-on bus height. */
-  .drawflow .drawflow-node[class*="bus-"] { min-width: 290px; }
+  /* Every node is the same outer size (--node-w x --node-h) so auto-arrange
+     gives clean columns and rows. Bus button row H L D A | P M R + mute
+     measured 217 px with padding (2026-11-13, after G, N and V went; it
+     needed 290 px with them), so 224 px leaves the output socket clear.
+     Tighter vertical padding on title/box + compact proc buttons + tight mix
+     row shaves ~10 px off the DFN-on bus height. */
   .drawflow .drawflow-node[class*="bus-"] .title-box { padding: 1px var(--s-2); line-height: 1.2; }
   .drawflow .drawflow-node[class*="bus-"] .box       { padding: 1px var(--s-2); }
   .drawflow .drawflow-node[class*="bus-"] .proc-btn,
   .drawflow .drawflow-node[class*="bus-"] .mute-btn {
     height: 12px; line-height: 10px;          /* -2px */
   }
-  /* The remaining -3px, taken where it costs nothing visually: the gaps above
-     the button row and the level bar. Together with the -2px above this trims
-     5px off a bus, meeting the +5px added to --node-h so both kinds land on
-     the same height. */
-  .drawflow .drawflow-node[class*="bus-"] .proc-buttons { margin-top: 0; }      /* -2px */
+  /* Bus vertical spacing. Every node is --node-h tall now (busses grow to
+     it), so these gaps are for readability, not for squeezing into a height:
+     4px under the title, 4px between the buttons and the mix slider. */
+  .drawflow .drawflow-node[class*="bus-"] .proc-buttons { margin-top: 4px; }    /* space under the title line */
   .drawflow .drawflow-node[class*="bus-"] .level-bar    { margin-top: 2px; }    /* -1px */
-  .drawflow .drawflow-node[class*="bus-"] .dfn-mix-row { padding: 0 6px 1px; }
+  .drawflow .drawflow-node[class*="bus-"] .dfn-mix-row { padding: 0 6px 1px; margin-top: 4px; }  /* breathing room under the buttons; fits in --node-h */
   /* Source / sink nodes are naturally shorter (just mute + gain slider +
      level bar) — pad them out ~10 px so the three node types share a
      similar visual footprint on the canvas. */
   .drawflow .drawflow-node.source,
-  .drawflow .drawflow-node.sink { min-width: 210px; }
+  .drawflow .drawflow-node.sink,
+  .drawflow .drawflow-node[class*="bus-"] { min-width: var(--node-w); }
   .node-port { font-size: 0.78em; opacity: 0.55; margin-left: 4px; font-weight: 400; }
   .drawflow .drawflow-node.source .box,
   .drawflow .drawflow-node.sink   .box { padding: 8px var(--s-2); }
@@ -207,19 +207,6 @@
     margin-left: var(--s-2);
     text-transform: none; letter-spacing: 0;
   }
-  .title-delay-slider {
-    width: 54px; flex: none; height: 3px;
-    -webkit-appearance: none; appearance: none;
-    background: var(--t-panel-hi);
-    border: 1px solid var(--t-border);
-    border-radius: 2px; margin: 0; cursor: pointer;
-  }
-  .title-delay-slider::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none;
-    width: 8px; height: 10px; border-radius: 1px;
-    background: var(--t-accent); border: none; cursor: pointer;
-  }
-  .title-delay .dfn-mix-val { min-width: 2.6em; text-align: right; }  /* fits '5000' */
   .dfn-mix-row {
     display: flex;
     align-items: center;
@@ -806,13 +793,11 @@ function rebuildEditor() {
     var html = '<div class="box"><div class="proc-buttons">'
       + '<button class="proc-btn' + (proc.hpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'hpf\')" id="proc-' + b.id + '-hpf" title="High Pass Filter">H</button>'
       + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
-      + '<button class="proc-btn' + (proc.notch ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'notch\')" id="proc-' + b.id + '-notch" title="Notch Filter">N</button>'
       + '<button class="proc-btn' + (proc.dfn ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'dfn\')" id="proc-' + b.id + '-dfn" title="Neural Denoise (DPDFNet 8 kHz)">D</button>'
       + '<button class="proc-btn' + (proc.agc ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'agc\')" id="proc-' + b.id + '-agc" title="Automatic Gain Control: levels quiet and loud stations, after denoise">A</button>'
       + '<span class="proc-sep"></span>'
       + '<button class="proc-btn out-btn' + (proc.pcm === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
       + '<button class="proc-btn out-btn' + (proc.mp3 === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'
-      + '<button class="proc-btn out-btn' + (proc.vad ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'vad\')" id="proc-' + b.id + '-vad" title="VAD gate">V</button>'
       + '<button class="proc-btn out-btn' + (proc.loop ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'loop\')" id="proc-' + b.id + '-loop" title="Loop record">R</button>'
       + '<span class="flex-spacer"></span>'
       + '<button class="mute-btn' + busMuted + '" onclick="toggleBusMute(\'' + b.id + '\')" id="bus-mute-' + b.id + '" title="Mute bus">M</button>'
@@ -869,43 +854,13 @@ function rebuildEditor() {
     ySink += spacing;
   }
 
-  // Inject the delay slider into each solo bus's title bar (top-right).
-  // Same trick as the speaker-mode buttons below: keeps the control reachable
-  // without spending a whole body row on it.
-  for (var bi = 0; bi < _state.busses.length; bi++) {
-    var bb = _state.busses[bi];
-    if (bb.type !== 'solo') continue;
-    var bNodeId = _nodeMap['bus-' + bb.id];
-    if (!bNodeId) continue;
-    // .drawflow_content_node is the real container. There is no .title-box —
-    // nothing in Drawflow or this page ever creates one, so selecting it
-    // silently found nothing and the control never appeared.
-    var bEl = document.querySelector('#node-' + bNodeId + ' .drawflow_content_node');
-    if (!bEl) continue;
-    var bProc = (bb.processing || {});
-    var bMs = (bProc.delay_ms !== undefined) ? bProc.delay_ms : 0;
-    var dWrap = document.createElement('span');
-    dWrap.className = 'title-delay';
-    dWrap.innerHTML = '<span class="dfn-mix-label" title="Bus delay, milliseconds">dly</span>'
-      + '<input type="range" class="title-delay-slider" min="0" max="5000" step="50" '
-      +   'value="' + bMs + '" id="bus-delay-' + bb.id + '" '
-      +   'onmousedown="event.stopPropagation()" onpointerdown="event.stopPropagation()" '
-      +   'oninput="setBusDelay(\'' + bb.id + '\', this.value, true)" '
-      +   'onchange="setBusDelay(\'' + bb.id + '\', this.value, false)" '
-      +   'ondblclick="this.value=0;setBusDelay(\'' + bb.id + '\', 0, false)" '
-      +   'title="Bus delay (double-click to reset)">'
-      + '<span class="dfn-mix-val" id="bus-delay-val-' + bb.id + '">' + bMs + '</span>';
-    var bBox = bEl.querySelector('.box');
-    if (bBox) bEl.insertBefore(dWrap, bBox); else bEl.appendChild(dWrap);
-  }
-
   // Inject speaker mode buttons into title-box (top-right)
   var spkSink = _state.sinks.find(function(s) { return s.id === 'speaker'; });
   if (spkSink) {
     var spkNodeId = _nodeMap['sink-speaker'];
     if (spkNodeId) {
-      // Was '.title-box', which does not exist — these buttons have never
-      // rendered. Same fix as the delay control above.
+      // Was '.title-box', which does not exist — these buttons had never
+      // rendered. .drawflow_content_node is the real container.
       var spkEl = document.querySelector('#node-' + spkNodeId + ' .drawflow_content_node');
       if (spkEl) {
         var sm = spkSink._speaker_mode || (spkSink.speaker_mode || 'virtual').toLowerCase();
@@ -1307,23 +1262,6 @@ function setDfnMix(busId, value, isLive) {
     if (_dfnMixTimers[busId]) { clearTimeout(_dfnMixTimers[busId]); delete _dfnMixTimers[busId]; }
     send();
   }
-}
-
-var _busDelayTimers = {};
-function setBusDelay(busId, value, live) {
-  var v = Math.round(parseFloat(value));
-  var el = document.getElementById('bus-delay-val-' + busId);
-  // Bare number: this label sits in the title bar now, where ' ms' cost more
-  // width than it earned. Unit is in the 'dly' tooltip.
-  if (el) el.textContent = v;
-  clearTimeout(_busDelayTimers[busId]);
-  _busDelayTimers[busId] = setTimeout(function() {
-    fetch('/routing/cmd', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({cmd: 'set_bus_delay', bus: busId, delay_ms: v})
-    });
-  }, live ? 120 : 0);
 }
 
 // Speaker mode selector

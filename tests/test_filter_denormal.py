@@ -76,14 +76,13 @@ check("no subnormals left in state", nz.size == 0 or nz.min() >= tiny)
 out = vf2.process(noise, SPEC)
 check("still filters when audio returns", out.any())
 
-print("AudioProcessor HPF / LPF / notch:")
+print("AudioProcessor HPF / LPF:")
 cfg = types.SimpleNamespace(AUDIO_RATE=RATE)
 ap = AudioProcessor.__new__(AudioProcessor)
 ap.config = cfg
-ap.hpf_cutoff, ap.lpf_cutoff, ap.notch_freq, ap.notch_q = 300, 3000, 1000, 30.0
-ap.highpass_state = ap.lowpass_state = ap.notch_state = None
-for fn, attr in ((ap._apply_hpf, 'highpass_state'), (ap._apply_lpf, 'lowpass_state'),
-                 (ap._apply_notch, 'notch_state')):
+ap.hpf_cutoff, ap.lpf_cutoff = 300, 3000
+ap.highpass_state = ap.lowpass_state = None
+for fn, attr in ((ap._apply_hpf, 'highpass_state'), (ap._apply_lpf, 'lowpass_state')):
     fn(noise.tobytes())
     live = getattr(ap, attr).copy()
     for _ in range(400):

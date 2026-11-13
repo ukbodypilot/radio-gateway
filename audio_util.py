@@ -488,9 +488,6 @@ class AudioProcessor:
         self.hpf_cutoff = 300         # Hz
         self.enable_lpf = False
         self.lpf_cutoff = 3000        # Hz
-        self.enable_notch = False
-        self.notch_freq = 1000        # Hz — target frequency
-        self.notch_q = 30.0           # Q factor (higher = narrower notch)
         self.enable_noise_gate = False
         self.gate_threshold = -40     # dB
         self.gate_attack = 0.01       # seconds
@@ -519,7 +516,6 @@ class AudioProcessor:
         # Filter state (persists across audio chunks for continuity)
         self.highpass_state = None
         self.lowpass_state = None
-        self.notch_state = None
         self.gate_envelope = 0.0
         self.dfn_stream = None
         # Off-tick denoise worker + fixed-lag delay line (see _apply_dfn).
@@ -563,7 +559,6 @@ class AudioProcessor:
         """Reset all filter states (e.g. when source restarts)."""
         self.highpass_state = None
         self.lowpass_state = None
-        self.notch_state = None
         self.gate_envelope = 0.0
         self.agc_gain_db = 0.0
         self._dn_stop_worker()
@@ -602,10 +597,10 @@ class AudioProcessor:
 
     def process(self, pcm_data):
         """Run the full processing chain on PCM data. Order:
-        HPF → DFN → LPF → Notch → Noise Gate → AGC
+        HPF → DFN → LPF → Noise Gate → AGC
 
-        HPF runs before DFN so subsonic rumble is removed cheaply; LPF/notch
-        run after DFN so the denoiser sees the full band. AGC runs last so it
+        HPF runs before DFN so subsonic rumble is removed cheaply; LPF
+        runs after DFN so the denoiser sees the full band. AGC runs last so it
         levels the cleaned signal: boosting a quiet station BEFORE denoise
         would raise the hiss with it.
         """
@@ -629,12 +624,9 @@ class AudioProcessor:
         return self._post_dfn(processed)
 
     def _post_dfn(self, processed):
-        """The stages after DFN: LPF → Notch → Noise Gate → AGC."""
+        """The stages after DFN: LPF → Noise Gate → AGC."""
         if self.enable_lpf:
             processed = self._apply_lpf(processed)
-
-        if self.enable_notch:
-            processed = self._apply_notch(processed)
 
         if self.enable_noise_gate:
             processed = self._apply_noise_gate(processed)
@@ -661,7 +653,6 @@ class AudioProcessor:
         if self.enable_hpf: active.append('HPF')
         if self.enable_dfn: active.append('DFN')
         if self.enable_lpf: active.append('LPF')
-        if self.enable_notch: active.append('Notch')
         if self.enable_agc: active.append('AGC')
         return active
 
@@ -717,35 +708,6 @@ class AudioProcessor:
 
             filtered, self.lowpass_state = lfilter(b, a, samples, zi=self.lowpass_state)
             settle_filter_state(self.lowpass_state)
-            return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
-        except Exception:
-            return pcm_data
-
-    def _apply_notch(self, pcm_data):
-        """Second-order IIR notch (band-stop) filter — removes a specific frequency."""
-        try:
-            from scipy.signal import lfilter, lfilter_zi
-
-            samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-            if len(samples) == 0:
-                return pcm_data
-
-            sample_rate = self.config.AUDIO_RATE
-            w0 = 2.0 * _math.pi * self.notch_freq / sample_rate
-            bw = w0 / self.notch_q
-            r = 1.0 - (bw / 2.0)
-            r = max(0.0, min(r, 0.9999))  # clamp for stability
-
-            cos_w0 = _math.cos(w0)
-            b = np.array([1.0, -2.0 * cos_w0, 1.0], dtype=np.float64)
-            a = np.array([1.0, -2.0 * r * cos_w0, r * r], dtype=np.float64)
-            b = b / (1.0 + abs(1.0 - r))
-
-            if self.notch_state is None:
-                self.notch_state = lfilter_zi(b, a) * 0.0
-
-            filtered, self.notch_state = lfilter(b, a, samples, zi=self.notch_state)
-            settle_filter_state(self.notch_state)
             return np.clip(filtered, -32768, 32767).astype(np.int16).tobytes()
         except Exception:
             return pcm_data

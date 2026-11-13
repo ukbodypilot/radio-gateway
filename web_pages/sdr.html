@@ -424,12 +424,6 @@
       <label class="lbl">Ch BW</label>
       <input type="number" id="sdr-chbw" step="500" min="0" max="15000" value="0" class="si">
       <span class="unit">Hz</span>
-      <label class="lbl">Notch</label>
-      <input type="number" id="sdr-notch" step="1" min="0" max="5000" value="0" class="si">
-      <span class="unit">Hz</span>
-      <label class="lbl">Notch Q</label>
-      <input type="number" id="sdr-notchq" step="1" min="1" max="100" value="10" class="si">
-      <span class="unit"></span>
     </div>
   </div>
 </div>
@@ -527,12 +521,6 @@
       <label class="lbl">Ch BW</label>
       <input type="number" id="sdr2-chbw" step="500" min="0" max="15000" value="0" class="si">
       <span class="unit">Hz</span>
-      <label class="lbl">Notch</label>
-      <input type="number" id="sdr2-notch" step="1" min="0" max="5000" value="0" class="si">
-      <span class="unit">Hz</span>
-      <label class="lbl">Notch Q</label>
-      <input type="number" id="sdr2-notchq" step="1" min="1" max="100" value="10" class="si">
-      <span class="unit"></span>
     </div>
   </div>
 </div>
@@ -857,7 +845,7 @@ function renderChannelList(channels) {
    (plugins/sdr.py _write_config_single): a field at its default is not
    written to the config, so rtl_airband's own default applies. */
 var CH_FILTER_DEFAULTS = {ampfactor: 1.0, highpass: 100, lowpass: 2500,
-                          channel_bw: 0, notch: 0, notch_q: 10, continuous: false};
+                          channel_bw: 0, continuous: false};
 var _chFiltersOpen = new Set();
 
 function _escAttr(s) {
@@ -892,8 +880,6 @@ function _chFiltersHtml(ch, i) {
   h += num('ch-hpf', 'HPF', 'highpass', 10, 0, 1000, 'Hz', 'Audio high-pass, 12 dB/oct, applied by the gateway (0 = off). Removes CTCSS tone/rumble');
   h += num('ch-lpf', 'LPF', 'lowpass', 100, 0, 8000, 'Hz', 'Audio low-pass, 24 dB/oct, applied by the gateway (0 = off). Lower = less hiss, less clarity');
   h += num('ch-bw', 'Ch BW', 'channel_bw', 500, 0, 15000, 'Hz', 'I/Q channel filter before the demodulator, full width (0 = off). ~10000-12000 suits 12.5 kHz NFM');
-  h += num('ch-notch', 'Notch', 'notch', 1, 0, 5000, 'Hz', 'Audio notch frequency (0 = off)');
-  h += num('ch-notchq', 'Notch Q', 'notch_q', 1, 1, 100, '', 'Notch sharpness (higher = narrower)');
   var tau = (ch.tau !== undefined && ch.tau !== null) ? String(ch.tau) : '';
   h += '<label class="lbl" title="FM de-emphasis time constant">De-emph</label>';
   h += '<select class="si ch-tau" title="FM de-emphasis time constant (Device = use the De-emphasis setting above)">';
@@ -1000,8 +986,6 @@ function gatherChannelsFromUI() {
       highpass: numOr(r.querySelector('.ch-hpf'), parseInt, CH_FILTER_DEFAULTS.highpass),
       lowpass: numOr(r.querySelector('.ch-lpf'), parseInt, CH_FILTER_DEFAULTS.lowpass),
       channel_bw: numOr(r.querySelector('.ch-bw'), parseInt, CH_FILTER_DEFAULTS.channel_bw),
-      notch: numOr(r.querySelector('.ch-notch'), parseFloat, CH_FILTER_DEFAULTS.notch),
-      notch_q: numOr(r.querySelector('.ch-notchq'), parseFloat, CH_FILTER_DEFAULTS.notch_q),
       continuous: r.querySelector('.ch-cont').checked
     };
     var tau = r.querySelector('.ch-tau').value;
@@ -1165,8 +1149,6 @@ function gatherSettings() {
     ampfactor: parseFloat(document.getElementById('sdr-ampfactor').value),
     lowpass: parseInt(document.getElementById('sdr-lowpass').value),
     highpass: parseInt(document.getElementById('sdr-highpass').value),
-    notch: parseFloat(document.getElementById('sdr-notch').value),
-    notch_q: parseFloat(document.getElementById('sdr-notchq').value),
     channel_bw: parseFloat(document.getElementById('sdr-chbw').value),
     bias_t: document.getElementById('sdr-biast').checked,
     rf_notch: document.getElementById('sdr-rfnotch').checked,
@@ -1188,8 +1170,6 @@ function gatherSettings() {
     ampfactor2: parseFloat(document.getElementById('sdr2-ampfactor').value),
     lowpass2: parseInt(document.getElementById('sdr2-lowpass').value),
     highpass2: parseInt(document.getElementById('sdr2-highpass').value),
-    notch2: parseFloat(document.getElementById('sdr2-notch').value),
-    notch_q2: parseFloat(document.getElementById('sdr2-notchq').value),
     channel_bw2: parseFloat(document.getElementById('sdr2-chbw').value),
     continuous2: document.getElementById('sdr2-continuous').checked,
   };
@@ -1207,8 +1187,6 @@ function loadSettingsToUI(d) {
   if (d.ampfactor !== undefined) document.getElementById('sdr-ampfactor').value = d.ampfactor;
   if (d.lowpass !== undefined) document.getElementById('sdr-lowpass').value = d.lowpass;
   if (d.highpass !== undefined) document.getElementById('sdr-highpass').value = d.highpass;
-  if (d.notch !== undefined) document.getElementById('sdr-notch').value = d.notch;
-  if (d.notch_q !== undefined) document.getElementById('sdr-notchq').value = d.notch_q;
   if (d.channel_bw !== undefined) document.getElementById('sdr-chbw').value = d.channel_bw;
   if (d.bias_t !== undefined) document.getElementById('sdr-biast').checked = d.bias_t;
   if (d.rf_notch !== undefined) document.getElementById('sdr-rfnotch').checked = d.rf_notch;
@@ -1230,8 +1208,6 @@ function loadSettingsToUI(d) {
   if (d.ampfactor2 !== undefined) document.getElementById('sdr2-ampfactor').value = d.ampfactor2;
   if (d.lowpass2 !== undefined) document.getElementById('sdr2-lowpass').value = d.lowpass2;
   if (d.highpass2 !== undefined) document.getElementById('sdr2-highpass').value = d.highpass2;
-  if (d.notch2 !== undefined) document.getElementById('sdr2-notch').value = d.notch2;
-  if (d.notch_q2 !== undefined) document.getElementById('sdr2-notchq').value = d.notch_q2;
   if (d.channel_bw2 !== undefined) document.getElementById('sdr2-chbw').value = d.channel_bw2;
   if (d.continuous2 !== undefined) document.getElementById('sdr2-continuous').checked = d.continuous2;
 }

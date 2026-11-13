@@ -15,6 +15,30 @@ All notable changes to Radio Gateway.
   `bus_toggle_processing` takes `agc`; `gate` is no longer a bus filter and a
   saved `gate` key is ignored. Source-level noise gates (TH-9800, SDR, KV4P,
   D75 config keys) are unchanged. `tests/test_bus_agc.py`.
+- **Per-bus output delay removed.** The 0-5000 ms "dly" slider in each solo
+  bus's title bar, the `set_bus_delay` routing command and the `bus_set_delay`
+  MCP tool (164 tools). It was added on 2026-06-14 with no recorded use, and
+  no bus had ever set it. A stale `delay_ms` key in `routing_config.json` is
+  ignored.
+- **/routing: every node is the same size** (224 x 81 px, `--node-w` /
+  `--node-h`), so auto-arrange gives clean rows and columns. Busses were
+  290 px wide for a button row that has since lost G, N and V.
+- **Notch filter removed everywhere.** It was off on every bus, every radio
+  and both SDR channels, with no use case. Gone: the bus `N` button; the
+  per-radio notch (`ENABLE_NOTCH_FILTER`/`NOTCH_FREQ`/`NOTCH_Q` and the
+  `SDR_`/`D75_`/`KV4P_PROC_*NOTCH*` keys, 12 in all) from the schema, config
+  form, `/mixer` processing toggles and the `mixer_control` MCP tool; the
+  SDR per-channel rtl_airband notch on /sdr (single and dual mode); and
+  `AudioProcessor._apply_notch`. Old notch keys left in `gateway_config.txt`
+  or `sdr_channels.json` are ignored. The KV4P link plugin changed, so the
+  endpoint takes the new bundle on its next deploy (harmless either way: it
+  only stopped setting attributes nothing reads).
+- **Bus `V` (VAD) button removed.** It saved a `vad` flag that nothing ever
+  read; it only reached `gateway._bus_stream_flags`, a cache written in four
+  places and read in none, which is also gone (with
+  `BusManager.get_bus_stream_flags`). The global Mumble VAD gate
+  (`ENABLE_VAD`, and the audio page's VAD flag) is a different thing and is
+  unchanged. A stale `vad` key in `routing_config.json` is ignored.
 - **SDR page: each channel's squelch box is labelled** ("Squelch … dBFS"). It
   was an unlabelled number with only a tooltip, easy to miss in single mode,
   where the big squelch sliders don't apply.

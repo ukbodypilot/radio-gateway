@@ -70,7 +70,7 @@ were refactored into plugins (not wrapped).
 class RadioPlugin:
     name: str
     capabilities: set          # {rx, tx, ptt, frequency, ctcss, ...}
-    processing: ProcessChain   # gate -> HPF -> LPF -> notch -> gain
+    processing: ProcessChain   # gate -> HPF -> LPF -> gain
     enabled: bool
 
     def setup(self) -> bool

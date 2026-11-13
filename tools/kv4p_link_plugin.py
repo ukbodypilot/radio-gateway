@@ -587,9 +587,6 @@ class KV4PPlugin(RadioPlugin):
         p.hpf_cutoff = float(_cfg(c, 'proc_hpf_cutoff', 300))
         p.enable_lpf = bool(_cfg(c, 'proc_enable_lpf', False))
         p.lpf_cutoff = float(_cfg(c, 'proc_lpf_cutoff', 3000))
-        p.enable_notch = bool(_cfg(c, 'proc_enable_notch', False))
-        p.notch_freq = float(_cfg(c, 'proc_notch_freq', 1000))
-        p.notch_q = float(_cfg(c, 'proc_notch_q', 30.0))
 
     def _send_test_tone(self, cmd):
         freq = int(cmd.get('frequency', 440))

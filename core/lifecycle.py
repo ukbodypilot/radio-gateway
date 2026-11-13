@@ -36,25 +36,21 @@ class _LifecycleMixin:
                 'gate':  'ENABLE_NOISE_GATE',
                 'hpf':   'ENABLE_HIGHPASS_FILTER',
                 'lpf':   'ENABLE_LOWPASS_FILTER',
-                'notch': 'ENABLE_NOTCH_FILTER',
             }, '_sync_radio_processor'),
             'sdr': ({
                 'gate':  'SDR_PROC_ENABLE_NOISE_GATE',
                 'hpf':   'SDR_PROC_ENABLE_HPF',
                 'lpf':   'SDR_PROC_ENABLE_LPF',
-                'notch': 'SDR_PROC_ENABLE_NOTCH',
             }, '_sync_sdr_plugin_processors'),
             'd75': ({
                 'gate':  'D75_PROC_ENABLE_NOISE_GATE',
                 'hpf':   'D75_PROC_ENABLE_HPF',
                 'lpf':   'D75_PROC_ENABLE_LPF',
-                'notch': 'D75_PROC_ENABLE_NOTCH',
             }, None),  # link endpoint manages its own processing
             'kv4p': ({
                 'gate':  'KV4P_PROC_ENABLE_NOISE_GATE',
                 'hpf':   'KV4P_PROC_ENABLE_HPF',
                 'lpf':   'KV4P_PROC_ENABLE_LPF',
-                'notch': 'KV4P_PROC_ENABLE_NOTCH',
             }, None),  # link endpoint manages its own processing (kv4p is endpoint-hosted)
         }
         entry = _source_map.get(source)
@@ -260,7 +256,6 @@ class _LifecycleMixin:
             self.bus_manager.start()
             self.mixer = self.bus_manager.listen_bus  # Backward compat for trace access
             # Cache bus metadata for web UI (refreshed after routing saves)
-            self._bus_stream_flags = self.bus_manager.get_bus_stream_flags()
             self._bus_sinks = self.bus_manager.get_bus_sinks()
             self._listen_bus_id = self.bus_manager.get_listen_bus_id()
             self._listen_bus_muted = self.bus_manager.is_bus_muted(self._listen_bus_id)

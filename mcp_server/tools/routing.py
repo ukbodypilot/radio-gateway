@@ -250,14 +250,12 @@ def bus_toggle_processing(bus_id: str, filter_name: str) -> str:
         filter_name: One of:
                      'hpf'   — high-pass filter
                      'lpf'   — low-pass filter
-                     'notch' — notch filter
                      'dfn'   — neural denoise (DPDFNet 8 kHz)
                      'agc'   — automatic gain control, last in the chain:
                                levels quiet and loud stations toward
                                -20 dBFS, holds between overs
                      'pcm'   — feed PCM stream output
                      'mp3'   — feed MP3 stream output
-                     'vad'   — VAD (voice activity detection) gate
     """
     result = _post('/routing/cmd', {
         'cmd': 'toggle_proc',
@@ -333,23 +331,4 @@ def bus_set_denoise_bypass(bus_id: str, bypass_db: float) -> str:
                    {'cmd': 'set_dfn_bypass', 'bus': bus_id, 'bypass_db': bypass_db})
     if result.get('ok'):
         return f"Bus {bus_id}: denoise bypass → {result.get('bypass_db')} dBFS"
-    return f"Error: {result.get('error', 'unknown')}"
-
-
-# ---------------------------------------------------------------------------
-# Per-bus delay
-# ---------------------------------------------------------------------------
-@mcp.tool()
-def bus_set_delay(bus_id: str, delay_ms: int) -> str:
-    """
-    Set a fixed output delay on a bus, in milliseconds (0-5000).
-
-    Used to time-align a bus against another path — e.g. holding a local
-    speaker bus back so it lines up with the latency of a streamed or
-    linked copy of the same audio. 0 disables the delay.
-    """
-    result = _post('/routing/cmd',
-                   {'cmd': 'set_bus_delay', 'bus': bus_id, 'delay_ms': delay_ms})
-    if result.get('ok'):
-        return f"Bus {bus_id}: delay → {result.get('delay_ms')} ms"
     return f"Error: {result.get('error', 'unknown')}"

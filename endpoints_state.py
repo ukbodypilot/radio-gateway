@@ -100,9 +100,6 @@ _LEGACY_KV4P_MAP = {
     'KV4P_PROC_HPF_CUTOFF': 'proc_hpf_cutoff',
     'KV4P_PROC_ENABLE_LPF': 'proc_enable_lpf',
     'KV4P_PROC_LPF_CUTOFF': 'proc_lpf_cutoff',
-    'KV4P_PROC_ENABLE_NOTCH': 'proc_enable_notch',
-    'KV4P_PROC_NOTCH_FREQ': 'proc_notch_freq',
-    'KV4P_PROC_NOTCH_Q': 'proc_notch_q',
 }
 
 

@@ -29,9 +29,6 @@ class _AudioProcMixin:
         p.hpf_cutoff = self.config.HIGHPASS_CUTOFF_FREQ
         p.enable_lpf = self.config.ENABLE_LOWPASS_FILTER
         p.lpf_cutoff = self.config.LOWPASS_CUTOFF_FREQ
-        p.enable_notch = self.config.ENABLE_NOTCH_FILTER
-        p.notch_freq = self.config.NOTCH_FREQ
-        p.notch_q = self.config.NOTCH_Q
         p.enable_noise_gate = self.config.ENABLE_NOISE_GATE
         p.gate_threshold = self.config.NOISE_GATE_THRESHOLD
         p.gate_attack = self.config.NOISE_GATE_ATTACK

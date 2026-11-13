@@ -501,11 +501,11 @@ def handle_mixer(handler, parent):
         elif action == 'processing':
             # Toggle or set audio processing filter
             # source: radio, sdr, d75, kv4p
-            # filter: gate, hpf, lpf, notch
+            # filter: gate, hpf, lpf
             filt = data.get('filter', '')
             proc_state = data.get('state')  # true/false or omit for toggle
             valid_sources = ('radio', 'sdr', 'd75', 'kv4p')
-            valid_filters = ('gate', 'hpf', 'lpf', 'notch')
+            valid_filters = ('gate', 'hpf', 'lpf')
             if source not in valid_sources:
                 result = {'ok': False, 'error': f'source must be one of: {", ".join(valid_sources)}'}
             elif filt not in valid_filters:
@@ -544,7 +544,7 @@ def handle_proc_toggle(handler, parent):
     try:
         data = json_mod.loads(body)
         source = data.get('source', '')  # "radio" or "sdr"
-        filt = data.get('filter', '')    # "gate", "hpf", "lpf", "notch"
+        filt = data.get('filter', '')    # "gate", "hpf", "lpf"
         if source and filt and parent.gateway:
             parent.gateway.handle_proc_toggle(source, filt)
     except Exception:

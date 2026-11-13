@@ -220,7 +220,7 @@ class _TunerCapture:
         self._get_gaps = []  # recent gaps > 60ms
         # Browser PCM monitor tap (SDR1/SDR2 buttons, see pcm_taps.py). The
         # tap follows the BUS this tuner is routed to: the bus manager sends
-        # that bus's processed output (gate/HPF/LPF/notch/denoise + delay) to
+        # that bus's processed output (HPF/LPF/denoise/AGC) to
         # the browser, so the routing-page processing buttons are audible.
         self.pcm_tap = False
         self.tap_from_bus = True
@@ -469,7 +469,7 @@ class _TunerCapture:
                 arr = self.voice_filter.process(arr, spec)
                 raw = arr.tobytes()
 
-        # Apply audio processing (HPF, LPF, notch, gate)
+        # Apply audio processing (HPF, LPF, gate)
         if self.processor:
             raw = self.processor.process(raw)
 
@@ -581,8 +581,6 @@ class SDRPlugin:
         'ampfactor': (float, 1.0),
         'lowpass': (int, 2500),
         'highpass': (int, 100),
-        'notch': (float, 0.0),
-        'notch_q': (float, 10.0),
         'channel_bw': (float, 0.0),
         'bias_t': (bool, False),
         'rf_notch': (bool, False),
@@ -602,8 +600,6 @@ class SDRPlugin:
         'ampfactor2': (float, 1.0),
         'lowpass2': (int, 2500),
         'highpass2': (int, 100),
-        'notch2': (float, 0.0),
-        'notch_q2': (float, 10.0),
         'channel_bw2': (float, 0.0),
         'continuous2': (bool, False),
     }
@@ -1356,9 +1352,6 @@ class SDRPlugin:
         proc.hpf_cutoff = getattr(config, 'SDR_PROC_HPF_CUTOFF', 300)
         proc.enable_lpf = getattr(config, 'SDR_PROC_ENABLE_LPF', True)
         proc.lpf_cutoff = getattr(config, 'SDR_PROC_LPF_CUTOFF', 3000)
-        proc.enable_notch = getattr(config, 'SDR_PROC_ENABLE_NOTCH', False)
-        proc.notch_freq = getattr(config, 'SDR_PROC_NOTCH_FREQ', 1000)
-        proc.notch_q = getattr(config, 'SDR_PROC_NOTCH_Q', 10.0)
 
     # -- Internal: tuning settings persistence --
 
@@ -1459,10 +1452,6 @@ class SDRPlugin:
             ch_opts += f'      lowpass = {self.lowpass};\n'
         if self.highpass != 100:
             ch_opts += f'      highpass = {self.highpass};\n'
-        if self.notch > 0:
-            ch_opts += f'      notch = {self.notch};\n'
-            if self.notch_q != 10.0:
-                ch_opts += f'      notch_q = {self.notch_q};\n'
         if self.channel_bw > 0:
             ch_opts += f'      bandwidth = {int(self.channel_bw)};\n'
 
@@ -1527,10 +1516,6 @@ devices:
             ch_opts += f'      lowpass = {self.lowpass2};\n'
         if self.highpass2 != 100:
             ch_opts += f'      highpass = {self.highpass2};\n'
-        if self.notch2 > 0:
-            ch_opts += f'      notch = {self.notch2};\n'
-            if self.notch_q2 != 10.0:
-                ch_opts += f'      notch_q = {self.notch_q2};\n'
         if self.channel_bw2 > 0:
             ch_opts += f'      bandwidth = {int(self.channel_bw2)};\n'
 
@@ -1801,14 +1786,6 @@ devices:
             hp = ch.get('highpass', 100)
             if hp != 100:
                 ch_opts += f'      highpass = {int(hp)};\n'
-            notch = ch.get('notch', 0.0)
-            # rtl_airband requires notch_q to be a float of the same type as
-            # notch, and JSON turns 1000.0 into 1000 -- always write floats.
-            if notch > 0:
-                ch_opts += f'      notch = {float(notch)};\n'
-                nq = ch.get('notch_q', 10.0)
-                if nq != 10.0:
-                    ch_opts += f'      notch_q = {float(nq)};\n'
             cbw = ch.get('channel_bw', 0.0)
             if cbw > 0:
                 ch_opts += f'      bandwidth = {int(cbw)};\n'
@@ -2063,8 +2040,6 @@ devices:
             'ampfactor': float(cmd.get('ampfactor', 1.0)),
             'lowpass': int(cmd.get('lowpass', 2500)),
             'highpass': int(cmd.get('highpass', 100)),
-            'notch': float(cmd.get('notch', 0.0)),
-            'notch_q': float(cmd.get('notch_q', 10.0)),
             'channel_bw': float(cmd.get('channel_bw', 0.0)),
             'continuous': bool(cmd.get('continuous', False)),
         }
@@ -2094,7 +2069,7 @@ devices:
             return {'ok': False, 'error': f'Invalid channel index: {index}'}
         ch = self._single_channels[index]
         for key in ('freq', 'modulation', 'squelch_threshold', 'ampfactor',
-                     'lowpass', 'highpass', 'notch', 'notch_q', 'channel_bw',
+                     'lowpass', 'highpass', 'channel_bw',
                      'tau', 'continuous', 'label'):
             if key in cmd:
                 ch[key] = cmd[key]

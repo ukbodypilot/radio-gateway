@@ -119,7 +119,7 @@ The dashboard's Services page (`/dashboard/services`) shows per-bus disk usage a
 
 ## Technical Details
 
-- Audio is tapped after bus processing (gate/HPF/LPF/notch) in BusManager
+- Audio is tapped after bus processing (HPF/LPF/denoise/AGC) in BusManager
 - Waveform data is computed in real-time from raw PCM (not decoded from MP3)
 - Active segment waveform is served from memory (no delay waiting for segment close)
 - Playback supports HTTP Range requests for native browser seeking

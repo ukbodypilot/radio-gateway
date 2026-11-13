@@ -29,7 +29,6 @@ Every bus has a processing chain you can toggle from its node:
 |--------|--------|
 | `H` | High-pass filter (300 Hz default) |
 | `L` | Low-pass filter (3 kHz default) |
-| `N` | Notch filter (60 Hz default, Q=30) |
 | **`D`** | Neural denoise — DPDFNet 8 kHz, a narrowband model that keeps FM radio voice and sounds good fully wet. Phase-aligned wet/dry mix. Inference runs off the bus tick on a per-bus worker with its own 1-thread ONNX session, behind a fixed 100 ms delay line: a chunk the worker misses plays dry, in order, and is counted in `rg_denoise_late_total`. |
 | `A` | Automatic gain control, last in the chain (after denoise, so it lifts the voice and not the hiss). Steers speech toward −20 dBFS, at most +24 / −12 dB; turns down fast (0.1 s), up more slowly (1 s). Chunks under −50 dBFS hold the gain, so silence between overs is never pumped up. A clip guard cuts the gain at once if a peak would pass −1 dBFS. `rg_agc_gain_db` shows the live gain, `rg_agc_limited_total` counts clip-guard hits. Replaced the bus noise gate (`G`) on 2026-11-13; a saved `gate` key is ignored. |
 
@@ -41,10 +40,9 @@ Each bus can independently expose:
 
 - **PCM WebSocket** — raw 16-bit mono at 48 kHz to the browser, for the routing-page audio cues and monitor pages
 - **MP3 stream** — lazy-started ffmpeg encoder, only launches when a browser first subscribes
-- **VAD-gated transcription** — feeds the per-bus VAD + ASR worker (see [transcription-pool.md](transcription-pool.md))
 - **Loop recording** — per-bus continuous capture (see [loop-recorder.md](loop-recorder.md))
 
-Toggle from the bus's node. Disabled streams cost nothing — no encoder is started until at least one consumer.
+Toggle from the bus's node (`P`, `M`, `R`). Transcription is not a toggle: route the bus to the Transcription sink (see [transcription-pool.md](transcription-pool.md)). Disabled streams cost nothing — no encoder is started until at least one consumer.
 
 ## Broadcastify uplink health: connected is not flowing
 

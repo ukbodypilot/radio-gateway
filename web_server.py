@@ -94,24 +94,18 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'NOISE_GATE_RELEASE': 'seconds',
         'HIGHPASS_CUTOFF_FREQ': 'Hz',
         'LOWPASS_CUTOFF_FREQ': 'Hz',
-        'NOTCH_FREQ': 'Hz',
-        'NOTCH_Q': 'quality factor (higher = narrower)',
         # SDR Processing
         'SDR_PROC_NOISE_GATE_THRESHOLD': 'dBFS (−60 to 0)',
         'SDR_PROC_NOISE_GATE_ATTACK': 'seconds',
         'SDR_PROC_NOISE_GATE_RELEASE': 'seconds',
         'SDR_PROC_HPF_CUTOFF': 'Hz',
         'SDR_PROC_LPF_CUTOFF': 'Hz',
-        'SDR_PROC_NOTCH_FREQ': 'Hz',
-        'SDR_PROC_NOTCH_Q': 'quality factor (higher = narrower)',
         # D75 Processing
         'D75_PROC_NOISE_GATE_THRESHOLD': 'dBFS (−60 to 0)',
         'D75_PROC_NOISE_GATE_ATTACK': 'seconds',
         'D75_PROC_NOISE_GATE_RELEASE': 'seconds',
         'D75_PROC_HPF_CUTOFF': 'Hz',
         'D75_PROC_LPF_CUTOFF': 'Hz',
-        'D75_PROC_NOTCH_FREQ': 'Hz',
-        'D75_PROC_NOTCH_Q': 'quality factor (higher = narrower)',
         # KV4P HT
         'KV4P_PORT': 'serial port (e.g. /dev/ttyUSB0)',
         'KV4P_FREQ': 'MHz',
@@ -126,8 +120,6 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'KV4P_PROC_NOISE_GATE_RELEASE': 'seconds',
         'KV4P_PROC_HPF_CUTOFF': 'Hz',
         'KV4P_PROC_LPF_CUTOFF': 'Hz',
-        'KV4P_PROC_NOTCH_FREQ': 'Hz',
-        'KV4P_PROC_NOTCH_Q': 'quality factor (higher = narrower)',
         # ADS-B
         'ADSB_PORT': 'port dump1090-fa web server listens on (default 30080, avoids conflict with gateway on 8080)',
         'USBIP_SERVER': 'IP address or hostname of the USB/IP server (usbipd)',

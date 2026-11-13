@@ -136,7 +136,6 @@ class _RoutingCmdsMixin:
         if self.gateway and hasattr(self.gateway, 'bus_manager') and self.gateway.bus_manager:
             try:
                 self.gateway.bus_manager.reload()
-                self.gateway._bus_stream_flags = self.gateway.bus_manager.get_bus_stream_flags()
                 self.gateway._bus_sinks = self.gateway.bus_manager.get_bus_sinks()
                 self.gateway._listen_bus_id = self.gateway.bus_manager.get_listen_bus_id()
             except Exception as e:
@@ -169,18 +168,13 @@ class _RoutingCmdsMixin:
     def _routing_cmd_toggle_proc(self, data, busses, connections):
         bus_id = data.get('bus', '')
         filt = data.get('filter', '')
-        if filt not in ('agc', 'hpf', 'lpf', 'notch', 'dfn', 'pcm', 'mp3', 'vad', 'loop'):
+        if filt not in ('agc', 'hpf', 'lpf', 'dfn', 'pcm', 'mp3', 'loop'):
             return {'ok': False, 'error': f'invalid filter: {filt}'}
         for b in busses:
             if b['id'] == bus_id:
                 proc = b.setdefault('processing', {})
                 proc[filt] = not proc.get(filt, False)
                 self._save_routing_config(busses, connections)
-                # Update cached stream flags on gateway + BusManager
-                if filt in ('pcm', 'mp3', 'vad', 'loop') and self.gateway:
-                    flags = getattr(self.gateway, '_bus_stream_flags', {})
-                    bus_flags = flags.setdefault(bus_id, {'pcm': False, 'mp3': False, 'vad': False})
-                    bus_flags[filt] = proc[filt]
                 bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
                 # Stop loop recorder when toggled off
                 if filt == 'loop' and not proc[filt] and self.gateway:
@@ -191,7 +185,7 @@ class _RoutingCmdsMixin:
                     if bus_id in bm._bus_config:
                         bm._bus_config[bus_id][filt] = proc[filt]
                     # Update the live AudioProcessor (create if needed)
-                    if filt in ('agc', 'hpf', 'lpf', 'notch', 'dfn'):
+                    if filt in ('agc', 'hpf', 'lpf', 'dfn'):
                         _bp = bm._bus_processors.get(bus_id)
                         if not _bp:
                             _bp = AudioProcessor(f"bus_{bus_id}", self.gateway.config)
@@ -243,22 +237,6 @@ class _RoutingCmdsMixin:
                     if _bp is not None:
                         _bp.dfn_bypass_db = bypass
                 return {'ok': True, 'bypass_db': bypass}
-        return {'ok': False, 'error': f'bus not found: {bus_id}'}
-
-    def _routing_cmd_set_bus_delay(self, data, busses, connections):
-        bus_id = data.get('bus', '')
-        try:
-            delay_ms = max(0, min(5000, int(round(float(data.get('delay_ms', 0))))))
-        except (ValueError, TypeError):
-            return {'ok': False, 'error': 'invalid delay_ms'}
-        for b in busses:
-            if b['id'] == bus_id:
-                b.setdefault('processing', {})['delay_ms'] = delay_ms
-                self._save_routing_config(busses, connections)
-                bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
-                if bm and bus_id in bm._bus_config:
-                    bm._bus_config[bus_id]['delay_ms'] = delay_ms
-                return {'ok': True, 'delay_ms': delay_ms}
         return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
     def _routing_cmd_set_loop_hours(self, data, busses, connections):
@@ -399,7 +377,6 @@ class _RoutingCmdsMixin:
         'toggle_proc':     _routing_cmd_toggle_proc,
         'set_dfn_mix':     _routing_cmd_set_dfn_mix,
         'set_dfn_bypass':  _routing_cmd_set_dfn_bypass,
-        'set_bus_delay':   _routing_cmd_set_bus_delay,
         'set_loop_hours':  _routing_cmd_set_loop_hours,
         'bus_mute':        _routing_cmd_bus_mute,
         'mute':            _routing_cmd_mute,

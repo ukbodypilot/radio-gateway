@@ -393,7 +393,6 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
         self.packet_plugin = None         # PacketRadioPlugin instance
         self.bus_manager = None           # BusManager (created in _setup_routing)
         self._bus_sinks = {}              # {bus_id: set(sink_ids)} — populated by _setup_routing
-        self._bus_stream_flags = {}       # {bus_id: {pcm, mp3, vad}} — populated by _setup_routing
         self._listen_bus_id = 'listen'    # Primary listen bus ID — set by _setup_routing
         self._listen_bus_muted = False    # Primary listen bus mute — set by _setup_routing
         self._muted_sinks = set()         # Set of muted sink IDs

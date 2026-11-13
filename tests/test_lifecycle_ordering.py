@@ -136,7 +136,6 @@ def _build_host(log, sandbox):
     bus_extra = {
         'start': lambda self: log.append('BusManager.start'),
         'reload': lambda self: log.append('BusManager.reload'),
-        'get_bus_stream_flags': lambda self: {},
         'get_bus_sinks': lambda self: {},
         'get_listen_bus_id': lambda self: 'lb',
         'is_bus_muted': lambda self, i: False,

@@ -467,7 +467,7 @@ def mixer_control(
     """
     Control the legacy per-source audio mixer — mute/unmute sources, adjust
     volume/boost, toggle duck, and control per-source processing flags
-    (gate/HPF/LPF/notch). Operates on sources themselves (sdr1, d75, kv4p, …).
+    (gate/HPF/LPF). Operates on sources themselves (sdr1, d75, kv4p, …).
 
     For bus-level routing and mute in the v2 mixer, use bus_mute / sink_mute /
     routing_connect / routing_disconnect instead.
@@ -499,7 +499,6 @@ def mixer_control(
                 'gate'  — Noise gate
                 'hpf'   — High-pass filter
                 'lpf'   — Low-pass filter
-                'notch' — Notch filter
         state:  Explicit true/false for 'duck', 'flag', and 'processing' actions.
                 Omit to toggle.
     """
@@ -568,7 +567,7 @@ def mixer_control(
         if not source:
             return 'Error: source required (radio, sdr, d75, kv4p)'
         if not flag:
-            return 'Error: flag required for filter name (gate, hpf, lpf, notch)'
+            return 'Error: flag required for filter name (gate, hpf, lpf)'
         payload = {'action': 'processing', 'source': source.lower().strip(),
                    'filter': flag.lower().strip()}
         if state is not None:

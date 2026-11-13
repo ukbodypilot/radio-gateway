@@ -1,6 +1,6 @@
 # Radio Gateway
 
-A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, email alerting, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 165 MCP tools for AI control.
+A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, email alerting, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 164 MCP tools for AI control.
 
 **Radios:** TH-9800 (AIOC USBIP), TH-D75 (Bluetooth RFCOMM + SCO), KV4P (USB serial), FTM-150 (remote AIOC endpoint), IC-7100 (CI-V remote endpoint), RSPduo dual SDR receiver.
 
@@ -24,7 +24,7 @@ More screenshots in `docs/screenshots/`.
 
 **Radio hardware** — TH-9800 (AIOC USB + CAT control), TH-D75 over Bluetooth, KV4P HT (SA818/DRA818), RSPduo SDR (single-tuner multi-channel *or* dual-tuner master/slave), plus any AIOC/CI-V-equipped radio as a remote endpoint via [Gateway Link](docs/gateway_link.md).
 
-**Audio routing v2.0** — bus-based mixer with a visual drag-and-drop editor at `/routing`. Four bus types (Listen / Solo / Duplex / Simplex Repeater), per-bus processing chain (gate / HPF / LPF / notch / **neural denoise** with DPDFNet 8 kHz), per-bus PCM + MP3 streaming, NUL sink for recording-only paths. Independent TX/RX muting per radio.
+**Audio routing v2.0** — bus-based mixer with a visual drag-and-drop editor at `/routing`. Four bus types (Listen / Solo / Duplex / Simplex Repeater), per-bus processing chain (HPF / LPF / **neural denoise** with DPDFNet 8 kHz / AGC), per-bus PCM + MP3 streaming, NUL sink for recording-only paths. Independent TX/RX muting per radio.
 
 **Transcription** — distributed pool. NVIDIA Parakeet TDT 0.6B (int8 ONNX, CPU) by default, Moonshine v2 as the lighter option. Local engine or [remote workers](docs/transcription-pool.md) on other Linux boxes. Silero v5 VAD. Per-utterance frequency tagging and Mumble cross-posting and keyword email alerts.
 
@@ -36,7 +36,7 @@ More screenshots in `docs/screenshots/`.
 
 **Streaming** — Broadcastify / Icecast via internal ffmpeg pipe (no DarkIce, no ALSA loopback). Auto-reconnect. Cloudflare quick-tunnel for free public HTTPS with URL discovery via Google Drive.
 
-**Control surfaces** — 20+ page web UI, 165 MCP tools, Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
+**Control surfaces** — 20+ page web UI, 164 MCP tools, Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
 
 **Fleet Manager** — document-driven autonomous monitoring. Plain-English tasks in `hourly.md` / `daily.md` are handed to a one-shot Claude run on a schedule; structured reports come back, with an email alert on `elevated` or `warning` severity. Auto-discovers nodes that change DHCP IP. See [docs/fleet-manager.md](docs/fleet-manager.md).
 
@@ -115,7 +115,7 @@ radio-gateway/
 ├── gateway_setup.py            phased initialization helpers
 ├── core/                       lifecycle, monitor loop, transmit loop, PTT, Mumble I/O, endpoint log store
 ├── hw_deps.py                  hardware-library check at startup (hidapi, pyaudio, pymumble) + pymumble SSL shims
-├── gateway_mcp.py              MCP server entry point (165 tools, stdio); tools in mcp_server/tools/
+├── gateway_mcp.py              MCP server entry point (164 tools, stdio); tools in mcp_server/tools/
 ├── web_server.py               HTTP/WS server + config UI
 ├── config_schema.py            every setting: default, type, and its place on the config form
 ├── config_format.py            gateway_config.txt value read/write rules (quoting, inline comments)

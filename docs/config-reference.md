@@ -41,7 +41,7 @@ The installer copies the example to `gateway_config.txt` if one doesn't exist. T
 | `[ptt]` | PTT method, hold times, talkback, link auto-PTT, and the transmit time-out `PTT_TIMEOUT_SECONDS` (default 180 s, `0` = off; see below) |
 | `[vad]` | Silero VAD threshold, hold, hysteresis |
 | `[vox]` | Legacy dB-envelope VOX (most paths use VAD now) |
-| `[processing]` | High-pass / low-pass / notch / noise gate / neural denoise (DPDFNet 8 kHz) |
+| `[processing]` | High-pass / low-pass / noise gate / neural denoise (DPDFNet 8 kHz) |
 | `[sdr1]` / `[sdr2]` | SDR receivers: device, ducking, boost, `SDR_PRIORITY_ORDER`, `SDR_DAILY_RESTART_TIME` (daily rtl_airband + SDRplay restart, HH:MM, empty = never) |
 | `[switching]` | SDR ducking, priority, signal threshold |
 | `[remote]` | Remote audio TX/RX link (full duplex) |
