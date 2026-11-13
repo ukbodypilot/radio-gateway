@@ -5,7 +5,7 @@ Before 2026-11-06 a worker that missed its one-tick slot made the tick emit
 the CURRENT chunk dry and the stale denoised chunk next tick: an audible
 skip-and-repeat ("drops" with both SDR buses on D). Now the tick emits the
 chunk from DN_LAG ticks ago, denoised if ready, else THAT chunk dry, so
-order never changes. Also: each DFN3 stream owns a 1-thread ONNX session
+order never changes. Also: each denoise stream owns a 1-thread ONNX session
 (a shared intra=2 session made two buses contend).
 """
 
@@ -49,9 +49,6 @@ class FakeStream:
     hold = set()
     release = threading.Event()
 
-    def set_atten_lim_db(self, a):
-        pass
-
     def process_mix(self, samples, wet):
         if int(samples[0]) in FakeStream.hold:
             FakeStream.release.wait(timeout=5)
@@ -61,7 +58,7 @@ class FakeStream:
         pass
 
 
-audio_util.make_denoise_stream = lambda engine='rnnoise': FakeStream()
+audio_util.make_denoise_stream = lambda engine='dpdfnet': FakeStream()
 
 
 def make_proc():
@@ -156,21 +153,36 @@ check('gap > DN_STALE_S resets the line', o == 0, o)
 check('output length == input length', len(p.process(chunk(1))) == N * 2)
 p._dn_stop_worker()
 
-# --- DFN3: private single-threaded session per stream ---
+# --- DPDFNet: private single-threaded session per stream ---
 try:
     import onnxruntime  # noqa: F401
-    have_ort = os.path.exists(audio_util._dfn3_bundled_path())
+    have_ort = os.path.exists(audio_util._dpdfnet_model_path())
 except Exception:
     have_ort = False
 if have_ort:
-    a, b = audio_util._DFN3Stream(), audio_util._DFN3Stream()
-    check('DFN3 streams do not share a session', a._sess is not b._sess)
-    check('DFN3 session is single-threaded',
+    a, b = audio_util._DPDFNet8kStream(), audio_util._DPDFNet8kStream()
+    check('DPDFNet streams do not share a session', a._sess is not b._sess)
+    check('DPDFNet session is single-threaded',
           a._sess.get_session_options().intra_op_num_threads == 1)
     out = a.process(np.zeros(N, dtype=np.int16))
-    check('DFN3 stream still processes', out.size == N, out.size)
+    check('DPDFNet stream still processes', out.size == N, out.size)
 else:
-    print('  SKIP  DFN3 session checks (onnxruntime or bundled model missing)')
+    print('  SKIP  DPDFNet session checks (onnxruntime or bundled model missing)')
+
+# --- removed engines fall back to the default, never to "denoise off" ---
+check('rnnoise maps to dpdfnet',
+      audio_util.normalize_denoise_engine('rnnoise') == 'dpdfnet')
+check('deepfilternet maps to dpdfnet',
+      audio_util.normalize_denoise_engine('deepfilternet') == 'dpdfnet')
+check('missing engine maps to dpdfnet',
+      audio_util.normalize_denoise_engine('') == 'dpdfnet')
+q = audio_util.AudioProcessor('bus_legacy', types.SimpleNamespace(AUDIO_RATE=48000))
+q.set_dfn_engine('rnnoise')
+check('AudioProcessor accepts a legacy id as dpdfnet', q.dfn_engine == 'dpdfnet', q.dfn_engine)
+q.set_dfn_engine('bogus')
+check('AudioProcessor rejects an unknown id', q.dfn_engine == 'dpdfnet', q.dfn_engine)
+check('only dpdfnet is registered', audio_util.DENOISE_ENGINE_IDS == ('dpdfnet',),
+      audio_util.DENOISE_ENGINE_IDS)
 
 print('PASS' if not _fails else f'FAIL ({_fails})')
 sys.exit(1 if _fails else 0)

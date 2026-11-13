@@ -221,29 +221,6 @@ class _RoutingCmdsMixin:
                 return {'ok': True, 'mix': mix}
         return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
-    def _routing_cmd_set_dfn_atten(self, data, busses, connections):
-        # DFN attenuation cap in dB. 0 = model decides (can pump);
-        # 15–25 is typical real-world range. Clamped to [0, 60].
-        bus_id = data.get('bus', '')
-        try:
-            atten = max(0.0, min(60.0, float(data.get('atten_db', 18.0))))
-        except (ValueError, TypeError):
-            return {'ok': False, 'error': 'invalid atten_db value'}
-        for b in busses:
-            if b['id'] == bus_id:
-                proc = b.setdefault('processing', {})
-                proc['dfn_atten_db'] = atten
-                self._save_routing_config(busses, connections)
-                bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
-                if bm:
-                    if bus_id in bm._bus_config:
-                        bm._bus_config[bus_id]['dfn_atten_db'] = atten
-                    _bp = bm._bus_processors.get(bus_id)
-                    if _bp is not None:
-                        _bp.dfn_atten_db = atten
-                return {'ok': True, 'atten_db': atten}
-        return {'ok': False, 'error': f'bus not found: {bus_id}'}
-
     def _routing_cmd_set_dfn_bypass(self, data, busses, connections):
         # Denoise bypass threshold in dBFS: chunks below this RMS skip the
         # denoise worker (CPU saver). Clamped to [-90, -20]; -60 is the
@@ -282,31 +259,6 @@ class _RoutingCmdsMixin:
                 if bm and bus_id in bm._bus_config:
                     bm._bus_config[bus_id]['delay_ms'] = delay_ms
                 return {'ok': True, 'delay_ms': delay_ms}
-        return {'ok': False, 'error': f'bus not found: {bus_id}'}
-
-    def _routing_cmd_set_dfn_engine(self, data, busses, connections):
-        # Per-bus denoise engine — 'rnnoise' | 'deepfilternet' | 'dpdfnet'.
-        # AudioProcessor.set_dfn_engine drops the current stream so the
-        # next audio chunk rebuilds with the new engine.
-        from audio_util import DENOISE_ENGINE_IDS
-        bus_id = data.get('bus', '')
-        engine = str(data.get('engine', ''))
-        if engine not in DENOISE_ENGINE_IDS:
-            return {'ok': False,
-                    'error': f'invalid engine; must be one of {list(DENOISE_ENGINE_IDS)}'}
-        for b in busses:
-            if b['id'] == bus_id:
-                proc = b.setdefault('processing', {})
-                proc['dfn_engine'] = engine
-                self._save_routing_config(busses, connections)
-                bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
-                if bm:
-                    if bus_id in bm._bus_config:
-                        bm._bus_config[bus_id]['dfn_engine'] = engine
-                    _bp = bm._bus_processors.get(bus_id)
-                    if _bp is not None:
-                        _bp.set_dfn_engine(engine)
-                return {'ok': True, 'engine': engine}
         return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
     def _routing_cmd_set_loop_hours(self, data, busses, connections):
@@ -446,9 +398,7 @@ class _RoutingCmdsMixin:
         'save_all':        _routing_cmd_save_all,
         'toggle_proc':     _routing_cmd_toggle_proc,
         'set_dfn_mix':     _routing_cmd_set_dfn_mix,
-        'set_dfn_atten':   _routing_cmd_set_dfn_atten,
         'set_dfn_bypass':  _routing_cmd_set_dfn_bypass,
-        'set_dfn_engine':  _routing_cmd_set_dfn_engine,
         'set_bus_delay':   _routing_cmd_set_bus_delay,
         'set_loop_hours':  _routing_cmd_set_loop_hours,
         'bus_mute':        _routing_cmd_bus_mute,

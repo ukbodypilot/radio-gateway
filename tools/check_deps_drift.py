@@ -4,8 +4,8 @@ scripts/install.sh actually installs, and report drift.
 
 Why this exists: install.sh does NOT read requirements.txt. It installs each
 package explicitly, because several need special handling that a flat
-`pip install -r` would get wrong — silero-vad and pyrnnoise are installed
---no-deps (to skip torch and matplotlib), pymumble has a fallback chain of
+`pip install -r` would get wrong — silero-vad is installed --no-deps (to
+skip torch), pymumble has a fallback chain of
 PyPI names, kv4p-ht-python is an editable clone of a git repo, and protobuf
 has to be re-pinned last (see the pin-repair block in install.sh). So the two
 lists are maintained by hand and can silently diverge.

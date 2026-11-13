@@ -31,9 +31,9 @@ Every bus has a processing chain you can toggle from its node:
 | `H` | High-pass filter (300 Hz default) |
 | `L` | Low-pass filter (3 kHz default) |
 | `N` | Notch filter (60 Hz default, Q=30) |
-| **`D`** | Neural denoise — RNNoise, DeepFilterNet 3 or DPDFNet 8 kHz (selectable per bus; DPDFNet is the one for FM radio voice and sounds good fully wet). Phase-aligned wet/dry mix; per-bus attenuation cap. Inference runs off the bus tick on a per-bus worker (DFN3: its own 1-thread ONNX session), behind a fixed 100 ms delay line: a chunk the worker misses plays dry, in order, and is counted in `rg_denoise_late_total`. |
+| **`D`** | Neural denoise — DPDFNet 8 kHz, a narrowband model that keeps FM radio voice and sounds good fully wet. Phase-aligned wet/dry mix. Inference runs off the bus tick on a per-bus worker with its own 1-thread ONNX session, behind a fixed 100 ms delay line: a chunk the worker misses plays dry, in order, and is counted in `rg_denoise_late_total`. |
 
-The `D` button has a sub-popover with the engine select (`rnnoise` / `deepfilternet` / `dpdfnet`; the pill cycles RNN → DFN → DP8), wet/dry mix slider (0–100 %), and attenuation cap in dB (DFN only — caps how much the model can pull down; 18 dB default).
+The `D` button has a wet/dry mix slider underneath (0–100 %). RNNoise and DeepFilterNet 3 were removed on 2026-11-13: both gated narrowband radio voice out. A saved `dfn_engine` of `rnnoise` or `deepfilternet` now loads as DPDFNet, and a leftover `dfn_atten_db` is ignored.
 
 ## Per-bus streaming
 

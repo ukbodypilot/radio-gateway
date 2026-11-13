@@ -100,176 +100,29 @@ def _warmup_gate_loop():
 _warmup_gate_loop()
 
 
-# ── Neural denoise — engine-abstracted ──────────────────────────────────────
+# ── Neural denoise ──────────────────────────────────────────────────────────
 #
-# Three engines are available:
-#   - 'rnnoise'       : tiny (~100 KB model), fast (<1 ms/frame), aggressive
-#                       broadband hiss cut. Default for existing deployments.
-#   - 'deepfilternet' : DFN3 (~16 MB ONNX), 48 kHz, ~2–4 ms/frame on Haswell.
-#   - 'dpdfnet'       : DPDFNet 8 kHz (~10 MB ONNX), ~2.6 ms per 10 ms.
-#                       The only one that keeps narrowband FM radio voice:
-#                       on our audio RNNoise and the 48 kHz models gated the
-#                       speech out (2026-11-12). See _DPDFNet8kStream.
+# One engine: 'dpdfnet' (DPDFNet 8 kHz, ~10 MB ONNX, ~2.6 ms per 10 ms). It is
+# the only model that keeps narrowband FM radio voice; RNNoise and the 48 kHz
+# DeepFilterNet3 gated the speech out on our audio (2026-11-12) and were
+# removed on 2026-11-13. See _DPDFNet8kStream.
 #
-# All implement the DenoiseStream duck-type:
-#     native_rate: int                              (48000 for all)
+# A DenoiseStream implements:
+#     native_rate: int                              (48000)
+#     dry_delay_samples: int                        (wet-path latency)
 #     process(samples_i16: np.ndarray) -> np.ndarray
+#     process_mix(samples_i16, mix) -> np.ndarray
 #     close() -> None
 #
-# Use make_denoise_stream('rnnoise'|'deepfilternet'|'dpdfnet') to construct.
-# The JSON/API surface still uses the legacy key 'dfn' — it's no longer a
-# literal acronym but kept for config compatibility.
-
-_RNN_LIB = None   # (ctypes.CDLL, frame_size) after first successful load
-_RNN_LIB_SRC = ''  # path the lib was loaded from (status/debug)
-
-# Drop-in override path for an optimized librnnoise build. The pyrnnoise
-# wheel ships a mostly-scalar build that measures ~0.9 ms/frame on the
-# gateway's Haswell; a local `-O3 -march=native` build of xiph/rnnoise runs
-# the same API at ~0.22 ms/frame (4× — measured 2026-07-27). The optimized
-# .so is machine-specific, so it lives OUTSIDE the repo; build one with
-# tools/build_rnnoise.sh. Wheel lib remains the portable fallback.
-_RNNOISE_OPT_PATH = '~/.local/lib/radio-gateway/librnnoise.so'
-
-
-def _load_rnnoise():
-    """Load librnnoise via ctypes. Prefers the optimized local build at
-    _RNNOISE_OPT_PATH, falls back to the pyrnnoise wheel's bundled lib.
-    Returns (lib, frame_size), or None if no candidate loads."""
-    global _RNN_LIB, _RNN_LIB_SRC
-    if _RNN_LIB is not None:
-        return _RNN_LIB
-    import ctypes, os
-    candidates = [os.path.expanduser(_RNNOISE_OPT_PATH)]
-    try:
-        import importlib.util
-        spec = importlib.util.find_spec('pyrnnoise')
-        if spec is not None and spec.submodule_search_locations:
-            candidates.append(os.path.join(
-                spec.submodule_search_locations[0], 'librnnoise.so'))
-    except Exception:
-        log_exc()
-    for path in candidates:
-        if not os.path.exists(path):
-            continue
-        try:
-            lib = ctypes.CDLL(path)
-            lib.rnnoise_create.argtypes = [ctypes.c_void_p]
-            lib.rnnoise_create.restype = ctypes.c_void_p
-            lib.rnnoise_destroy.argtypes = [ctypes.c_void_p]
-            lib.rnnoise_get_frame_size.restype = ctypes.c_int
-            lib.rnnoise_process_frame.argtypes = [
-                ctypes.c_void_p,
-                ctypes.POINTER(ctypes.c_float),
-                ctypes.POINTER(ctypes.c_float),
-            ]
-            lib.rnnoise_process_frame.restype = ctypes.c_float
-            frame_size = int(lib.rnnoise_get_frame_size())
-            if not 0 < frame_size <= 4800:
-                print(f"[DFN] rnnoise at {path}: bad frame size {frame_size}")
-                continue
-            _RNN_LIB = (lib, frame_size)
-            _RNN_LIB_SRC = path
-            print(f"  [DFN] rnnoise loaded: {path} (frame={frame_size})")
-            return _RNN_LIB
-        except Exception as e:
-            print(f"[DFN] rnnoise candidate {path} failed: {e}")
-    print("[DFN] rnnoise unavailable: no loadable librnnoise")
-    return None
-
-
-class _RNNoiseStream:
-    """Per-source denoise state. Feed int16 PCM bytes in any length — the
-    stream buffers to the native 480-sample (10 ms @ 48 kHz) frame size.
-
-    Conforms to the DenoiseStream duck-type used by make_denoise_stream().
-    """
-
-    native_rate = 48000
-    # Algorithmic delay of the denoised output relative to the input. Used
-    # by process_mix() to delay the dry signal before blending so wet+dry
-    # stay phase-aligned (otherwise the mix acts as a comb filter and
-    # introduces an audible chorus/reverb smear). Measured empirically with
-    # an impulse test — pyrnnoise's overlap-add plus internal lookahead adds
-    # 960 samples (20 ms). Don't assume zero.
-    dry_delay_samples = 960
-
-    def __init__(self):
-        loaded = _load_rnnoise()
-        if loaded is None:
-            raise RuntimeError("rnnoise library not available")
-        self._lib, self._frame_size = loaded
-        self._state = self._lib.rnnoise_create(None)
-        self._buf = np.empty(0, dtype=np.int16)
-        self._dry_delay_buf = np.empty(0, dtype=np.int16)  # used by process_mix
-        self.last_prob = 0.0
-
-    def close(self):
-        if self._state is not None:
-            try:
-                self._lib.rnnoise_destroy(self._state)
-            except Exception:
-                log_exc()
-            self._state = None
-
-    def __del__(self):
-        self.close()
-
-    def process(self, samples_i16):
-        """Process a numpy int16 mono array. Returns denoised int16 array
-        of the same length. Residual (<1 frame) is carried over internally."""
-        if samples_i16.size == 0:
-            return samples_i16
-
-        frame_size = self._frame_size
-        buf = np.concatenate([self._buf, samples_i16]) if self._buf.size else samples_i16
-        n_frames = buf.size // frame_size
-
-        if n_frames == 0:
-            self._buf = buf.copy()
-            return np.empty(0, dtype=np.int16)
-
-        # One float32 conversion for the whole chunk, direct in-place C
-        # calls per frame, one int16 conversion out. (The pyrnnoise
-        # process_mono_frame wrapper paid dtype checks + pad + two astype
-        # copies + allocs per frame; direct calls keep the whole chunk in
-        # one buffer. Output matches the wrapper bit-for-bit: same
-        # int16→float32→C(in-place)→int16 cast chain.)
-        import ctypes as _ct
-        f32 = np.ascontiguousarray(
-            buf[: n_frames * frame_size].astype(np.float32))
-        _fn = self._lib.rnnoise_process_frame
-        _PTR = _ct.POINTER(_ct.c_float)
-        _base = f32.ctypes.data
-        _state = self._state
-        last_prob = self.last_prob
-        for i in range(n_frames):
-            _ptr = _ct.cast(_base + i * frame_size * 4, _PTR)
-            last_prob = _fn(_state, _ptr, _ptr)
-        self._buf = buf[n_frames * frame_size :].copy()
-        self.last_prob = float(last_prob)
-        return f32.astype(np.int16)
-
-    def process_mix(self, samples_i16, mix):
-        """Process + wet/dry blend with dry-path delay compensation.
-
-        Calls process() to get the wet output, delays the dry path by
-        self.dry_delay_samples so the two are phase-aligned, and returns
-        a length-matched int16 blend. mix: 0.0 dry, 1.0 wet.
-        """
-        return _mix_with_dry_delay(self, samples_i16, mix)
-
-    def set_atten_lim_db(self, atten_lim_db):
-        """No-op — RNNoise has no attenuation-cap parameter. Kept so the
-        caller can uniformly set it across engines without type-checking."""
-        pass
+# The JSON/API surface still uses the legacy key 'dfn' and stores
+# 'dfn_engine'; the names are kept for config compatibility.
 
 
 def _mix_with_dry_delay(stream, samples_i16, mix):
     """Shared wet/dry blender used by every DenoiseStream subclass.
 
     Keeps a persistent dry-delay buffer sized by stream.dry_delay_samples
-    so the wet stream's algorithmic latency (DFN3 ≈ 10 ms) is matched
+    so the wet stream's algorithmic latency (DPDFNet ≈ 52 ms) is matched
     on the dry path — without this, the blend is literally a comb filter
     and the signal gets a chorus/reverb smear.
     """
@@ -313,272 +166,6 @@ def _mix_with_dry_delay(stream, samples_i16, mix):
     mixed = (dry_aligned[:n].astype(np.int32) * int((1.0 - mix) * 65536)
              + denoised[:n].astype(np.int32) * int(mix * 65536)) >> 16
     return np.clip(mixed, -32768, 32767).astype(np.int16)
-
-
-# ── DeepFilterNet 3 (DFN3) streaming via onnxruntime ────────────────────────
-#
-# Uses the stateful single-file ONNX export from yuyun2000/SpeechDenoiser
-# (48k/denoiser_model.onnx, 16 MB). Model weights are MIT-licensed
-# DeepFilterNet3; the re-exported ONNX wraps all STFT/ERB/GRU recurrence into
-# one graph with a flat 45304-float state vector carried across calls.
-#
-# Signature:
-#   inputs:  input_frame[480]  states[45304]  atten_lim_db[]
-#   outputs: enhanced_audio_frame[480]  new_states[45304]  lsnr[1]
-#
-# Runs on existing onnxruntime — no new Python deps, no torch wheel bloat,
-# no numpy conflict. ~2–4 ms per 10 ms frame on Haswell i5.
-
-_DFN3_MODEL_URL = (
-    'https://github.com/yuyun2000/SpeechDenoiser/raw/main/48k/denoiser_model.onnx'
-)
-_DFN3_MODEL_SHA256 = (
-    'fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9'
-)
-_DFN3_MODEL_SIZE = 16_104_687       # bytes — paired with SHA for sanity
-_DFN3_STATE_SIZE = 45304            # fixed by the ONNX graph
-_DFN3_FRAME_SIZE = 480              # 10 ms @ 48 kHz (model hop_size)
-
-
-def _dfn3_bundled_path():
-    """Path to the model bundled in the repo (preferred — no network)."""
-    import os
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        'tools', 'models', 'dfn3', 'denoiser_model.onnx')
-
-
-
-def _dfn3_ensure_model():
-    """Return a path to a usable DFN3 ONNX.
-
-    Preference order:
-      1. Bundled copy in repo (tools/models/dfn3/denoiser_model.onnx) —
-         always preferred, no network, no cache side-effects.
-      2. User cache (~/.cache/radio-gateway/dfn3/) if already downloaded.
-      3. Download from GitHub into the user cache as a last resort (for
-         install paths that didn't ship the bundled model).
-
-    Raises on network failure or SHA mismatch so construction propagates
-    an error the factory can catch."""
-    import os, hashlib, urllib.request
-    # 1. Bundled.
-    bundled = _dfn3_bundled_path()
-    if os.path.exists(bundled) and os.path.getsize(bundled) == _DFN3_MODEL_SIZE:
-        return bundled
-    # 2. Cache.
-    path = os.path.expanduser('~/.cache/radio-gateway/dfn3/denoiser_model.onnx')
-    if os.path.exists(path):
-        if os.path.getsize(path) == _DFN3_MODEL_SIZE:
-            return path
-        print(f"  [DFN3] Cached model size mismatch; redownloading")
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-    # 3. Download.
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + '.part'
-    print(f"  [DFN3] Downloading model ({_DFN3_MODEL_SIZE//1024//1024} MB) from {_DFN3_MODEL_URL}")
-    try:
-        urllib.request.urlretrieve(_DFN3_MODEL_URL, tmp)
-    except Exception as e:
-        try: os.remove(tmp)
-        except Exception: pass
-        raise RuntimeError(f"DFN3 download failed: {e}")
-    # Verify SHA256 — model artefacts may change upstream; failing loud is
-    # better than silently running on an unexpected graph.
-    h = hashlib.sha256()
-    with open(tmp, 'rb') as f:
-        for chunk in iter(lambda: f.read(1 << 20), b''):
-            h.update(chunk)
-    if h.hexdigest() != _DFN3_MODEL_SHA256:
-        try: os.remove(tmp)
-        except Exception: pass
-        raise RuntimeError(
-            f"DFN3 SHA mismatch: got {h.hexdigest()} expected {_DFN3_MODEL_SHA256}. "
-            f"The upstream model may have been replaced — update _DFN3_MODEL_SHA256."
-        )
-    os.rename(tmp, path)
-    print(f"  [DFN3] Model cached at {path}")
-    return path
-
-
-class _DFN3Stream:
-    """Per-source DeepFilterNet 3 denoise stream.
-
-    Feed int16 PCM arrays of any length; internally buffers to 480-sample
-    frames, runs each through the ONNX graph with a persistent state vector,
-    emits 480-sample enhanced frames back. ~10 ms intrinsic algorithmic delay.
-
-    Each instance owns its OWN single-threaded ONNX session (and state
-    vector). It used to share one class-wide intra=2 session: two buses
-    denoising at once then ran concurrent run() calls on one session and its
-    thread pool, and on this 4-core box the contention pushed occasional
-    chunks past the 50 ms tick (measured 2026-11-06: 14 chunks >50 ms in 13
-    min with both SDR buses on, zero with either alone). intra=1 costs ~4 ms
-    per chunk (19.7 vs 15.5 ms median) and makes each bus's cost predictable.
-    """
-
-    native_rate = 48000
-    # Measured algorithmic delay: 1440 samples (30 ms). Not fft-hop (480)
-    # as the reference impl's trim suggests — that's only the STFT window
-    # portion; the deep-filtering stage adds its own latency on top. Impulse
-    # probe confirmed 3 × hop = 1440 samples end-to-end. Dry path must be
-    # delayed by the same amount before blending, otherwise wet+dry acts as
-    # a comb filter with nulls at 33 Hz fundamental and harmonics → audible
-    # chorus/reverb smear exactly as users reported.
-    dry_delay_samples = 1440
-
-    _lock = None          # class lock — guards the one-shot model download
-    _download_thread = None   # background download worker (one-shot)
-
-    @classmethod
-    def _kick_background_download(cls):
-        """Start the model download on a background thread if not already
-        running or cached. Non-blocking — safe to call from the feed worker.
-        Returns True if the model file is ready NOW, False if we're still
-        downloading (caller should treat DFN as unavailable for the moment).
-
-        Bundled copy in the repo short-circuits this entirely.
-        """
-        import os, threading
-        bundled = _dfn3_bundled_path()
-        if os.path.exists(bundled) and os.path.getsize(bundled) == _DFN3_MODEL_SIZE:
-            return True
-        cached = os.path.expanduser('~/.cache/radio-gateway/dfn3/denoiser_model.onnx')
-        if os.path.exists(cached) and os.path.getsize(cached) == _DFN3_MODEL_SIZE:
-            return True
-        if cls._lock is None:
-            cls._lock = threading.Lock()
-        with cls._lock:
-            if cls._download_thread is not None and cls._download_thread.is_alive():
-                return False
-            def _bg():
-                try:
-                    _dfn3_ensure_model()
-                except Exception as e:
-                    print(f"  [DFN3] Background download failed: {e}")
-            cls._download_thread = threading.Thread(
-                target=_bg, daemon=True, name='DFN3-download')
-            cls._download_thread.start()
-        return False
-
-    @classmethod
-    def _new_session(cls):
-        """Build + warm a private session for one stream. Runs on the
-        stream's denoise worker thread, never the bus tick."""
-        # Refuse to block the caller on download — that's the bus tick's
-        # nightmare. Kick off a background fetch instead and fail fast so
-        # the denoise engine reports "unavailable yet" until the file lands.
-        if not cls._kick_background_download():
-            raise RuntimeError('DFN3 model downloading — try again shortly')
-        path = _dfn3_ensure_model()
-        import time as _t, onnxruntime as ort
-        opts = ort.SessionOptions()
-        # intra=1: one core per stream. See the class docstring — a
-        # shared intra=2 session made concurrent buses contend. inter
-        # stays at 1 — DFN is a deep sequential graph.
-        opts.intra_op_num_threads = 1
-        opts.inter_op_num_threads = 1
-        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        sess = ort.InferenceSession(
-            path, sess_options=opts, providers=['CPUExecutionProvider'])
-        # ORT spends the first handful of inference calls doing graph
-        # finalisation / thread-pool binding / CPU-cache population —
-        # we've seen the first ~50 frames run 5-10× slower than steady
-        # state, which is exactly the bus-tick spike that caused the
-        # reported "first few minutes of SDR stutters". Warm up
-        # synchronously here so the first real audio frame flies.
-        _t0 = _t.monotonic()
-        _warmup_state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
-        _warmup_atten = np.array(18.0, dtype=np.float32)
-        # Mixed amplitude noise to exercise the DF path, not just the
-        # cheap "all silence" branch.
-        import numpy as _np
-        _rng = _np.random.default_rng(0)
-        for _i in range(80):
-            _frame = (_rng.standard_normal(_DFN3_FRAME_SIZE).astype(np.float32)
-                      * (0.1 if _i % 4 else 0.001))
-            _out, _warmup_state, _ = sess.run(
-                None,
-                {'input_frame': _frame, 'states': _warmup_state,
-                 'atten_lim_db': _warmup_atten})
-        _dur = (_t.monotonic() - _t0) * 1000
-        print(f"  [DFN3] ONNX session ready (intra=1, warmup {_dur:.0f}ms / 80 frames)")
-        return sess
-
-    def __init__(self, atten_lim_db=18.0):
-        self._sess = self._new_session()
-        self._state = np.zeros(_DFN3_STATE_SIZE, dtype=np.float32)
-        # atten_lim_db caps how hard the model can attenuate a frame. 0 =
-        # unlimited (pumping on marginal signals); typical real-world use
-        # is 15–25 dB. 18 dB is a decent default for radio audio — the
-        # floor stops breathing but noise is still well-reduced.
-        # ORT expects a 0-d ndarray, not a bare numpy scalar.
-        self._atten_lim = np.array(float(atten_lim_db), dtype=np.float32)
-        self._buf = np.empty(0, dtype=np.int16)
-        # FIFO for the dry path used by process_mix() — keeps wet/dry in
-        # phase so the blend doesn't comb-filter. Primed with silence on
-        # first call (see _mix_with_dry_delay).
-        self._dry_delay_buf = np.empty(0, dtype=np.int16)
-        self.last_lsnr = 0.0
-
-    def set_atten_lim_db(self, atten_lim_db):
-        """Update the attenuation cap for subsequent frames.
-
-        0 = unlimited (model decides); positive = hard cap at that many dB
-        of attenuation. Changes take effect on the next process() call with
-        no state reset needed.
-        """
-        self._atten_lim = np.array(float(atten_lim_db), dtype=np.float32)
-
-    def close(self):
-        # Drop the private session; state + buffer are plain numpy objects.
-        self._sess = None
-        self._state = None
-        self._buf = np.empty(0, dtype=np.int16)
-
-    def __del__(self):
-        self.close()
-
-    def process(self, samples_i16):
-        """Same contract as _RNNoiseStream.process — int16 in, int16 out,
-        residue <1 frame buffered internally for the next call."""
-        if samples_i16.size == 0 or self._state is None:
-            return np.empty(0, dtype=np.int16)
-        buf = np.concatenate([self._buf, samples_i16]) if self._buf.size else samples_i16
-        n_frames = buf.size // _DFN3_FRAME_SIZE
-        if n_frames == 0:
-            self._buf = buf.copy()
-            return np.empty(0, dtype=np.int16)
-
-        out_chunks = []
-        last_lsnr = self.last_lsnr
-        _run = self._sess.run
-        _state = self._state
-        _atten = self._atten_lim
-        for i in range(n_frames):
-            frame_i16 = buf[i * _DFN3_FRAME_SIZE : (i + 1) * _DFN3_FRAME_SIZE]
-            frame_f32 = frame_i16.astype(np.float32) / 32768.0
-            enhanced, _state, lsnr = _run(
-                None,
-                {'input_frame': frame_f32, 'states': _state, 'atten_lim_db': _atten},
-            )
-            # Back to int16 with clip — the model output is float32 in roughly
-            # [-1, 1] but nothing stops occasional overshoot.
-            out_chunks.append(np.clip(enhanced * 32768.0, -32768, 32767).astype(np.int16))
-            last_lsnr = float(lsnr[0])
-
-        self._state = _state
-        self._buf = buf[n_frames * _DFN3_FRAME_SIZE :].copy()
-        self.last_lsnr = last_lsnr
-        return np.concatenate(out_chunks) if out_chunks else np.empty(0, dtype=np.int16)
-
-    def process_mix(self, samples_i16, mix):
-        """Process + wet/dry blend with DFN's 480-sample dry-path delay
-        compensation. See _mix_with_dry_delay for mechanics."""
-        return _mix_with_dry_delay(self, samples_i16, mix)
 
 
 # ── DPDFNet 8 kHz (narrowband) streaming via onnxruntime ────────────────────
@@ -645,7 +232,7 @@ class _DPDFNet8kStream:
         if not os.path.exists(path) or os.path.getsize(path) != _DPDFNET_MODEL_SIZE:
             raise RuntimeError(f'DPDFNet model missing or wrong size at {path}')
         opts = ort.SessionOptions()
-        # One core per stream, like DFN3: concurrent buses must not contend
+        # One core per stream: concurrent buses must not contend
         # on a shared session's thread pool inside the 50 ms tick.
         opts.intra_op_num_threads = 1
         opts.inter_op_num_threads = 1
@@ -687,11 +274,6 @@ class _DPDFNet8kStream:
         self._phase = 0
         self._in8 = np.zeros(self._hop, dtype=np.float32)    # primed hop
         self._ola = np.zeros(self._win, dtype=np.float32)
-
-    def set_atten_lim_db(self, atten_lim_db):
-        """No-op. DPDFNet's attenuation limit is a blend of the noisy and
-        enhanced spectra, which is the same thing as the bus's wet/dry mix."""
-        pass
 
     def close(self):
         self._sess = None
@@ -742,28 +324,37 @@ class _DPDFNet8kStream:
         return _mix_with_dry_delay(self, samples_i16, mix)
 
 
-# Engine registry. Missing entries fall back cleanly via
-# make_denoise_stream() returning None.
+# Engine registry. make_denoise_stream() returns None for an unknown id.
 _DENOISE_ENGINES = {
-    'rnnoise': _RNNoiseStream,
-    'deepfilternet': _DFN3Stream,
     'dpdfnet': _DPDFNet8kStream,
 }
 
-# Legal engine identifiers — consumers should validate user input against
-# this set before calling make_denoise_stream so typos become explicit errors
-# rather than silent "denoise turned off".
-DENOISE_ENGINE_IDS = ('rnnoise', 'deepfilternet', 'dpdfnet')
+# Legal engine identifiers — consumers validate user input against these.
+DENOISE_ENGINE_IDS = tuple(_DENOISE_ENGINES)
+DEFAULT_DENOISE_ENGINE = 'dpdfnet'
+
+# Engines removed 2026-11-13. Saved bus configs may still name them; they
+# map to the default instead of silently switching denoise off.
+_LEGACY_DENOISE_ENGINES = ('rnnoise', 'deepfilternet')
 
 
-def make_denoise_stream(engine='rnnoise'):
+def normalize_denoise_engine(engine):
+    """Map a stored engine id to a live one. Removed engines become the
+    default; anything else unknown is returned unchanged (and rejected)."""
+    engine = str(engine or DEFAULT_DENOISE_ENGINE)
+    if engine in _LEGACY_DENOISE_ENGINES:
+        return DEFAULT_DENOISE_ENGINE
+    return engine
+
+
+def make_denoise_stream(engine=DEFAULT_DENOISE_ENGINE):
     """Construct a denoise stream for the requested engine.
 
     Returns a DenoiseStream instance, or None if the engine is unknown or
-    the underlying library failed to load. Callers should handle None by
-    skipping denoise (pass-through) rather than erroring — the audio path
-    should never die because a denoise lib went missing.
+    its model failed to load. Callers handle None by passing audio through
+    dry — the audio path must never die because denoise is unavailable.
     """
+    engine = normalize_denoise_engine(engine)
     cls = _DENOISE_ENGINES.get(engine)
     if cls is None:
         print(f"  [Denoise] unknown engine '{engine}' — skipping")
@@ -907,19 +498,11 @@ class AudioProcessor:
         self.enable_dfn = False       # Neural denoise toggle. "dfn" is kept
                                       # as the config/API key for back-compat;
                                       # actual engine is picked via dfn_engine.
-        self.dfn_engine = 'rnnoise'   # 'rnnoise' (default, aggressive) or
-                                      # 'deepfilternet' (speech-preserving).
-                                      # Swap via set_dfn_engine().
+        self.dfn_engine = DEFAULT_DENOISE_ENGINE  # set via set_dfn_engine()
         self.dfn_mix = 0.5            # Wet/dry mix — 1.0 = fully denoised,
-                                      # 0.0 = pass-through. RNNoise over-cuts
-                                      # on radio audio, so default to 50%.
+                                      # 0.0 = pass-through.
                                       # Per-bus override via routing cmd
                                       # 'dfn_mix' (see web_server.py).
-        self.dfn_atten_db = 18.0      # DFN-only: caps max attenuation per
-                                      # frame to prevent the neural gate
-                                      # pumping. 0 = model decides (can
-                                      # pump). Applied only when engine is
-                                      # DeepFilterNet; RNNoise ignores it.
         self.dfn_bypass_db = -60.0    # Denoise bypass threshold (dBFS).
                                       # Chunks below this RMS skip the
                                       # denoise worker entirely and pass
@@ -942,7 +525,7 @@ class AudioProcessor:
         # DN_LAG ticks (100 ms) instead of one, and a late chunk is a brief
         # un-denoised chunk rather than a skip-and-repeat.
         import collections as _c
-        self._dn_queue_in = _c.deque(maxlen=8)   # (seq, pcm, mix, atten, engine)
+        self._dn_queue_in = _c.deque(maxlen=8)   # (seq, pcm, mix, engine)
         self._dn_wet = {}                        # seq -> denoised pcm (worker writes)
         self._dn_line = _c.deque()               # (seq, dry pcm, sent_to_worker)
         self._dn_seq = 0
@@ -959,7 +542,9 @@ class AudioProcessor:
 
     def set_dfn_engine(self, engine):
         """Switch denoise engine. Signals the worker to rebuild the stream
-        with the new backend on its next loop iteration."""
+        with the new backend on its next loop iteration. Removed engine ids
+        (rnnoise, deepfilternet) map to the default."""
+        engine = normalize_denoise_engine(engine)
         if engine == self.dfn_engine:
             return
         if engine not in DENOISE_ENGINE_IDS:
@@ -1170,7 +755,7 @@ class AudioProcessor:
         the line fills (start, after a reset) it emits silence, DN_LAG ticks.
 
         Silence short-circuit: chunks below dfn_bypass_db (default -60
-        dBFS) are not sent to the worker — RNNoise/DFN3 would pay a full
+        dBFS) are not sent to the worker — the model would pay a full
         frame cost on squelch zero-fill. They still go through the delay
         line (dry), so timing stays constant across squelch transitions.
         """
@@ -1192,14 +777,13 @@ class AudioProcessor:
         self._dn_seq += 1
         if send:
             self._dn_ensure_worker()
-            # Snapshot params — mix, engine, atten can all change mid-flight
+            # Snapshot params — mix and engine can change mid-flight
             # from the HTTP/MCP threads; capturing at enqueue time keeps the
             # tick's decision stable through the denoise pipeline.
             wet = max(0.0, min(1.0, float(getattr(self, 'dfn_mix', 0.5))))
-            atten = float(getattr(self, 'dfn_atten_db', 18.0))
             try:
                 with self._dn_lock:
-                    self._dn_queue_in.append((seq, pcm_data, wet, atten, self.dfn_engine))
+                    self._dn_queue_in.append((seq, pcm_data, wet, self.dfn_engine))
                 self._dn_evt.set()
             except Exception as e:
                 print(f"[DFN] {self.name}: enqueue error — {e}")
@@ -1256,7 +840,7 @@ class AudioProcessor:
         """Per-bus denoise worker: pulls (seq, audio) from _dn_queue_in,
         runs the engine, stores the result in _dn_wet[seq].
 
-        Owns its denoise stream (and, for DFN3, that stream's private ONNX
+        Owns its denoise stream (and that stream's private ONNX
         session) — only the worker touches the stream state, so there's no
         cross-thread synchronisation needed on the recurrent model history.
         The stream is built up front for the current engine, so session
@@ -1278,7 +862,7 @@ class AudioProcessor:
                     if not self._dn_queue_in:
                         break
                     item = self._dn_queue_in.popleft()
-                seq, pcm_data, wet, atten, engine = item
+                seq, pcm_data, wet, engine = item
                 # Rebuild stream if engine changed (or first call).
                 if stream is None or engine != current_engine:
                     if stream is not None:
@@ -1295,7 +879,6 @@ class AudioProcessor:
                         continue
                 _t0 = _time.monotonic()
                 try:
-                    stream.set_atten_lim_db(atten)
                     samples = np.frombuffer(pcm_data, dtype=np.int16)
                     mixed = stream.process_mix(samples, wet)
                     if mixed.size == 0:

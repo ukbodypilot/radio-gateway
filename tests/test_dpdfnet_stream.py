@@ -96,7 +96,6 @@ else:
     mixed = st.process_mix(x[:2400], 0.5)
     check('process_mix returns int16 of chunk length',
           mixed.dtype == np.int16 and len(mixed) == 2400, f'{mixed.dtype} {len(mixed)}')
-    check('atten cap is accepted (no-op)', st.set_atten_lim_db(18.0) is None)
 
 print('PASS' if not _fails else f'FAIL ({_fails})')
 sys.exit(1 if _fails else 0)

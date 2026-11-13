@@ -11,6 +11,17 @@ All notable changes to Radio Gateway.
   (a backstop for a stuck-open VAD) is 120 s, up from Moonshine v1's 60 s, and
   remote workers get 180 s per request. `get_status()['utterance_close']`
   counts how utterances ended (`end` / `soft_cap` / `hard_cap`).
+- **RNNoise and DeepFilterNet 3 removed; DPDFNet 8 kHz is the only denoise
+  engine.** Both old engines gated narrowband radio voice out (see 5.5.0), and
+  every bus already ran DP8. Gone: `pyrnnoise`, the optional native librnnoise
+  build (`tools/build_rnnoise.sh`, `SKIP_RNNOISE_BUILD` / `BUILD_RNNOISE`), the
+  16 MB DFN3 model (`tools/models/dfn3/`), the engine pill and attenuation-cap
+  input on /routing, the `set_dfn_engine` / `set_dfn_atten` routing commands
+  and the `bus_set_denoise_engine` / `bus_set_denoise_atten` MCP tools (165
+  tools now). DPDFNet had no attenuation cap; the cap was a no-op for it.
+  A saved `dfn_engine` of `rnnoise` or `deepfilternet` loads as `dpdfnet`
+  rather than switching denoise off, and a stale `dfn_atten_db` is ignored.
+  The installer health check now confirms the DPDFNet model is present.
 
 ## [5.5.0] -- 2026-11-12
 

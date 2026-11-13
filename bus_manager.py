@@ -1053,22 +1053,18 @@ class BusManager:
                 proc.enable_notch = proc_cfg.get('notch', False)
                 proc.enable_dfn = proc_cfg.get('dfn', False)
                 proc.dfn_mix = max(0.0, min(1.0, float(proc_cfg.get('dfn_mix', 0.5))))
-                # DFN attenuation cap (dB). 0 = unlimited; typical 15-25.
-                # Missing key → 18 dB (prevents neural-gate pumping on radio
-                # audio). Clamp to a sane range.
-                proc.dfn_atten_db = max(0.0, min(60.0,
-                    float(proc_cfg.get('dfn_atten_db', 18.0))))
                 # Denoise bypass threshold (dBFS). Missing key → -60
                 # (historical hardcoded value — behavior unchanged).
                 proc.dfn_bypass_db = max(-90.0, min(-20.0,
                     float(proc_cfg.get('dfn_bypass_db', -60.0))))
-                # Back-compat: missing 'dfn_engine' → 'rnnoise' (existing
-                # deployments' behaviour). Use set_dfn_engine so an invalid
-                # saved value is rejected without killing the bus.
-                proc.set_dfn_engine(str(proc_cfg.get('dfn_engine', 'rnnoise')))
+                # A missing or removed engine ('rnnoise', 'deepfilternet')
+                # maps to the default; set_dfn_engine rejects anything else
+                # without killing the bus. A stale 'dfn_atten_db' key in an
+                # old routing_config.json is ignored.
+                proc.set_dfn_engine(str(proc_cfg.get('dfn_engine', '')))
                 self._bus_processors[bus_id] = proc
                 # Start the denoise worker now: it builds its own stream
-                # (for DFN3, a private ONNX session + 80-frame warmup) on its
+                # (a private ONNX session) on its
                 # own thread, so that cost lands neither on startup nor on
                 # the first live audio tick.
                 if proc.enable_dfn:

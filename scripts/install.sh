@@ -437,82 +437,6 @@ else
         || echo "  ⚠ Could not pip install silero-vad — transcription VAD will not work"
 fi
 
-# RNNoise — neural speech denoise via pyrnnoise (ships librnnoise.so in wheel, ~13MB).
-# We bind to the ctypes wrapper directly and skip the package __init__ (which pulls
-# audiolab/matplotlib/tqdm — none of which we need).
-if python3 -c "import importlib.util; s=importlib.util.find_spec('pyrnnoise'); exit(0 if s else 1)" 2>/dev/null; then
-    echo "  ✓ pyrnnoise already installed"
-else
-    _pip --no-deps pyrnnoise 2>/dev/null \
-        && echo "  ✓ pyrnnoise installed (DFN neural denoise)" \
-        || echo "  ⚠ Could not pip install pyrnnoise — DFN denoise will not work"
-fi
-
-# Optimized librnnoise — the wheel ships a mostly-scalar build that measured
-# ~0.9 ms/frame on the gateway (Haswell i5); a -O3 -march=native build of
-# xiph/rnnoise runs the same ctypes API at ~0.22 ms/frame (4x, measured
-# 2026-07-27). audio_util._load_rnnoise() prefers
-# ~/.local/lib/radio-gateway/librnnoise.so and falls back to the wheel, so
-# this is a pure speedup with an automatic safety net.
-#
-# The binary is machine-specific (-march=native), so it cannot be shipped in
-# the repo — it has to be built per box. Opt out with SKIP_RNNOISE_BUILD=1;
-# force it on in an unattended run with BUILD_RNNOISE=1.
-RNNOISE_OPT_LIB="$HOME/.local/lib/radio-gateway/librnnoise.so"
-RNNOISE_BUILDER="$GATEWAY_DIR/tools/build_rnnoise.sh"
-# NOTE: already inside the `set +e` region opened above — do not toggle
-# errexit here, or the Kokoro download block below inherits the wrong state.
-if [ -f "$RNNOISE_OPT_LIB" ]; then
-    echo "  ✓ optimized librnnoise already present ($RNNOISE_OPT_LIB)"
-elif [ "${SKIP_RNNOISE_BUILD:-0}" = "1" ]; then
-    echo "  → skipping native librnnoise build (SKIP_RNNOISE_BUILD=1)"
-    echo "    Build it later for a 4x faster denoise: tools/build_rnnoise.sh"
-elif [ ! -x "$RNNOISE_BUILDER" ] && [ ! -f "$RNNOISE_BUILDER" ]; then
-    echo "  ⚠ tools/build_rnnoise.sh not found — keeping the wheel's librnnoise"
-else
-    _DO_RNNOISE_BUILD=0
-    if [ "${BUILD_RNNOISE:-0}" = "1" ]; then
-        _DO_RNNOISE_BUILD=1
-    elif [ -t 0 ]; then
-        echo "  Build an optimized librnnoise for this machine?"
-        echo "    ~2 min: clones xiph/rnnoise and compiles -O3 -march=native."
-        echo "    4x faster denoise on the audio hot path. Falls back safely."
-        read -rp "  Build it now? [Y/n] " _rn_yn
-        case "$_rn_yn" in
-            [nN]*) _DO_RNNOISE_BUILD=0 ;;
-            *)     _DO_RNNOISE_BUILD=1 ;;
-        esac
-    else
-        echo "  → non-interactive run: skipping the native librnnoise build"
-        echo "    Run tools/build_rnnoise.sh (or re-run with BUILD_RNNOISE=1)"
-        echo "    for a 4x faster denoise. The wheel's lib works meanwhile."
-    fi
-
-    if [ "$_DO_RNNOISE_BUILD" = "1" ]; then
-        # autogen.sh needs autotools; the wheel install needed none of this.
-        # wget is NOT optional here: xiph/rnnoise's autogen.sh shells out to
-        # download_model.sh, which is hardcoded to wget and dies with
-        # "wget: command not found" on a box that only has curl. A fresh Arch
-        # cloud image has neither, and the rest of this installer treats wget
-        # as optional (it falls back to curl for the Kokoro download), so
-        # nothing else guarantees it is present.
-        echo "  Installing build dependencies (autotools + wget)..."
-        if [ "$DISTRO" = "arch" ]; then
-            sudo pacman -S --noconfirm --needed base-devel autoconf automake libtool wget >/dev/null 2>&1
-        else
-            sudo apt-get install -y build-essential autoconf automake libtool wget >/dev/null 2>&1
-        fi
-        echo "  Building librnnoise (-O3 -march=native)..."
-        if bash "$RNNOISE_BUILDER"; then
-            echo "  ✓ optimized librnnoise installed to $RNNOISE_OPT_LIB"
-        else
-            echo "  ⚠ native librnnoise build failed — falling back to the"
-            echo "    pyrnnoise wheel's bundled lib (denoise still works, just"
-            echo "    slower). Re-run tools/build_rnnoise.sh to retry."
-        fi
-    fi
-fi
-
 # Kokoro ONNX — offline TTS engine (default, 54 voices, no internet required).
 # Python package is lightweight; the ONNX model files (~340 MB) are fetched below.
 if python3 -c "import kokoro_onnx" 2>/dev/null; then
@@ -1935,14 +1859,12 @@ else
     _hc_fail "gateway_config.txt is missing — copy from examples/gateway_config.txt"
 fi
 
-# Optimized librnnoise (4x faster denoise; wheel fallback is automatic)
-if [ -f "$HOME/.local/lib/radio-gateway/librnnoise.so" ]; then
-    _hc_pass "optimized librnnoise present (~0.22 ms/frame)"
-elif python3 -c "import importlib.util; exit(0 if importlib.util.find_spec('pyrnnoise') else 1)" 2>/dev/null; then
-    _hc_warn "using the pyrnnoise wheel's librnnoise (~0.9 ms/frame) — run"
-    _hc_warn "  tools/build_rnnoise.sh for a 4x faster denoise on this machine"
+# Neural denoise model (DPDFNet 8 kHz) is vendored in the repo, not
+# downloaded — a missing file means a partial checkout.
+if [ -f "$GATEWAY_DIR/tools/models/dpdfnet/dpdfnet2_8khz.onnx" ]; then
+    _hc_pass "DPDFNet 8 kHz denoise model present"
 else
-    _hc_warn "no librnnoise available — RNNoise denoise will not work"
+    _hc_warn "tools/models/dpdfnet/dpdfnet2_8khz.onnx missing — bus denoise (D) will pass audio through dry"
 fi
 
 # Web UI assets — v4.2.0 split the dashboard into sub-pages. A partial deploy

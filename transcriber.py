@@ -366,8 +366,7 @@ class _StreamState:
     """Per-bus transcription pipeline state.
 
     One instance per bus wired to the transcription sink. Each holds its own
-    Silero VAD context, frame accumulator, utterance buffer, and RNNoise
-    state — so two buses feeding the sink in the same tick don't scramble
+    Silero VAD context, frame accumulator and utterance buffer — so two buses feeding the sink in the same tick don't scramble
     each other's audio or VAD timing.
     """
     __slots__ = (

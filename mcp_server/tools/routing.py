@@ -291,43 +291,6 @@ def set_gain(target_id: str, gain_percent: int) -> str:
 # Per-bus neural denoise tuning
 # ---------------------------------------------------------------------------
 @mcp.tool()
-def bus_set_denoise_atten(bus_id: str, atten_db: float) -> str:
-    """
-    Set the DeepFilterNet attenuation cap for a bus (dB). 0 = model decides
-    (can cause pumping on marginal SNR); typical useful values 15–25 dB.
-    Bounded to [0, 60]. No effect if engine is RNNoise.
-    """
-    result = _post('/routing/cmd',
-                   {'cmd': 'set_dfn_atten', 'bus': bus_id, 'atten_db': atten_db})
-    if result.get('ok'):
-        return f"Bus {bus_id}: denoise atten cap → {result.get('atten_db')} dB"
-    return f"Error: {result.get('error', 'unknown')}"
-
-
-@mcp.tool()
-def bus_set_denoise_engine(bus_id: str, engine: str) -> str:
-    """
-    Change the neural-denoise engine used by a bus's "D" filter.
-
-    Args:
-        bus_id: Bus id (e.g. 'main'). Run routing_status to list buses.
-        engine: 'rnnoise' (tiny, aggressive), 'deepfilternet' (DFN3, 48 kHz) or
-                'dpdfnet' (DPDFNet 8 kHz narrowband). On FM radio voice only
-                'dpdfnet' keeps the speech — RNNoise and the 48 kHz models gate
-                it out (measured 2026-11-12). Fully wet sounds good by ear;
-                lower the mix only if words get clipped.
-
-    The swap is live — the next audio chunk rebuilds the denoise stream
-    with the chosen engine. Existing enable/mix state is preserved.
-    """
-    result = _post('/routing/cmd',
-                   {'cmd': 'set_dfn_engine', 'bus': bus_id, 'engine': engine})
-    if result.get('ok'):
-        return f"Bus {bus_id}: denoise engine → {result.get('engine')}"
-    return f"Error: {result.get('error', 'unknown')}"
-
-
-@mcp.tool()
 def bus_set_denoise_mix(bus_id: str, mix: float) -> str:
     """
     Set the dry/wet mix of a bus's neural denoise filter.

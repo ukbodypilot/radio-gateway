@@ -117,7 +117,7 @@ def transcription_config(
                'clear'       — clear all results
 
                NOTE: denoise is a per-bus setting now — use
-               bus_toggle_processing / bus_set_denoise_engine on the bus
+               bus_toggle_processing / bus_set_denoise_mix on the bus
                that feeds the transcription sink.
         value: The value to set (ignored for restart/clear).
     """

@@ -272,43 +272,6 @@
     text-align: right;
     flex-shrink: 0;
   }
-  /* DFN-only attenuation cap input. Hidden when engine=RNNoise. */
-  .dfn-atten-wrap {
-    display: inline-flex; align-items: center; gap: 3px;
-    flex-shrink: 0; margin-left: 4px;
-  }
-  .dfn-atten-input {
-    width: 36px; height: 16px; padding: 0 3px;
-    font: inherit; font-size: 10px;
-    font-variant-numeric: tabular-nums;
-    background: var(--t-panel-hi); color: var(--t-text);
-    border: 1px solid var(--t-border-hi); border-radius: var(--r-sm);
-    text-align: right;
-  }
-  .dfn-atten-input::-webkit-inner-spin-button,
-  .dfn-atten-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
-
-  /* Engine pill: tiny toggle badge next to the mix slider. RNN→DFN swap. */
-  .dfn-engine-pill {
-    font: inherit; font-size: 10px; font-weight: 600;
-    letter-spacing: 0.05em; text-transform: uppercase;
-    padding: 2px 8px; border-radius: var(--r-sm);
-    background: var(--t-panel-hi);
-    border: 1px solid var(--t-border-hi);
-    color: var(--t-text);
-    cursor: pointer !important; flex-shrink: 0;
-    min-width: 42px; text-align: center;
-    /* Override drawflow's default move-cursor on node descendants. */
-    pointer-events: auto;
-    user-select: none;
-    touch-action: manipulation;
-  }
-  .dfn-engine-pill[data-engine="deepfilternet"],
-  .dfn-engine-pill[data-engine="dpdfnet"] {
-    color: var(--t-accent);
-    border-color: var(--t-accent);
-  }
-  .dfn-engine-pill:hover { background: var(--t-border-hi); }
 
   .gain-slider {
     width: 60px;
@@ -481,14 +444,6 @@
 <script src="/pages/dagre.min.js"></script>
 <script src="/pages/common.js"></script>
 <script>
-// Denoise engines, in pill-cycle order. Ids must match audio_util.DENOISE_ENGINE_IDS.
-// DPDFNet is the 8 kHz narrowband model — the one that keeps FM radio voice
-// (RNNoise and the 48 kHz models gate it out). Fully wet sounds good.
-var _DFN_ENGINES = {
-  rnnoise:       {label: 'RNN', name: 'RNNoise',              next: 'deepfilternet'},
-  deepfilternet: {label: 'DFN', name: 'DeepFilterNet',        next: 'dpdfnet'},
-  dpdfnet:       {label: 'DP8', name: 'DPDFNet 8 kHz',        next: 'rnnoise'}
-};
 
 var editor;
 var _state = {};
@@ -526,7 +481,7 @@ container.addEventListener('wheel', function(e) {
 // starts a "move" gesture on them (that's the "cursor stuck in move mode"
 // symptom when one of these slips through).
 var _INTERACTIVE_SEL =
-  '.gain-slider, .mute-btn, .proc-btn, .dfn-mix-slider, .dfn-engine-pill, .bus-name, button, input, select, textarea';
+  '.gain-slider, .mute-btn, .proc-btn, .dfn-mix-slider, .bus-name, button, input, select, textarea';
 container.addEventListener('mousedown', function(e) {
   if (e.target.closest(_INTERACTIVE_SEL)) e.stopPropagation();
 }, true);
@@ -853,7 +808,7 @@ function rebuildEditor() {
       + '<button class="proc-btn' + (proc.hpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'hpf\')" id="proc-' + b.id + '-hpf" title="High Pass Filter">H</button>'
       + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
       + '<button class="proc-btn' + (proc.notch ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'notch\')" id="proc-' + b.id + '-notch" title="Notch Filter">N</button>'
-      + '<button class="proc-btn' + (proc.dfn ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'dfn\')" id="proc-' + b.id + '-dfn" title="Neural Denoise (RNNoise)">D</button>'
+      + '<button class="proc-btn' + (proc.dfn ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'dfn\')" id="proc-' + b.id + '-dfn" title="Neural Denoise (DPDFNet 8 kHz)">D</button>'
       + '<span class="proc-sep"></span>'
       + '<button class="proc-btn out-btn' + (proc.pcm === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
       + '<button class="proc-btn out-btn' + (proc.mp3 === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'
@@ -865,19 +820,8 @@ function rebuildEditor() {
       + (function() {
           var mix = (proc.dfn_mix !== undefined) ? proc.dfn_mix : 0.5;
           var pct = Math.round(mix * 100);
-          var eng = _DFN_ENGINES[proc.dfn_engine] ? proc.dfn_engine : 'rnnoise';
-          var engLabel = _DFN_ENGINES[eng].label;
           var cls = 'dfn-mix-row' + (proc.dfn ? '' : ' dim-op');
-          var atten = (proc.dfn_atten_db !== undefined) ? proc.dfn_atten_db : 18;
-          var attenHidden = (eng === 'deepfilternet') ? '' : ' style="display:none"';
           return '<div class="' + cls + '" id="dfn-mix-row-' + b.id + '">'
-            + '<button class="dfn-engine-pill" id="dfn-engine-' + b.id + '" '
-            +   'data-engine="' + eng + '" '
-            +   'title="Click to cycle denoise engine (RNNoise → DeepFilterNet → DPDFNet 8 kHz)" '
-            +   'onmousedown="event.stopPropagation()" '
-            +   'onpointerdown="event.stopPropagation()" '
-            +   'ontouchstart="event.stopPropagation()" '
-            +   'onclick="event.stopPropagation(); toggleDfnEngine(\'' + b.id + '\')">' + engLabel + '</button>'
             + '<span class="dfn-mix-label">mix</span>'
             + '<input type="range" class="dfn-mix-slider" min="0" max="1" step="0.05" value="' + mix + '" '
             +   'id="dfn-mix-' + b.id + '" '
@@ -885,15 +829,6 @@ function rebuildEditor() {
             +   'onchange="setDfnMix(\'' + b.id + '\', this.value, false)" '
             +   'ondblclick="this.value=0.5;setDfnMix(\'' + b.id + '\', 0.5, false)">'
             + '<span class="dfn-mix-val" id="dfn-mix-val-' + b.id + '">' + pct + '%</span>'
-            + '<span class="dfn-atten-wrap" id="dfn-atten-wrap-' + b.id + '"' + attenHidden + '>'
-            +   '<span class="dfn-mix-label" title="Attenuation cap (dB). 0=unlimited, 15–25 typical. Stops pumping.">cap</span>'
-            +   '<input type="number" class="dfn-atten-input" min="0" max="60" step="1" value="' + atten + '" '
-            +     'id="dfn-atten-' + b.id + '" '
-            +     'onmousedown="event.stopPropagation()" '
-            +     'onpointerdown="event.stopPropagation()" '
-            +     'onchange="setDfnAtten(\'' + b.id + '\', this.value)">'
-            +   '<span class="dfn-mix-label">dB</span>'
-            + '</span>'
             + '</div>';
         })()
       /* Delay lives in the title bar for solo busses — see the injection
@@ -1372,52 +1307,6 @@ function setDfnMix(busId, value, isLive) {
     if (_dfnMixTimers[busId]) { clearTimeout(_dfnMixTimers[busId]); delete _dfnMixTimers[busId]; }
     send();
   }
-}
-
-// Cycle the denoise engine on a bus.
-function toggleDfnEngine(busId) {
-  var pill = document.getElementById('dfn-engine-' + busId);
-  if (!pill) return;
-  var cur = pill.getAttribute('data-engine') || 'rnnoise';
-  var next = (_DFN_ENGINES[cur] || _DFN_ENGINES.rnnoise).next;
-  fetch('/routing/cmd', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({cmd: 'set_dfn_engine', bus: busId, engine: next})
-  }).then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (d.ok) {
-        pill.setAttribute('data-engine', d.engine);
-        pill.textContent = (_DFN_ENGINES[d.engine] || _DFN_ENGINES.rnnoise).label;
-        // Show/hide the DFN-only atten cap input so it only surfaces for
-        // the engine it applies to.
-        var attenWrap = document.getElementById('dfn-atten-wrap-' + busId);
-        if (attenWrap) attenWrap.style.display = (d.engine === 'deepfilternet') ? '' : 'none';
-        setStatus(busId + ': engine → ' + (_DFN_ENGINES[d.engine] || _DFN_ENGINES.rnnoise).name);
-      } else {
-        setStatus('engine swap failed: ' + (d.error || 'unknown'), true);
-      }
-    }).catch(function() { setStatus('engine swap network error', true); });
-}
-
-// DFN-only attenuation cap — bounds how aggressively the model attenuates
-// per frame. Prevents neural-gate pumping on marginal-SNR radio audio.
-function setDfnAtten(busId, value) {
-  var v = parseFloat(value);
-  if (isNaN(v)) return;
-  v = Math.max(0, Math.min(60, v));
-  fetch('/routing/cmd', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({cmd: 'set_dfn_atten', bus: busId, atten_db: v})
-  }).then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (d.ok) {
-        setStatus(busId + ': DFN cap ' + d.atten_db + ' dB');
-      } else {
-        setStatus('atten cap failed: ' + (d.error || 'unknown'), true);
-      }
-    });
 }
 
 var _busDelayTimers = {};
