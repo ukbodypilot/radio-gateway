@@ -125,10 +125,6 @@
   .smart-row button { flex: 1; margin: 0; }
 
   /* Fart synth */
-  .fart-sliders { display: grid; grid-template-columns: auto 1fr auto; gap: 3px var(--s-2); align-items: center; margin-top: var(--s-2); }
-  .fart-sliders label { font-size: var(--f-xs); color: var(--t-text-dim); white-space: nowrap; }
-  .fart-sliders input[type=range] { width: 100%; margin: 0; }
-  .fart-val { font-size: var(--f-xs); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; color: var(--t-text); }
   .fart-presets { display: flex; flex-wrap: wrap; gap: 3px; margin-top: var(--s-2); }
   .fart-presets button { flex: 1 1 auto; font-size: var(--f-xs); padding: 2px var(--s-1); margin: 0; }
   .fart-actions { display: flex; gap: 3px; margin-top: var(--s-2); }
@@ -278,7 +274,7 @@
       <button class="tx-tab active" onclick="switchTab('tts',this)">TTS</button>
       <button class="tx-tab" onclick="switchTab('cw',this)">CW</button>
       <button class="tx-tab" onclick="switchTab('ai',this)">AI</button>
-      <button class="tx-tab" onclick="switchTab('fart',this)" title="Fart Machine">&#x1F4A8; Fart</button>
+      <button class="tx-tab" onclick="switchTab('fart',this)" title="Sample Player">Sample</button>
     </div>
 
     <div id="tx-tts" class="tx-pane active">
@@ -346,12 +342,9 @@
 
     <div id="tx-fart" class="tx-pane">
       <div class="ctrl-stack">
-        <div class="fart-sliders">
-          <label>Pitch spread</label><input type="range" id="fart-variation" min="0" max="0.4" step="0.01" value="0.12" oninput="fartLabel()"><span class="fart-val" id="fart-variation-v"></span>
-        </div>
         <div class="fart-actions">
-          <button onclick="fartPreview()" title="Audition a random fart in your browser only (no transmit)">&#x1F50A; Preview</button>
-          <button id="fart-rip" onclick="fartSend(this)" title="Transmit a random fart over the air">&#x1F4A8; LET IT RIP</button>
+          <button onclick="fartPreview()" title="Audition a random sample in your browser only (no transmit)">&#x1F50A; Preview</button>
+          <button id="fart-rip" onclick="fartSend(this)" title="Transmit a random sample over the air">Play</button>
         </div>
         <div id="fart-status" class="st-line"></div>
       </div>
@@ -600,12 +593,8 @@ createPoller('/status', 1000, function(s) {
   }
 });
 
-// ── Fart machine (real samples) ──────────────────────────────────────────────
+// ── Sample Player (real recorded samples) ─────────────────────────────────────
 var _fartAudio = null;
-function fartVariation() { return parseFloat(document.getElementById('fart-variation').value); }
-function fartLabel() {
-  document.getElementById('fart-variation-v').textContent = Math.round(fartVariation() * 100) + '%';
-}
 function fartStatus(msg, cls) {
   var el = document.getElementById('fart-status');
   el.textContent = msg || '';
@@ -614,8 +603,7 @@ function fartStatus(msg, cls) {
 // Preview = audition a random fart in THIS browser only (no RF).
 function fartPreview() {
   fartStatus('…', 'working');
-  fetch('/fart/preview', {method:'POST', headers:{'Content-Type':'application/json'},
-                          body: JSON.stringify({variation: fartVariation()})})
+  fetch('/fart/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
     .then(function(r){ if (!r.ok) throw new Error('failed'); return r.blob(); })
     .then(function(b){
       if (_fartAudio) { try { _fartAudio.pause(); } catch(e){} URL.revokeObjectURL(_fartAudio.src); }
@@ -628,13 +616,12 @@ function fartPreview() {
 function fartSend(btn) {
   if (btn) btn.disabled = true;
   fartStatus('transmitting…', 'working');
-  postJson('/fart/send', {variation: fartVariation()}).then(function(d){
+  postJson('/fart/send', {}).then(function(d){
     if (d && d.ok) fartStatus('📡 ' + (d.fart || 'sent') + ' → air', 'ok');
     else fartStatus('send failed: ' + ((d && d.error) || '?'), 'err');
   }).catch(function(){ fartStatus('send error', 'err'); })
     .finally(function(){ if (btn) setTimeout(function(){ btn.disabled = false; }, 400); });
 }
-fartLabel();
 </script>
 
 </body>

@@ -40,7 +40,7 @@
     <button class="panel-tab active" role="tab" aria-selected="true" aria-controls="tx-tts" onclick="switchPanelTab('transmit-panel','tx-tts',this)">TTS</button>
     <button class="panel-tab" role="tab" aria-selected="false" aria-controls="tx-cw" onclick="switchPanelTab('transmit-panel','tx-cw',this)">CW</button>
     <button class="panel-tab" role="tab" aria-selected="false" aria-controls="tx-ai" onclick="switchPanelTab('transmit-panel','tx-ai',this)">AI</button>
-    <button class="panel-tab" role="tab" aria-selected="false" aria-controls="tx-fart" onclick="switchPanelTab('transmit-panel','tx-fart',this)" title="Fart Machine">&#x1F4A8; Fart</button>
+    <button class="panel-tab" role="tab" aria-selected="false" aria-controls="tx-fart" onclick="switchPanelTab('transmit-panel','tx-fart',this)" title="Sample Player">Sample</button>
   </div>
 
   <div id="tx-tts" class="panel-pane active" role="tabpanel">
@@ -91,10 +91,9 @@
 
   <div id="tx-fart" class="panel-pane" role="tabpanel">
     <div class="ctrl-stack">
-      <div class="ctrl-field"><label class="w4">Pitch spread</label><input id="fart-variation" class="ctrl-input flex-grow" type="range" min="0" max="0.4" step="0.01" value="0.12" oninput="fartLabel()"><span id="fart-variation-v" class="w3"></span></div>
       <div class="ctrl-field">
-        <button class="ctrl-btn btn-flex" onclick="fartPreview()" title="Audition a random fart in your browser only (no transmit)">&#x1F50A; Preview</button>
-        <button class="ctrl-btn btn-flex" id="fart-rip" onclick="fartSend(this)" title="Transmit a random fart over the air">&#x1F4A8; LET IT RIP</button>
+        <button class="ctrl-btn btn-flex" onclick="fartPreview()" title="Audition a random sample in your browser only (no transmit)">&#x1F50A; Preview</button>
+        <button class="ctrl-btn btn-flex" id="fart-rip" onclick="fartSend(this)" title="Transmit a random sample over the air">Play</button>
       </div>
       <div id="fart-status" class="st-line"></div>
     </div>
@@ -123,14 +122,12 @@
 <script src="/pages/common.js"></script>
 <script src="/pages/dash.js"></script>
 <script>
-// ── Fart machine (real samples) ──
+// ── Sample Player (real recorded samples) ──
 var _fartAudio = null;
-function fartVariation() { return parseFloat(document.getElementById('fart-variation').value); }
-function fartLabel() { var e = document.getElementById('fart-variation-v'); if (e) e.textContent = Math.round(fartVariation() * 100) + '%'; }
 function fartStatus(m, c) { var el = document.getElementById('fart-status'); if (!el) return; el.textContent = m || ''; el.className = 'st-line' + (c ? ' ' + c : ''); }
 function fartPreview() {
   fartStatus('…', 'working');
-  fetch('/fart/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({variation: fartVariation()})})
+  fetch('/fart/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
     .then(function(r){ if (!r.ok) throw new Error('failed'); return r.blob(); })
     .then(function(b){ if (_fartAudio) { try { _fartAudio.pause(); } catch(e){} URL.revokeObjectURL(_fartAudio.src); }
       _fartAudio = new Audio(URL.createObjectURL(b)); _fartAudio.play(); fartStatus('▶ preview (browser only)', 'ok'); })
@@ -139,13 +136,12 @@ function fartPreview() {
 function fartSend(btn) {
   if (btn) btn.disabled = true;
   fartStatus('transmitting…', 'working');
-  postJson('/fart/send', {variation: fartVariation()}).then(function(d){
+  postJson('/fart/send', {}).then(function(d){
     if (d && d.ok) fartStatus('📡 ' + (d.fart || 'sent') + ' → air', 'ok');
     else fartStatus('send failed: ' + ((d && d.error) || '?'), 'err');
   }).catch(function(){ fartStatus('send error', 'err'); })
     .finally(function(){ if (btn) setTimeout(function(){ btn.disabled = false; }, 400); });
 }
-fartLabel();
 
 // ── Transmit helpers ──
 function setTxStatus(text, cls) {

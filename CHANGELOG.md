@@ -4,6 +4,15 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Sample Player** (was the "Fart" tab on /controls and the dashboard's
+  Operate page): tab renamed "Sample", the transmit button is "Play", icons
+  removed. Its "Pitch spread" slider is gone: it randomly sped each press up
+  or down by up to ±12% so a 12-sample set wouldn't sound repetitive;
+  `audio/farts/` now holds about 1,400 samples, so every press is played as
+  recorded. `/fart/preview`
+  and `/fart/send` take no parameters (an old client's body is read and
+  ignored).
+
 ## [5.6.0] -- 2026-11-13
 
 - **Bus AGC (`A`) replaces the bus noise gate (`G`) on /routing.** The SDRs

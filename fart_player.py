@@ -2,11 +2,12 @@
 
 Plays real recorded fart samples (royalty-free Mixkit SFX, vendored under
 audio/farts/) instead of synthesizing — guaranteed to sound like a fart because
-it is one. Optional per-press tape-speed pitch/length variation keeps a small
-sample set from sounding repetitive.
+it is one. Each press picks a random sample, played as recorded. (A per-press
+tape-speed variation existed for a 12-sample set; with ~1,400 samples it was
+pointless and was removed on 2026-11-13.)
 
 Public interface mirrors the playback path's needs:
-    random_fart(variation) -> (mono int16 PCM bytes @ RATE, name)
+    random_fart() -> (mono int16 PCM bytes @ RATE, name)
     to_wav_bytes(pcm_bytes) -> WAV bytes   (browser preview)
 """
 
@@ -71,13 +72,8 @@ def _decode(path):
     return audio
 
 
-def random_fart(variation=0.12, rng=None):
-    """Pick a random real fart, optionally tape-speed varied. Returns (pcm, name).
-
-    `variation` is the max ± fractional speed/pitch shift (0.12 = ±12%). A speed
-    change shifts pitch and length together, like a tape-speed wobble — natural
-    variety for a fart, no spectral artefacts.
-    """
+def random_fart(rng=None):
+    """Pick a random real fart, played as recorded. Returns (pcm, name)."""
     files = list_farts()
     if not files:
         ensure_samples()
@@ -88,12 +84,6 @@ def random_fart(variation=0.12, rng=None):
     rng = rng or random.Random()
     path = rng.choice(files)
     a = _decode(path)
-
-    variation = max(0.0, min(0.6, float(variation)))
-    if variation > 0 and len(a) > 4:
-        factor = 1.0 + rng.uniform(-variation, variation)   # >1 = faster/higher
-        idx = np.arange(0, len(a), factor)
-        a = np.interp(idx, np.arange(len(a)), a)
 
     # light peak-normalise to ~-1 dBFS (parity with how the soundboard loads
     # files); the playback path applies the configured TX gain on top.
