@@ -4,9 +4,11 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.6.1] -- 2026-11-13
+
 - **Sample Player** (was the "Fart" tab on /controls and the dashboard's
-  Operate page): tab renamed "Sample", the transmit button is "Play", icons
-  removed. Its "Pitch spread" slider is gone: it randomly sped each press up
+  Operate page): tab renamed "Sample", the transmit button is "Play" (with a ▶), the
+  fart icons removed. Its "Pitch spread" slider is gone: it randomly sped each press up
   or down by up to ±12% so a 12-sample set wouldn't sound repetitive;
   `audio/farts/` now holds about 1,400 samples, so every press is played as
   recorded. `/fart/preview`
