@@ -804,11 +804,11 @@ function rebuildEditor() {
     var proc = b.processing || {};
     var busMuted = b.muted ? ' muted' : '';
     var html = '<div class="box"><div class="proc-buttons">'
-      + '<button class="proc-btn' + (proc.gate ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'gate\')" id="proc-' + b.id + '-gate" title="Noise Gate">G</button>'
       + '<button class="proc-btn' + (proc.hpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'hpf\')" id="proc-' + b.id + '-hpf" title="High Pass Filter">H</button>'
       + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
       + '<button class="proc-btn' + (proc.notch ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'notch\')" id="proc-' + b.id + '-notch" title="Notch Filter">N</button>'
       + '<button class="proc-btn' + (proc.dfn ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'dfn\')" id="proc-' + b.id + '-dfn" title="Neural Denoise (DPDFNet 8 kHz)">D</button>'
+      + '<button class="proc-btn' + (proc.agc ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'agc\')" id="proc-' + b.id + '-agc" title="Automatic Gain Control: levels quiet and loud stations, after denoise">A</button>'
       + '<span class="proc-sep"></span>'
       + '<button class="proc-btn out-btn' + (proc.pcm === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
       + '<button class="proc-btn out-btn' + (proc.mp3 === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'

@@ -495,6 +495,10 @@ class AudioProcessor:
         self.gate_threshold = -40     # dB
         self.gate_attack = 0.01       # seconds
         self.gate_release = 0.1       # seconds
+        self.enable_agc = False       # Automatic gain control, last in the
+                                      # chain. See _apply_agc.
+        self.agc_gain_db = 0.0        # current AGC gain (state)
+        self.agc_limited = 0          # chunks where the clip guard cut gain
         self.enable_dfn = False       # Neural denoise toggle. "dfn" is kept
                                       # as the config/API key for back-compat;
                                       # actual engine is picked via dfn_engine.
@@ -561,6 +565,7 @@ class AudioProcessor:
         self.lowpass_state = None
         self.notch_state = None
         self.gate_envelope = 0.0
+        self.agc_gain_db = 0.0
         self._dn_stop_worker()
 
     def _dn_stop_worker(self):
@@ -597,10 +602,12 @@ class AudioProcessor:
 
     def process(self, pcm_data):
         """Run the full processing chain on PCM data. Order:
-        HPF → DFN → LPF → Notch → Noise Gate
+        HPF → DFN → LPF → Notch → Noise Gate → AGC
 
         HPF runs before DFN so subsonic rumble is removed cheaply; LPF/notch
-        run after DFN so the denoiser sees the full band.
+        run after DFN so the denoiser sees the full band. AGC runs last so it
+        levels the cleaned signal: boosting a quiet station BEFORE denoise
+        would raise the hiss with it.
         """
         if not pcm_data:
             return pcm_data
@@ -622,7 +629,7 @@ class AudioProcessor:
         return self._post_dfn(processed)
 
     def _post_dfn(self, processed):
-        """The stages after DFN: LPF → Notch → Noise Gate."""
+        """The stages after DFN: LPF → Notch → Noise Gate → AGC."""
         if self.enable_lpf:
             processed = self._apply_lpf(processed)
 
@@ -631,6 +638,9 @@ class AudioProcessor:
 
         if self.enable_noise_gate:
             processed = self._apply_noise_gate(processed)
+
+        if self.enable_agc:
+            processed = self._apply_agc(processed)
 
         return processed
 
@@ -652,6 +662,7 @@ class AudioProcessor:
         if self.enable_dfn: active.append('DFN')
         if self.enable_lpf: active.append('LPF')
         if self.enable_notch: active.append('Notch')
+        if self.enable_agc: active.append('AGC')
         return active
 
     # --- Filter implementations ---
@@ -906,6 +917,70 @@ class AudioProcessor:
         if stream is not None:
             try: stream.close()
             except Exception: pass
+
+    # AGC tuning. Repeaters arrive at full RF strength but with whatever
+    # audio level each station put into them, so overs differ by 10-20 dB.
+    AGC_TARGET_DBFS = -20.0   # chunk RMS the AGC steers speech towards
+    AGC_MAX_GAIN_DB = 24.0    # most it will lift a quiet station
+    AGC_MIN_GAIN_DB = -12.0   # most it will pull down a hot one
+    AGC_FLOOR_DBFS = -50.0    # below this a chunk is a gap, not speech:
+                              # the gain HOLDS, so silence between overs
+                              # (or denoise residue) is never pumped up
+    AGC_ATTACK_S = 0.1        # time constant for turning down
+    AGC_RELEASE_S = 1.0       # time constant for turning up. Simulated on
+                              # 70 min of sdr1 overs (2026-11-13, mean 6.2 s):
+                              # 2 s left station spread at 16.8 dB, 1 s at 12.8,
+                              # with 7 dB in-over gain swing (0.5 s: 9.6, pumps)
+    AGC_CEILING = 0.89        # peak limit after gain (-1 dBFS)
+
+    def _apply_agc(self, pcm_data):
+        """Speech-gated AGC with a clip guard.
+
+        Gain moves in dB toward (target - chunk RMS), fast down and slow up,
+        and is ramped linearly across the chunk so it never steps (a step is
+        a click). Chunks below AGC_FLOOR_DBFS leave the gain where it was.
+        If a peak would pass AGC_CEILING the gain drops at once for this
+        chunk, counted in agc_limited / rg_agc_limited_total.
+        """
+        x = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
+        n = x.size
+        if n == 0:
+            return pcm_data
+        g0 = self.agc_gain_db
+        rms = float(np.sqrt(np.mean(x * x)))
+        rms_db = 20.0 * _math.log10(rms / 32767.0) if rms > 0 else -120.0
+        g1 = g0
+        if rms_db > self.AGC_FLOOR_DBFS:
+            want = max(self.AGC_MIN_GAIN_DB,
+                       min(self.AGC_MAX_GAIN_DB, self.AGC_TARGET_DBFS - rms_db))
+            dt = n / float(getattr(self.config, 'AUDIO_RATE', 48000) or 48000)
+            tc = self.AGC_ATTACK_S if want < g0 else self.AGC_RELEASE_S
+            g1 = g0 + (want - g0) * (1.0 - _math.exp(-dt / tc))
+        # Clip guard: the louder end of the ramp must keep the peak under
+        # the ceiling. If not, both ends drop to the safe gain now.
+        peak = float(np.max(np.abs(x)))
+        if peak > 0:
+            safe_db = 20.0 * _math.log10(self.AGC_CEILING * 32767.0 / peak)
+            if max(g0, g1) > safe_db:
+                g0 = g1 = min(g1, safe_db)
+                self.agc_limited += 1
+                try:
+                    import metrics as _m
+                    _m.agc_limited_total.labels(
+                        bus=getattr(self, 'name', 'unknown')).inc()
+                except Exception:
+                    log_exc()
+        self.agc_gain_db = g1
+        try:
+            import metrics as _m
+            _m.agc_gain_db.labels(bus=getattr(self, 'name', 'unknown')).set(g1)
+        except Exception:
+            log_exc()
+        if g0 == 0.0 and g1 == 0.0:
+            return pcm_data
+        ramp = np.power(10.0, np.linspace(g0, g1, n, dtype=np.float32) / 20.0)
+        y = np.clip(x * ramp, -32768.0, 32767.0)
+        return y.astype(np.int16).tobytes()
 
     def _apply_noise_gate(self, pcm_data):
         """Noise gate with attack/release envelope.

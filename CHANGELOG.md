@@ -4,6 +4,20 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Bus AGC (`A`) replaces the bus noise gate (`G`) on /routing.** The SDRs
+  hear nearby repeaters at full RF strength, but each station's audio into
+  the repeater varies, so overs differ by 10-20 dB. The AGC runs last, after
+  denoise, so it lifts the voice rather than the hiss. It steers speech
+  toward -20 dBFS (at most +24 / -12 dB), turns down in 0.1 s and up over
+  1 s, and HOLDS its gain on chunks under -50 dBFS, so the silence between
+  overs is never pumped up. A clip guard cuts the gain at once if a peak
+  would pass -1 dBFS. Metrics: `rg_agc_gain_db`, `rg_agc_limited_total`.
+  `bus_toggle_processing` takes `agc`; `gate` is no longer a bus filter and a
+  saved `gate` key is ignored. Source-level noise gates (TH-9800, SDR, KV4P,
+  D75 config keys) are unchanged. `tests/test_bus_agc.py`.
+- **SDR page: each channel's squelch box is labelled** ("Squelch … dBFS"). It
+  was an unlabelled number with only a tooltip, easy to miss in single mode,
+  where the big squelch sliders don't apply.
 - **Long transmissions are cut at a pause, not inside a word.** Past 50 s the
   transcriber used to split on the first single 32 ms dip in speech
   probability, usually mid-word, and dropped the audio between that cut and

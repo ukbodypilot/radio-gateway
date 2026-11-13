@@ -1045,9 +1045,12 @@ class BusManager:
             proc_cfg = bus_cfg.get('processing', {})
             proc_cfg['muted'] = bus_cfg.get('muted', False)
             self._bus_config[bus_id] = proc_cfg
-            if any(proc_cfg.get(k) for k in ('gate', 'hpf', 'lpf', 'notch', 'dfn')):
+            # The bus noise gate ('gate') was replaced by AGC on 2026-11-13;
+            # a stale 'gate' key in routing_config.json is ignored. Source-
+            # level gates (TH-9800, SDR, KV4P, D75) are untouched.
+            if any(proc_cfg.get(k) for k in ('agc', 'hpf', 'lpf', 'notch', 'dfn')):
                 proc = AudioProcessor(f"bus_{bus_id}", self.config)
-                proc.enable_noise_gate = proc_cfg.get('gate', False)
+                proc.enable_agc = proc_cfg.get('agc', False)
                 proc.enable_hpf = proc_cfg.get('hpf', False)
                 proc.enable_lpf = proc_cfg.get('lpf', False)
                 proc.enable_notch = proc_cfg.get('notch', False)
@@ -1070,7 +1073,7 @@ class BusManager:
                 if proc.enable_dfn:
                     proc._dn_ensure_worker()
                 _tags = [k.upper() if k != 'dfn' else f"DFN({proc.dfn_engine})"
-                         for k in ('gate', 'hpf', 'lpf', 'notch', 'dfn')
+                         for k in ('hpf', 'lpf', 'notch', 'dfn', 'agc')
                          if proc_cfg.get(k)]
                 print(f"  [BusManager] {bus_name}: processing [{' '.join(_tags)}]")
 

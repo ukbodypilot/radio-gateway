@@ -206,6 +206,8 @@
   .ch-freq { width:120px; font-family:inherit; }
   .ch-mod  { width:70px; }
   .ch-sq   { width:60px; }
+  .ch-sq-wrap { display:inline-flex; align-items:center; gap:var(--s-1); flex-shrink:0; }
+  .ch-tag  { color:var(--t-text-dim); font-size:var(--f-xs); }
   .ch-label{ flex:1; min-width:80px; }
   .ch-empty { color:var(--t-text-mute); font-size:var(--f-xs);
               padding:var(--s-2) 0; font-style:italic; }
@@ -835,7 +837,11 @@ function renderChannelList(channels) {
     html += '<option value="nfm"' + ((ch.modulation || 'nfm') === 'nfm' ? ' selected' : '') + '>NFM</option>';
     html += '<option value="am"' + ((ch.modulation || 'nfm') === 'am' ? ' selected' : '') + '>AM</option>';
     html += '</select>';
-    html += '<input type="number" min="-60" max="0" value="' + (ch.squelch_threshold !== undefined ? ch.squelch_threshold : (ch.squelch !== undefined ? ch.squelch : -26)) + '" class="si ch-sq" title="Squelch (dBFS)">';
+    html += '<label class="ch-sq-wrap" title="Squelch threshold: the channel opens when its signal rises above this level">'
+         +    '<span class="ch-tag">Squelch</span>'
+         +    '<input type="number" min="-60" max="0" value="' + (ch.squelch_threshold !== undefined ? ch.squelch_threshold : (ch.squelch !== undefined ? ch.squelch : -26)) + '" class="si ch-sq">'
+         +    '<span class="ch-tag">dBFS</span>'
+         +  '</label>';
     html += '<input type="text" value="' + _escAttr(ch.label || '') + '" class="si ch-label" placeholder="Label" title="Channel label">';
     var nf = _chFilterChangedCount(ch);
     html += '<button class="rb rb-sm ch-filt-btn' + (nf ? ' changed' : '') + '" onclick="toggleChFilters(' + i + ')" title="Per-channel audio filters">Filters' + (nf ? ' (' + nf + ')' : '') + '</button>';

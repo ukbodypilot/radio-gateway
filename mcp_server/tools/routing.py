@@ -248,11 +248,13 @@ def bus_toggle_processing(bus_id: str, filter_name: str) -> str:
     Args:
         bus_id: The bus ID
         filter_name: One of:
-                     'gate'  — noise gate
                      'hpf'   — high-pass filter
                      'lpf'   — low-pass filter
                      'notch' — notch filter
-                     'dfn'   — neural denoise (engine set per bus)
+                     'dfn'   — neural denoise (DPDFNet 8 kHz)
+                     'agc'   — automatic gain control, last in the chain:
+                               levels quiet and loud stations toward
+                               -20 dBFS, holds between overs
                      'pcm'   — feed PCM stream output
                      'mp3'   — feed MP3 stream output
                      'vad'   — VAD (voice activity detection) gate

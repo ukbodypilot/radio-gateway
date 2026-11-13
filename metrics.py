@@ -169,6 +169,20 @@ denoise_late_total = Counter(
     registry=REGISTRY,
 )
 
+agc_gain_db = Gauge(
+    'rg_agc_gain_db',
+    'Current bus AGC gain in dB (held between overs)',
+    ['bus'],
+    registry=REGISTRY,
+)
+
+agc_limited_total = Counter(
+    'rg_agc_limited_total',
+    'Chunks where the bus AGC clip guard cut the gain at once',
+    ['bus'],
+    registry=REGISTRY,
+)
+
 gc_pause_ms = Histogram(
     'rg_gc_pause_ms',
     'Garbage-collection stop-the-world pause per generation, milliseconds',

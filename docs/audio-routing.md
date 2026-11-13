@@ -27,11 +27,11 @@ Every bus has a processing chain you can toggle from its node:
 
 | Button | Effect |
 |--------|--------|
-| `G` | Noise gate (numba-jit, < 10µs/chunk) |
 | `H` | High-pass filter (300 Hz default) |
 | `L` | Low-pass filter (3 kHz default) |
 | `N` | Notch filter (60 Hz default, Q=30) |
 | **`D`** | Neural denoise — DPDFNet 8 kHz, a narrowband model that keeps FM radio voice and sounds good fully wet. Phase-aligned wet/dry mix. Inference runs off the bus tick on a per-bus worker with its own 1-thread ONNX session, behind a fixed 100 ms delay line: a chunk the worker misses plays dry, in order, and is counted in `rg_denoise_late_total`. |
+| `A` | Automatic gain control, last in the chain (after denoise, so it lifts the voice and not the hiss). Steers speech toward −20 dBFS, at most +24 / −12 dB; turns down fast (0.1 s), up more slowly (1 s). Chunks under −50 dBFS hold the gain, so silence between overs is never pumped up. A clip guard cuts the gain at once if a peak would pass −1 dBFS. `rg_agc_gain_db` shows the live gain, `rg_agc_limited_total` counts clip-guard hits. Replaced the bus noise gate (`G`) on 2026-11-13; a saved `gate` key is ignored. |
 
 The `D` button has a wet/dry mix slider underneath (0–100 %). RNNoise and DeepFilterNet 3 were removed on 2026-11-13: both gated narrowband radio voice out. A saved `dfn_engine` of `rnnoise` or `deepfilternet` now loads as DPDFNet, and a leftover `dfn_atten_db` is ignored.
 
