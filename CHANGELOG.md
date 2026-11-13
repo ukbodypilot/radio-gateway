@@ -4,6 +4,8 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.6.0] -- 2026-11-13
+
 - **Bus AGC (`A`) replaces the bus noise gate (`G`) on /routing.** The SDRs
   hear nearby repeaters at full RF strength, but each station's audio into
   the repeater varies, so overs differ by 10-20 dB. The AGC runs last, after
