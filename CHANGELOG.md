@@ -20,6 +20,8 @@ All notable changes to Radio Gateway.
   MCP tool (164 tools). It was added on 2026-06-14 with no recorded use, and
   no bus had ever set it. A stale `delay_ms` key in `routing_config.json` is
   ignored.
+- **Overview page: trend tiles reordered** to CPU, RAM, Gateway memory,
+  CPU temp, Net up, Net down.
 - **/routing: every node is the same size** (224 x 81 px, `--node-w` /
   `--node-h`), so auto-arrange gives clean rows and columns. Busses were
   290 px wide for a button row that has since lost G, N and V.

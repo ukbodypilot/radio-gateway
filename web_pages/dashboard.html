@@ -156,17 +156,17 @@ function _kb(v){ return fmtBytes(v); }
 var TRENDS = [
   {id:'cpu',  name:'CPU',       q:'100*(1-sum(rate(rg_host_cpu_seconds_total{mode="idle"}[2m]))/sum(rate(rg_host_cpu_seconds_total[2m])))',
    live:function(s){return s.cpu_pct;}, fmt:function(v){return v.toFixed(1)+'%';}, min:0, max:100},
+  {id:'ram',  name:'RAM',       q:'rg_host_mem_pct',
+   live:function(s){return s.mem_pct;}, fmt:function(v){return v.toFixed(1)+'%';}, min:0, max:100},
+  {id:'gwmem',name:'Gateway memory', q:'rg_process_resident_memory_bytes/1048576',
+   live:function(){return NaN;}, fmt:function(v){return v.toFixed(0)+' MB';}, minSpan:50},
   {id:'temp', name:'CPU temp',  q:'rg_cpu_temp_c', color:'var(--t-warn)',
    live:function(s){var t=s.temps||[];for(var i=0;i<t.length;i++)if(/core/i.test(t[i].label))return t[i].temp;return NaN;},
    fmt:function(v){return v.toFixed(0)+'\u00b0C';}, minSpan:10},
-  {id:'ram',  name:'RAM',       q:'rg_host_mem_pct',
-   live:function(s){return s.mem_pct;}, fmt:function(v){return v.toFixed(1)+'%';}, min:0, max:100},
-  {id:'rx',   name:'Net down',  q:'rg_host_net_rx_bps', color:'var(--t-ok)',
-   live:function(s){return s.net_rx_bps;}, fmt:_kb, min:0, minSpan:1024},
   {id:'tx',   name:'Net up',    q:'rg_host_net_tx_bps', color:'var(--t-ok)',
    live:function(s){return s.net_tx_bps;}, fmt:_kb, min:0, minSpan:1024},
-  {id:'gwmem',name:'Gateway memory', q:'rg_process_resident_memory_bytes/1048576',
-   live:function(){return NaN;}, fmt:function(v){return v.toFixed(0)+' MB';}, minSpan:50}
+  {id:'rx',   name:'Net down',  q:'rg_host_net_rx_bps', color:'var(--t-ok)',
+   live:function(s){return s.net_rx_bps;}, fmt:_kb, min:0, minSpan:1024}
 ];
 (function(){
   var g=document.getElementById('trend-grid'), h='';
