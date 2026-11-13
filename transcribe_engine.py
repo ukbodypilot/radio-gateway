@@ -224,7 +224,10 @@ class LocalInferenceEngine:
 class RemoteEngine:
     """Sends VAD-gated utterances to a transcribe_worker HTTP endpoint."""
 
-    def __init__(self, url: str, timeout: int = 60,
+    # 180 s: utterances can now run to the 120 s hard cap, and a slow worker
+    # (the macmini, RTF ~0.2-0.3, more when thermally throttled) needs ~40 s
+    # for one. A timed-out request returns '' and that text is lost.
+    def __init__(self, url: str, timeout: int = 180,
                  name: str = '', registered: bool = False):
         self._url = url.rstrip('/')
         self._timeout = timeout

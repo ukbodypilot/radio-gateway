@@ -30,16 +30,23 @@ logging.getLogger('huggingface_hub').setLevel(logging.ERROR)
 _SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                '.transcribe_settings.json')
 
-# ASR encoder memory grows with input length. Hard-cap utterance buffers at
-# 60s to bound it on a stuck-open VAD (squelched repeater, continuous tone). Between the soft and hard
-# cap, cut on the first probability dip to split at a natural pause rather
-# than mid-word.
+# Long overs are split into bounded chunks: ASR memory grows with input
+# length (Parakeet, measured 2026-11-12: 1.5 GB peak at 50 s, 2.4 GB at
+# 120 s, 4.2 GB at 300 s) and nothing is transcribed until a chunk closes.
+# Past the soft cap, cut at the first REAL pause — _SOFT_CAP_PAUSE_FRAMES
+# consecutive below-exit-threshold frames (~300 ms). It used to cut on the
+# first single dipping frame, which on radio audio lands inside words
+# ("doesn't have a re | anymore"), and the frames between that cut and the
+# VAD re-opening were dropped. The hard cap is only a backstop for a
+# stuck-open VAD (squelched repeater, continuous tone); 60 s was Moonshine
+# v1's 64 s input limit, which no longer applies.
 from transcribe_engine import (
     _VALID_MODELS, DEFAULT_MODEL, LocalInferenceEngine, RemoteEngine, _pick_worker,
 )  # re-exported so web_routes_post.py can still `from transcriber import _VALID_MODELS`
 
-_MAX_UTTERANCE_SECS = 60.0
+_MAX_UTTERANCE_SECS = 120.0
 _SOFT_CAP_SECS = 50.0
+_SOFT_CAP_PAUSE_FRAMES = 10          # 10 x 32 ms Silero frames = 320 ms
 
 
 def _as_bool(value, default=False):
@@ -366,7 +373,7 @@ class _StreamState:
     __slots__ = (
         'vad', 'decimator',
         'frame_acc', 'audio_buf_16k', 'audio_buf_samples', 'buf_start_time',
-        'vad_open', 'vad_close_time',
+        'vad_open', 'vad_close_time', 'low_run',
         'vad_last_prob', 'vad_prob_env', 'vad_prob_peak', 'vad_envelope',
         'upstream_counts', 'last_upstream_source',
         # Per-stream feed queue + worker. One thread per bus so the VAD /
@@ -384,6 +391,7 @@ class _StreamState:
         self.buf_start_time = 0
         self.vad_open = False
         self.vad_close_time = 0
+        self.low_run = 0            # consecutive below-exit-threshold frames while open
         self.vad_last_prob = 0.0
         self.vad_prob_env = 0.0
         self.vad_prob_peak = 0.0
@@ -448,6 +456,9 @@ class RadioTranscriber:
         # keeps one lock to guard `_feed_stats` updates from multiple worker
         # threads (one per bus — see _get_or_create_stream).
         self._feed_stats_lock = threading.Lock()
+        # How each utterance closed: 'end' / 'soft_cap' / 'hard_cap'
+        # (see _submit_utterance). Guarded by _feed_stats_lock.
+        self._close_reasons = {}
 
         # Feed-path health counters. Always on (zero cost) — read via
         # get_status() so we have actual numbers when audio misbehaves
@@ -884,25 +895,27 @@ class RadioTranscriber:
             if _us:
                 stream.upstream_counts[_us] = stream.upstream_counts.get(_us, 0) + 1
 
-            # Hard 60s cap — force close to bound ASR memory.
+            stream.low_run = stream.low_run + 1 if prob < exit_thresh else 0
+
+            # Hard cap — backstop only, bounds ASR memory on a stuck-open VAD.
             if stream.audio_buf_samples >= self._max_samples_16k:
-                self._submit_utterance(stream, source_id)
+                self._submit_utterance(stream, source_id, reason='hard_cap')
                 return
 
-            # Inside the soft-cap zone, take any probability dip as a cut
-            # point so long utterances split on natural pauses rather than
-            # mid-word at the hard cap. If speech continues, VAD re-opens on
-            # the next above-threshold frame with no audio lost.
+            # Past the soft cap, cut at the first real pause (~320 ms of
+            # non-speech), not on a single dipping frame inside a word.
+            # Frames after the cut that score below the open threshold are
+            # not buffered, so cutting in a pause is what keeps them silence.
             if (stream.audio_buf_samples >= self._soft_cap_samples_16k
-                    and prob < exit_thresh):
-                self._submit_utterance(stream, source_id)
+                    and stream.low_run >= _SOFT_CAP_PAUSE_FRAMES):
+                self._submit_utterance(stream, source_id, reason='soft_cap')
                 return
 
             if prob < exit_thresh:
                 if stream.vad_close_time == 0:
                     stream.vad_close_time = now
                 elif now - stream.vad_close_time > self._vad_hold_time:
-                    self._submit_utterance(stream, source_id)
+                    self._submit_utterance(stream, source_id, reason='end')
             else:
                 # Speech resumed during hold window — reset close timer.
                 stream.vad_close_time = 0
@@ -910,6 +923,7 @@ class RadioTranscriber:
             if prob >= self._vad_threshold:
                 stream.vad_open = True
                 stream.vad_close_time = 0
+                stream.low_run = 0
                 stream.audio_buf_16k = [frame_16k.copy()]
                 stream.audio_buf_samples = _SILERO_FRAME
                 stream.buf_start_time = now
@@ -919,10 +933,19 @@ class RadioTranscriber:
                 if _us:
                     stream.upstream_counts[_us] = 1
 
-    def _submit_utterance(self, stream, source_id):
-        """Finalize this stream's current utterance and queue it for transcription."""
+    def _submit_utterance(self, stream, source_id, reason='end'):
+        """Finalize this stream's current utterance and queue it for transcription.
+
+        reason: 'end' (speech stopped for the hold time), 'soft_cap' (long
+        over cut at a pause) or 'hard_cap' (backstop hit). Counted in
+        get_status()['utterance_close'] so a run of hard-cap cuts, i.e.
+        mid-word splits, is visible.
+        """
         stream.vad_open = False
         stream.vad_close_time = 0
+        stream.low_run = 0
+        with self._feed_stats_lock:
+            self._close_reasons[reason] = self._close_reasons.get(reason, 0) + 1
         try:
             import metrics as _m
             _m.vad_speech_events_total.labels(bus=source_id).inc()
@@ -1019,6 +1042,18 @@ class RadioTranscriber:
             'remote_worker': next(
                 (e.get_status() for e in _pool_snapshot if isinstance(e, RemoteEngine)), None),
             'registration': self._get_registration_health(),
+            'utterance_close': self._utterance_close_stats(),
+        }
+
+    def _utterance_close_stats(self):
+        """Counts of how utterances closed since start, plus the caps in force."""
+        with self._feed_stats_lock:
+            counts = dict(self._close_reasons)
+        return {
+            'counts': counts,
+            'soft_cap_secs': _SOFT_CAP_SECS,
+            'hard_cap_secs': _MAX_UTTERANCE_SECS,
+            'pause_ms': _SOFT_CAP_PAUSE_FRAMES * _SILERO_FRAME * 1000 // _SILERO_SR,
         }
 
     def _get_registration_health(self):

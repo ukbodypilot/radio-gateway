@@ -4,6 +4,14 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Long transmissions are cut at a pause, not inside a word.** Past 50 s the
+  transcriber used to split on the first single 32 ms dip in speech
+  probability, usually mid-word, and dropped the audio between that cut and
+  the VAD re-opening. It now waits for 320 ms of non-speech. The hard cap
+  (a backstop for a stuck-open VAD) is 120 s, up from Moonshine v1's 60 s, and
+  remote workers get 180 s per request. `get_status()['utterance_close']`
+  counts how utterances ended (`end` / `soft_cap` / `hard_cap`).
+
 ## [5.5.0] -- 2026-11-12
 
 - **New denoise engine: DPDFNet 8 kHz (`dpdfnet`, "DP8" on /routing).** On our
