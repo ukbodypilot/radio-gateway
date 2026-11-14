@@ -8,6 +8,7 @@ callbacks. Labels stay low-cardinality (bus/engine/endpoint), never
 per-utterance.
 """
 
+import glob
 import json
 import os
 import re
@@ -439,6 +440,87 @@ class _CpuCollector:
 if os.path.isdir('/proc/self/task'):
     REGISTRY.register(_CpuCollector())
 
+
+# rtl_airband (SDR plugin) writes Prometheus-style stats files here; see
+# plugins/sdr.py AIRBAND_STATS_PATH. One file per rtl_airband process.
+AIRBAND_STATS_GLOB = '/dev/shm/rtl_airband_stats*.txt'
+AIRBAND_STATS_MAX_AGE_S = 60.0   # older = left over from another SDR mode
+_AIRBAND_LINE = re.compile(r'^([a-zA-Z_][a-zA-Z0-9_]*)(?:\{(.*)\})?\s+(\S+)\s*$')
+_AIRBAND_LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
+
+
+def parse_airband_stats(text):
+    """Parse an rtl_airband stats file -> {metric: [(labels_dict, value)]}.
+
+    Partial or odd lines are skipped, never raised on."""
+    out = {}
+    for line in text.splitlines():
+        m = _AIRBAND_LINE.match(line)
+        if not m:
+            continue
+        try:
+            val = float(m.group(3))
+        except ValueError:
+            continue
+        labels = dict(_AIRBAND_LABEL.findall(m.group(2) or ''))
+        out.setdefault(m.group(1), []).append((labels, val))
+    return out
+
+
+class _AirbandCollector:
+    """rtl_airband's own counters (pulse underflows, output overruns, input
+    buffer overflows, squelch activity), read from its stats file at scrape.
+
+    *_count / *_counter metrics become rg_airband_<name>_total counters, the
+    rest rg_airband_<name> gauges. `instance` is the file's suffix
+    ('single', 'sdr1', 'sdr2'). rg_airband_stats_age_seconds says how fresh
+    each file is: a stuck rtl_airband stops updating it.
+    """
+
+    def describe(self):
+        return []
+
+    def collect(self):
+        from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
+        fams = {}
+        age = GaugeMetricFamily('rg_airband_stats_age_seconds',
+                                'Seconds since rtl_airband last wrote its stats file',
+                                labels=['instance'])
+        now = time.time()
+        for path in sorted(glob.glob(AIRBAND_STATS_GLOB)):
+            try:
+                st_age = now - os.stat(path).st_mtime
+                if st_age > AIRBAND_STATS_MAX_AGE_S:
+                    continue
+                with open(path) as f:
+                    parsed = parse_airband_stats(f.read())
+            except OSError:
+                continue
+            except Exception:
+                log_exc()
+                continue
+            stem = os.path.basename(path)[len('rtl_airband_stats'):-len('.txt')].lstrip('_')
+            inst = stem or 'single'
+            age.add_metric([inst], st_age)
+            for name, rows in parsed.items():
+                for labels, val in rows:
+                    keys = ('instance',) + tuple(sorted(labels))
+                    if name.endswith(('_count', '_counter')):
+                        base = 'rg_airband_' + name.rsplit('_', 1)[0]
+                        kind = CounterMetricFamily
+                    else:
+                        base = 'rg_airband_' + name
+                        kind = GaugeMetricFamily
+                    fam_key = (base, keys)
+                    if fam_key not in fams:
+                        if any(k[0] == base for k in fams):
+                            continue          # same name, other label set: skip
+                        fams[fam_key] = kind(base, f'rtl_airband {name}', labels=list(keys))
+                    fams[fam_key].add_metric([inst] + [labels[k] for k in keys[1:]], val)
+        return [age] + list(fams.values())
+
+
+REGISTRY.register(_AirbandCollector())
 
 def render() -> tuple[bytes, str]:
     """Return (body, content_type) for the /metrics endpoint."""

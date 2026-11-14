@@ -4,6 +4,26 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **SDR: the last 43 ms dropouts fixed with rate matching in a patched
+  rtl_airband.** The RSPduo's real sample rate differs from 2 MS/s by a
+  different amount at every start (−156 to +160 ppm measured), while PipeWire
+  reads the streams at exactly 16 kHz, so a slow start drained each stream into
+  an underflow every few minutes. `tools/rtl_airband/build.sh` builds upstream
+  rtl_airband (v7.0.1) with `tools/rtl_airband/0001-radio-gateway-fixes.patch`:
+  per-output `rate_match` (PI loop on the stream latency, one sample at a time
+  via a windowed-sinc stretch) and `buffer_ms`, a condition-variable wakeup for
+  the demod instead of a 10 ms poll, an atomic stats file, and new counters
+  (pulse underflows, latency, rate-match state, production/consumption).
+  30 min check: 0 underflows, 0 drops. The plugin writes `rate_match = true`,
+  `buffer_ms = 250` and a stats file; stock rtl_airband ignores them.
+- **rtl_airband counters in Prometheus** as `rg_airband_*` (stats file read at
+  scrape time, stale files skipped, `rg_airband_stats_age_seconds`).
+- **rtl_airband logs again** (`journalctl -t rtl_airband`): the plugin started
+  it with `-e`, which without `-F` sends every log line nowhere.
+- **Only the BusManager tick thread is realtime.** Threads it started
+  (TranscribeFeed, SinkDrain-*, PTT-*) inherited SCHED_RR; the tick now sets
+  `SCHED_RESET_ON_FORK`.
+
 ## [5.7.0] -- 2026-11-13
 
 - **Bus compressor (`C`) on /routing**, after the AGC. The AGC levels whole

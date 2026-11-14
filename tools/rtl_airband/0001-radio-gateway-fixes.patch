@@ -1,0 +1,467 @@
+From 2d460a2cf5691146dac6595402ad4d7920e5e977 Mon Sep 17 00:00:00 2001
+From: ukbodypilot <noreply@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 11:32:16 -0800
+Subject: [PATCH] radio-gateway: pulse buffer_ms, demod wakeup, stats
+ underflows, atomic stats, overflow via log()
+
+---
+ src/config.cpp        |   6 ++
+ src/input-common.cpp  |   3 +
+ src/input-common.h    |   2 +
+ src/input-helpers.cpp |   6 +-
+ src/output.cpp        |  82 ++++++++++++++++++++++++-
+ src/pulse.cpp         | 138 +++++++++++++++++++++++++++++++++++++++++-
+ src/rtl_airband.cpp   |  19 +++++-
+ src/rtl_airband.h     |  21 +++++++
+ 8 files changed, 270 insertions(+), 7 deletions(-)
+
+diff --git a/src/config.cpp b/src/config.cpp
+index d8e26f1..4e328d1 100644
+--- a/src/config.cpp
++++ b/src/config.cpp
+@@ -273,6 +273,12 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
+ 
+             pulse_data* pdata = (pulse_data*)(channel->outputs[oo].data);
+             pdata->continuous = outs[o].exists("continuous") ? (bool)(outs[o]["continuous"]) : false;
++            pdata->buffer_ms = outs[o].exists("buffer_ms") ? (int)(outs[o]["buffer_ms"]) : 0;
++            pdata->latency_ms = -1.0f;
++            pdata->rate_match = outs[o].exists("rate_match") ? (bool)(outs[o]["rate_match"]) : false;
++            if (pdata->buffer_ms < 0) {
++                output_error(i, j, o, parsing_mixers, "buffer_ms must not be negative");
++            }
+             pdata->server = outs[o].exists("server") ? strdup(outs[o]["server"]) : NULL;
+             pdata->name = outs[o].exists("name") ? strdup(outs[o]["name"]) : "rtl_airband";
+             pdata->sink = outs[o].exists("sink") ? strdup(outs[o]["sink"]) : NULL;
+diff --git a/src/input-common.cpp b/src/input-common.cpp
+index dbadf3b..2df87b2 100644
+--- a/src/input-common.cpp
++++ b/src/input-common.cpp
+@@ -63,6 +63,9 @@ int input_init(input_t* const input) {
+     } else if ((ret = pthread_mutex_init(&input->buffer_lock, NULL)) != 0) {
+         errno = ret;
+         ret = -1;
++    } else if ((ret = pthread_cond_init(&input->buffer_cond, NULL)) != 0) {
++        errno = ret;
++        ret = -1;
+     } else {
+         new_state = INPUT_INITIALIZED;
+         ret = 0;
+diff --git a/src/input-common.h b/src/input-common.h
+index ffade02..7590eb7 100644
+--- a/src/input-common.h
++++ b/src/input-common.h
+@@ -41,6 +41,7 @@ struct input_t {
+     void* dev_data;
+     size_t buf_size, bufs, bufe;
+     size_t overflow_count;
++    unsigned long long sample_count;  // complex samples received since start
+     input_state_t state;
+     sample_format_t sfmt;
+     float fullscale;
+@@ -54,6 +55,7 @@ struct input_t {
+     int (*stop)(input_t* const input);
+     pthread_t rx_thread;
+     pthread_mutex_t buffer_lock;
++    pthread_cond_t buffer_cond;  // signalled whenever bufe advances
+ };
+ 
+ input_t* input_new(char const* const type);
+diff --git a/src/input-helpers.cpp b/src/input-helpers.cpp
+index 172a91a..754e2b0 100644
+--- a/src/input-helpers.cpp
++++ b/src/input-helpers.cpp
+@@ -53,11 +53,15 @@ void circbuffer_append(input_t* const input, unsigned char* buf, size_t len) {
+                     std::min(len - space_left, 2 * input->bytes_per_sample * fft_size));
+     }
+ 
++    input->sample_count += len / (2 * input->bytes_per_sample);
+     size_t old_end = input->bufe;
+     input->bufe = (input->bufe + len) % input->buf_size;
+     if (old_end < input->bufs && input->bufe >= input->bufs) {
+-        std::cerr << "Warning: buffer overflow\n";
++        // log(), not cerr: a daemonised rtl_airband has no stderr, so this
++        // warning was invisible unless run with -F
++        log(LOG_WARNING, "Warning: input buffer overflow\n");
+         input->overflow_count++;
+     }
++    pthread_cond_signal(&input->buffer_cond);
+     pthread_mutex_unlock(&input->buffer_lock);
+ }
+diff --git a/src/output.cpp b/src/output.cpp
+index a22cc22..41fb400 100644
+--- a/src/output.cpp
++++ b/src/output.cpp
+@@ -20,6 +20,7 @@
+ #include <math.h>
+ #include <ogg/ogg.h>
+ #include <shout/shout.h>
++#include <limits.h>
+ #include <stdio.h>
+ #include <sys/stat.h>
+ #include <sys/time.h>
+@@ -952,7 +953,72 @@ static void output_device_buffer_overflows(FILE* f) {
+         fprintf(f, "buffer_overflow_count{device=\"%d\"}\t%zu\n", i, dev->input->overflow_count);
+     }
+     fprintf(f, "\n");
++
++    // Samples received vs CLOCK_MONOTONIC (the clock PipeWire's timers run on):
++    // the slope over a few minutes is the device's real sample rate, so its
++    // offset from the nominal rate can be measured to well under 1 ppm.
++    struct timespec now;
++    clock_gettime(CLOCK_MONOTONIC, &now);
++    fprintf(f,
++            "# HELP input_sample_count Complex samples received from the device since start.\n"
++            "# TYPE input_sample_count counter\n");
++    for (int i = 0; i < device_count; i++) {
++        device_t* dev = devices + i;
++        fprintf(f, "input_sample_count{device=\"%d\"}\t%llu\n", i, dev->input->sample_count);
++    }
++    fprintf(f, "\n# HELP stats_monotonic_seconds CLOCK_MONOTONIC when this file was written.\n# TYPE stats_monotonic_seconds gauge\n");
++    fprintf(f, "stats_monotonic_seconds\t%.6f\n\n", (double)now.tv_sec + now.tv_nsec / 1e9);
++}
++
++#ifdef WITH_PULSEAUDIO
++static void output_pulse_underflows(FILE* f) {
++    fprintf(f,
++            "# HELP pulse_underflow_count Number of times a PulseAudio output stream has run dry.\n"
++            "# TYPE pulse_underflow_count counter\n");
++
++    for (int i = 0; i < device_count; i++) {
++        device_t* dev = devices + i;
++        for (int j = 0; j < dev->channel_count; j++) {
++            channel_t* channel = dev->channels + j;
++            for (int k = 0; k < channel->output_count; k++) {
++                if (channel->outputs[k].type != O_PULSE)
++                    continue;
++                pulse_data* pdata = (pulse_data*)(channel->outputs[k].data);
++                fprintf(f, "pulse_underflow_count{stream=\"%s\"}\t%zu\n", pdata->stream_name, pdata->underflow_count);
++            }
++        }
++    }
++    fprintf(f, "\n");
++    fprintf(f,
++            "# HELP pulse_latency_ms PulseAudio stream latency (buffered audio) just before the last write.\n"
++            "# TYPE pulse_latency_ms gauge\n");
++    for (int i = 0; i < device_count; i++) {
++        device_t* dev = devices + i;
++        for (int j = 0; j < dev->channel_count; j++) {
++            channel_t* channel = dev->channels + j;
++            for (int k = 0; k < channel->output_count; k++) {
++                if (channel->outputs[k].type != O_PULSE)
++                    continue;
++                pulse_data* pdata = (pulse_data*)(channel->outputs[k].data);
++                fprintf(f, "pulse_latency_ms{stream=\"%s\"}\t%.1f\n", pdata->stream_name, pdata->latency_ms);
++                fprintf(f, "pulse_written_bytes{stream=\"%s\"}\t%llu\n", pdata->stream_name, pdata->written_bytes);
++                fprintf(f, "pulse_written_monotonic_seconds{stream=\"%s\"}\t%.6f\n", pdata->stream_name, pdata->written_mono_s);
++                fprintf(f, "pulse_read_index_bytes{stream=\"%s\"}\t%lld\n", pdata->stream_name, pdata->read_index);
++                fprintf(f, "pulse_read_index_realtime_seconds{stream=\"%s\"}\t%.6f\n", pdata->stream_name, pdata->read_index_usec / 1e6);
++                if (pdata->rate_match) {
++                    fprintf(f, "pulse_rate_match_ppm{stream=\"%s\"}\t%.1f\n", pdata->stream_name, pdata->rm_ppm);
++                    fprintf(f, "pulse_rate_match_integral_ppm{stream=\"%s\"}\t%.1f\n", pdata->stream_name, pdata->rm_i_ppm);
++                    fprintf(f, "pulse_rate_match_target_ms{stream=\"%s\"}\t%.1f\n", pdata->stream_name, pdata->rm_target_ms);
++                    fprintf(f, "pulse_rate_match_smoothed_ms{stream=\"%s\"}\t%.1f\n", pdata->stream_name, pdata->rm_ema_ms);
++                    fprintf(f, "pulse_samples_inserted_count{stream=\"%s\"}\t%zu\n", pdata->stream_name, pdata->rm_inserted);
++                    fprintf(f, "pulse_samples_dropped_count{stream=\"%s\"}\t%zu\n", pdata->stream_name, pdata->rm_dropped);
++                }
++            }
++        }
++    }
++    fprintf(f, "\n");
+ }
++#endif /* WITH_PULSEAUDIO */
+ 
+ static void output_output_overruns(FILE* f) {
+     fprintf(f,
+@@ -1003,9 +1069,13 @@ void write_stats_file(timeval* last_stats_write) {
+ 
+     *last_stats_write = current_time;
+ 
+-    FILE* file = fopen(stats_filepath, "w");
++    // Write to a temporary file and rename() it into place, so a reader never
++    // sees a truncated or half-written file.
++    char tmp_path[PATH_MAX];
++    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", stats_filepath);
++    FILE* file = fopen(tmp_path, "w");
+     if (!file) {
+-        log(LOG_WARNING, "Cannot open output file %s (%s)\n", stats_filepath, strerror(errno));
++        log(LOG_WARNING, "Cannot open output file %s (%s)\n", tmp_path, strerror(errno));
+         return;
+     }
+ 
+@@ -1023,8 +1093,14 @@ void write_stats_file(timeval* last_stats_write) {
+     output_device_buffer_overflows(file);
+     output_output_overruns(file);
+     output_input_overruns(file);
++#ifdef WITH_PULSEAUDIO
++    output_pulse_underflows(file);
++#endif /* WITH_PULSEAUDIO */
+ 
+-    fclose(file);
++    if (fclose(file) != 0 || rename(tmp_path, stats_filepath) != 0) {
++        log(LOG_WARNING, "Cannot write stats file %s (%s)\n", stats_filepath, strerror(errno));
++        unlink(tmp_path);
++    }
+ }
+ 
+ void* output_thread(void* param) {
+diff --git a/src/pulse.cpp b/src/pulse.cpp
+index af57ab4..f7ec91d 100644
+--- a/src/pulse.cpp
++++ b/src/pulse.cpp
+@@ -18,6 +18,8 @@
+  * along with this program; if not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++#include <math.h>    // sin, cos
++#include <string.h>  // memcpy
+ #include <pulse/pulseaudio.h>
+ #include <syslog.h>
+ #include <iostream>
+@@ -61,6 +63,7 @@ void pulse_shutdown(pulse_data* pdata) {
+ 
+ static void pulse_stream_underflow_cb(pa_stream*, void* userdata) {
+     pulse_data* pdata = (pulse_data*)userdata;
++    pdata->underflow_count++;
+     if (pdata->continuous)  // do not flood the logs on every squelch closing
+         log(LOG_INFO, "pulse: %s: stream \"%s\": underflow\n", SERVER_IFNOTNULL(pdata->server), pdata->stream_name);
+ }
+@@ -101,11 +104,21 @@ static pa_stream* pulse_setup_stream(pulse_data* pdata, const pa_sample_spec* ss
+     pa_stream_set_state_callback(stream, stream_state_cb, pdata);
+     pa_stream_set_underflow_callback(stream, pulse_stream_underflow_cb, pdata);
+     pa_stream_set_overflow_callback(stream, pulse_stream_overflow_cb, pdata);
++    // Audio is written in WAVE_BATCH (125 ms) blocks. With the server's default
++    // target latency (~145 ms on PipeWire) only ~20 ms is left in the buffer just
++    // before each write, so a slightly late batch underflows. buffer_ms lets the
++    // config ask for a deeper buffer; 0 keeps the server default.
++    pa_buffer_attr attr;
++    attr.maxlength = (uint32_t)-1;
++    attr.tlength = pdata->buffer_ms > 0 ? (uint32_t)pa_usec_to_bytes((pa_usec_t)pdata->buffer_ms * 1000, ss) : (uint32_t)-1;
++    attr.prebuf = (uint32_t)-1;
++    attr.minreq = (uint32_t)-1;
++    attr.fragsize = (uint32_t)-1;
+     // Initially streams are corked (paused). For mono streams this is irrelevant,
+     // but for stereo mixers it's required to keep left and right channels in sync.
+     // Starting the left channel stream before the other stream from the sync pair is
+     // set up causes the left channel stream to fail.
+-    if (pa_stream_connect_playback(stream, pdata->sink, NULL, (pa_stream_flags_t)(PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_ADJUST_LATENCY | PA_STREAM_START_CORKED | PA_STREAM_AUTO_TIMING_UPDATE),
++    if (pa_stream_connect_playback(stream, pdata->sink, pdata->buffer_ms > 0 ? &attr : NULL, (pa_stream_flags_t)(PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_ADJUST_LATENCY | PA_STREAM_START_CORKED | PA_STREAM_AUTO_TIMING_UPDATE),
+                                    NULL, sync_stream) < 0) {
+         log(LOG_ERR, "pulse: %s: failed to connect stream \"%s\": %s\n", SERVER_IFNOTNULL(pdata->server), pdata->stream_name, pa_strerror(pa_context_errno(pdata->context)));
+         goto fail;
+@@ -119,6 +132,9 @@ fail:
+ }
+ 
+ static void pulse_setup_streams(pulse_data* pdata) {
++    pdata->latency_ms = -1.0f;
++    pdata->rm_batches = 0;
++    pdata->rm_ema_ms = pdata->rm_target_ms = pdata->rm_acc = pdata->rm_ppm = pdata->rm_i_ppm = 0.0;
+     const pa_sample_spec ss = {
+ #if __cplusplus >= 199711L
+         .format = PA_SAMPLE_FLOAT32LE, .rate = WAVE_RATE, .channels = 1
+@@ -216,20 +232,140 @@ static int pulse_write_single_stream(pa_stream* stream, pulse_data* pdata, const
+             log(LOG_INFO, "pulse: %s: exceeded max backlog for stream \"%s\", disconnecting\n", SERVER_IFNOTNULL(pdata->server), pdata->stream_name);
+             goto end;
+         }
++        pdata->latency_ms = (float)latency / 1000.0f;
+         debug_bulk_print("pulse: %s: stream=\"%s\" lret=%d latency=%f ms\n", SERVER_IFNOTNULL(pdata->server), pdata->stream_name, lret, (float)latency / 1000.0f);
+     }
+     if (pa_stream_write(stream, data, len, NULL, 0LL, PA_SEEK_RELATIVE) < 0) {
+         log(LOG_WARNING, "pulse: %s: could not write to stream \"%s\", disconnecting\n", SERVER_IFNOTNULL(pdata->server), pdata->stream_name);
+         goto end;
+     }
++    if (is_master) {
++        struct timespec now;
++        clock_gettime(CLOCK_MONOTONIC, &now);
++        pdata->written_bytes += len;
++        pdata->written_mono_s = (double)now.tv_sec + now.tv_nsec / 1e9;
++        const pa_timing_info* ti = pa_stream_get_timing_info(stream);
++        if (ti && ti->read_index_corrupt == 0) {
++            pdata->read_index = ti->read_index;
++            pdata->read_index_usec = (unsigned long long)ti->timestamp.tv_sec * 1000000ULL + ti->timestamp.tv_usec;
++        }
++    }
+     ret = 0;
+ end:
+     PA_LOOP_UNLOCK(mainloop);
+     return ret;
+ }
+ 
++// --- rate matching -----------------------------------------------------------
++#define RM_WARMUP_BATCHES 80      // 10 s at 8 batches/s: learn the target latency
++#define RM_EMA_ALPHA (1.0 / 160)  // ~20 s smoothing; single readings jitter by tens of ms
++// PI control. Plant: 1 ppm of mismatch moves the latency 0.001 ms/s, so
++// Kp = 10 ppm/ms gives a ~100 s loop, well below the 20 s smoothing.
++// Ki = Kp / 400 s puts the integral zero under the crossover, which keeps the
++// phase margin; the integral removes P-only's offset (it sat 16 ms under the
++// target at a 160 ppm clock offset).
++#define RM_KP_PPM_PER_MS 10.0
++#define RM_KI_PPM_PER_MS_S (RM_KP_PPM_PER_MS / 400.0)
++#define RM_BATCH_S ((double)WAVE_BATCH / (double)WAVE_RATE)
++#define RM_MAX_PPM 1000.0
++// Never hold less than this. PipeWire pulls from the stream one graph cycle at
++// a time (2048 samples = 42.7 ms here); a stream that settled lower after
++// connecting would be held just above underflow, so the loop raises it.
++#define RM_MIN_TARGET_MS 80.0
++
++// Stretch or shrink one batch by d (-1, 0 or +1) samples with a 32-tap
++// Blackman-windowed sinc interpolator (linear was -34 dB clean at 1 kHz, cubic
++// -28 dB at 3 kHz). Only ~1 batch in 8 is touched at typical drift, so the cost
++// is negligible. The first and last samples are kept (fractional offset 0
++// there), so batches still join without a step. Taps past either end of the
++// batch use the edge sample.
++#define RM_HALF_TAPS 16
++static size_t rm_resample(const float* in, size_t n, float* out, int d) {
++    size_t m = n + d;
++    if (d == 0 || n < 2) {
++        memcpy(out, in, n * sizeof(float));
++        return n;
++    }
++    double step = (double)(n - 1) / (double)(m - 1);
++    for (size_t i = 0; i < m; i++) {
++        double pos = i * step;
++        long k = (long)pos;
++        double t = pos - (double)k;
++        if (t < 1e-9) {
++            out[i] = in[k < (long)n ? k : (long)n - 1];
++            continue;
++        }
++        double acc = 0.0, wsum = 0.0;
++        for (long j = -RM_HALF_TAPS + 1; j <= RM_HALF_TAPS; j++) {
++            double x = (double)j - t;  // distance from the wanted position
++            double sinc = sin(M_PI * x) / (M_PI * x);
++            double w = 0.42 + 0.5 * cos(M_PI * x / RM_HALF_TAPS) + 0.08 * cos(2.0 * M_PI * x / RM_HALF_TAPS);
++            long idx = k + j;
++            if (idx < 0)
++                idx = 0;
++            if (idx >= (long)n)
++                idx = (long)n - 1;
++            acc += in[idx] * sinc * w;
++            wsum += sinc * w;
++        }
++        out[i] = (float)(acc / wsum);  // normalise: unity gain at DC
++    }
++    return m;
++}
++
++// Decide this batch's correction from the latency measured before the last write.
++static int rm_step(pulse_data* pdata, size_t n) {
++    if (pdata->latency_ms < 0)
++        return 0;
++    pdata->rm_batches++;
++    if (pdata->rm_batches <= RM_WARMUP_BATCHES) {
++        // running mean: single readings jitter too much to seed an EMA
++        pdata->rm_ema_ms += (pdata->latency_ms - pdata->rm_ema_ms) / pdata->rm_batches;
++        pdata->rm_target_ms = pdata->rm_ema_ms > RM_MIN_TARGET_MS ? pdata->rm_ema_ms : RM_MIN_TARGET_MS;
++        return 0;
++    }
++    pdata->rm_ema_ms += RM_EMA_ALPHA * (pdata->latency_ms - pdata->rm_ema_ms);
++    double err_ms = pdata->rm_target_ms - pdata->rm_ema_ms;
++    double p_ppm = RM_KP_PPM_PER_MS * err_ms;
++    double i_new = pdata->rm_i_ppm + RM_KI_PPM_PER_MS_S * err_ms * RM_BATCH_S;
++    double ppm = p_ppm + i_new;
++    // anti-windup: only integrate while the output is not saturated
++    if (ppm > RM_MAX_PPM)
++        ppm = RM_MAX_PPM;
++    else if (ppm < -RM_MAX_PPM)
++        ppm = -RM_MAX_PPM;
++    else
++        pdata->rm_i_ppm = i_new;
++    pdata->rm_ppm = ppm;
++    pdata->rm_acc += ppm * 1e-6 * (double)n;
++    if (pdata->rm_acc >= 1.0) {
++        pdata->rm_acc -= 1.0;
++        pdata->rm_inserted++;
++        return 1;
++    }
++    if (pdata->rm_acc <= -1.0) {
++        pdata->rm_acc += 1.0;
++        pdata->rm_dropped++;
++        return -1;
++    }
++    return 0;
++}
++
+ void pulse_write_stream(pulse_data* pdata, mix_modes mode, const float* data_left, const float* data_right, size_t len) {
++    float rm_left[WAVE_BATCH + 1], rm_right[WAVE_BATCH + 1];
+     PA_LOOP_LOCK(mainloop);
++    if (pdata->rate_match && len == (size_t)WAVE_BATCH * sizeof(float)) {
++        int d = rm_step(pdata, WAVE_BATCH);
++        if (d != 0) {
++            size_t m = rm_resample(data_left, WAVE_BATCH, rm_left, d);
++            data_left = rm_left;
++            if (mode == MM_STEREO) {
++                rm_resample(data_right, WAVE_BATCH, rm_right, d);
++                data_right = rm_right;
++            }
++            len = m * sizeof(float);
++        }
++    }
+     if (!pdata->context || pa_context_get_state(pdata->context) != PA_CONTEXT_READY)
+         goto end;
+     if (pulse_write_single_stream(pdata->left, pdata, data_left, len, true) < 0)
+diff --git a/src/rtl_airband.cpp b/src/rtl_airband.cpp
+index 9a569fe..15df7ef 100644
+--- a/src/rtl_airband.cpp
++++ b/src/rtl_airband.cpp
+@@ -421,9 +421,24 @@ void* demodulate(void* params) {
+         // number of input bytes per output wave sample (x 2 for I and Q)
+         size_t bps = 2 * dev->input->bytes_per_sample * (size_t)round((double)dev->input->sample_rate / (double)WAVE_RATE);
+         if (available < bps * FFT_BATCH + fft_size * dev->input->bytes_per_sample * 2) {
+-            // move to next device
++            // Wait for the input thread to append more samples (it signals
++            // buffer_cond) instead of a blind 10 ms sleep, which added up to
++            // 10 ms of jitter to every output batch. The 10 ms timeout keeps
++            // the old worst case and still rotates through multiple devices.
++            struct timespec deadline;
++            clock_gettime(CLOCK_REALTIME, &deadline);
++            deadline.tv_nsec += 10 * 1000000L;
++            if (deadline.tv_nsec >= 1000000000L) {
++                deadline.tv_sec++;
++                deadline.tv_nsec -= 1000000000L;
++            }
++            pthread_mutex_lock(&dev->input->buffer_lock);
++            // re-check under the lock so a signal sent since the check above is not missed
++            size_t avail_now = dev->input->bufe >= dev->input->bufs ? dev->input->bufe - dev->input->bufs : dev->input->buf_size - dev->input->bufs + dev->input->bufe;
++            if (avail_now < bps * FFT_BATCH + fft_size * dev->input->bytes_per_sample * 2)
++                pthread_cond_timedwait(&dev->input->buffer_cond, &dev->input->buffer_lock, &deadline);
++            pthread_mutex_unlock(&dev->input->buffer_lock);
+             device_num = next_device(demod_params, device_num);
+-            SLEEP(10);
+             continue;
+         }
+ 
+diff --git a/src/rtl_airband.h b/src/rtl_airband.h
+index 8d58112..0444f90 100644
+--- a/src/rtl_airband.h
++++ b/src/rtl_airband.h
+@@ -181,6 +181,27 @@ struct pulse_data {
+     pa_channel_map lmap, rmap;
+     mix_modes mode;
+     bool continuous;
++    int buffer_ms;  // target stream latency in ms; 0 = server default
++    size_t underflow_count;
++    float latency_ms;  // stream latency measured before the last write (-1 = unknown)
++    // rate matching: the SDR's sample clock and the sound server's clock differ
++    // by tens of ppm, so a continuous stream slowly drains (or fills) and
++    // underflows every few minutes. With rate_match, one sample is added or
++    // dropped (spread over a whole batch by linear interpolation) as needed to
++    // hold the stream latency at the level it settled at after connecting.
++    bool rate_match;
++    int rm_batches;      // batches seen since the stream connected
++    double rm_ema_ms;    // smoothed latency
++    double rm_target_ms; // latency to hold (learned during warm-up)
++    double rm_acc;       // fractional samples owed (+) or surplus (-)
++    double rm_ppm;       // current correction (P + I)
++    double rm_i_ppm;     // integral part: settles at the clocks' real offset
++    size_t rm_inserted, rm_dropped;
++    // production vs consumption, for measuring the real clock offset:
++    unsigned long long written_bytes;  // bytes handed to pa_stream_write (master stream)
++    double written_mono_s;             // CLOCK_MONOTONIC at that write
++    long long read_index;              // server read position from the timing info
++    unsigned long long read_index_usec;  // timing info timestamp (realtime usec)
+ };
+ #endif /* WITH_PULSEAUDIO */
+ 
+-- 
+2.56.0
+
