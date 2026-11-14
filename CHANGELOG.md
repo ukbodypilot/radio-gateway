@@ -16,6 +16,12 @@ All notable changes to Radio Gateway.
   (pulse underflows, latency, rate-match state, production/consumption).
   30 min check: 0 underflows, 0 drops. The plugin writes `rate_match = true`,
   `buffer_ms = 250` and a stats file; stock rtl_airband ignores them.
+- **`scripts/install.sh` builds the patched rtl_airband** (step 7, Arch and
+  Debian/Pi): official-repo / apt build deps only, no AUR helper needed,
+  installs to `/usr/local/bin`, skipped when `tools/rtl_airband/build.sh
+  --check` finds it. The stock package (AUR or source build) is only a
+  fallback, with a warning; the health check flags a stock rtl_airband.
+  Verified on a fresh Arch VM: all 16 steps, patched build installed.
 - **rtl_airband counters in Prometheus** as `rg_airband_*` (stats file read at
   scrape time, stale files skipped, `rg_airband_stats_age_seconds`).
 - **rtl_airband logs again** (`journalctl -t rtl_airband`): the plugin started

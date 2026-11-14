@@ -947,6 +947,34 @@ set +e
 
 SDR_INSTALLED=false
 
+# The gateway needs the PATCHED rtl_airband (tools/rtl_airband/): its
+# `rate_match` keeps each SDR stream's buffer steady against the RSPduo's
+# per-start clock offset (up to +/-160 ppm). Stock rtl_airband ignores the
+# setting and drops 43 ms of audio every few minutes. Installs to
+# /usr/local/bin, ahead of any distro copy on the service's PATH.
+install_patched_rtl_airband() {
+    local build="$GATEWAY_DIR/tools/rtl_airband/build.sh"
+    if [ ! -x "$build" ]; then
+        echo "  ⚠ $build missing — cannot build the patched rtl_airband"
+        return 1
+    fi
+    if "$build" --check; then
+        echo "  ✓ patched rtl_airband already installed (/usr/local/bin/rtl_airband)"
+        return 0
+    fi
+    echo "  Building patched rtl_airband (upstream + rate_match; ~2 min)..."
+    local flags=""
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7l" ]; then
+        flags="-DPLATFORM=rpiv2"
+    fi
+    if RTL_AIRBAND_CMAKE_FLAGS="$flags" "$build" >/tmp/rtl_airband_build.log 2>&1 && "$build" --check; then
+        echo "  ✓ patched rtl_airband installed: $(/usr/local/bin/rtl_airband -v 2>&1 | head -1)"
+        return 0
+    fi
+    echo "  ⚠ patched rtl_airband build failed — see /tmp/rtl_airband_build.log"
+    return 1
+}
+
 if [ "$DISTRO" = "arch" ]; then
     # SDR packages are in AUR — need an AUR helper
     AUR_USER=${SUDO_USER:-$USER}
@@ -1002,23 +1030,27 @@ if [ "$DISTRO" = "arch" ]; then
             rm -rf "$_SOAPY_PKG"
         fi
 
-        # Install rtl_airband (SDR demodulator — outputs audio to PulseAudio)
-        if command -v rtl_airband &>/dev/null; then
-            echo "  ✓ rtl_airband already installed"
-            SDR_INSTALLED=true
-        else
-            echo "  Installing rtl_airband from AUR..."
-            if sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm rtlsdr-airband-git 2>/dev/null; then
-                echo "  ✓ rtl_airband installed"
-                SDR_INSTALLED=true
-            else
-                echo "  ⚠ Could not install rtl_airband — install manually: $AUR_HELPER -S rtlsdr-airband-git"
-            fi
-        fi
     else
-        echo "  ⚠ No AUR helper found (yay/paru) — cannot install SDR packages"
+        echo "  ⚠ No AUR helper found (yay/paru) — cannot install the SDRplay driver"
         echo "    Install an AUR helper, then run:"
-        echo "      yay -S libsdrplay soapysdr soapysdrplay3-git rtlsdr-airband-git"
+        echo "      yay -S libsdrplay soapysdrplay3-git"
+    fi
+
+    # rtl_airband: the patched build (official-repo deps only, no AUR needed).
+    # Falls back to the stock AUR package, which works but keeps the drops.
+    sudo pacman -S --needed --noconfirm base-devel cmake git pkgconf libconfig lame libshout \
+        libvorbis fftw libpulse rtl-sdr soapysdr >/dev/null 2>&1 \
+        || echo "  ⚠ Could not install rtl_airband build dependencies"
+    if install_patched_rtl_airband; then
+        SDR_INSTALLED=true
+    elif command -v rtl_airband &>/dev/null; then
+        echo "  ⚠ Using the existing (unpatched) rtl_airband — expect a 43 ms SDR dropout every few minutes"
+        SDR_INSTALLED=true
+    elif [ -n "$AUR_HELPER" ] && sudo -u "$AUR_USER" $AUR_HELPER -S --noconfirm rtlsdr-airband-git 2>/dev/null; then
+        echo "  ⚠ Installed the stock AUR rtl_airband instead (no rate_match)"
+        SDR_INSTALLED=true
+    else
+        echo "  ⚠ No rtl_airband installed — SDR channels will not work"
     fi
 else
     # Debian/Ubuntu — SoapySDR is in apt, others built/downloaded automatically
@@ -1027,17 +1059,17 @@ else
         && echo "  ✓ SoapySDR installed" \
         || echo "  ⚠ Could not install SoapySDR — install manually"
 
-    # ── rtl_airband: build from source if not already installed ──
-    if command -v rtl_airband &>/dev/null; then
-        echo "  ✓ rtl_airband already installed"
+    # ── rtl_airband: the patched build (see install_patched_rtl_airband) ──
+    sudo apt-get install -y build-essential cmake git pkg-config \
+        libmp3lame-dev libshout3-dev 'libconfig++-dev' \
+        libfftw3-dev librtlsdr-dev libpulse-dev libsoapysdr-dev 2>/dev/null
+    if install_patched_rtl_airband; then
+        SDR_INSTALLED=true
+    elif command -v rtl_airband &>/dev/null; then
+        echo "  ⚠ Using the existing (unpatched) rtl_airband — expect a 43 ms SDR dropout every few minutes"
         SDR_INSTALLED=true
     else
-        echo "  Building rtl_airband from source..."
-
-        # Install build dependencies
-        sudo apt-get install -y build-essential cmake pkg-config \
-            libmp3lame-dev libshout3-dev 'libconfig++-dev' \
-            libfftw3-dev librtlsdr-dev libpulse-dev libsoapysdr-dev 2>/dev/null
+        echo "  Falling back to the stock rtl_airband source build (no rate_match)..."
 
         # Raspberry Pi GPU support (optional, non-fatal if missing)
         if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7l" ]; then
@@ -1779,6 +1811,13 @@ if lsmod 2>/dev/null | grep -q '^snd_aloop'; then
     _hc_pass "snd-aloop kernel module loaded"
 else
     _hc_warn "snd-aloop NOT currently loaded — reboot or run: sudo modprobe snd-aloop"
+fi
+
+# rtl_airband: the gateway needs the patched build (rate_match) for clean SDR audio
+if "$GATEWAY_DIR/tools/rtl_airband/build.sh" --check 2>/dev/null; then
+    _hc_pass "patched rtl_airband (rate_match) at /usr/local/bin/rtl_airband"
+elif command -v rtl_airband &>/dev/null; then
+    _hc_warn "rtl_airband is the stock build (no rate_match) — SDR audio drops 43 ms every few minutes; run: tools/rtl_airband/build.sh"
 fi
 
 # Audio group membership — takes effect on next login
