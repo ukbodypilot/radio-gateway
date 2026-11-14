@@ -1559,6 +1559,13 @@ devices:
             raise RuntimeError(f"Failed to write SDR2 config: {proc.stderr.decode()}")
 
     # -- Internal: rtl_airband process management --
+    #
+    # rtl_airband is launched WITHOUT '-e'. In rtl_airband, '-e' only means
+    # "log to stderr" together with '-F' (foreground); on its own it sets the
+    # log destination to NONE, so every message -- pulse underflows, SoapySDR
+    # device errors, buffer overflows -- was silently dropped (found
+    # 2026-11-14 chasing 43 ms SDR drops). Without '-e' it daemonizes as
+    # before and logs to syslog: `journalctl -t rtl_airband`.
 
     def _restart_rtl_airband(self):
         """Kill and restart rtl_airband processes."""
@@ -1588,7 +1595,7 @@ devices:
             time.sleep(5)
 
             # Start SDR1 (Master)
-            subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
+            subprocess.Popen(['rtl_airband', '-c', self.CONFIG_PATH],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             alive = False
             for _ in range(5):
@@ -1603,7 +1610,7 @@ devices:
             # Start SDR2 (Slave)
             time.sleep(3)
             if os.path.exists(self.CONFIG_PATH_SDR2):
-                subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SDR2],
+                subprocess.Popen(['rtl_airband', '-c', self.CONFIG_PATH_SDR2],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 time.sleep(2)
 
@@ -1635,7 +1642,7 @@ devices:
 
         # Start SDR1 (Master) — capture stderr briefly to diagnose failures
         _sdr1_err = subprocess.PIPE
-        _sdr1_proc = subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH],
+        _sdr1_proc = subprocess.Popen(['rtl_airband', '-c', self.CONFIG_PATH],
                          stdout=subprocess.DEVNULL, stderr=_sdr1_err)
         alive = False
         for _ in range(5):
@@ -1658,7 +1665,7 @@ devices:
         # Start SDR2 (Slave) — must start after Master
         time.sleep(3)
         if os.path.exists(self.CONFIG_PATH_SDR2):
-            subprocess.run(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SDR2],
+            subprocess.run(['rtl_airband', '-c', self.CONFIG_PATH_SDR2],
                            capture_output=True, timeout=10)
             time.sleep(2)
             chk2 = subprocess.run(['pgrep', '-c', 'rtl_airband'], capture_output=True, timeout=2)
@@ -1683,7 +1690,7 @@ devices:
             time.sleep(8)
 
         # Start single rtl_airband
-        subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SINGLE],
+        subprocess.Popen(['rtl_airband', '-c', self.CONFIG_PATH_SINGLE],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         alive = False
         for _ in range(5):
@@ -1870,7 +1877,7 @@ devices:
             time.sleep(5)
 
             # Start single rtl_airband process
-            subprocess.Popen(['rtl_airband', '-e', '-c', self.CONFIG_PATH_SINGLE],
+            subprocess.Popen(['rtl_airband', '-c', self.CONFIG_PATH_SINGLE],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             alive = False
             for _ in range(5):

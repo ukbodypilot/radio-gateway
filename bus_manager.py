@@ -1528,8 +1528,14 @@ class BusManager:
         # which now only drains queues, runs at normal priority, so the thread doing
         # the actual audio work isn't starved by transcription / denoise /
         # web threads under load.
+        #
+        # SCHED_RESET_ON_FORK: Linux threads inherit their creator's policy,
+        # so every thread started from the tick (TranscribeFeed, SinkDrain-*,
+        # PTT-*) silently ran SCHED_RR too and could preempt rtl_airband /
+        # sdrplay_apiService (found 2026-11-14). With the flag, threads this
+        # one creates start as normal SCHED_OTHER threads; only the tick is RT.
         try:
-            os.sched_setscheduler(0, os.SCHED_RR, os.sched_param(10))
+            os.sched_setscheduler(0, os.SCHED_RR | os.SCHED_RESET_ON_FORK, os.sched_param(10))
             print("  [BusManager] Tick thread: SCHED_RR (realtime, priority 10)")
         except (PermissionError, OSError, AttributeError):
             try:
