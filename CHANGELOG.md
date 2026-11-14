@@ -4,6 +4,8 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.7.0] -- 2026-11-13
+
 - **Bus compressor (`C`) on /routing**, after the AGC. The AGC levels whole
   overs; inside an over, loud syllables still peaked ~19 dB above the speech
   and quiet words sat well under it. The compressor (-18 dBFS, 4:1, 6 dB knee,

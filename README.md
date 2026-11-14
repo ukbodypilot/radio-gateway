@@ -48,6 +48,7 @@ More screenshots in `docs/screenshots/`.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Highlights:
 
+- **v5.7.0** (2026-11-13) — New per-bus compressor (`C`) after the AGC: evens out loud and quiet syllables within an over at the same loudness (in-over range 21.9 → 17.6 dB on SDR1), and the clip guard, now after it, went from 68 trims to none. Makeup gain only while speech is present, so gaps stay silent. Routing nodes 240 px wide.
 - **v5.6.2** (2026-11-13) — SDR dropouts fixed: rtl_airband continuous output now on by default, ending the 43 ms holes mid-over (17 per 2 min → 0-1); dual-mode tuners now honour the Continuous checkbox.
 - **v5.6.1** (2026-11-13) — Fart tab renamed Sample Player ("Sample" tab, "▶ Play" button); pitch-spread slider removed, every sample plays as recorded.
 - **v5.6.0** (2026-11-13) — New per-bus AGC (`A`, replaces the bus noise gate): levels quiet and loud stations after denoise, holds between overs, never clips — on SDR2 the spread of over levels went from ~10 dB to ~4 dB. DPDFNet 8 kHz is now the only denoise engine (RNNoise, DeepFilterNet 3 and their libraries removed). Unused features removed: bus delay, bus `V` button, notch filter everywhere. Routing page nodes all one size; SDR channel squelch labelled; long transmissions transcribed whole, cut at a pause.
