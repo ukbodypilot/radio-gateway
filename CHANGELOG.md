@@ -4,6 +4,8 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.8.0] -- 2026-11-14
+
 - **SDR: the last 43 ms dropouts fixed with rate matching in a patched
   rtl_airband.** The RSPduo's real sample rate differs from 2 MS/s by a
   different amount at every start (−156 to +160 ppm measured), while PipeWire
@@ -24,6 +26,7 @@ All notable changes to Radio Gateway.
   Verified on a fresh Arch VM: all 16 steps, patched build installed.
 - **rtl_airband counters in Prometheus** as `rg_airband_*` (stats file read at
   scrape time, stale files skipped, `rg_airband_stats_age_seconds`).
+- Rate matching offered upstream: rtl-airband/RTLSDR-Airband#586.
 - **rtl_airband logs again** (`journalctl -t rtl_airband`): the plugin started
   it with `-e`, which without `-F` sends every log line nowhere.
 - **Only the BusManager tick thread is realtime.** Threads it started
