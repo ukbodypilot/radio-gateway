@@ -168,7 +168,7 @@ class _RoutingCmdsMixin:
     def _routing_cmd_toggle_proc(self, data, busses, connections):
         bus_id = data.get('bus', '')
         filt = data.get('filter', '')
-        if filt not in ('agc', 'hpf', 'lpf', 'dfn', 'pcm', 'mp3', 'loop'):
+        if filt not in ('agc', 'comp', 'hpf', 'lpf', 'dfn', 'pcm', 'mp3', 'loop'):
             return {'ok': False, 'error': f'invalid filter: {filt}'}
         for b in busses:
             if b['id'] == bus_id:
@@ -185,7 +185,7 @@ class _RoutingCmdsMixin:
                     if bus_id in bm._bus_config:
                         bm._bus_config[bus_id][filt] = proc[filt]
                     # Update the live AudioProcessor (create if needed)
-                    if filt in ('agc', 'hpf', 'lpf', 'dfn'):
+                    if filt in ('agc', 'comp', 'hpf', 'lpf', 'dfn'):
                         _bp = bm._bus_processors.get(bus_id)
                         if not _bp:
                             _bp = AudioProcessor(f"bus_{bus_id}", self.gateway.config)

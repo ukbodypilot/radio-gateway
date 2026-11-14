@@ -254,6 +254,9 @@ def bus_toggle_processing(bus_id: str, filter_name: str) -> str:
                      'agc'   — automatic gain control, last in the chain:
                                levels quiet and loud stations toward
                                -20 dBFS, holds between overs
+                     'comp'  — compressor after the AGC (-18 dBFS, 4:1,
+                               5/80 ms, +2 dB makeup only while speech is
+                               present): evens out syllables within an over
                      'pcm'   — feed PCM stream output
                      'mp3'   — feed MP3 stream output
     """

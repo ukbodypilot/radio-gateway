@@ -4,6 +4,18 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Bus compressor (`C`) on /routing**, after the AGC. The AGC levels whole
+  overs; inside an over, loud syllables still peaked ~19 dB above the speech
+  and quiet words sat well under it. The compressor (-18 dBFS, 4:1, 6 dB knee,
+  5/80 ms, +2 dB makeup) evens that out: on 15 min of SDR1 the in-over range
+  went from 21.9 to 17.6 dB at the same loudness, and the clip guard, which
+  now runs after the compressor, went from 68 trims to none. Makeup only
+  applies while a chunk is above -50 dBFS, so gaps between overs are never
+  lifted. Settings picked by ear from a level-matched A/B. Metric:
+  `rg_comp_reduction_db`. `bus_toggle_processing` takes `comp`.
+  `tests/test_bus_comp.py`.
+- **/routing nodes are 240 px wide** (was 224) to fit the `C` button.
+
 ## [5.6.2] -- 2026-11-13
 
 - **SDR audio: no more 43 ms dropouts.** rtl_airband ran with

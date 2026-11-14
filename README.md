@@ -24,7 +24,7 @@ More screenshots in `docs/screenshots/`.
 
 **Radio hardware** — TH-9800 (AIOC USB + CAT control), TH-D75 over Bluetooth, KV4P HT (SA818/DRA818), RSPduo SDR (single-tuner multi-channel *or* dual-tuner master/slave), plus any AIOC/CI-V-equipped radio as a remote endpoint via [Gateway Link](docs/gateway_link.md).
 
-**Audio routing v2.0** — bus-based mixer with a visual drag-and-drop editor at `/routing`. Four bus types (Listen / Solo / Duplex / Simplex Repeater), per-bus processing chain (HPF / LPF / **neural denoise** with DPDFNet 8 kHz / AGC), per-bus PCM + MP3 streaming, NUL sink for recording-only paths. Independent TX/RX muting per radio.
+**Audio routing v2.0** — bus-based mixer with a visual drag-and-drop editor at `/routing`. Four bus types (Listen / Solo / Duplex / Simplex Repeater), per-bus processing chain (HPF / LPF / **neural denoise** with DPDFNet 8 kHz / AGC / compressor), per-bus PCM + MP3 streaming, NUL sink for recording-only paths. Independent TX/RX muting per radio.
 
 **Transcription** — distributed pool. NVIDIA Parakeet TDT 0.6B (int8 ONNX, CPU) by default, Moonshine v2 as the lighter option. Local engine or [remote workers](docs/transcription-pool.md) on other Linux boxes. Silero v5 VAD. Per-utterance frequency tagging and Mumble cross-posting and keyword email alerts.
 

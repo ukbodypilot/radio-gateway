@@ -12,9 +12,9 @@
   /* One outer size for every node — sources, busses and sinks — so the
      auto-arranged columns and rows line up (2026-11-13). 81px is what all
      three kinds measure in Chromium with the 8px vertical frame padding set
-     on .drawflow-node; 224px fits the bus button row with the output socket
+     on .drawflow-node; 240px fits the bus button row with the output socket
      clear. */
-  :root { --node-h: 81px; --node-w: 224px; }
+  :root { --node-h: 81px; --node-w: 240px; }   /* 240: room for the C button (2026-11-13) */
   #drawflow {
     width: 100%;
     height: calc(100vh - 40px);
@@ -47,7 +47,8 @@
   /* Every node is the same outer size (--node-w x --node-h) so auto-arrange
      gives clean columns and rows. Bus button row H L D A | P M R + mute
      measured 217 px with padding (2026-11-13, after G, N and V went; it
-     needed 290 px with them), so 224 px leaves the output socket clear.
+     needed 290 px with them), so 224 px left the output socket clear.
+     The C (compressor) button took it to 240 px, same 11 px clearance.
      Tighter vertical padding on title/box + compact proc buttons + tight mix
      row shaves ~10 px off the DFN-on bus height. */
   .drawflow .drawflow-node[class*="bus-"] .title-box { padding: 1px var(--s-2); line-height: 1.2; }
@@ -795,6 +796,7 @@ function rebuildEditor() {
       + '<button class="proc-btn' + (proc.lpf ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'lpf\')" id="proc-' + b.id + '-lpf" title="Low Pass Filter">L</button>'
       + '<button class="proc-btn' + (proc.dfn ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'dfn\')" id="proc-' + b.id + '-dfn" title="Neural Denoise (DPDFNet 8 kHz)">D</button>'
       + '<button class="proc-btn' + (proc.agc ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'agc\')" id="proc-' + b.id + '-agc" title="Automatic Gain Control: levels quiet and loud stations, after denoise">A</button>'
+      + '<button class="proc-btn' + (proc.comp ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'comp\')" id="proc-' + b.id + '-comp" title="Compressor: evens out loud and quiet syllables within an over, after the AGC">C</button>'
       + '<span class="proc-sep"></span>'
       + '<button class="proc-btn out-btn' + (proc.pcm === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'pcm\')" id="proc-' + b.id + '-pcm" title="Feed PCM stream">P</button>'
       + '<button class="proc-btn out-btn' + (proc.mp3 === true ? ' on' : '') + '" onclick="toggleProc(\'' + b.id + '\',\'mp3\')" id="proc-' + b.id + '-mp3" title="Feed MP3 stream">M</button>'

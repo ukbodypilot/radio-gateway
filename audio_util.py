@@ -496,6 +496,11 @@ class AudioProcessor:
                                       # chain. See _apply_agc.
         self.agc_gain_db = 0.0        # current AGC gain (state)
         self.agc_limited = 0          # chunks where the clip guard cut gain
+        self.enable_comp = False      # Compressor after the AGC. See _apply_comp.
+        self._comp_env = 0.0          # peak envelope (linear, full scale = 1)
+        self._comp_mk_db = 0.0        # gated makeup gain, smoothed (dB)
+        self._comp_g_db = 0.0         # gain of the last 1 ms block (dB)
+        self.comp_reduction_db = 0.0  # most gain reduction in the last chunk
         self.enable_dfn = False       # Neural denoise toggle. "dfn" is kept
                                       # as the config/API key for back-compat;
                                       # actual engine is picked via dfn_engine.
@@ -561,6 +566,10 @@ class AudioProcessor:
         self.lowpass_state = None
         self.gate_envelope = 0.0
         self.agc_gain_db = 0.0
+        self._comp_env = 0.0
+        self._comp_mk_db = 0.0
+        self._comp_g_db = 0.0
+        self.comp_reduction_db = 0.0
         self._dn_stop_worker()
 
     def _dn_stop_worker(self):
@@ -597,7 +606,7 @@ class AudioProcessor:
 
     def process(self, pcm_data):
         """Run the full processing chain on PCM data. Order:
-        HPF → DFN → LPF → Noise Gate → AGC
+        HPF → DFN → LPF → Noise Gate → AGC → Compressor
 
         HPF runs before DFN so subsonic rumble is removed cheaply; LPF
         runs after DFN so the denoiser sees the full band. AGC runs last so it
@@ -624,15 +633,15 @@ class AudioProcessor:
         return self._post_dfn(processed)
 
     def _post_dfn(self, processed):
-        """The stages after DFN: LPF → Noise Gate → AGC."""
+        """The stages after DFN: LPF → Noise Gate → AGC → Compressor."""
         if self.enable_lpf:
             processed = self._apply_lpf(processed)
 
         if self.enable_noise_gate:
             processed = self._apply_noise_gate(processed)
 
-        if self.enable_agc:
-            processed = self._apply_agc(processed)
+        if self.enable_agc or self.enable_comp:
+            processed = self._apply_level(processed)
 
         return processed
 
@@ -654,6 +663,7 @@ class AudioProcessor:
         if self.enable_dfn: active.append('DFN')
         if self.enable_lpf: active.append('LPF')
         if self.enable_agc: active.append('AGC')
+        if self.enable_comp: active.append('Comp')
         return active
 
     # --- Filter implementations ---
@@ -895,22 +905,66 @@ class AudioProcessor:
                               # with 7 dB in-over gain swing (0.5 s: 9.6, pumps)
     AGC_CEILING = 0.89        # peak limit after gain (-1 dBFS)
 
-    def _apply_agc(self, pcm_data):
-        """Speech-gated AGC with a clip guard.
+    # Compressor tuning, chosen by ear 2026-11-13: A/B of 15 min of sdr1 through
+    # NR -> AGC, with and without, level-matched. Against the AGC alone it cut
+    # the in-over range (p90-p10 of 50 ms RMS) from 21.9 to 17.8 dB, lifted the
+    # quietest speech, and cut clip-guard hits 68 -> 8. Makeup +2 dB keeps the
+    # loudness where the AGC alone left it (the version that was chosen).
+    COMP_THRESHOLD_DBFS = -18.0
+    COMP_RATIO = 4.0
+    COMP_KNEE_DB = 6.0
+    COMP_ATTACK_MS = 5.0
+    COMP_RELEASE_MS = 80.0
+    COMP_MAKEUP_DB = 2.0
+    COMP_BLOCK = 48           # envelope resolution in samples (1 ms at 48 kHz)
 
-        Gain moves in dB toward (target - chunk RMS), fast down and slow up,
-        and is ramped linearly across the chunk so it never steps (a step is
-        a click). Chunks below AGC_FLOOR_DBFS leave the gain where it was.
-        If a peak would pass AGC_CEILING the gain drops at once for this
-        chunk, counted in agc_limited / rg_agc_limited_total.
+    def _apply_level(self, pcm_data):
+        """AGC and/or compressor, then the clip guard, in one float pass.
+
+        Order: AGC gain ramp -> compressor -> clip guard. With the compressor
+        on, the guard sees the compressed signal, so it only trims what the
+        compressor let through (with the AGC alone it trims raw peaks).
         """
         x = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
         n = x.size
         if n == 0:
             return pcm_data
-        g0 = self.agc_gain_db
         rms = float(np.sqrt(np.mean(x * x)))
         rms_db = 20.0 * _math.log10(rms / 32767.0) if rms > 0 else -120.0
+        y = x
+        g0 = g1 = 0.0
+        if self.enable_agc:
+            g0, g1 = self._agc_step(n, rms_db)
+            if not self.enable_comp:
+                g0, g1 = self._agc_guard(x, g0, g1)
+            if g0 != 0.0 or g1 != 0.0:
+                y = x * np.power(10.0, np.linspace(g0, g1, n, dtype=np.float32) / 20.0)
+            self.agc_gain_db = g1
+            try:
+                import metrics as _m
+                _m.agc_gain_db.labels(bus=getattr(self, 'name', 'unknown')).set(g1)
+            except Exception:
+                log_exc()
+        if self.enable_comp:
+            # The makeup gate uses the level the compressor actually sees.
+            y = self._apply_comp(y, rms_db + (g0 + g1) / 2.0)
+            peak = float(np.max(np.abs(y)))
+            ceil = self.AGC_CEILING * 32767.0
+            if peak > ceil:
+                y = y * (ceil / peak)
+                self._count_limited()
+        elif not self.enable_agc or (g0 == 0.0 and g1 == 0.0):
+            return pcm_data
+        return np.clip(y, -32768.0, 32767.0).astype(np.int16).tobytes()
+
+    def _agc_step(self, n, rms_db):
+        """Advance the AGC gain over one chunk: returns (start, end) gain in dB.
+
+        Gain moves in dB toward (target - chunk RMS), fast down and slow up,
+        and is ramped linearly across the chunk so it never steps (a step is
+        a click). Chunks below AGC_FLOOR_DBFS leave the gain where it was.
+        """
+        g0 = self.agc_gain_db
         g1 = g0
         if rms_db > self.AGC_FLOOR_DBFS:
             want = max(self.AGC_MIN_GAIN_DB,
@@ -918,31 +972,92 @@ class AudioProcessor:
             dt = n / float(getattr(self.config, 'AUDIO_RATE', 48000) or 48000)
             tc = self.AGC_ATTACK_S if want < g0 else self.AGC_RELEASE_S
             g1 = g0 + (want - g0) * (1.0 - _math.exp(-dt / tc))
-        # Clip guard: the louder end of the ramp must keep the peak under
-        # the ceiling. If not, both ends drop to the safe gain now.
+        return g0, g1
+
+    def _agc_guard(self, x, g0, g1):
+        """Clip guard for the AGC alone: if the louder end of the ramp would
+        put the peak past AGC_CEILING, both ends drop to the safe gain now.
+        Counted in agc_limited / rg_agc_limited_total."""
         peak = float(np.max(np.abs(x)))
         if peak > 0:
             safe_db = 20.0 * _math.log10(self.AGC_CEILING * 32767.0 / peak)
             if max(g0, g1) > safe_db:
                 g0 = g1 = min(g1, safe_db)
-                self.agc_limited += 1
-                try:
-                    import metrics as _m
-                    _m.agc_limited_total.labels(
-                        bus=getattr(self, 'name', 'unknown')).inc()
-                except Exception:
-                    log_exc()
-        self.agc_gain_db = g1
+                self._count_limited()
+        return g0, g1
+
+    def _count_limited(self):
+        self.agc_limited += 1
         try:
             import metrics as _m
-            _m.agc_gain_db.labels(bus=getattr(self, 'name', 'unknown')).set(g1)
+            _m.agc_limited_total.labels(bus=getattr(self, 'name', 'unknown')).inc()
         except Exception:
             log_exc()
-        if g0 == 0.0 and g1 == 0.0:
-            return pcm_data
-        ramp = np.power(10.0, np.linspace(g0, g1, n, dtype=np.float32) / 20.0)
-        y = np.clip(x * ramp, -32768.0, 32767.0)
-        return y.astype(np.int16).tobytes()
+
+    def _apply_agc(self, pcm_data):
+        """AGC alone (kept for callers and tests): see _apply_level."""
+        comp, self.enable_comp = self.enable_comp, False
+        agc, self.enable_agc = self.enable_agc, True
+        try:
+            return self._apply_level(pcm_data)
+        finally:
+            self.enable_comp, self.enable_agc = comp, agc
+
+    def _apply_comp(self, y, level_db):
+        """Feed-forward soft-knee compressor on float samples (int16 scale).
+
+        A peak envelope at 1 ms resolution (attack COMP_ATTACK_MS, release
+        COMP_RELEASE_MS) drives the gain reduction; the per-block gain is
+        interpolated to every sample, carrying the last block's gain across
+        chunks so it never steps. Makeup gain applies only while the chunk
+        is above AGC_FLOOR_DBFS and fades in/out over ~10 ms, so the gaps
+        between overs are never lifted.
+        """
+        B = self.COMP_BLOCK
+        n = y.size
+        nb = n // B
+        if nb == 0:
+            return y
+        blk = np.abs(y[:nb * B]).reshape(nb, B).max(axis=1) / 32767.0
+        a_att = _math.exp(-1.0 / self.COMP_ATTACK_MS)
+        a_rel = _math.exp(-1.0 / self.COMP_RELEASE_MS)
+        env = np.empty(nb, dtype=np.float64)
+        e = self._comp_env
+        for i in range(nb):
+            v = blk[i]
+            a = a_att if v > e else a_rel
+            e = a * e + (1.0 - a) * v
+            env[i] = e
+        self._comp_env = float(e)
+        over = 20.0 * np.log10(env + 1e-9) - self.COMP_THRESHOLD_DBFS
+        k = self.COMP_KNEE_DB
+        slope = 1.0 - 1.0 / self.COMP_RATIO
+        gr = np.where(over <= -k / 2, 0.0,
+             np.where(over >= k / 2, over * slope,
+                      slope * (over + k / 2) ** 2 / (2.0 * k)))
+        mk_want = self.COMP_MAKEUP_DB if level_db > self.AGC_FLOOR_DBFS else 0.0
+        mk = np.empty(nb, dtype=np.float64)
+        m = self._comp_mk_db
+        a_mk = _math.exp(-1.0 / 10.0)
+        for i in range(nb):
+            m = a_mk * m + (1.0 - a_mk) * mk_want
+            mk[i] = m
+        self._comp_mk_db = float(m)
+        g_db = mk - gr
+        self.comp_reduction_db = float(gr.max())
+        try:
+            import metrics as _m
+            _m.comp_reduction_db.labels(
+                bus=getattr(self, 'name', 'unknown')).set(self.comp_reduction_db)
+        except Exception:
+            log_exc()
+        # Block gains sit at block centres; the previous chunk's last gain
+        # anchors sample 0 so the curve is continuous across chunks.
+        xs = np.concatenate(([-B / 2.0], np.arange(nb) * B + B / 2.0))
+        gs = np.concatenate(([self._comp_g_db], g_db))
+        self._comp_g_db = float(g_db[-1])
+        g = np.power(10.0, np.interp(np.arange(n), xs, gs) / 20.0).astype(np.float32)
+        return y * g
 
     def _apply_noise_gate(self, pcm_data):
         """Noise gate with attack/release envelope.

@@ -176,9 +176,16 @@ agc_gain_db = Gauge(
     registry=REGISTRY,
 )
 
+comp_reduction_db = Gauge(
+    'rg_comp_reduction_db',
+    'Most gain reduction the bus compressor applied in the last chunk (dB)',
+    ['bus'],
+    registry=REGISTRY,
+)
+
 agc_limited_total = Counter(
     'rg_agc_limited_total',
-    'Chunks where the bus AGC clip guard cut the gain at once',
+    'Chunks where the bus clip guard (after AGC / compressor) cut the gain at once',
     ['bus'],
     registry=REGISTRY,
 )
