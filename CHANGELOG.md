@@ -4,6 +4,8 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [5.6.2] -- 2026-11-13
+
 - **SDR audio: no more 43 ms dropouts.** rtl_airband ran with
   `continuous = false`, which skips any 125 ms audio block whose squelch reads
   closed and lets its PulseAudio stream drain and re-buffer. Mid-over that
