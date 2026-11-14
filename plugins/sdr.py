@@ -388,12 +388,13 @@ class _TunerCapture:
 
         if data is None:
             # Underrun: zero-fill so the bus sees a chunk every tick instead
-            # of a gap. rtl_airband has `continuous = false` (deliberate, to
-            # avoid noise-floor pollution of routing levels — see bugs.md
-            # 2026-04-05), so parec stalls during squelch-closed and the
-            # queue drains. Emitting silence here decouples bus cadence from
-            # rtl_airband's output cadence. Zero samples → level meter reads
-            # 0, so levels stay clean.
+            # of a gap. With `continuous = true` (the default since
+            # 2026-11-13) rtl_airband writes exact zeros while the squelch is
+            # closed, so this mostly covers start-up and a channel someone set
+            # back to continuous = false, where parec stalls during
+            # squelch-closed and the queue drains. Emitting silence here
+            # decouples bus cadence from rtl_airband's output cadence. Zero
+            # samples → level meter reads 0, so levels stay clean.
             if self.muted or not self.processor:
                 # Keep old behaviour when muted or unconfigured
                 pass
@@ -587,7 +588,7 @@ class SDRPlugin:
         'dab_notch': (bool, False),
         'iq_correction': (bool, True),
         'external_ref': (bool, False),
-        'continuous': (bool, False),
+        'continuous': (bool, True),
         # SDR2 (Tuner 2)
         'frequency2': (float, 462.550),
         'modulation2': (str, 'nfm'),
@@ -601,7 +602,7 @@ class SDRPlugin:
         'lowpass2': (int, 2500),
         'highpass2': (int, 100),
         'channel_bw2': (float, 0.0),
-        'continuous2': (bool, False),
+        'continuous2': (bool, True),
     }
 
     def __init__(self):
@@ -1484,7 +1485,7 @@ devices:
           type = "pulse";
           stream_name = "SDR {self.frequency:.3f} MHz";
           sink = "sdr_capture";
-          continuous = false;
+          continuous = {str(self.continuous).lower()};
         }}
       );
     }}
@@ -1543,7 +1544,7 @@ devices:
           type = "pulse";
           stream_name = "SDR2 {self.frequency2:.3f} MHz";
           sink = "sdr_capture2";
-          continuous = false;
+          continuous = {str(self.continuous2).lower()};
         }}
       );
     }}
@@ -1792,7 +1793,7 @@ devices:
             tau = ch.get('tau', self._single_tau)
             if tau != 200:
                 ch_opts += f'      tau = {int(tau)};\n'
-            continuous = ch.get('continuous', False)
+            continuous = ch.get('continuous', True)
             label = ch.get('label', f'Ch{i+1}')
 
             # Route each channel to its own PipeWire sink for independent audio
@@ -2041,7 +2042,7 @@ devices:
             'lowpass': int(cmd.get('lowpass', 2500)),
             'highpass': int(cmd.get('highpass', 100)),
             'channel_bw': float(cmd.get('channel_bw', 0.0)),
-            'continuous': bool(cmd.get('continuous', False)),
+            'continuous': bool(cmd.get('continuous', True)),
         }
         self._single_channels.append(ch)
         return self._restart_rtl_airband_single()

@@ -4,6 +4,17 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **SDR audio: no more 43 ms dropouts.** rtl_airband ran with
+  `continuous = false`, which skips any 125 ms audio block whose squelch reads
+  closed and lets its PulseAudio stream drain and re-buffer. Mid-over that
+  left holes of exact digital silence, one PipeWire cycle (2048 samples,
+  42.7 ms) or more, up to 17 per 2 minutes on a busy channel (and the NR made
+  them sound worse). `continuous` now defaults to on for single-mode channels
+  and both dual-mode tuners (the dual-mode templates had hard-coded `false`,
+  ignoring the /sdr checkbox). Measured: 17 holes per 2 minutes to 0-1. With
+  the squelch closed rtl_airband writes exact zeros, so routing levels stay at
+  0 between overs. Saved channels keep their own setting.
+
 ## [5.6.1] -- 2026-11-13
 
 - **Sample Player** (was the "Fart" tab on /controls and the dashboard's

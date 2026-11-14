@@ -845,7 +845,7 @@ function renderChannelList(channels) {
    (plugins/sdr.py _write_config_single): a field at its default is not
    written to the config, so rtl_airband's own default applies. */
 var CH_FILTER_DEFAULTS = {ampfactor: 1.0, highpass: 100, lowpass: 2500,
-                          channel_bw: 0, continuous: false};
+                          channel_bw: 0, continuous: true};
 var _chFiltersOpen = new Set();
 
 function _escAttr(s) {
