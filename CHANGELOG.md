@@ -4,6 +4,28 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [6.0.0] -- 2026-11-14
+
+- **Routing page: auto-arrange without crossing wires.** Buses that share a
+  source or a sink form a group; each group is its own block (biggest first,
+  then the buses with no sink), ordered by barycentre sweeps, with the short
+  columns centred on the tall one, so a mixer sits in the middle of its
+  inputs. Live graph: 6 crossings before, 0 after. Runs automatically on
+  first open; nodes added since the last Save go below the saved ones.
+- **Routing page visuals:** wires coloured by group, a faint labelled band
+  per group (`SDR1 → Transcription`), hover a node to light up its whole
+  source → bus → sink path, "Show unused (N)" folds away unwired
+  sources/sinks, flowing wires thicken with level and now include wires drawn
+  after the page loaded.
+- **The `nul` sink is retired (breaking).** A bus never needed a sink: one
+  without still runs, meters, loop-records (R) and streams (P/M). The page
+  shows it with a hollow socket and a stub naming where its audio goes
+  (`web · rec`, or `meter only`), grouped under "Monitor / record only — no
+  sink". Configs are migrated on load (bus→nul wires and the node removed),
+  stale saves are stripped, and `connect` to `nul` is refused
+  (`routing_rules.RETIRED_SINKS`). The `rg_bus_audio_level{bus="nul"}`
+  series is gone.
+
 ## [5.8.0] -- 2026-11-14
 
 - **SDR: the last 43 ms dropouts fixed with rate matching in a patched

@@ -48,6 +48,7 @@ More screenshots in `docs/screenshots/`.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Highlights:
 
+- **v6.0.0** (2026-11-14) — Routing page redesign: auto-arrange groups related buses into labelled, colour-coded blocks with no crossing wires, hover lights up a whole path, unused nodes fold away. The `nul` sink is retired — a bus with no sink simply shows where its audio goes (web / rec / meter only); old configs migrate on load.
 - **v5.8.0** (2026-11-14) — No more SDR dropouts: the RSPduo's sample clock is off by a different amount every start (up to ±160 ppm), which drained rtl_airband's audio stream into a 43 ms gap every few minutes. A patched rtl_airband (`tools/rtl_airband/`, built by the installer) now rate-matches each stream, inaudibly; 30 min with a busy channel: 0 drops. rtl_airband's counters are in Prometheus (`rg_airband_*`) and its log in the journal.
 - **v5.7.0** (2026-11-13) — New per-bus compressor (`C`) after the AGC: evens out loud and quiet syllables within an over at the same loudness (in-over range 21.9 → 17.6 dB on SDR1), and the clip guard, now after it, went from 68 trims to none. Makeup gain only while speech is present, so gaps stay silent. Routing nodes 240 px wide.
 - **v5.6.2** (2026-11-13) — SDR dropouts fixed: rtl_airband continuous output now on by default, ending the 43 ms holes mid-over (17 per 2 min → 0-1); dual-mode tuners now honour the Continuous checkbox.
