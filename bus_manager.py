@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-from routing_rules import find_sink_conflicts
+from routing_rules import find_sink_conflicts, strip_retired_sinks, RETIRED_SINKS
 from pcm_taps import tap_sources, tap_bus_id
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus, additive_mix
 from audio_util import AudioProcessor, pcm_level, update_level, apply_gain
@@ -155,7 +155,6 @@ class BusManager:
             'mumble_tx': 0,
             'transcription': 0,
             'remote_audio_tx': 0,
-            'nul': 0,
         }
         # Per-link-endpoint TX levels. Was gw._link_tx_levels — now owned
         # here, mirrored to gw post-tick.
@@ -869,22 +868,26 @@ class BusManager:
         busses = data.get('busses', [])
         connections = data.get('connections', [])
 
-        # One-time migration: strip any stale 'recording' sink leftovers
-        # from pre-D11 configs (the sink was never implemented in v2.0 —
-        # Loop Recorder's per-bus R button is the actual mechanism). Drops
-        # any bus→recording connection and any Drawflow node with that id.
+        # One-time migration: strip retired sinks (routing_rules.RETIRED_SINKS):
+        # 'recording' (a v1 stub; the per-bus R button is the real recorder)
+        # and 'nul' (retired 2026-11-14 — a bus needs no sink to run). Drops
+        # their bus→sink edges, their entry in each bus's sinks list, and
+        # their Drawflow node.
         _before_conns = len(connections)
-        connections = [c for c in connections
-                       if not (c.get('type') == 'bus-sink' and c.get('to') == 'recording')]
+        connections = strip_retired_sinks(connections)
+        for _b in busses:
+            if any(s in RETIRED_SINKS for s in _b.get('sinks', [])):
+                _b['sinks'] = [s for s in _b['sinks'] if s not in RETIRED_SINKS]
         _drawflow = data.get('layout', {}).get('drawflow', {}).get('Home', {}).get('data', {})
         _stripped_nodes = []
         for _nk in list(_drawflow.keys()):
             _n = _drawflow.get(_nk) or {}
-            if _n.get('class') == 'sink' and (_n.get('data') or {}).get('id') == 'recording':
+            if ('sink' in (_n.get('class') or '').split()
+                    and (_n.get('data') or {}).get('id') in RETIRED_SINKS):
                 del _drawflow[_nk]
                 _stripped_nodes.append(_nk)
         if _before_conns != len(connections) or _stripped_nodes:
-            print(f"  [BusManager] Migration: removed dangling 'recording' sink "
+            print(f"  [BusManager] Migration: removed retired sink(s) "
                   f"({_before_conns - len(connections)} connection(s), "
                   f"{len(_stripped_nodes)} node(s))")
             data['connections'] = connections
@@ -1173,20 +1176,9 @@ class BusManager:
             self._meters['stream_audio_r'] = max(0, int(self._meters['stream_audio_r'] * 0.7))
             self._meters['mumble_tx'] = max(0, int(self._meters['mumble_tx'] * 0.7))
             self._meters['transcription'] = max(0, int(self._meters['transcription'] * 0.7))
-            self._meters['nul'] = max(0, int(self._meters['nul'] * 0.7))
 
         for sink_id, audio in bus_output.audio.items():
             if audio is None:
-                continue
-            # NUL sink: drop audio, but still meter activity for the UI.
-            # Must run before the _muted_sinks check so the level updates
-            # even though NUL is presented as permanently muted.
-            if sink_id == 'nul':
-                _lvl = gw.calculate_audio_level(audio)
-                _prev = self._meters['nul']
-                self._meters['nul'] = update_level(_prev, _lvl)
-                if _st:
-                    _st.record(f'{bus_id}_deliver', 'nul', audio)
                 continue
             if sink_id in ctx.muted_sinks:
                 continue
@@ -1678,14 +1670,12 @@ class BusManager:
             gw.mumble_tx_level = self._meters['mumble_tx']
             gw.transcription_audio_level = self._meters['transcription']
             gw.remote_audio_tx_level = self._meters['remote_audio_tx']
-            gw.nul_audio_level = self._meters['nul']
             try:
                 import metrics as _m
                 _m.bus_audio_level.labels(bus='stream').set(self._meters['stream_audio'] / 100.0)
                 _m.bus_audio_level.labels(bus='mumble_tx').set(self._meters['mumble_tx'] / 100.0)
                 _m.bus_audio_level.labels(bus='transcription').set(self._meters['transcription'] / 100.0)
                 _m.bus_audio_level.labels(bus='remote_audio_tx').set(self._meters['remote_audio_tx'] / 100.0)
-                _m.bus_audio_level.labels(bus='nul').set(self._meters['nul'] / 100.0)
                 for _eln, _lv in self._link_tx_meters.items():
                     _m.bus_audio_level.labels(bus=f'link_{_eln}').set(_lv / 100.0)
             except Exception:
@@ -1790,7 +1780,6 @@ class BusManager:
             # Ensures link/radio TX bars clear after playback even when
             # the routing page is not open (routing/levels is not polled).
             if _tick_num % 4 == 0:
-                self._meters['nul'] = max(0, int(self._meters['nul'] * 0.8))
                 for _ln in list(self._link_tx_meters):
                     self._link_tx_meters[_ln] = max(0, int(self._link_tx_meters[_ln] * 0.8))
                 # Decay each link endpoint's own tx_audio_level (covers all

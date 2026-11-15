@@ -27,9 +27,19 @@ Mixing several sources is a within-bus operation (mix_audio_streams, with the
 ducking and priorities that go with it). Put the sources on one bus instead.
 """
 
-# The null sink discards audio and exists to park a bus, so any number of
-# buses may point at it.
-UNCONSTRAINED_SINKS = frozenset({'nul'})
+# Sinks that no longer exist. 'recording' was a v1 stub; 'nul' (a drop-only
+# sink buses were parked on so they "had a destination") was retired
+# 2026-11-14: a bus with no sink already runs, meters, records (R) and streams
+# (P/M) — the routing page now shows that on the bus itself. Old configs and
+# stale browser tabs may still carry edges to these; they are stripped on
+# load and on save, and never count as a conflict.
+RETIRED_SINKS = frozenset({'recording', 'nul'})
+
+
+def strip_retired_sinks(connections):
+    """Return `connections` without bus->sink edges to a retired sink."""
+    return [c for c in connections or []
+            if not (c.get('type') == 'bus-sink' and c.get('to') in RETIRED_SINKS)]
 
 
 def find_sink_conflicts(connections):
@@ -46,7 +56,7 @@ def find_sink_conflicts(connections):
             continue
         sink = c.get('to')
         bus = c.get('from')
-        if not sink or not bus or sink in UNCONSTRAINED_SINKS:
+        if not sink or not bus or sink in RETIRED_SINKS:
             continue
         by_sink.setdefault(sink, [])
         if bus not in by_sink[sink]:

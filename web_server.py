@@ -965,9 +965,8 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         if gw and getattr(gw, 'transcriber', None):
             sinks.append({'id': 'transcription', 'name': 'Transcription', 'type': 'AI',
                           'enabled': True})
-        # NUL Sink — drops audio without using network/CPU. Always muted.
-        sinks.append({'id': 'nul', 'name': 'NUL Sink', 'type': 'Null',
-                      'enabled': True, 'muted': True})
+        # (The 'nul' sink was retired 2026-11-14: a bus with no sink already
+        # runs, and the routing page shows it as monitor/record only.)
         if gw and getattr(gw, 'remote_audio_server', None):
             sinks.append({'id': 'remote_audio_tx', 'name': 'Remote Audio [TX]', 'type': 'Network',
                           'enabled': bool(gw.remote_audio_server.connected)})

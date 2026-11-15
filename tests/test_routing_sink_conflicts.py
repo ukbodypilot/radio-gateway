@@ -16,7 +16,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from routing_rules import find_sink_conflicts, describe_conflicts  # noqa: E402
+from routing_rules import (find_sink_conflicts, describe_conflicts,  # noqa: E402
+                           strip_retired_sinks, RETIRED_SINKS)
 
 FAIL = []
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +46,7 @@ check("the message says what to do instead",
       describe_conflicts(c))
 
 print("\n2. what must stay legal")
-check("nul takes any number of buses (it discards audio)",
+check("a stale edge to the retired nul sink is never a conflict",
       find_sink_conflicts([bs('a', 'nul'), bs('b', 'nul'), bs('c', 'nul')]) == [])
 check("the dual-channel feed is two buses into two SINKS",
       find_sink_conflicts([bs('sdr2', 'broadcastify_r'),
@@ -109,6 +110,27 @@ check("load path checks for conflicts", 'find_sink_conflicts(connections)' in bm
 check("it warns rather than raising or returning early",
       'WARNING: sink' in bm and 'raise' not in bm.split('find_sink_conflicts(connections)')[1][:400],
       "a routing mistake must not stop the gateway booting")
+
+print("\n7. the retired 'nul' sink (2026-11-14): a bus needs no sink")
+check("nul and recording are retired", {'nul', 'recording'} <= RETIRED_SINKS)
+_cs = [bs('a', 'nul'), bs('b', 'speaker'), {'type': 'source-bus', 'from': 'x', 'to': 'nul'},
+       bs('c', 'recording')]
+check("strip_retired_sinks drops bus->nul / bus->recording edges only",
+      strip_retired_sinks(_cs) == [bs('b', 'speaker'), {'type': 'source-bus', 'from': 'x', 'to': 'nul'}],
+      str(strip_retired_sinks(_cs)))
+check("strip_retired_sinks tolerates None", strip_retired_sinks(None) == [])
+check("save_all strips retired sinks before the conflict check",
+      save_src.index('strip_retired_sinks') < save_src.index('find_sink_conflicts'))
+check("connect refuses a retired sink", 'RETIRED_SINKS' in sink_branch.split('connections.append(conn)')[0])
+check("BusManager migration strips retired sinks on load",
+      'strip_retired_sinks(connections)' in bm and 'RETIRED_SINKS' in bm)
+with open(os.path.join(ROOT, 'web_server.py')) as f:
+    check("the routing status no longer lists a 'nul' sink", "'id': 'nul'" not in f.read())
+with open(os.path.join(ROOT, 'web_pages', 'routing.html')) as f:
+    _html = f.read()
+check("the routing page drops retired sinks an older gateway still lists",
+      "RETIRED_SINKS = ['nul', 'recording']" in _html and 'RETIRED_SINKS.indexOf(s.id) < 0' in _html)
+check("the routing page has no nul special cases left", 'isNul' not in _html and "!== 'nul'" not in _html)
 
 print(f"\n{'ALL PASS' if not FAIL else 'FAILURES: ' + ', '.join(FAIL)}")
 sys.exit(1 if FAIL else 0)

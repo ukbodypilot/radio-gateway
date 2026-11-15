@@ -19,7 +19,23 @@ Pre-v2 the gateway had a hand-written routing matrix in `gateway_core.py`. Addin
 
 `/routing` page — Drawflow canvas, mouse-wheel zoom, drag nodes to position. Click a connection to delete; drag from a source's right port to a bus's left port to create. Active connections animate. Each node has a live VU-style level bar.
 
-**NUL sink** — drops audio without playing it. Use when you want to record a bus (`R` button) without also routing it to anywhere audible.
+**Auto-arrange** lays the graph out as sources | buses | sinks with no crossing wires:
+- Buses that share a source or a sink form one **group**. Each group gets its own block with a faint labelled band (`SDR1 → Transcription`), and its wires get the group's colour.
+- Inside a group, nodes are ordered by barycentre sweeps. The tallest column is stacked and the others are centred on it, so a 4-input mixer sits in the middle of its inputs.
+- The page auto-arranges on first open (no saved layout). Nodes added since the last Save go below the saved ones in their column.
+
+**Hover** a node to light up its whole path (source → bus → sink); everything else dims.
+
+**Show unused (N)** in the toolbar folds away sources and sinks with no wires (remembered per browser).
+
+**Wires** animate while what feeds them has level, and get thicker with that level.
+
+**A bus needs no sink.** A bus with no sink still runs, shows its level, loop-records (`R`) and streams (`P` web listen, `M` MP3). That is a normal end state, so the page shows it on the bus itself:
+- The output socket goes hollow (dashed).
+- A short stub names where the audio does go (`web · rec`), or says `meter only`.
+- These buses share a **Monitor / record only — no sink** band.
+
+The socket still works: drag from it to add a sink. The old `nul` sink, which buses were parked on only so they looked finished, was retired on 2026-11-14. Existing configs are migrated on load: the `bus → nul` wires and the node are removed, and `routing_rules.RETIRED_SINKS` lists it. A stale browser tab that saves `nul` edges has them stripped, and `connect` to `nul` is refused.
 
 ## Per-bus processing
 
@@ -142,8 +158,8 @@ suggests:
 Mixing several sources is a **within-bus** operation (`mix_audio_streams`, with
 the ducking and priorities that go with it). Put the sources on one bus instead.
 
-The null sink (`nul`) is exempt — it discards audio and exists to park a bus,
-so any number of buses may point at it.
+(The retired `nul` sink used to be exempt from this rule. It no longer exists:
+a bus with no sink is simply left unconnected. See Routing UI.)
 
 ## PTT: the sink kind decides the keying mechanism
 

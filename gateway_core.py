@@ -348,10 +348,6 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
         self.transcription_log = None
         self.transcription_audio_level = 0
 
-        # NUL Sink: drop-only destination; tracks activity level but never
-        # delivers audio. Always presented as muted in the UI.
-        self.nul_audio_level = 0
-
         # Web configuration UI
         self.web_config_server = None
 

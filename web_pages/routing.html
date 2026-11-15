@@ -107,10 +107,12 @@
   .drawflow .drawflow-node.sink         { --node-color: var(--t-text-dim); }
 
   /* Connections + sockets */
+  /* --wire is the wire's GROUP colour (set from JS, refreshDecor);
+     --wire-w tracks the live level of what feeds it (level poll). */
   .drawflow .connection .main-path {
-    stroke: var(--t-border-hi);
-    stroke-width: 2;
-    transition: stroke 0.2s;
+    stroke: color-mix(in srgb, var(--wire, var(--t-border-hi)) 55%, var(--t-bg));
+    stroke-width: var(--wire-w, 2px);
+    transition: stroke 0.2s, stroke-width 0.15s, opacity 0.15s;
   }
   .drawflow .connection .main-path.selected {
     stroke: var(--t-accent);
@@ -120,11 +122,10 @@
      along the path. Pure CSS; no layout cost. */
   @keyframes rf-flow { to { stroke-dashoffset: -24; } }
   .drawflow .connection.flowing .main-path {
-    stroke: var(--t-ok);
-    stroke-width: 2.5;
+    stroke: var(--wire, var(--t-ok));
     stroke-dasharray: 6 6;
     animation: rf-flow 1.2s linear infinite;
-    filter: drop-shadow(0 0 3px rgba(93,196,122,0.55));
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--wire, var(--t-ok)) 60%, transparent));
   }
   /* Selected flowing connection: accent color wins (so selection is
      visible on active lines too) while keeping the dashed animation
@@ -400,6 +401,71 @@
     font-size: inherit;
   }
 
+  /* Group bands: one faint labelled panel behind each group of buses that
+     share a source or sink (see graphModel). Inside the zoom/pan canvas,
+     before the wires and nodes, so it never takes a click. */
+  .group-band {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+    border: 1px solid color-mix(in srgb, var(--band, var(--t-border-hi)) 35%, transparent);
+    background: color-mix(in srgb, var(--band, var(--t-border-hi)) 5%, transparent);
+    border-radius: var(--r-md);
+  }
+  .group-band-label {
+    position: absolute; top: 3px; left: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: color-mix(in srgb, var(--band, var(--t-text-mute)) 80%, var(--t-text-mute));
+    white-space: nowrap;
+  }
+
+  /* A bus with no sink is a normal end state (monitor / record / stream
+     only), not a missing wire. Its output socket goes hollow and a short
+     stub says where the audio does go. The socket still works: drag from
+     it to add a sink. */
+  .drawflow .drawflow-node.no-sink .output {
+    border-style: dashed;
+    border-color: var(--t-text-mute);
+    background: transparent;
+  }
+  .dest-stub {
+    position: absolute;
+    left: calc(100% + 14px);
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 1px 6px 1px 6px;
+    border: 1px dashed var(--t-border-hi);
+    border-radius: var(--r-sm);
+    color: var(--t-text-dim);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    pointer-events: auto;
+  }
+  .dest-stub::before {           /* the short line from the socket */
+    content: '';
+    position: absolute;
+    right: 100%;
+    top: 50%;
+    width: 8px;
+    border-top: 1px dashed var(--t-border-hi);
+  }
+  .dest-stub.nowhere { color: var(--t-text-mute); border-color: var(--t-border); }
+
+  /* Unused sources/sinks folded away (toolbar "Show unused"). */
+  .drawflow .drawflow-node.unused-hidden { display: none; }
+
+  /* Hover highlight: the hovered node's whole path stays, the rest dims. */
+  #drawflow.hl-mode .drawflow-node:not(.hl) { opacity: 0.28; }
+  #drawflow.hl-mode .connection:not(.hl) .main-path { opacity: 0.12; }
+  #drawflow.hl-mode .connection.hl .main-path {
+    stroke: var(--wire, var(--t-accent));
+    stroke-width: calc(var(--wire-w, 2px) + 1.5px);
+  }
+  #drawflow.hl-mode .group-band { opacity: 0.5; }
+  .drawflow-node { transition: opacity 0.12s; }
+  .rb.on { border-color: var(--t-accent); color: var(--t-accent); }
+
   /* Utility helpers */
   .flex-spacer { flex-grow: 1; }
   .bus-type-tag {
@@ -420,6 +486,7 @@
   <button class="rb rb-sm rb-danger" onclick="deleteSelected()">Delete</button>
   <span class="hint">Click a connection or node, then Delete (or right-click connection).</span>
   <span class="spacer"></span>
+  <button class="rb rb-sm" id="unusedBtn" onclick="toggleUnused()" title="Sources and sinks with no wires">Show unused</button>
   <button class="rb rb-sm" onclick="autoArrange()">Auto-arrange</button>
   <button class="rb rb-sm rb-primary" onclick="saveRouting()">Save</button>
   <button class="rb rb-sm" onclick="loadRouting()">Reload</button>
@@ -480,197 +547,379 @@ container.addEventListener('touchstart', function(e) {
   if (e.target.closest(_INTERACTIVE_SEL)) e.stopPropagation();
 }, true);
 
-// Auto-arrange: 3-column layout with connection-aware ordering
-// Rules:
-//  1. Sources left, buses middle, sinks right (fixed columns)
-//  2. Connected nodes at top, unconnected at bottom sorted alphabetically
-//  3. No wire crossings — nodes ordered to match bus positions
-//  4. First source → bus → first sink on same horizontal line
-//  5. Additional connected nodes stack below
-//  6. Minimum gap between all nodes
-function autoArrange() {
-  var data = editor.export().drawflow.Home.data;
-  var GAP = 12;
-  var MARGIN = 15;
-  var COL_GAP = 90;
+// ── Graph model ─────────────────────────────────────────────────────────────
+// One read of the live Drawflow graph, shared by auto-arrange, the group
+// bands, wire colours, hover highlighting and the "no sink" decoration.
+//
+// GROUP = the buses that share a source or a sink, plus everything wired to
+// them (a connected component). Kinds:
+//   routed — has at least one sink
+//   local  — has sources but no sink: monitor / record / stream only. That is
+//            a normal state, not a missing wire: the bus still runs, meters,
+//            records (R) and streams (P/M). It used to be parked on a 'nul'
+//            sink (retired 2026-11-14) only so it would look finished.
+//   idle   — a bus with nothing wired to it
+// Sources and sinks wired to nothing are "unused" and foldable.
+var RETIRED_SINKS = ['nul', 'recording'];   // mirror of routing_rules.RETIRED_SINKS
+var GROUP_COLORS = ['#4fd6e6', '#e89d3c', '#b98cf0', '#5dc47a', '#f07a8a',
+                    '#e8d05a', '#6aa8ff', '#4fc9a8', '#d98ad9', '#a8c060'];
+var NODE_H_FALLBACK = 81;
 
-  // ── Step 1: Classify nodes ──
-  var sources = [], buses = [], sinks = [];
-  var nodeInfo = {}; // nid -> {h, w, name}
+// Display name of a source/sink node: the title text before its first child
+// element (node.name is the id, e.g. 'cm5_aioc_tx').
+function _titleText(el, fallback) {
+  var c = el && el.querySelector('.drawflow_content_node');
+  var t = c && c.firstChild && c.firstChild.nodeType === 3 ? c.firstChild.textContent.trim() : '';
+  return t || fallback;
+}
+
+function graphModel() {
+  var data = editor.drawflow.drawflow.Home.data;
+  var info = {}, sources = [], buses = [], sinks = [];
   for (var nid in data) {
     var node = data[nid];
-    var el = document.querySelector('#node-' + nid);
-    var h = el ? el.offsetHeight : 55;
-    var w = el ? el.offsetWidth : 140;
+    var el = document.getElementById('node-' + nid);
     var busNameEl = el ? el.querySelector('.bus-name') : null;
-    var displayName = busNameEl ? busNameEl.textContent : (node.name || node.data.id || '');
-    var entry = { nid: nid, name: displayName, cls: node.class || '', h: h, w: w };
-    nodeInfo[nid] = entry;
-    if (entry.cls.indexOf('source') >= 0) sources.push(entry);
-    else if (entry.cls.indexOf('bus') >= 0) buses.push(entry);
-    else sinks.push(entry);
+    var cls = ' ' + (node.class || '') + ' ';
+    var e = {
+      nid: String(nid), el: el, id: (node.data && node.data.id) || node.name || '',
+      h: (el && el.offsetHeight) || NODE_H_FALLBACK,
+      w: (el && el.offsetWidth) || 240,
+      name: busNameEl ? busNameEl.textContent : _titleText(el, node.name || ''),
+      nbrs: [], col: 0, y: node.pos_y || 0, x: node.pos_x || 0, group: null
+    };
+    if (cls.indexOf(' source ') >= 0) { e.col = 0; sources.push(e); }
+    else if (cls.indexOf('bus-') >= 0) { e.col = 1; buses.push(e); }
+    else { e.col = 2; sinks.push(e); }
+    info[e.nid] = e;
   }
-
-  // ── Step 2: Build connection maps ──
-  var busSourceMap = {}, busSinkMap = {};
-  var srcToBus = {}, sinkToBus = {};
+  var edges = [];
   for (var nid in data) {
     var outputs = data[nid].outputs || {};
-    for (var okey in outputs) {
-      var conns = outputs[okey].connections || [];
+    for (var ok in outputs) {
+      var conns = outputs[ok].connections || [];
       for (var j = 0; j < conns.length; j++) {
-        var fromNid = nid, toNid = conns[j].node;
-        var fromCls = data[fromNid].class || '';
-        var toCls = data[toNid].class || '';
-        if (fromCls.indexOf('source') >= 0 && toCls.indexOf('bus') >= 0) {
-          if (!busSourceMap[toNid]) busSourceMap[toNid] = [];
-          busSourceMap[toNid].push(fromNid);
-          srcToBus[fromNid] = toNid;
-        } else if (fromCls.indexOf('bus') >= 0 && toCls.indexOf('bus') < 0) {
-          if (!busSinkMap[fromNid]) busSinkMap[fromNid] = [];
-          busSinkMap[fromNid].push(toNid);
-          sinkToBus[toNid] = fromNid;
+        var a = info[String(nid)], b = info[String(conns[j].node)];
+        if (!a || !b || a.col === b.col) continue;
+        edges.push({from: a, to: b});
+        if (a.nbrs.indexOf(b) < 0) a.nbrs.push(b);
+        if (b.nbrs.indexOf(a) < 0) b.nbrs.push(a);
+      }
+    }
+  }
+  var byName = function(a, b) { return a.name.localeCompare(b.name); };
+  buses.sort(byName);
+  var seen = {}, groups = [];
+  for (var i = 0; i < buses.length; i++) {
+    if (seen[buses[i].nid]) continue;
+    var g = {cols: [[], [], []], kind: 'routed', color: null, label: ''};
+    var stack = [buses[i]];
+    seen[buses[i].nid] = true;
+    while (stack.length) {
+      var n = stack.pop();
+      g.cols[n.col].push(n);
+      n.group = g;
+      for (var k = 0; k < n.nbrs.length; k++) {
+        if (!seen[n.nbrs[k].nid]) { seen[n.nbrs[k].nid] = true; stack.push(n.nbrs[k]); }
+      }
+    }
+    for (var c = 0; c < 3; c++) g.cols[c].sort(byName);
+    g.kind = g.cols[2].length ? 'routed' : (g.cols[0].length ? 'local' : 'idle');
+    var list = function(col, max) {
+      var names = col.map(function(x) { return x.name; });
+      return names.length > max ? names.slice(0, max).join(' · ') + ' +' + (names.length - max)
+                                : names.join(' · ');
+    };
+    g.label = list(g.cols[1], 3) + (g.cols[2].length ? '  →  ' + list(g.cols[2], 2) : '');
+    groups.push(g);
+  }
+  var size = function(g) { return g.cols[0].length + g.cols[1].length + g.cols[2].length; };
+  var rank = {routed: 0, local: 1, idle: 2};
+  groups.sort(function(a, b) {
+    return (rank[a.kind] - rank[b.kind]) || (size(b) - size(a))
+        || a.cols[1][0].name.localeCompare(b.cols[1][0].name);
+  });
+  for (var i = 0; i < groups.length; i++) {
+    if (groups[i].kind !== 'idle') groups[i].color = GROUP_COLORS[i % GROUP_COLORS.length];
+  }
+  var unused = {src: [], sink: []};
+  for (var i = 0; i < sources.length; i++) if (!sources[i].nbrs.length) unused.src.push(sources[i]);
+  for (var i = 0; i < sinks.length; i++) if (!sinks[i].nbrs.length) unused.sink.push(sinks[i]);
+  unused.src.sort(byName); unused.sink.sort(byName);
+  return {info: info, edges: edges, groups: groups, unused: unused,
+          sources: sources, buses: buses, sinks: sinks};
+}
+
+// Auto-arrange: sources | buses | sinks.
+//  1. Each routed group is its own block, blocks stacked top to bottom
+//     (biggest first), so wires from one group never cross another.
+//  2. Inside a group, order comes from barycentre sweeps (each node moves to
+//     the average position of its neighbours) — the standard way to remove
+//     crossings in a layered graph.
+//  3. The tallest column of a group is packed; the others are centred on
+//     their neighbours, so a 4-input mixer sits in the middle of its inputs
+//     and a single chain is one straight line.
+//  4. Then the monitor/record-only buses (no sink), then idle buses, then the
+//     unused sources/sinks (folded away unless "Unused" is on).
+var GAP = 12, GROUP_GAP = 40, MARGIN_TOP = 30, MARGIN_X = 20, COL_GAP = 90;
+
+function autoArrange() {
+  var m = graphModel();
+  var byName = function(a, b) { return a.name.localeCompare(b.name); };
+
+  var maxW = [0, 0, 0];
+  for (var nid in m.info) maxW[m.info[nid].col] = Math.max(maxW[m.info[nid].col], m.info[nid].w);
+  var colX = [MARGIN_X, 0, 0];
+  colX[1] = colX[0] + maxW[0] + COL_GAP;
+  colX[2] = colX[1] + maxW[1] + COL_GAP;
+
+  var order = {};
+  function setOrder(list) { for (var i = 0; i < list.length; i++) order[list[i].nid] = i; }
+  function sortByBary(list) {
+    var bs = {};
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i], s = 0;
+      for (var k = 0; k < n.nbrs.length; k++) s += order[n.nbrs[k].nid];
+      bs[n.nid] = n.nbrs.length ? s / n.nbrs.length : order[n.nid];
+    }
+    list.sort(function(a, b) { return (bs[a.nid] - bs[b.nid]) || byName(a, b); });
+    setOrder(list);
+  }
+  var placed = {};
+  function pack(list, top) {
+    var y = top;
+    for (var i = 0; i < list.length; i++) {
+      list[i].y = y; placed[list[i].nid] = true; y += list[i].h + GAP;
+    }
+  }
+  // Centre each node on its placed neighbours, keep order, no overlaps.
+  function centreOn(list, top) {
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i], s = 0, c = 0;
+      for (var k = 0; k < n.nbrs.length; k++) {
+        if (placed[n.nbrs[k].nid]) { s += n.nbrs[k].y + n.nbrs[k].h / 2; c++; }
+      }
+      n.y = c ? s / c - n.h / 2 : top;
+    }
+    var y = top;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].y < y) list[i].y = y;
+      y = list[i].y + list[i].h + GAP;
+      placed[list[i].nid] = true;
+    }
+  }
+  function colHeight(list) {
+    var h = 0;
+    for (var i = 0; i < list.length; i++) h += list[i].h + GAP;
+    return h;
+  }
+
+  var curY = MARGIN_TOP, prevKind = null;
+  for (var gi = 0; gi < m.groups.length; gi++) {
+    var g = m.groups[gi], cols = g.cols;
+    // Local groups sit together in one band, so only a small gap between them.
+    if (prevKind !== null) curY += (g.kind === prevKind && g.kind !== 'routed') ? GAP * 2 : GROUP_GAP;
+    prevKind = g.kind;
+    for (var c = 0; c < 3; c++) setOrder(cols[c]);
+    for (var it = 0; it < 6; it++) { sortByBary(cols[0]); sortByBary(cols[2]); sortByBary(cols[1]); }
+    var tall = 1;   // ties prefer the bus column
+    if (colHeight(cols[0]) > colHeight(cols[tall])) tall = 0;
+    if (colHeight(cols[2]) > colHeight(cols[tall])) tall = 2;
+    pack(cols[tall], curY);
+    if (tall !== 1) centreOn(cols[1], curY);
+    if (tall !== 0) centreOn(cols[0], curY);
+    if (tall !== 2) centreOn(cols[2], curY);
+    var bottom = curY;
+    for (var c = 0; c < 3; c++) {
+      for (var i = 0; i < cols[c].length; i++) bottom = Math.max(bottom, cols[c][i].y + cols[c][i].h);
+    }
+    curY = bottom;
+  }
+  if (m.unused.src.length || m.unused.sink.length) {
+    curY += GROUP_GAP;
+    pack(m.unused.src, curY);
+    pack(m.unused.sink, curY);
+  }
+
+  var data = editor.drawflow.drawflow.Home.data;
+  for (var nid in m.info) {
+    var n = m.info[nid];
+    var x = Math.round(colX[n.col]), y = Math.round(n.y);
+    data[nid].pos_x = x;
+    data[nid].pos_y = y;
+    if (n.el) { n.el.style.left = x + 'px'; n.el.style.top = y + 'px'; }
+  }
+  for (var nid in data) {
+    try { editor.updateConnectionNodes('node-' + nid); } catch (e) {}
+  }
+  refreshDecor();
+  setStatus('Auto-arranged — click Save to keep');
+}
+
+// ── Decoration: wire colours, group bands, no-sink stubs, unused fold ───────
+var _wires = [];            // [{el, key}] for the live level poll
+var _hlNid = null;          // node under the pointer (hover highlight)
+var _showUnused = false;
+try { _showUnused = localStorage.getItem('routing.showUnused') === '1'; } catch (e) {}
+
+function _connEl(fromNid, toNid) {
+  return document.querySelector('.connection.node_out_node-' + fromNid + '.node_in_node-' + toNid);
+}
+
+function refreshDecor() {
+  if (!editor || !editor.precanvas) return;
+  var m = graphModel();
+
+  // Wires: group colour + level key for the poll.
+  _wires = [];
+  for (var i = 0; i < m.edges.length; i++) {
+    var e = m.edges[i], el = _connEl(e.from.nid, e.to.nid);
+    if (!el) continue;
+    var g = e.from.group || e.to.group;
+    if (g && g.color) el.style.setProperty('--wire', g.color);
+    else el.style.removeProperty('--wire');
+    _wires.push({el: el, key: e.from.col === 0 ? e.from.id : 'bus_' + e.from.id});
+  }
+
+  // Sinkless buses: a terminal stub saying where the audio does go.
+  for (var i = 0; i < m.buses.length; i++) {
+    var b = m.buses[i];
+    if (!b.el) continue;
+    var hasSink = b.nbrs.some(function(n) { return n.col === 2; });
+    b.el.classList.toggle('no-sink', !hasSink);
+    var stub = b.el.querySelector('.dest-stub');
+    if (hasSink) { if (stub) stub.remove(); continue; }
+    if (!stub) {
+      stub = document.createElement('div');
+      stub.className = 'dest-stub';
+      b.el.appendChild(stub);
+    }
+    var on = function(k) { var x = document.getElementById('proc-' + b.id + '-' + k); return x && x.classList.contains('on'); };
+    var taps = [];
+    if (on('pcm')) taps.push('web');
+    if (on('mp3')) taps.push('mp3');
+    if (on('loop')) taps.push('rec');
+    stub.classList.toggle('nowhere', !taps.length);
+    stub.textContent = taps.length ? taps.join(' · ') : 'meter only';
+    stub.title = taps.length
+      ? 'No sink: this bus still runs. Its audio goes to: '
+        + taps.map(function(t) { return {web: 'web listen (P)', mp3: 'MP3 stream (M)', rec: 'loop recorder (R)'}[t]; }).join(', ')
+        + '. Drag from the socket to add a sink.'
+      : 'No sink and no P/M/R: this bus only shows its level. Drag from the socket to add a sink.';
+  }
+
+  // Unused sources/sinks: fold away unless shown.
+  var nUnused = m.unused.src.length + m.unused.sink.length;
+  var all = m.unused.src.concat(m.unused.sink);
+  for (var nid in m.info) {
+    var n = m.info[nid];
+    if (n.el) n.el.classList.toggle('unused-hidden', !_showUnused && all.indexOf(n) >= 0);
+  }
+  var btn = document.getElementById('unusedBtn');
+  if (btn) {
+    btn.textContent = (_showUnused ? 'Hide' : 'Show') + ' unused (' + nUnused + ')';
+    btn.classList.toggle('on', _showUnused);
+  }
+
+  // Group bands, behind nodes and wires (inside the zoom/pan canvas).
+  var old = editor.precanvas.querySelectorAll('.group-band');
+  for (var i = 0; i < old.length; i++) old[i].remove();
+  function band(nodes, label, color, extraRight) {
+    var vis = nodes.filter(function(n) { return n.el && !n.el.classList.contains('unused-hidden'); });
+    if (!vis.length) return;
+    var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (var i = 0; i < vis.length; i++) {
+      var n = vis[i];
+      x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y);
+      x1 = Math.max(x1, n.x + n.w + (n.el.classList.contains('no-sink') ? (extraRight || 0) : 0));
+      y1 = Math.max(y1, n.y + n.h);
+    }
+    var d = document.createElement('div');
+    d.className = 'group-band';
+    d.style.left = (x0 - 10) + 'px';
+    d.style.top = (y0 - 22) + 'px';
+    d.style.width = (x1 - x0 + 20) + 'px';
+    d.style.height = (y1 - y0 + 32) + 'px';
+    if (color) d.style.setProperty('--band', color);
+    var lab = document.createElement('span');
+    lab.className = 'group-band-label';
+    lab.textContent = label;
+    d.appendChild(lab);
+    editor.precanvas.insertBefore(d, editor.precanvas.firstChild);
+  }
+  var locals = [], idles = [];
+  for (var i = 0; i < m.groups.length; i++) {
+    var g = m.groups[i], nodes = g.cols[0].concat(g.cols[1], g.cols[2]);
+    if (g.kind === 'routed') band(nodes, g.label, g.color, 0);
+    else if (g.kind === 'local') locals = locals.concat(nodes);
+    else idles = idles.concat(nodes);
+  }
+  band(locals, 'Monitor / record only — no sink', null, 110);
+  band(idles, 'Idle buses — nothing wired', null, 110);
+  if (_showUnused) band(all, 'Unused', null, 0);
+
+  applyHighlight();
+}
+
+function toggleUnused() {
+  _showUnused = !_showUnused;
+  try { localStorage.setItem('routing.showUnused', _showUnused ? '1' : '0'); } catch (e) {}
+  refreshDecor();
+}
+
+// Hover: light up the node's whole path (source → bus → sink), dim the rest.
+function applyHighlight() {
+  var root = document.getElementById('drawflow');
+  var hl = {};
+  if (_hlNid && !editor.connection) {
+    var m = graphModel(), n = m.info[_hlNid];
+    if (n) {
+      hl[n.nid] = true;
+      var buses = n.col === 1 ? [n] : n.nbrs;   // a source/sink lights its buses...
+      for (var i = 0; i < buses.length; i++) {
+        hl[buses[i].nid] = true;
+        if (n.col === 1) { for (var k = 0; k < n.nbrs.length; k++) hl[n.nbrs[k].nid] = true; }
+        else {                                  // ...and their far side
+          var far = n.col === 0 ? 2 : 0;
+          for (var k = 0; k < buses[i].nbrs.length; k++) {
+            if (buses[i].nbrs[k].col === far) hl[buses[i].nbrs[k].nid] = true;
+          }
         }
       }
     }
   }
-
-  // ── Step 3: Split connected/unconnected, sort unconnected alphabetically ──
-  var connSources = [], unconnSources = [];
-  var connSinks = [], unconnSinks = [];
-  for (var i = 0; i < sources.length; i++) {
-    if (srcToBus[sources[i].nid]) connSources.push(sources[i]);
-    else unconnSources.push(sources[i]);
-  }
-  for (var i = 0; i < sinks.length; i++) {
-    if (sinkToBus[sinks[i].nid]) connSinks.push(sinks[i]);
-    else unconnSinks.push(sinks[i]);
-  }
-  unconnSources.sort(function(a, b) { return a.name.localeCompare(b.name); });
-  unconnSinks.sort(function(a, b) { return a.name.localeCompare(b.name); });
-
-  // ── Step 4: Column X positions ──
-  var maxSrcW = 0, maxBusW = 0;
-  for (var i = 0; i < sources.length; i++) maxSrcW = Math.max(maxSrcW, sources[i].w);
-  for (var i = 0; i < buses.length; i++) maxBusW = Math.max(maxBusW, buses[i].w);
-  var colSrc = MARGIN;
-  var colBus = colSrc + maxSrcW + COL_GAP;
-  var colSink = colBus + maxBusW + COL_GAP;
-
-  // ── Step 5: Layout bus groups top-down ──
-  // Each bus group: first source, bus, first sink on same Y (straight line)
-  // Additional sources/sinks stack below
-  var positions = {};
-  var curY = MARGIN;  // shared Y cursor across all three columns
-
-  // Sort buses alphabetically by name
-  buses.sort(function(a, b) { return a.name.localeCompare(b.name); });
-
-  var placedSrc = {}, placedSink = {};
-
-  for (var bi = 0; bi < buses.length; bi++) {
-    var b = buses[bi];
-    var bSrcs = busSourceMap[b.nid] || [];
-    var bSnks = busSinkMap[b.nid] || [];
-
-    // First row: first source, bus, first sink — all at curY
-    var rowY = curY;
-    positions[b.nid] = { x: colBus, y: rowY, h: b.h, w: b.w };
-
-    if (bSrcs.length > 0 && nodeInfo[bSrcs[0]]) {
-      var s = nodeInfo[bSrcs[0]];
-      positions[s.nid] = { x: colSrc, y: rowY, h: s.h, w: s.w };
-      placedSrc[s.nid] = true;
+  var on = !!_hlNid && Object.keys(hl).length > 0;
+  root.classList.toggle('hl-mode', on);
+  var nodes = root.querySelectorAll('.drawflow-node');
+  for (var i = 0; i < nodes.length; i++) nodes[i].classList.toggle('hl', on && !!hl[nodes[i].id.replace('node-', '')]);
+  var conns = root.querySelectorAll('.connection');
+  for (var i = 0; i < conns.length; i++) {
+    var c = conns[i], f = null, t = null;
+    for (var k = 0; k < c.classList.length; k++) {
+      var cl = c.classList[k];
+      if (cl.indexOf('node_out_node-') === 0) f = cl.substring(14);
+      else if (cl.indexOf('node_in_node-') === 0) t = cl.substring(13);
     }
-    if (bSnks.length > 0 && nodeInfo[bSnks[0]]) {
-      var s = nodeInfo[bSnks[0]];
-      positions[s.nid] = { x: colSink, y: rowY, h: s.h, w: s.w };
-      placedSink[s.nid] = true;
-    }
-
-    // Find max height of first row to advance curY
-    var rowH = b.h;
-    if (bSrcs.length > 0 && nodeInfo[bSrcs[0]]) rowH = Math.max(rowH, nodeInfo[bSrcs[0]].h);
-    if (bSnks.length > 0 && nodeInfo[bSnks[0]]) rowH = Math.max(rowH, nodeInfo[bSnks[0]].h);
-    curY = rowY + rowH + GAP;
-
-    // Stack additional sources below
-    for (var si = 1; si < bSrcs.length; si++) {
-      var s = nodeInfo[bSrcs[si]];
-      if (s && !placedSrc[s.nid]) {
-        positions[s.nid] = { x: colSrc, y: curY, h: s.h, w: s.w };
-        placedSrc[s.nid] = true;
-        curY = Math.max(curY, curY);
-        // Only advance curY if this source row is taller than what's already there
-        var nextY = positions[s.nid].y + s.h + GAP;
-        if (nextY > curY) curY = nextY;
-      }
-    }
-
-    // Stack additional sinks below (use separate tracker to not conflict)
-    var sinkY = rowY + rowH + GAP;
-    for (var si = 1; si < bSnks.length; si++) {
-      var s = nodeInfo[bSnks[si]];
-      if (s && !placedSink[s.nid]) {
-        positions[s.nid] = { x: colSink, y: sinkY, h: s.h, w: s.w };
-        placedSink[s.nid] = true;
-        sinkY += s.h + GAP;
-        if (sinkY > curY) curY = sinkY;
-      }
-    }
-
-    // Add gap between bus groups
-    curY += GAP;
+    c.classList.toggle('hl', on && !!hl[f] && !!hl[t]);
   }
-
-  // ── Step 6: Append unconnected nodes below ──
-  // Sources
-  for (var i = 0; i < unconnSources.length; i++) {
-    var s = unconnSources[i];
-    if (!placedSrc[s.nid]) {
-      positions[s.nid] = { x: colSrc, y: curY, h: s.h, w: s.w };
-      // Don't advance curY for every unconnected — use column-local Y
-    }
-  }
-  // Layout unconnected sources from curY
-  var ucSrcY = curY;
-  for (var i = 0; i < unconnSources.length; i++) {
-    var s = unconnSources[i];
-    if (!placedSrc[s.nid]) {
-      positions[s.nid] = { x: colSrc, y: ucSrcY, h: s.h, w: s.w };
-      ucSrcY += s.h + GAP;
-    }
-  }
-  // Sinks
-  var ucSinkY = curY;
-  for (var i = 0; i < unconnSinks.length; i++) {
-    var s = unconnSinks[i];
-    if (!placedSink[s.nid]) {
-      positions[s.nid] = { x: colSink, y: ucSinkY, h: s.h, w: s.w };
-      ucSinkY += s.h + GAP;
-    }
-  }
-
-  // ── Step 7: Apply positions to Drawflow ──
-  for (var nid in positions) {
-    var p = positions[nid];
-    var x = Math.round(p.x);
-    var y = Math.round(p.y);
-    editor.drawflow.drawflow.Home.data[nid].pos_x = x;
-    editor.drawflow.drawflow.Home.data[nid].pos_y = y;
-    var el = document.querySelector('#node-' + nid);
-    if (el) {
-      el.style.left = x + 'px';
-      el.style.top = y + 'px';
-    }
-  }
-
-  // Redraw all connections
-  for (var nid in data) {
-    try { editor.updateConnectionNodes('node-' + nid); } catch(e) {}
-  }
-  setStatus('Auto-arranged — click Save to keep');
 }
+container.addEventListener('mouseover', function(e) {
+  var n = e.target.closest && e.target.closest('.drawflow-node');
+  var nid = n ? n.id.replace('node-', '') : null;
+  if (nid !== _hlNid) { _hlNid = nid; applyHighlight(); }
+});
+container.addEventListener('mouseleave', function() { _hlNid = null; applyHighlight(); });
+
+// Keep bands/colours/stubs in step with edits.
+var _decorTimer = null;
+function refreshDecorSoon() {
+  clearTimeout(_decorTimer);
+  _decorTimer = setTimeout(refreshDecor, 30);
+}
+['connectionCreated', 'connectionRemoved', 'nodeMoved', 'nodeRemoved'].forEach(function(ev) {
+  editor.on(ev, refreshDecorSoon);
+});
+editor.on('mouseMove', function() { if (editor.drag) refreshDecorSoon(); });
 
 // Delete selected connection or node
 function deleteSelected() {
@@ -757,13 +1006,28 @@ function rebuildEditor() {
     } catch(e) {}
   }
 
-  var ySource = 20;
-  var yBus = 20;
-  var ySink = 20;
-  var xSource = 50;
-  var xBus = 350;
-  var xSink = 650;
-  var spacing = 75;
+  // Nodes with no saved position (new since the last Save) go BELOW the
+  // saved ones in their column, not on top of them at the old fixed spots.
+  var hasLayout = Object.keys(savedPositions).length > 0;
+  var colStart = {'src-': {x: MARGIN_X, y: MARGIN_TOP}, 'bus-': {x: 350, y: MARGIN_TOP},
+                  'sink-': {x: 680, y: MARGIN_TOP}};
+  for (var key in savedPositions) {
+    var pre = key.substring(0, key.indexOf('-') + 1), sp = savedPositions[key];
+    if (!colStart[pre]) continue;
+    if (!colStart[pre]._seen) { colStart[pre].x = sp.x; colStart[pre].y = sp.y; colStart[pre]._seen = true; }
+    colStart[pre].y = Math.max(colStart[pre].y, sp.y + NODE_H_FALLBACK + GROUP_GAP);
+  }
+  function placeNew(pre) {
+    var c = colStart[pre], p = {x: c.x, y: c.y};
+    c.y += NODE_H_FALLBACK + GAP;
+    return p;
+  }
+  // Retired sinks (an old gateway may still list 'nul') and their wires are
+  // dropped here; the next Save removes them from the config for good.
+  _state.sinks = (_state.sinks || []).filter(function(s) { return RETIRED_SINKS.indexOf(s.id) < 0; });
+  _state.connections = (_state.connections || []).filter(function(c) {
+    return !(c.type === 'bus-sink' && RETIRED_SINKS.indexOf(c.to) >= 0);
+  });
 
   // Add source nodes (output only — right side)
   for (var i = 0; i < _state.sources.length; i++) {
@@ -777,12 +1041,11 @@ function rebuildEditor() {
       + '</div>'
       + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>'
       + '</div>';
-    var pos = savedPositions['src-' + s.id] || {x: xSource, y: ySource};
+    var pos = savedPositions['src-' + s.id] || placeNew('src-');
     var srcCls = 'source' + (s.muted ? ' node-muted' : '');
     var nodeLabel = s.name + (s.port ? '<span class="node-port">:' + s.port + '</span>' : '');
     var nodeId = editor.addNode(s.id, 0, 1, pos.x, pos.y, srcCls, {id: s.id}, nodeLabel + '\n' + html);
     _nodeMap['src-' + s.id] = nodeId;
-    ySource += spacing;
   }
 
   // Add bus nodes (input left, output right)
@@ -823,25 +1086,21 @@ function rebuildEditor() {
          type had, so solo could never line up with the rest. */
       + '<div class="level-bar" id="level-bus_' + b.id + '"><div class="level-fill"></div></div>'
       + '</div>';
-    var pos = savedPositions['bus-' + b.id] || {x: xBus, y: yBus};
+    var pos = savedPositions['bus-' + b.id] || placeNew('bus-');
     var busCls = cls + (b.muted ? ' node-muted' : '') + (proc.loop ? ' recording' : '');
     var nodeId = editor.addNode(b.id, 1, 1, pos.x, pos.y, busCls, {id: b.id, type: b.type}, '<span class="rec-dot" title="Loop recording"></span><span class="bus-name" data-bus="' + b.id + '" ondblclick="renameBus(this,\'' + b.id + '\')">' + b.name + '</span> <span class="bus-type-tag">(' + b.type + ')</span>\n' + html);
     _nodeMap['bus-' + b.id] = nodeId;
-    yBus += spacing + 20;
   }
 
   // Add sink nodes (input only — left side)
   for (var i = 0; i < _state.sinks.length; i++) {
     var s = _state.sinks[i];
     var muted = s.muted ? ' muted' : '';
-    var isNul = (s.id === 'nul');
     var html = '<div class="box">'
       + '<div class="node-controls">'
-      + (isNul
-          ? '<button class="mute-btn muted" disabled title="NUL Sink: always muted" id="mute-' + s.id + '">M</button>'
-          : '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">M</button>'
-            + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" ondblclick="this.value=100;setGain(\'' + s.id + '\',100)" title="Gain (double-click to reset)">'
-            + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>')
+      + '<button class="mute-btn' + muted + '" onclick="toggleMute(\'' + s.id + '\')" id="mute-' + s.id + '">M</button>'
+      + '<input type="range" class="gain-slider" min="0" max="500" value="' + (s.gain || 100) + '" oninput="setGain(\'' + s.id + '\',this.value)" ondblclick="this.value=100;setGain(\'' + s.id + '\',100)" title="Gain (double-click to reset)">'
+      + '<span class="gain-val" id="gain-val-' + s.id + '">' + (s.gain || 100) + '%</span>'
       + '</div>'
       + '<div class="level-bar" id="level-' + s.id + '"><div class="level-fill"></div></div>';
     // Speaker mode selector — injected into title-box via JS after node creation
@@ -849,11 +1108,10 @@ function rebuildEditor() {
       s._speaker_mode = (s.speaker_mode || 'virtual').toLowerCase();
     }
     html += '</div>';
-    var pos = savedPositions['sink-' + s.id] || {x: xSink, y: ySink};
+    var pos = savedPositions['sink-' + s.id] || placeNew('sink-');
     var sinkCls = 'sink' + (s.muted ? ' node-muted' : '');
     var nodeId = editor.addNode(s.id, 1, 0, pos.x, pos.y, sinkCls, {id: s.id}, s.name + '\n' + html);
     _nodeMap['sink-' + s.id] = nodeId;
-    ySink += spacing;
   }
 
   // Inject speaker mode buttons into title-box (top-right)
@@ -901,6 +1159,14 @@ function rebuildEditor() {
     }
   }
   } finally { _restoringGraph = false; }
+
+  // First open (nothing saved yet): arrange instead of leaving a pile.
+  // Otherwise just draw the bands/colours/stubs on the saved layout.
+  // Next frame, so node heights are measured.
+  requestAnimationFrame(function() {
+    if (!hasLayout) { autoArrange(); setStatus('First open: auto-arranged — click Save to keep'); }
+    else refreshDecor();
+  });
 }
 
 // Add a new bus node
@@ -1001,7 +1267,7 @@ editor.on('connectionCreated', function(info) {
   var fromIsBus = fromClass.indexOf('bus') >= 0;
   var toIsBus = toClass.indexOf('bus') >= 0;
   // Use whole-word match so sinks/sources that also carry modifier classes
-  // (e.g. 'sink node-muted' for a permanently-muted NUL sink) still validate.
+  // (e.g. 'sink node-muted') still validate.
   var fromIsSource = (' ' + fromClass + ' ').indexOf(' source ') >= 0;
   var toIsSink = (' ' + toClass + ' ').indexOf(' sink ') >= 0;
   // Valid: source→bus or bus→sink
@@ -1027,20 +1293,17 @@ editor.on('connectionCreated', function(info) {
   if (fromIsBus && toIsSink) {
     // addNode() stores {id: s.id} as the node's data — the sink id itself.
     var sinkId = (toNode.data && toNode.data.id) || '';
-    // NUL discards audio, so any number of buses may park on it.
-    if (sinkId !== 'nul') {
-      var feeders = busFeedersOf(toNode, info.input_class);
-      if (feeders.length > 1) {
-        setTimeout(function() {
-          editor.removeSingleConnection(info.output_id, info.input_id, info.output_class, info.input_class);
-        }, 0);
-        var otherId = null;
-        for (var fi = 0; fi < feeders.length; fi++) {
-          if (feeders[fi] !== String(info.output_id)) { otherId = feeders[fi]; break; }
-        }
-        setStatus('"' + (sinkId || 'that sink') + '" is already fed by ' + busLabel(otherId) +
-                  ' — a sink takes one bus. Put both sources on one bus and let it mix them.');
+    var feeders = busFeedersOf(toNode, info.input_class);
+    if (feeders.length > 1) {
+      setTimeout(function() {
+        editor.removeSingleConnection(info.output_id, info.input_id, info.output_class, info.input_class);
+      }, 0);
+      var otherId = null;
+      for (var fi = 0; fi < feeders.length; fi++) {
+        if (feeders[fi] !== String(info.output_id)) { otherId = feeders[fi]; break; }
       }
+      setStatus('"' + (sinkId || 'that sink') + '" is already fed by ' + busLabel(otherId) +
+                ' — a sink takes one bus. Put both sources on one bus and let it mix them.');
     }
   }
 });
@@ -1228,6 +1491,7 @@ function toggleProc(busId, filter) {
             if (node) node.classList.toggle('recording', !!d.state);
           }
         }
+        if (filter === 'pcm' || filter === 'mp3' || filter === 'loop') refreshDecor();
         if (filter === 'dfn') {
           var row = document.getElementById('dfn-mix-row-' + busId);
           if (row) row.classList.toggle('dim-op', !d.state);
@@ -1341,28 +1605,15 @@ function _lvlRafLoop(ts) {
           if (dfNode) dfNode.classList.toggle('ptt-active', !!ptt[txId]);
         }
       }
-      // Signal-flow animation: mark connections .flowing when the source
-      // (or bus, for bus→sink links) has a non-trivial level. Drawflow
-      // emits connection DOM with node_in_node-<target> + node_out_node-<source>
-      // classes keyed by numeric drawflow ids; _nodeMap translates ours.
-      if (_state && _state.connections && _nodeMap) {
-        for (var j = 0; j < _state.connections.length; j++) {
-          var c = _state.connections[j];
-          var fromId = null, toId = null, lev = 0;
-          if (c.type === 'source-bus') {
-            fromId = _nodeMap['src-' + c.from];
-            toId   = _nodeMap['bus-' + c.to];
-            lev = d[c.from] || 0;
-          } else if (c.type === 'bus-sink') {
-            fromId = _nodeMap['bus-' + c.from];
-            toId   = _nodeMap['sink-' + c.to];
-            lev = d['bus_' + c.from] || 0;
-          }
-          if (fromId && toId) {
-            var cEl = document.querySelector('.connection.node_out_node-' + fromId + '.node_in_node-' + toId);
-            if (cEl) cEl.classList.toggle('flowing', lev > 3);
-          }
-        }
+      // Signal flow: a wire animates while what feeds it has level, and
+      // gets thicker with that level (2 px idle → 5 px at full scale).
+      // _wires comes from the LIVE graph (refreshDecor), so wires drawn
+      // since the page loaded animate too.
+      for (var j = 0; j < _wires.length; j++) {
+        var w = _wires[j], lev = d[w.key] || 0;
+        w.el.classList.toggle('flowing', lev > 3);
+        var px = lev > 3 ? (2 + Math.min(lev, 100) * 0.03).toFixed(1) + 'px' : '';
+        if (w.px !== px) { w.px = px; if (px) w.el.style.setProperty('--wire-w', px); else w.el.style.removeProperty('--wire-w'); }
       }
     })
     .catch(function() {})

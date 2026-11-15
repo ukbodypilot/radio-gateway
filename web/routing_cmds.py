@@ -10,7 +10,8 @@ from log_util import log_exc
 import os
 
 from audio_util import AudioProcessor
-from routing_rules import find_sink_conflicts, describe_conflicts
+from routing_rules import (find_sink_conflicts, describe_conflicts,
+                           strip_retired_sinks, RETIRED_SINKS)
 
 
 class _RoutingCmdsMixin:
@@ -75,6 +76,9 @@ class _RoutingCmdsMixin:
             return {'ok': True}
 
         elif bus and sink:
+            if sink in RETIRED_SINKS:
+                return {'ok': False, 'error': f"'{sink}' was retired: a bus needs no "
+                        "sink to run, meter, record or stream — leave it unconnected"}
             conn = {'type': 'bus-sink', 'from': bus, 'to': sink}
             if conn not in connections:
                 # Refuse BEFORE appending: a sink fed by two buses does not
@@ -117,7 +121,7 @@ class _RoutingCmdsMixin:
     def _routing_cmd_save_all(self, data, busses, connections):
         """Wholesale save from Drawflow — replace connections, update bus
         sources/sinks, reload bus manager, reset stale sink levels."""
-        new_connections = data.get('connections', [])
+        new_connections = strip_retired_sinks(data.get('connections', []))
         bus_updates = data.get('bus_updates', {})
         layout = data.get('layout')
         # The authoritative gate. The editor blocks these at drag time, but
@@ -130,7 +134,7 @@ class _RoutingCmdsMixin:
         for b in busses:
             upd = bus_updates.get(b['id'], {})
             b['sources'] = upd.get('sources', [])
-            b['sinks'] = upd.get('sinks', [])
+            b['sinks'] = [s for s in upd.get('sinks', []) if s not in RETIRED_SINKS]
         self._save_routing_config(busses, new_connections, layout=layout)
 
         if self.gateway and hasattr(self.gateway, 'bus_manager') and self.gateway.bus_manager:
@@ -279,9 +283,6 @@ class _RoutingCmdsMixin:
 
     def _routing_cmd_mute(self, data, busses, connections):
         target_id = data.get('id', '')
-        # NUL sink is permanently muted — ignore toggle.
-        if target_id == 'nul':
-            return {'ok': True, 'muted': True}
         # Sinks without a plugin object — toggle a separate gateway flag
         _sink_ids = ('speaker', 'broadcastify', 'broadcastify_l', 'broadcastify_r',
                       'mumble', 'remote_audio_tx')
