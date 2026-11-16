@@ -33,7 +33,7 @@ import time
 
 from speaker_id import callsign as cs
 
-VERSION = 1
+VERSION = 2          # 2: evidence carries `at`, where in the over the call was said
 SOURCE = 'rules'
 WEIGHT = {'callsign_self': 1.0, 'name_cue_back': 0.3, 'name_cue_fwd': 0.2, 'mention': 0.0}
 MIN_SELF_IDS = 2
@@ -95,7 +95,7 @@ class Identifier:
         self.counters = collections.Counter()
 
     # ── per over ────────────────────────────────────────────────────────
-    def file(self, utt_id, ts, duration, bus, text, count_regular=True):
+    def file(self, utt_id, ts, duration, bus, text, count_regular=True, word_times=None):
         """File the rule evidence for one over (and its neighbours' cues). Returns kinds filed.
 
         count_regular=False for history: the regulars were seeded from the
@@ -106,16 +106,19 @@ class Identifier:
             return []
         self.store.clear_rule_evidence(utt_id, SOURCE)
         filed = []
-        selfs = set()
-        for call, role, _i in cs.extract(text, self.uls.valid):
+        selfs = {}
+        starts = [m.start() for m in cs._TOK.finditer(text)]
+        for call, role, i in cs.extract(text, self.uls.valid):
+            at = self.position(text, starts, i, duration, word_times)
             if count_regular:
                 self.regulars.add(call, ts)
             if role == 'self':
-                selfs.add(self.regulars.fold(call))
+                selfs.setdefault(self.regulars.fold(call), at)
             else:
-                self._add(utt_id, 'mention', call)
+                self._add(utt_id, 'mention', call, at)
         if len(selfs) == 1:                       # two different "self" calls = ambiguous
-            self._add(utt_id, 'callsign_self', selfs.pop())
+            call, at = selfs.popitem()
+            self._add(utt_id, 'callsign_self', call, at)
             filed.append('callsign_self')
         # turn-taking: this over's opening thanks names the PREVIOUS speaker,
         # a pending "go ahead X" from the previous over names THIS speaker.
@@ -135,8 +138,38 @@ class Identifier:
             self.counters[k] += 1
         return filed
 
-    def _add(self, utt_id, kind, value):
-        self.store.add_evidence(utt_id, kind, value, WEIGHT[kind], SOURCE, VERSION)
+    def _add(self, utt_id, kind, value, at=None):
+        self.store.add_evidence(utt_id, kind, value, WEIGHT[kind], SOURCE, VERSION, at)
+
+    EST_BIAS = 2.0
+
+    @staticmethod
+    def position(text, starts, token_index, duration, word_times=None):
+        """Seconds into the over where token `token_index` was said.
+
+        Exact from the ASR's word timings when it sent them (Parakeet does).
+        Otherwise (history, older workers, Moonshine) estimated as the token's
+        share of the characters times the over's length, minus EST_BIAS:
+        measured on 12 real self-IDs that estimate ran 0.4-2.5 s LATE
+        (spelled-out calls take longer to say than their share of the text),
+        so the uncorrected estimate plus a 1 s pre-roll started after the call
+        9 times in 12; corrected, it starts before it every time.
+        """
+        if not text or token_index >= len(starts):
+            return None
+        c = starts[token_index]
+        if word_times:
+            best = None
+            for off, t in word_times:
+                if off <= c:
+                    best = t
+                else:
+                    break
+            if best is not None:
+                return round(float(best), 2)
+        if not duration:
+            return None
+        return round(max(0.0, duration * c / len(text) - Identifier.EST_BIAS), 2)
 
     # ── per voice ───────────────────────────────────────────────────────
     def verdict(self, profile_id):
@@ -234,8 +267,8 @@ class Identifier:
                     rows = [r for r in rows if r[0] <= ceiling]   # live filing owns the rest
                 if not rows:
                     break
-                for uid, ts, bus, freq, text, pid in rows:
-                    self.file(uid, ts, 0.0, bus, text, count_regular=False)
+                for uid, ts, bus, freq, text, pid, dur in rows:
+                    self.file(uid, ts, dur or 0.0, bus, text, count_regular=False)
                     upto = uid
                     n += 1
                     if pid:

@@ -108,6 +108,29 @@ def _host_fan_rpm():
 # Local engine
 # ---------------------------------------------------------------------------
 
+def word_times(tokens, timestamps, text):
+    """[[char_offset_in_text, seconds]] for each word start, from Parakeet's timed tokens.
+
+    Tokens carry their leading space (' No', ',', ' se', 'p'...); the joined
+    tokens equal the text up to leading whitespace. Speaker ID uses this to
+    play a clip from just before a callsign: the old estimate (a word's share
+    of the characters times the over's length) ran ~2 s late on spelled-out
+    calls, which take longer to say than their share of the text.
+    """
+    joined = ''.join(tokens)
+    lead = len(joined) - len(joined.lstrip())
+    if joined.strip() != (text or '').strip():
+        return None
+    out, pos = [], 0
+    for tok, t in zip(tokens, timestamps):
+        if pos == 0 or tok[:1].isspace():
+            off = pos + (len(tok) - len(tok.lstrip())) - lead
+            if off >= 0:
+                out.append([off, round(float(t), 2)])
+        pos += len(tok)
+    return out
+
+
 def _pick_worker(pool: list):
     """Return the least-busy ready engine for the next utterance.
 
@@ -178,16 +201,28 @@ class LocalInferenceEngine:
 
     def transcribe(self, audio_16k: np.ndarray) -> str:
         """Transcribe float32 16 kHz audio → text string."""
+        return self.transcribe_timed(audio_16k)[0]
+
+    def transcribe_timed(self, audio_16k: np.ndarray):
+        """(text, word_times or None). Parakeet gives word timings for free."""
         if self._model is None:
-            return ''
+            return '', None
         if self.engine == 'moonshine2':
             with self._call_lock:
                 transcript = self._model.transcribe_without_streaming(
                     audio_16k.astype(np.float32).tolist(), 16000)
-            return ' '.join(l.text.strip() for l in transcript.lines if l.text and l.text.strip())
+            return ' '.join(l.text.strip() for l in transcript.lines if l.text and l.text.strip()), None
         elif self.engine == 'parakeet':
-            return self._model.recognize(audio_16k.astype(np.float32), sample_rate=16000) or ''
-        return ''
+            if getattr(self, '_model_ts', None) is None:
+                self._model_ts = self._model.with_timestamps()
+            r = self._model_ts.recognize(audio_16k.astype(np.float32), sample_rate=16000)
+            text = (r.text if r else '') or ''
+            try:
+                wt = word_times(r.tokens, r.timestamps, text) if r else None
+            except Exception:
+                wt = None
+            return text, wt
+        return '', None
 
     def record_stat(self, duration: float, proc_time: float):
         """Track running ratio for this engine. Called from dispatcher after each call."""
@@ -280,6 +315,10 @@ class RemoteEngine:
 
     def transcribe(self, audio_16k: np.ndarray) -> str:
         """POST float32 audio bytes to /transcribe, return text."""
+        return self.transcribe_timed(audio_16k)[0]
+
+    def transcribe_timed(self, audio_16k: np.ndarray):
+        """(text, word_times or None); an older worker sends no word_times."""
         data = audio_16k.astype(np.float32).tobytes()
         req = urllib.request.Request(
             f'{self._url}/transcribe',
@@ -290,10 +329,10 @@ class RemoteEngine:
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 result = json.loads(resp.read().decode())
-                return result.get('text', '')
+                return result.get('text', ''), result.get('word_times')
         except Exception as e:
             print(f'  [RemoteEngine] transcribe error: {e}', flush=True)
-            return ''
+            return '', None
 
     def get_status(self) -> dict:
         """Return cached status from last /status poll plus reachability."""

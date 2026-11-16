@@ -188,7 +188,10 @@ class SpeakerID:
             raise RuntimeError('speaker ID is not running')
         box, done = {}, threading.Event()
         with self._lock:
-            self._q.append(('call', fn, box, done))
+            # Front of the queue: a click waits for at most the over in hand,
+            # not for every over queued behind it (2026-11-15: a confirm sat
+            # behind 7 overs, got clicked 4 times and applied 4 times).
+            self._q.appendleft(('call', fn, box, done))
         self._evt.set()
         if not done.wait(timeout):
             raise TimeoutError('speaker ID worker is busy; try again')
@@ -435,7 +438,7 @@ class SpeakerID:
                              freq=result.get('freq') or None, source=result.get('source') or None)
         self.counters['texted'] += 1
         if self._ident:
-            filed = self._ident.file(row, ts, dur, bus, text)
+            filed = self._ident.file(row, ts, dur, bus, text, word_times=result.get('word_times'))
             if filed:
                 self.counters['evidence_overs'] += 1
             # A self-ID on this voice, or a cue that landed on a neighbour,

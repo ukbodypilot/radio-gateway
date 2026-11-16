@@ -1323,7 +1323,10 @@ class RadioTranscriber:
         """Run ASR inference on one utterance. Called in ThreadPoolExecutor."""
         try:
             _t0 = time.monotonic()
-            text = engine.transcribe(item['audio_16k'])
+            if hasattr(engine, 'transcribe_timed'):
+                text, _wt = engine.transcribe_timed(item['audio_16k'])
+            else:
+                text, _wt = engine.transcribe(item['audio_16k']), None
             _proc_time = time.monotonic() - _t0
             _duration = item['duration']
             _ratio = _proc_time / _duration if _duration > 0 else 0
@@ -1356,6 +1359,11 @@ class RadioTranscriber:
                     'time_str': time.strftime('%H:%M:%S', time.localtime(item['start_time'])),
                     'uid': item.get('uid'),
                 }
+                # Word timings against the STRIPPED text (speaker ID plays a
+                # clip from just before a callsign).
+                if _wt:
+                    _lead = len(text) - len(text.lstrip())
+                    result['word_times'] = [[o - _lead, t] for o, t in _wt if o >= _lead]
             # Track per-engine ratio (LocalInferenceEngine only — RemoteEngine
             # gets its avg_ratio from the worker's /status payload).
             if hasattr(engine, 'record_stat'):

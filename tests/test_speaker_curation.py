@@ -85,6 +85,10 @@ p = st.profile(A)
 check("a label ties the voice to an identity, marked human", p['label_source'] == 'human'
       and st.identity_call(p['identity_id']) == 'KX7QZA')
 check("the identity takes the FCC name when none is typed", st.identity(p['identity_id'])['name'] == 'Quentin Ames')
+n_audit = st.last_audit_id()
+again = cur.label(A, callsign='KX7QZA')
+check("repeating the same label changes nothing and is not re-audited (double clicks)",
+      again.get('unchanged') and st.last_audit_id() == n_audit, str(again))
 cur.label(C, name='Gus')
 check("a name-only label works", st.identity(st.profile(C)['identity_id'])['name'] == 'Gus')
 try:

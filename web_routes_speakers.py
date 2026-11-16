@@ -109,11 +109,18 @@ def _profile(sid, pid):
         if r:
             licence = dict(zip(('status', 'name', 'city', 'state', 'class'), r))
     brief = next((x for x in sid.store.list_profiles() if x['id'] == pid), {})
+    overs = sid.store.profile_overs(pid, 60)
+    calls = sid.store.callsign_at([o['id'] for o in overs])
+    for o in overs:
+        if o['id'] in calls:
+            o['callsign'], o['at'] = calls[o['id']]
+    v = _verdict(sid, pid)
+    from speaker_id.review import _samples
+    top = (ident or {}).get('callsign') or (v['candidates'][0]['callsign'] if v and v['candidates'] else None)
     return {'profile': {**p, **{k: brief.get(k) for k in ('overs', 'first', 'last', 'seconds',
                                                           'buses', 'freqs')}},
-            'identity': ident, 'licence': licence, 'verdict': _verdict(sid, pid),
-            'overs': sid.store.profile_overs(pid, 60),
-            'samples': [o['id'] for o in sid.store.profile_overs(pid, 5, best=True)]}
+            'identity': ident, 'licence': licence, 'verdict': v, 'overs': overs,
+            'samples': _samples(sid.store, pid, {'callsign': top}, k=5)}
 
 
 def _clip(handler, sid, utt_id):

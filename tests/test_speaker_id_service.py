@@ -154,7 +154,15 @@ dt = time.perf_counter() - t0
 check("200 handovers to a stuck worker return at once", dt < 0.5, f'{dt:.3f}s')
 check("the overflow is dropped and counted", s.counters['dropped'] >= 200 - s._q_max - 1,
       str(dict(s.counters)))
+waiting = len(s._q)
+before = []
+t = threading.Thread(target=lambda: before.append(s.run_on_worker(lambda _s: _s.counters['processed'], timeout=10)))
+t.start()
+time.sleep(0.2)
 s._embedder.block.set()
+t.join(10)
+check("a curation click jumps the queue: it runs after at most the over in hand",
+      waiting > 10 and before and before[0] <= 1, f'{waiting} waiting, ran after {before}')
 s.stop()
 
 print("\n6. the transcriber's audio boost is undone")

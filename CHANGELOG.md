@@ -4,6 +4,16 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Speakers page: play from just before the callsign, and clicks that land.**
+  Play buttons marked ▶⇥ start 1 s before the call; callsign questions play
+  overs where the voice actually says it. Positions come from Parakeet's
+  word timings (now passed through the transcriber and the worker's
+  `/transcribe` as `word_times`); for history and engines without timings,
+  the text-share estimate is shifted 2 s earlier (measured 0.4-2.5 s late on
+  12 real self-IDs). Curation clicks jump the speaker-ID queue (a confirm sat
+  behind 7 overs and was clicked, and applied, 4 times), buttons show
+  "Saving…", and a repeated identical label is a no-op.
+
 - **Speaker ID, part 2: callsigns, curation, learning loop, offload.**
   See `docs/speaker-id.md`.
   - *Callsign evidence:* each transcript is read for callsigns (written out,

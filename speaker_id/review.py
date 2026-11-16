@@ -55,10 +55,29 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
     items.extend(_similar_pairs(store, model, profiles, same_lo, same_hi))
     items.sort(key=lambda i: -i['score'])
     for it in items[:limit]:
-        it['samples'] = {pid: [o['id'] for o in store.profile_overs(pid, 3, best=True)]
-                         for pid in it['profiles']}
+        it['samples'] = {pid: _samples(store, pid, it) for pid in it['profiles']}
         it['voices'] = {pid: _brief(profiles.get(pid)) for pid in it['profiles']}
     return items[:limit]
+
+
+def _samples(store, pid, item, k=3):
+    """Clips to listen to: for a callsign question, overs where the voice SAYS that call,
+    each with `at` (seconds in) so playback can start just before it."""
+    calls = [item.get('callsign')] if item.get('callsign') else \
+        [c['callsign'] for c in item.get('candidates') or []]
+    out, seen = [], set()
+    for call in calls:
+        for uid, at in store.callsign_overs(pid, call, k):
+            if uid not in seen and len(out) < k:
+                out.append({'id': uid, 'at': at, 'callsign': call})
+                seen.add(uid)
+    for o in store.profile_overs(pid, k, best=True):
+        if len(out) >= k:
+            break
+        if o['id'] not in seen:
+            out.append({'id': o['id'], 'at': None})
+            seen.add(o['id'])
+    return out
 
 
 def _similar_pairs(store, model, profiles, lo, hi):

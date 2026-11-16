@@ -8,7 +8,8 @@ the ASR inference step is remote.
 
 Endpoints:
   POST /transcribe   body: raw float32 LE bytes at 16 kHz
-                     response: {"text": "...", "proc_time": 1.23}
+                     response: {"text": "...", "proc_time": 1.23,
+                                "word_times": [[char_offset, secs], ...] or null}
   POST /embed?model=eres2net
                      body: raw float32 LE bytes at 16 kHz (speaker ID)
                      response: {"embedding": [...], "model": "...", "proc_time": 0.6}
@@ -267,13 +268,14 @@ class Handler(BaseHTTPRequestHandler):
 
         t0 = time.monotonic()
         try:
-            text = eng.transcribe(audio_16k)
+            text, wt = (eng.transcribe_timed(audio_16k) if hasattr(eng, 'transcribe_timed')
+                        else (eng.transcribe(audio_16k), None))
             proc_time = round(time.monotonic() - t0, 3)
             with _stats_lock:
                 _stats['total'] += 1
                 _stats['total_proc_secs'] += proc_time
                 _stats['total_audio_secs'] += audio_secs
-            self._send(200, {'text': text, 'proc_time': proc_time})
+            self._send(200, {'text': text, 'proc_time': proc_time, 'word_times': wt})
         except Exception as e:
             with _stats_lock:
                 _stats['errors'] += 1

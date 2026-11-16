@@ -44,6 +44,10 @@ class Curator:
         name = (name or '').strip()
         if not callsign and not name:
             raise CurationError('give a callsign or a name')
+        cur_ident = self.store.identity(p['identity_id']) if p['identity_id'] else None
+        if (cur_ident and p['label_source'] == 'human' and notes is None
+                and cur_ident['callsign'] == callsign and (not name or cur_ident['name'] == name)):
+            return {'profile_id': p['id'], 'identity_id': p['identity_id'], 'unchanged': True}
         if callsign:
             uls_name = ''
             if self.uls is not None and self.uls.ready():

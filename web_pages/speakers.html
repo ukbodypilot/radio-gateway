@@ -136,8 +136,25 @@ function voiceName(id) {
 }
 
 // ── audio ──────────────────────────────────────────────────────────────────
-function playBtn(uttId) {
-  return '<button class="rb rb-sm play" data-play="' + uttId + '" title="Play this over">▶</button>';
+// `at` = seconds into the over where the callsign was said (estimated from its
+// place in the transcript; the ASR gives no word timings). Playback starts
+// PREROLL seconds before it, so you hear the call without the whole over.
+var PREROLL = 1.0;
+var _clipUrls = {};
+function playBtn(uttId, at) {
+  var has = at != null && at > PREROLL;
+  return '<button class="rb rb-sm play" data-play="' + uttId + '"' + (has ? ' data-at="' + at + '"' : '') +
+         ' title="' + (has ? 'Play from just before the callsign (~' + Math.round(at) + ' s in)' : 'Play this over') +
+         '">' + (has ? '▶⇥' : '▶') + '</button>';
+}
+// Fetched as a blob: an object URL is fully seekable whatever the server
+// does with Range requests, so jumping to the callsign always works.
+function clipUrl(id) {
+  if (_clipUrls[id]) return Promise.resolve(_clipUrls[id]);
+  return fetch('/speakers/clip?id=' + encodeURIComponent(id)).then(function(r) {
+    if (!r.ok) throw new Error('no clip');
+    return r.blob();
+  }).then(function(b) { return (_clipUrls[id] = URL.createObjectURL(b)); });
 }
 document.addEventListener('click', function(e) {
   var b = e.target.closest && e.target.closest('[data-play]');
@@ -145,27 +162,55 @@ document.addEventListener('click', function(e) {
   e.stopPropagation();
   var a = document.getElementById('player');
   var id = b.getAttribute('data-play');
+  var at = parseFloat(b.getAttribute('data-at'));
+  var from = isFinite(at) ? Math.max(0, at - PREROLL) : 0;
   document.querySelectorAll('.play.on').forEach(function(x) { x.classList.remove('on'); });
   if (a.getAttribute('data-id') === id && !a.paused) { a.pause(); return; }
-  a.src = '/speakers/clip?id=' + encodeURIComponent(id);
-  a.setAttribute('data-id', id);
   b.classList.add('on');
-  a.play().catch(function() { b.classList.remove('on'); });
+  clipUrl(id).then(function(url) {
+    a.setAttribute('data-id', id);
+    if (a.src !== url) a.src = url;
+    var go = function() { try { a.currentTime = from; } catch (x) {} a.play().catch(function() { b.classList.remove('on'); }); };
+    if (a.readyState >= 1 && a.src === url) go(); else a.onloadedmetadata = function() { a.onloadedmetadata = null; go(); };
+  }).catch(function() { b.classList.remove('on'); b.title = 'clip no longer kept'; });
   a.onended = function() { b.classList.remove('on'); };
 }, true);
 
 // ── actions ────────────────────────────────────────────────────────────────
-function act(body, msg) {
+// The button that started an action: it (and its card) shows "Saving…" until
+// the change is done, so a click is never repeated for want of feedback.
+var _lastBtn = null;
+document.addEventListener('click', function(e) {
+  _lastBtn = e.target.closest ? e.target.closest('button') : null;
+}, true);
+function act(body) {
+  var btn = _lastBtn, card = btn && btn.closest('.card');
+  var scope = card ? card.querySelectorAll('button, input') : (btn ? [btn] : []);
+  var label = btn ? btn.textContent : '';
+  if (btn && btn.disabled) return Promise.resolve({ok: false});
+  Array.prototype.forEach.call(scope, function(x) { x.disabled = true; });
+  if (btn) btn.textContent = 'Saving…';
   return fetch('/speakers/api/action', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                         body: JSON.stringify(body)})
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      if (!d.ok) { alert(d.error || 'failed'); return d; }
+      if (!d.ok) {
+        Array.prototype.forEach.call(scope, function(x) { x.disabled = false; });
+        if (btn) btn.textContent = label;
+        alert(d.error || 'failed');
+        return d;
+      }
+      if (card) card.remove();                  // answered: off the queue at once
+      else if (btn) { btn.textContent = label; btn.disabled = false; }
       refresh();
       if (_sel) openVoice(_sel);
       return d;
     })
-    .catch(function(e) { alert('request failed: ' + e); });
+    .catch(function(e) {
+      Array.prototype.forEach.call(scope, function(x) { x.disabled = false; });
+      if (btn) btn.textContent = label;
+      alert('request failed: ' + e);
+    });
 }
 function labelVoice(pid, call, name) {
   call = (call || '').trim(); name = (name || '').trim();
@@ -192,7 +237,7 @@ function card(it, i) {
   var voices = it.profiles.map(function(pid) {
     var s = (it.samples && it.samples[pid]) || [];
     return '<span class="vchip"><a onclick="openVoice(' + pid + ')">' + h(voiceName(pid)) + '</a>' +
-           s.map(playBtn).join('') + '</span>';
+           s.map(function(x) { return playBtn(x.id, x.at); }).join('') + '</span>';
   }).join('');
   var a = '', pid = it.profiles[0], f = 'q' + i;
   var form = '<input class="txt call" id="' + f + '-call" placeholder="callsign">' +
@@ -268,10 +313,11 @@ function openVoice(pid) {
                    ' · class ' + h(L.class || '?') + (L.status === 'A' ? '' : ' · <span class="err">not active</span>') + '</p>';
     if ((v.candidates || []).length > 1) html += '<p class="muted">Other calls heard from this voice: ' +
         v.candidates.slice(1).map(function(c) { return h(c.callsign) + ' ' + c.weight + 'x'; }).join(', ') + '</p>';
-    html += '<div class="muted">Best samples</div><div class="row-actions">' + (d.samples || []).map(playBtn).join('') + '</div>';
+    html += '<div class="muted">Samples (▶⇥ starts just before the callsign)</div><div class="row-actions">' +
+            (d.samples || []).map(function(x) { return playBtn(x.id, x.at); }).join('') + '</div>';
     html += '</div><div><div class="muted">Recent overs (▶ play · ⇄ belongs to another voice)</div><div class="overs">' +
       (d.overs || []).map(function(o) {
-        return '<div class="over"><span class="t">' + when(o.ts) + '</span>' + (o.clip ? playBtn(o.id) : '<span></span>') +
+        return '<div class="over"><span class="t">' + when(o.ts) + '</span>' + (o.clip ? playBtn(o.id, o.at) : '<span></span>') +
                '<span class="x">' + h(o.text || '(no transcript)') + ' <span class="muted">' + h(o.bus) +
                (o.score != null ? ' · ' + Number(o.score).toFixed(2) : '') + '</span></span>' +
                '<button class="rb rb-sm" title="Move this over to another voice" onclick="moveOver(' + o.id + ')">⇄</button></div>';

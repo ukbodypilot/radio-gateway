@@ -172,5 +172,36 @@ check("history alone can name a voice", st2.profile_labels().get(p2, ('',))[0] =
 check("a second pass files nothing (resumable, no duplicates)", idf2.backfill(5, st2.max_utterance_id()) == 0
       and st2._conn.execute("SELECT COUNT(*) FROM evidence WHERE kind='callsign_self'").fetchone()[0] == 2)
 
+print("\n8. where in the over the call was said (play from just before it)")
+from transcribe_engine import word_times  # noqa: E402
+toks = [' This', ' is', ' K', 'X', '7', 'Q', 'Z', 'A', ' clear', '.']
+times = [0.5, 0.8, 4.0, 4.1, 4.3, 4.6, 4.8, 5.0, 6.2, 6.5]
+txt = ''.join(toks).strip()
+wt = word_times(toks, times, txt)
+check("Parakeet tokens -> word start offsets and times", wt == [[0, 0.5], [5, 0.8], [8, 4.0], [15, 6.2]], str(wt))
+check("tokens that don't rebuild the text give no timings (never wrong ones)",
+      word_times(toks, times, 'something else') is None)
+starts = [m.start() for m in cs._TOK.finditer(txt)]
+i = [x for x in cs.extract(txt, U.valid) if x[1] == 'self'][0][2]
+check("with word timings the position is exact", Identifier.position(txt, starts, i, 7.0, wt) == 4.0)
+est = Identifier.position(txt, starts, i, 7.0, None)
+check("without them it is estimated, shifted early by the measured bias",
+      est == round(max(0.0, 7.0 * 8 / len(txt) - Identifier.EST_BIAS), 2), str(est))
+st3 = SpeakerStore(os.path.join(tmp, 'pos.db'))
+idf3 = Identifier(st3, U)
+p3 = st3.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+u3 = st3.add_utterance(ts=1.0, bus='sdr1', source='', freq='', duration=7.0, model='fake', emb=None,
+                       profile_id=p3, score=0.9, decision='matched', clip='d/1.opus')
+st3.set_text(u3, txt)
+idf3.file(u3, 1.0, 7.0, 'sdr1', txt, word_times=wt)
+check("the self-ID evidence carries its position", st3.callsign_at([u3]) == {u3: ('KX7QZA', 4.0)},
+      str(st3.callsign_at([u3])))
+from speaker_id.review import _samples  # noqa: E402
+u4 = st3.add_utterance(ts=2.0, bus='sdr1', source='', freq='', duration=3.0, model='fake', emb=None,
+                       profile_id=p3, score=0.99, decision='matched', clip='d/2.opus')
+sm = _samples(st3, p3, {'callsign': 'KX7QZA'})
+check("callsign questions play overs where the call is SAID first, with the position",
+      sm[0] == {'id': u3, 'at': 4.0, 'callsign': 'KX7QZA'} and sm[1]['id'] == u4, str(sm))
+
 print('FAILED' if failed else 'OK')
 sys.exit(1 if failed else 0)
