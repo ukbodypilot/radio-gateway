@@ -278,6 +278,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         '/recorder': 'recorder.html',
         '/transcribe': 'transcribe.html',
         '/txlog': 'txlog.html',
+        '/speakers': 'speakers.html',
         '/logs': 'logs.html',
         '/gps': 'gps.html',
         '/repeaters': 'repeaters.html',
@@ -293,7 +294,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
 
     # ── Route tables ─────────────────────────────────────────────
     # Values are 'module:function' — g=web_routes_get,
-    # s=web_routes_stream, p=web_routes_post, l=web_routes_loop.
+    # s=web_routes_stream, p=web_routes_post, l=web_routes_loop,
+    # k=web_routes_speakers.
     # Modules resolve at request time (imports are cached), same as
     # the old elif chain. Lookup order: EXACT (full path) →
     # QEXACT (query string stripped) → PREFIX (ordered startswith;
@@ -354,6 +356,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     }
     _GET_PREFIX = (
         ('/pages/',               'g:handle_pages'),
+        ('/speakers/',            'k:handle_speakers_get'),
         ('/transcription/channels', 'g:handle_transcription_channels'),
         ('/transcription/stats',  'g:handle_transcription_stats'),
         ('/transcription/log',    'g:handle_transcription_log'),
@@ -383,7 +386,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         import web_routes_stream as _rs
         import web_routes_post as _rp
         import web_routes_loop as _rl
-        _mods = {'g': _rg, 's': _rs, 'p': _rp, 'l': _rl}
+        import web_routes_speakers as _rk
+        _mods = {'g': _rg, 's': _rs, 'p': _rp, 'l': _rl, 'k': _rk}
         route = exact.get(self.path) or qexact.get(self.path.split('?', 1)[0])
         if route is None:
             for _pfx, _r in prefixes:
@@ -497,6 +501,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         ('/grafana/',    'g:handle_grafana_proxy'),
         ('/prometheus/', 'g:handle_prometheus_proxy'),
         ('/packet/',     'p:handle_packet_cmd'),
+        ('/speakers/',   'k:handle_speakers_post'),
     )
 
     def do_POST(self):

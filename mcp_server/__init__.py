@@ -22,6 +22,7 @@ def _register_all_tools():
         routing,
         fleet,
         transcription,
+        speakers,
         link,
         loop_recorder,
         cloud,

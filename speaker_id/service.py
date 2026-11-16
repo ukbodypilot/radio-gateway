@@ -35,7 +35,7 @@ CLIP_BITRATE = '12k'
 
 
 class SpeakerID:
-    def __init__(self, config, gateway=None, store=None, embedder=None):
+    def __init__(self, config, gateway=None, store=None, embedder=None, uls=None):
         self._cfg = config
         self._gateway = gateway
         self.model_key = config.SPEAKER_ID_MODEL
@@ -63,12 +63,46 @@ class SpeakerID:
         self._embed_ms = collections.deque(maxlen=200)
         self.last_error = ''
         self.started = 0.0
+        self.callsigns = bool(config.SPEAKER_ID_CALLSIGNS)
+        self.offload = str(config.SPEAKER_ID_OFFLOAD or 'auto').strip().lower()
+        self.alert_for = {x.strip().upper() for x in str(config.SPEAKER_ID_ALERT or '').split(',') if x.strip()}
+        self._alert_last = {}
+        self._uls = uls
+        self._ident = None
+        self._seeded = False
+        self._backfill_ceiling = 0
+        self._backfill_done = False
+        self.nightly_time = str(config.SPEAKER_ID_NIGHTLY_TIME or '').strip()
+        self.clip_days = float(config.SPEAKER_ID_CLIP_DAYS)
+        self.merge_at = float(config.SPEAKER_ID_MERGE_AT)
+        self.target_model = self.model_key        # config; model_key = what the DB is in
+        self._target_embedder = None
+        self.last_nightly = None
 
     # ── lifecycle ───────────────────────────────────────────────────────
     def start(self):
         if self._store is None:
             self._store = SpeakerStore(self._db_path)
+        # The database records which model its fingerprints are in. A changed
+        # SPEAKER_ID_MODEL keeps that model live until every kept clip has been
+        # re-fingerprinted with the new one (idle time), then switches at once.
+        db_model = self._store.meta_get('embed_model')
+        if db_model is None:
+            self._store.meta_set('embed_model', self.model_key)
+        elif db_model != self.target_model:
+            self.model_key = db_model
+            print(f'  [SpeakerID] model change {db_model} -> {self.target_model}: '
+                  f'{db_model} stays live while kept clips are re-fingerprinted')
         self._profiles = [list(p) for p in self._store.load_profiles(self.model_key)]
+        if self.callsigns:
+            from speaker_id.identify import Identifier
+            if self._uls is None:
+                from speaker_id.uls import UlsLookup
+                self._uls = UlsLookup()
+            self._ident = Identifier(self._store, self._uls)
+            # Overs stored before this start are re-filed by the idle backfill;
+            # newer ones are filed live as their text arrives.
+            self._backfill_ceiling = self._store.max_utterance_id()
         self._thread = threading.Thread(target=self._run, name='SpeakerID', daemon=True)
         self._thread.start()
         self.started = time.time()
@@ -78,6 +112,8 @@ class SpeakerID:
     def stop(self):
         self._stop.set()
         self._evt.set()
+        if self._uls is not None:
+            self._uls.stop()
         if self._thread:
             self._thread.join(timeout=5)
         if self._store:
@@ -119,11 +155,15 @@ class SpeakerID:
         while not self._stop.is_set():
             self._evt.wait(1.0)
             self._evt.clear()
+            self._idle_work()
             while not self._stop.is_set():
                 with self._lock:
                     job = self._q.popleft() if self._q else None
                 if job is None:
                     break
+                if job[0] == 'call':
+                    self._handle_call(job)
+                    continue
                 try:
                     if job[0] == 'utt':
                         self._handle_utterance(job[1])
@@ -137,10 +177,183 @@ class SpeakerID:
                 finally:
                     self.counters['processed'] += 1
 
+    # ── curation entry point (web / MCP threads) ────────────────────────
+    def run_on_worker(self, fn, timeout=20.0):
+        """Run fn(self) on the worker thread and return its result (or raise its error).
+
+        Curation changes profiles the worker is assigning against; running
+        them here serialises the two. Never dropped by the queue cap.
+        """
+        if not (self._thread and self._thread.is_alive()):
+            raise RuntimeError('speaker ID is not running')
+        box, done = {}, threading.Event()
+        with self._lock:
+            self._q.append(('call', fn, box, done))
+        self._evt.set()
+        if not done.wait(timeout):
+            raise TimeoutError('speaker ID worker is busy; try again')
+        if 'error' in box:
+            raise box['error']
+        return box.get('result')
+
+    def _handle_call(self, job):
+        _, fn, box, done = job
+        try:
+            box['result'] = fn(self)
+            self.reload_profiles()
+            self.counters['curation'] += 1
+        except Exception as e:            # returned to the caller, not swallowed
+            box['error'] = e
+        finally:
+            done.set()
+
+    def reload_profiles(self):
+        self._profiles = [list(p) for p in self._store.load_profiles(self.model_key)]
+
+    def curator(self):
+        from speaker_id.curation import Curator
+        return Curator(self._store, self._uls, self.learn_secs)
+
+    @property
+    def store(self):
+        return self._store
+
+    @property
+    def identifier(self):
+        return self._ident
+
+    def _idle_work(self):
+        """Seed the regulars, then re-file history, a slice at a time, only when idle."""
+        if not self._ident or not self._uls.ready():
+            self._idle_nightly_and_migration()
+            return
+        with self._lock:
+            if self._q:
+                return
+        try:
+            if not self._seeded:
+                tl = getattr(self._gateway, 'transcription_log', None) if self._gateway else None
+                n = self._ident.regulars.seed_from_log(tl, self._uls.valid) if tl else 0
+                self._seeded = True
+                print(f'  [SpeakerID] regulars seeded from the transcription log: {n} callsign '
+                      f'mentions, {len(self._ident.regulars.mentions)} calls')
+                return
+            if not self._backfill_done:
+                n = self._ident.backfill(budget_secs=0.5, ceiling=self._backfill_ceiling)
+                self.counters['backfilled'] += n
+                if n == 0:
+                    self._backfill_done = True
+                return
+        except Exception as e:
+            self.counters['errors'] += 1
+            self.last_error = f'{type(e).__name__}: {e}'
+            log_exc()
+        self._idle_nightly_and_migration()
+
+    def _gauges(self):
+        """Voice counts for Grafana, at most once a minute (idle only)."""
+        now = time.monotonic()
+        if now - getattr(self, '_gauges_at', 0) < 60:
+            return
+        self._gauges_at = now
+        try:
+            import metrics as _m
+            ps = self._store.list_profiles()
+            _m.speaker_id_voices.labels(kind='voices').set(len(ps))
+            _m.speaker_id_voices.labels(kind='named').set(sum(1 for p in ps if p['identity_id']))
+            _m.speaker_id_voices.labels(kind='human').set(
+                sum(1 for p in ps if p['identity_id'] and (p['label_source'] or '').startswith('human')))
+        except Exception:
+            log_exc()
+
+    def _idle_nightly_and_migration(self):
+        with self._lock:
+            if self._q:
+                return
+        self._gauges()
+        try:
+            if self.target_model != self.model_key:
+                self._migrate_slice()
+            elif self._nightly_due():
+                self.nightly()
+        except Exception as e:
+            self.counters['errors'] += 1
+            self.last_error = f'{type(e).__name__}: {e}'
+            log_exc()
+
+    # ── nightly: re-cluster + clip retention ────────────────────────────
+    def _nightly_due(self):
+        if not self.nightly_time:
+            return False
+        try:
+            hh, mm = (int(x) for x in self.nightly_time.split(':'))
+        except ValueError:
+            return False
+        now = time.localtime()
+        if (now.tm_hour, now.tm_min) < (hh, mm):
+            return False
+        return self._store.meta_get('last_nightly_day') != time.strftime('%Y-%m-%d', now)
+
+    def nightly(self):
+        """Re-cluster then prune clips. Runs on the worker thread (idle, or via run_on_worker)."""
+        from speaker_id import recluster, retention
+        self._store.meta_set('last_nightly_day', time.strftime('%Y-%m-%d'))
+        rep = recluster.run(self._store, self.model_key, accept=max(self.accept, recluster.REASSIGN_AT),
+                            merge_at=self.merge_at,
+                            learn_secs=self.learn_secs, min_secs=self.min_secs, identifier=self._ident)
+        if self.keep_clips and self.clip_days > 0:
+            rep.update(retention.prune(self._store, self._clip_dir, self.clip_days))
+        self.reload_profiles()
+        self.last_nightly = {'at': time.time(), **rep}
+        self.counters['nightly'] += 1
+        print(f'  [SpeakerID] nightly: {rep}')
+        return rep
+
+    # ── model swap ──────────────────────────────────────────────────────
+    def _migrate_slice(self, n=8):
+        from speaker_id.embedder import Embedder
+        if self._target_embedder is None:
+            self._target_embedder = Embedder(self.target_model)
+        todo = self._store.reembed_todo(self.target_model, n)
+        for uid, clip in todo:
+            audio = self._load_clip(clip)
+            e = self._target_embedder.embed(audio) if audio is not None else None
+            if e is not None:
+                self._store.reembed_put(uid, self.target_model, e)
+                self.counters['reembedded'] += 1
+            else:
+                self._store.reembed_put(uid, self.target_model, np.zeros(self._target_embedder.dim, np.float32))
+                self.counters['reembed_failed'] += 1
+        if todo:
+            return
+        old = self.model_key
+        n_utt, n_prof = self._store.reembed_finish(self.target_model)
+        self._store.meta_set('embed_model', self.target_model)
+        self._store.audit('auto', 'model_switch', frm=old, to=self.target_model, overs=n_utt, voices=n_prof)
+        self.model_key = self.target_model
+        self._embedder, self._target_embedder = self._target_embedder, None
+        self.reload_profiles()
+        print(f'  [SpeakerID] switched {old} -> {self.model_key}: {n_utt} overs, {n_prof} voices carried over')
+
+    def _load_clip(self, clip):
+        path = os.path.join(self._clip_dir, clip)
+        try:
+            r = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-ac', '1', '-ar', '16000',
+                                '-f', 'f32le', '-'], capture_output=True, timeout=20)
+            if r.returncode != 0 or not r.stdout:
+                return None
+            return np.frombuffer(r.stdout, np.float32).copy()
+        except Exception:
+            log_exc()
+            return None
+
     def _ensure_embedder(self):
         if self._embedder is None:
             from speaker_id.embedder import Embedder
-            self._embedder = Embedder(self.model_key)
+            from speaker_id.remote import OffloadEmbedder, transcriber_workers
+            key = self.model_key
+            self._embedder = OffloadEmbedder(lambda: Embedder(key), key,
+                                             transcriber_workers(self._gateway), self.offload)
         return self._embedder
 
     @staticmethod
@@ -183,7 +396,7 @@ class SpeakerID:
                 self._store.set_clip(row, clip)
         uid = item.get('uid')
         if uid is not None:
-            self._uid_to_row[uid] = row
+            self._uid_to_row[uid] = (row, ts, dur, item.get('source_id', ''), pid)
             while len(self._uid_to_row) > 500:
                 self._uid_to_row.popitem(last=False)
 
@@ -212,13 +425,62 @@ class SpeakerID:
         return None, best, 'unsure'
 
     def _handle_text(self, uid, result):
-        row = self._uid_to_row.get(uid)
-        if row is None:
+        entry = self._uid_to_row.get(uid)
+        if entry is None:
             self.counters['text_orphan'] += 1      # over was too short, dropped or skipped
             return
-        self._store.set_text(row, result.get('text', ''), tx_id=result.get('tx_id'),
+        row, ts, dur, bus, pid = entry
+        text = result.get('text', '')
+        self._store.set_text(row, text, tx_id=result.get('tx_id'),
                              freq=result.get('freq') or None, source=result.get('source') or None)
         self.counters['texted'] += 1
+        if self._ident:
+            filed = self._ident.file(row, ts, dur, bus, text)
+            if filed:
+                self.counters['evidence_overs'] += 1
+            # A self-ID on this voice, or a cue that landed on a neighbour,
+            # may tip a voice over the naming bar.
+            if pid and 'callsign_self' in filed:
+                if self._ident.maybe_name(pid):
+                    self._refresh_identity(pid)
+        if pid and self.alert_for:
+            self._maybe_alert(pid, ts, bus, result)
+
+    ALERT_COOLDOWN = 1800.0
+
+    def _maybe_alert(self, pid, ts, bus, result):
+        """Email when a voice on SPEAKER_ID_ALERT is heard (once per person per cooldown)."""
+        p = self._store.profile(pid)
+        ident = self._store.identity(p['identity_id']) if p and p['identity_id'] else None
+        if not ident:
+            return
+        keys = {(ident.get('callsign') or '').upper(), (ident.get('name') or '').upper()} - {''}
+        hit = keys & self.alert_for
+        if not hit:
+            return
+        now = time.monotonic()
+        last = self._alert_last.get(ident['id'])
+        if last is not None and now - last < self.ALERT_COOLDOWN:
+            return
+        notifier = getattr(self._gateway, 'email_notifier', None) if self._gateway else None
+        if notifier is None or not notifier.is_configured():
+            self.counters['alert_no_email'] += 1
+            return
+        self._alert_last[ident['id']] = now
+        who = ' · '.join(x for x in (ident.get('callsign'), ident.get('name')) if x)
+        freq = result.get('freq') or bus or '?'
+        subject = f'[Gateway] {who} heard on {freq}'
+        body = (f"{who} (voice #{pid}, {p['label_source'] or 'unlabelled'})\nChannel: {bus} {result.get('freq') or ''}\n"
+                f"Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))}\n\n"
+                f"{result.get('text', '')}\n\n-- Radio Gateway speaker ID")
+        threading.Thread(target=notifier.send, args=(subject, body), daemon=True, name='SpeakerAlert').start()
+        self.counters['alerts'] += 1
+
+    def _refresh_identity(self, pid):
+        p = self._store.profile(pid)
+        for entry in self._profiles:
+            if entry[0] == pid and p:
+                entry[3] = p['identity_id']
 
     def _save_clip(self, row, ts, audio):
         """Opus at 12 kb/s (~1.5 KB/s of speech). Bounded: 10 s timeout."""
@@ -270,9 +532,24 @@ class SpeakerID:
             'profiles_loaded': len(self._profiles),
             'counters': dict(self.counters),
             'embed_ms_avg': round(sum(ms) / len(ms), 1) if ms else None,
+            'offload': (self._embedder.get_status() if hasattr(self._embedder, 'get_status')
+                        else {'mode': 'local'}),
             'db': counts,
             'last_error': self.last_error,
             'running': bool(self._thread and self._thread.is_alive()),
+            'nightly': {'time': self.nightly_time or None, 'last': self.last_nightly,
+                        'last_day': self._store.meta_get('last_nightly_day') if self._store else None},
+            'model_switch': (None if self.target_model == self.model_key else
+                             dict(zip(('done', 'left'), self._store.reembed_count(self.target_model)),
+                                  to=self.target_model)),
+            'callsigns': {
+                'enabled': bool(self._ident),
+                'uls': self._uls.get_status() if self._uls else None,
+                'regulars_seeded': self._seeded,
+                'regulars': len(self._ident.regulars.mentions) if self._ident else 0,
+                'backfill_done': self._backfill_done,
+                'counters': dict(self._ident.counters) if self._ident else {},
+            },
         }
 
     def chips_for(self, results):

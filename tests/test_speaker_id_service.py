@@ -59,7 +59,8 @@ class FakeEmbedder:
 def cfg(**kw):
     c = dict(SPEAKER_ID_MODEL='fake', SPEAKER_ID_ACCEPT=0.60, SPEAKER_ID_NEW=0.45,
              SPEAKER_ID_MIN_SECS=1.5, SPEAKER_ID_LEARN_SECS=3.0, SPEAKER_ID_KEEP_CLIPS=False,
-             SPEAKER_ID_BUSES='', SPEAKER_ID_DB_PATH='')
+             SPEAKER_ID_BUSES='', SPEAKER_ID_DB_PATH='', SPEAKER_ID_CALLSIGNS=False,
+             SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30, SPEAKER_ID_MERGE_AT=0.80, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='')
     c.update(kw)
     return types.SimpleNamespace(**c)
 
@@ -199,6 +200,34 @@ check("a failing listener does not stop the utterance reaching ASR", len(t._pend
 check("...nor the next listener", len(got) == 1)
 check("the handover carries uid and the boost to undo",
       got and got[0].get('uid') == 1 and got[0].get('audio_boost') == 2.0 and got[0] is t._pending[0])
+
+print("\n8. 'tell me when X is heard' alert")
+sent = []
+
+
+class Notifier:
+    def is_configured(self):
+        return True
+
+    def send(self, subject, body):
+        sent.append((subject, body))
+
+
+s, st = make(SPEAKER_ID_ALERT='kx7qza, Gus')
+s._gateway = types.SimpleNamespace(email_notifier=Notifier())
+s.on_utterance(utt(1.0)); drain(s)
+pid = s._profiles[0][0]
+st.set_profile_identity(pid, st.new_identity('KX7QZA', 'Quentin'), 'human')
+for _ in range(2):
+    u = utt(1.0)
+    s.on_utterance(u)
+    s.on_result(u['uid'], {'text': 'good morning all', 'freq': '146.520'})
+    drain(s)
+time.sleep(0.2)
+check("a listed callsign is emailed when its voice is heard", len(sent) == 1 and 'KX7QZA' in sent[0][0]
+      and 'good morning all' in sent[0][1], str(sent))
+check("...once per person per cooldown", s.counters['alerts'] == 1)
+s.stop()
 
 print('FAILED' if failed else 'OK')
 sys.exit(1 if failed else 0)

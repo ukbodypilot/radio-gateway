@@ -9,7 +9,16 @@ the ASR inference step is remote.
 Endpoints:
   POST /transcribe   body: raw float32 LE bytes at 16 kHz
                      response: {"text": "...", "proc_time": 1.23}
-  GET  /status       response: model info + health stats
+  POST /embed?model=eres2net
+                     body: raw float32 LE bytes at 16 kHz (speaker ID)
+                     response: {"embedding": [...], "model": "...", "proc_time": 0.6}
+  GET  /status       response: model info + health stats; "embed_models"
+                     lists the speaker models this worker can run
+
+Speaker ID offload needs speaker_id/{__init__,features,embedder}.py and the
+model files: present in a gateway checkout, or deployed beside this file as
+./speaker_id/ and ./speaker_models/ (SPEAKER_MODEL_DIR overrides). Without
+them /embed answers 404 and the gateway fingerprints locally.
 
 With --gateway the worker also dials in and announces itself, the same way
 link endpoints REGISTER on :9700, so the gateway never has to be told the
@@ -42,6 +51,40 @@ for _search in (_HERE, _PARENT):
         break
 
 from transcribe_engine import LocalInferenceEngine, _VALID_MODELS, DEFAULT_MODEL  # noqa: E402
+
+# Speaker ID offload (optional). Same features + model code as the gateway,
+# so a remote fingerprint is the same vector a local one would be.
+for _search in (_HERE, _PARENT):
+    if os.path.exists(os.path.join(_search, 'speaker_id', 'embedder.py')):
+        if _search not in sys.path:
+            sys.path.insert(0, _search)
+        break
+try:
+    from speaker_id.embedder import Embedder as _SpkEmbedder, MODELS as _SPK_MODELS  # noqa: E402
+except Exception:          # not deployed: /embed answers 404
+    _SpkEmbedder, _SPK_MODELS = None, {}
+
+
+def _spk_model_dir():
+    for d in (os.environ.get('SPEAKER_MODEL_DIR', ''),
+              os.path.join(_PARENT, 'tools', 'models', 'speaker'),
+              os.path.join(_HERE, 'tools', 'models', 'speaker'),
+              os.path.join(_HERE, 'speaker_models')):
+        if d and os.path.isdir(d):
+            return d
+    return ''
+
+
+def _spk_available():
+    d = _spk_model_dir()
+    if not d or _SpkEmbedder is None:
+        return []
+    return sorted(k for k, f in _SPK_MODELS.items() if os.path.exists(os.path.join(d, f)))
+
+
+_spk = {}                       # model key -> Embedder (loaded on first use)
+_spk_lock = threading.Lock()
+_spk_stats = {'embeds': 0, 'errors': 0, 'secs': 0.0}
 
 # ---------------------------------------------------------------------------
 # Global state (set up in main, read-only after model loaded)
@@ -138,8 +181,43 @@ class Handler(BaseHTTPRequestHandler):
             'cpu_temp_c': _get_cpu_temp_c(),
             'fan_rpm': _get_fan_rpm(),
             'last_switch_error': _last_switch_error,
+            'embed_models': _spk_available(),
+            'embeds': _spk_stats['embeds'],
+            'embed_errors': _spk_stats['errors'],
         }
         self._send(200, payload)
+
+    # -- POST /embed  (speaker fingerprint) --
+
+    def _handle_embed(self):
+        import urllib.parse as _up
+        key = _up.parse_qs(_up.urlparse(self.path).query).get('model', [''])[0]
+        if key not in _spk_available():
+            self._send(404, {'error': f'speaker model {key!r} not on this worker',
+                             'embed_models': _spk_available()})
+            return
+        length = int(self.headers.get('Content-Length', 0))
+        if length <= 0 or length > 16000 * 4 * 300:      # 5 min of audio is plenty
+            self._send(400, {'error': 'bad body length'})
+            return
+        audio = np.frombuffer(self.rfile.read(length), dtype=np.float32)
+        try:
+            with _spk_lock:
+                emb = _spk.get(key)
+                if emb is None:
+                    emb = _spk[key] = _SpkEmbedder(key, model_dir=_spk_model_dir())
+            t0 = time.monotonic()
+            v = emb.embed(audio)
+            dt = time.monotonic() - t0
+            with _stats_lock:
+                _spk_stats['embeds'] += 1
+                _spk_stats['secs'] += dt
+            self._send(200, {'embedding': None if v is None else [float(x) for x in v],
+                             'model': key, 'proc_time': round(dt, 3)})
+        except Exception as e:
+            with _stats_lock:
+                _spk_stats['errors'] += 1
+            self._send(500, {'error': f'{type(e).__name__}: {e}'})
 
     # -- POST /model  (switch model at runtime) --
 
@@ -164,6 +242,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path.rstrip('/') == '/model':
             self._handle_model_switch()
+            return
+        if self.path.split('?', 1)[0].rstrip('/') == '/embed':
+            self._handle_embed()
             return
         if self.path.rstrip('/') != '/transcribe':
             self._send(404, {'error': 'not found'})

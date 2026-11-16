@@ -106,6 +106,13 @@ mkdir -p ~/transcribe
 # (scp transcribe_engine.py + transcribe_worker.py here)
 pip install --break-system-packages 'onnx-asr[cpu,hub]' moonshine-voice
 
+# Optional: speaker ID offload (SPEAKER_ID_OFFLOAD=auto on the gateway).
+# The worker's /status then lists "embed_models" and the gateway sends each
+# over's fingerprint job here instead of running it on .140.
+mkdir -p ~/transcribe/speaker_id ~/transcribe/speaker_models
+# (scp speaker_id/__init__.py features.py embedder.py  -> ~/transcribe/speaker_id/)
+# (scp tools/models/speaker/*.onnx                      -> ~/transcribe/speaker_models/)
+
 # Manual smoke test — --gateway makes the worker announce itself
 python3 -u transcribe_worker.py --model parakeet/tdt-0.6b-v2 --port 9800 \
     --gateway http://192.168.2.140:8080 --name macmini

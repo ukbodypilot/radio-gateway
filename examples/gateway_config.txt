@@ -771,6 +771,28 @@ SPEAKER_ID_LEARN_SECS = 3.0
 SPEAKER_ID_KEEP_CLIPS = true
 # Blank = ~/.config/radio-gateway/speakers.db
 SPEAKER_ID_DB_PATH =
+# Read callsigns out of transcripts ("this is ..."), check them against an
+# offline copy of the FCC amateur database (public weekly download, ~200 MB,
+# kept as ~/.config/radio-gateway/uls.db) and name a voice once the same call
+# is heard from it on two days. Off = voices stay numbered.
+SPEAKER_ID_CALLSIGNS = true
+# Nightly (local time, blank = never): revisit every over with all that has
+# been learned since (re-assign, merge, re-name), then prune old clips.
+SPEAKER_ID_NIGHTLY_TIME = 03:30
+# Clips older than this are deleted, except each voice's 20 best and any over
+# placed by hand (fingerprints and transcripts are kept forever)
+SPEAKER_ID_CLIP_DAYS = 30
+# Voices whose average fingerprints are at least this alike merge on their
+# own. Different people on one repeater reached 0.76, so closer calls go to
+# the review queue on /speakers instead.
+SPEAKER_ID_MERGE_AT = 0.80
+# auto: fingerprint on a transcription worker that has the speaker model
+# (see docs/transcription-pool.md), falling back to this box per over;
+# local: always on this box (~7% of one core per busy bus)
+SPEAKER_ID_OFFLOAD = auto
+# Email (EMAIL_* settings) when one of these is heard: callsigns or names,
+# comma-separated, matched against a voice's label. Once per person per 30 min.
+SPEAKER_ID_ALERT =
 
 # Override the pool and send every job to one fixed worker URL
 TRANSCRIBE_REMOTE_URL =

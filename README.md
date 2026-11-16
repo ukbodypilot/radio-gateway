@@ -1,6 +1,6 @@
 # Radio Gateway
 
-A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, email alerting, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 164 MCP tools for AI control.
+A full-stack Linux radio gateway that bridges analog and digital two-way radios to the internet: Mumble VoIP, Broadcastify streaming, Winlink email over packet radio, APRS tracking, email alerting, AI-powered announcements, distributed AI transcription, and scheduled fleet health checks — all driven from a single Python process with a 20+ page web UI. Bus-based audio routing with a visual drag-and-drop editor, plugin-based radio support that scales across multiple machines via the link endpoint protocol, per-stream diagnostic tracing, and 168 MCP tools for AI control.
 
 **Radios:** TH-9800 (AIOC USBIP), TH-D75 (Bluetooth RFCOMM + SCO), KV4P (USB serial), FTM-150 (remote AIOC endpoint), IC-7100 (CI-V remote endpoint), RSPduo dual SDR receiver.
 
@@ -36,7 +36,7 @@ More screenshots in `docs/screenshots/`.
 
 **Streaming** — Broadcastify / Icecast via internal ffmpeg pipe (no DarkIce, no ALSA loopback). Auto-reconnect. Cloudflare quick-tunnel for free public HTTPS with URL discovery via Google Drive.
 
-**Control surfaces** — 20+ page web UI, 164 MCP tools, Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
+**Control surfaces** — 20+ page web UI, 168 MCP tools, Mumble chat commands (`!speak`, `!cw`), web mic + Android room monitor.
 
 **Fleet Manager** — document-driven autonomous monitoring. Plain-English tasks in `hourly.md` / `daily.md` are handed to a one-shot Claude run on a schedule; structured reports come back, with an email alert on `elevated` or `warning` severity. Auto-discovers nodes that change DHCP IP. See [docs/fleet-manager.md](docs/fleet-manager.md).
 
@@ -121,7 +121,7 @@ radio-gateway/
 ├── gateway_setup.py            phased initialization helpers
 ├── core/                       lifecycle, monitor loop, transmit loop, PTT, Mumble I/O, endpoint log store
 ├── hw_deps.py                  hardware-library check at startup (hidapi, pyaudio, pymumble) + pymumble SSL shims
-├── gateway_mcp.py              MCP server entry point (164 tools, stdio); tools in mcp_server/tools/
+├── gateway_mcp.py              MCP server entry point (168 tools, stdio); tools in mcp_server/tools/
 ├── web_server.py               HTTP/WS server + config UI
 ├── config_schema.py            every setting: default, type, and its place on the config form
 ├── config_format.py            gateway_config.txt value read/write rules (quoting, inline comments)

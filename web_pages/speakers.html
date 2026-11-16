@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speakers</title>
+<link rel="stylesheet" href="/pages/common.css">
+<style>
+  body { padding: var(--s-3); box-sizing: border-box; display: flex; flex-direction: column; gap: var(--s-3); }
+  .panel { background: var(--t-panel); border: 1px solid var(--t-border); border-radius: 6px; padding: var(--s-3); }
+  .panel h2 { margin: 0 0 var(--s-2); font-size: var(--f-md, 15px); display: flex; gap: var(--s-2); align-items: baseline; }
+  .panel h2 .sub { color: var(--t-text-dim); font-weight: normal; font-size: var(--f-sm); }
+  .status { color: var(--t-text-dim); font-size: var(--f-sm); display: flex; flex-wrap: wrap; gap: var(--s-3); }
+  .status b { color: var(--t-text); font-weight: 600; }
+  .muted { color: var(--t-text-dim); }
+  .err { color: var(--t-err); }
+
+  /* review queue */
+  .queue { display: grid; gap: var(--s-2); }
+  .card { border: 1px solid var(--t-border); border-radius: 6px; padding: var(--s-2) var(--s-3);
+          display: grid; gap: var(--s-2); background: var(--t-bg); }
+  .card .kind { font-size: var(--f-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--t-text-dim); }
+  .card .kind.conflict { color: var(--t-warn); }
+  .card .prompt { font-size: var(--f-sm); }
+  .card .voices { display: flex; flex-wrap: wrap; gap: var(--s-3); }
+  .card .actions, .row-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center; }
+  .vchip { display: inline-flex; gap: 6px; align-items: center; font-size: var(--f-sm); }
+  .vchip a { color: var(--t-accent); cursor: pointer; text-decoration: none; }
+  .play { padding: 1px 7px; }
+  .play.on { background: var(--t-btn-active); }
+  input.txt { background: var(--t-btn); color: var(--t-text); border: 1px solid var(--t-border);
+              padding: 3px var(--s-2); font: inherit; font-size: var(--f-sm); border-radius: 4px; min-width: 0; }
+  input.call { width: 8em; text-transform: uppercase; }
+
+  /* voices table */
+  .tools { display: flex; gap: var(--s-2); align-items: center; margin-bottom: var(--s-2); flex-wrap: wrap; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--f-sm); }
+  th { text-align: left; color: var(--t-text-dim); font-weight: normal; border-bottom: 1px solid var(--t-border);
+       padding: var(--s-1) var(--s-2); white-space: nowrap; }
+  td { padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--t-border); vertical-align: top; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td, tbody tr.sel td { background: var(--t-panel-hi); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .src { font-size: var(--f-xs); padding: 0 5px; border-radius: 999px; border: 1px solid var(--t-border); color: var(--t-text-dim); }
+  .src.human { color: var(--t-ok); border-color: var(--t-ok); }
+  .src.auto { color: var(--t-accent); border-color: var(--t-accent); }
+
+  /* detail */
+  .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-3); }
+  @media (max-width: 760px) { .detail-grid { grid-template-columns: minmax(0, 1fr); } }
+  .why { margin: 0; padding-left: 1.2em; font-size: var(--f-sm); }
+  .overs { display: grid; gap: 2px; font-size: var(--f-sm); max-height: 420px; overflow-y: auto; }
+  .over { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: var(--s-2); align-items: baseline;
+          padding: 2px var(--s-1); border-bottom: 1px solid var(--t-border); }
+  .over .t { color: var(--t-accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .over .x { overflow-wrap: anywhere; }
+  .form { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center; margin-bottom: var(--s-2); }
+  .audit { font-size: var(--f-sm); display: grid; gap: 2px; }
+  .audit .a { display: flex; gap: var(--s-2); align-items: baseline; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<script src="/pages/common.js"></script>
+
+<div class="panel">
+  <h2>Speakers <span class="sub">voices learned from transcribed overs · you are the strongest witness</span></h2>
+  <div class="status" id="status">Loading…</div>
+</div>
+
+<div class="panel">
+  <h2>Review <span class="sub">the questions where one click settles the most traffic</span></h2>
+  <div class="queue" id="queue"><span class="muted">Loading…</span></div>
+</div>
+
+<div class="panel" id="detail" style="display:none"></div>
+
+<div class="panel">
+  <h2>Voices <span class="sub" id="voice-count"></span></h2>
+  <div class="tools">
+    <input class="txt" id="q" placeholder="Filter: callsign, name, #id, channel" oninput="renderVoices()">
+    <label class="muted"><input type="checkbox" id="only-unnamed" onchange="renderVoices()"> unnamed only</label>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Voice</th><th>Who</th><th class="num">Overs</th><th class="num">Speech</th>
+        <th>Channels</th><th>Last heard</th><th>Evidence says</th></tr></thead>
+      <tbody id="voices"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Recent changes <span class="sub">every label, merge and move can be undone</span>
+    <button class="rb rb-sm" style="margin-left:auto" onclick="runNightly(this)"
+            title="Re-assign and merge with everything learned so far, then prune old clips (normally runs nightly)">Re-cluster now</button></h2>
+  <div class="audit" id="audit"><span class="muted">Loading…</span></div>
+</div>
+
+<audio id="player" preload="none"></audio>
+
+<script>
+var _voices = [], _sel = null, _skipped = {};
+
+function h(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function ago(ts) {
+  if (!ts) return '—';
+  var s = Date.now() / 1000 - ts;
+  if (s < 90) return 'just now';
+  if (s < 5400) return Math.round(s / 60) + ' min ago';
+  if (s < 129600) return Math.round(s / 3600) + ' h ago';
+  return Math.round(s / 86400) + ' d ago';
+}
+function when(ts) {
+  var d = new Date(ts * 1000);
+  return d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) + ' ' +
+         d.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+}
+function who(p) {
+  var s = p.callsign || '';
+  if (p.name) s += (s ? ' · ' : '') + p.name;
+  return s;
+}
+function srcBadge(p) {
+  var src = p.label_source || '';
+  if (!p.identity_id) return src === 'human:cleared' ? '<span class="src human">cleared</span>' : '';
+  return src.indexOf('human') === 0 ? '<span class="src human">you</span>'
+       : '<span class="src auto" title="' + h(src) + '">auto</span>';
+}
+function voiceName(id) {
+  var p = _voices.find(function(v) { return v.id === id; });
+  return p && who(p) ? who(p) + ' (#' + id + ')' : 'Voice #' + id;
+}
+
+// ── audio ──────────────────────────────────────────────────────────────────
+function playBtn(uttId) {
+  return '<button class="rb rb-sm play" data-play="' + uttId + '" title="Play this over">▶</button>';
+}
+document.addEventListener('click', function(e) {
+  var b = e.target.closest && e.target.closest('[data-play]');
+  if (!b) return;
+  e.stopPropagation();
+  var a = document.getElementById('player');
+  var id = b.getAttribute('data-play');
+  document.querySelectorAll('.play.on').forEach(function(x) { x.classList.remove('on'); });
+  if (a.getAttribute('data-id') === id && !a.paused) { a.pause(); return; }
+  a.src = '/speakers/clip?id=' + encodeURIComponent(id);
+  a.setAttribute('data-id', id);
+  b.classList.add('on');
+  a.play().catch(function() { b.classList.remove('on'); });
+  a.onended = function() { b.classList.remove('on'); };
+}, true);
+
+// ── actions ────────────────────────────────────────────────────────────────
+function act(body, msg) {
+  return fetch('/speakers/api/action', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify(body)})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { alert(d.error || 'failed'); return d; }
+      refresh();
+      if (_sel) openVoice(_sel);
+      return d;
+    })
+    .catch(function(e) { alert('request failed: ' + e); });
+}
+function labelVoice(pid, call, name) {
+  call = (call || '').trim(); name = (name || '').trim();
+  if (!call && !name) { alert('Give a callsign or a name'); return; }
+  act({op: 'label', profile_id: pid, callsign: call, name: name});
+}
+function labelFrom(pid, prefix) {
+  labelVoice(pid, document.getElementById(prefix + '-call').value, document.getElementById(prefix + '-name').value);
+}
+
+// ── review queue ───────────────────────────────────────────────────────────
+function loadQueue() {
+  fetch('/speakers/api/review').then(function(r) { return r.json(); }).then(function(d) {
+    var q = document.getElementById('queue');
+    if (!d.ok) { q.innerHTML = '<span class="err">' + h(d.error) + '</span>'; return; }
+    var items = (d.items || []).filter(function(it) { return !_skipped[it.type + it.profiles.join(',')]; });
+    if (!items.length) { q.innerHTML = '<span class="muted">Nothing to review right now.</span>'; return; }
+    q.innerHTML = items.slice(0, 12).map(card).join('');
+  });
+}
+function card(it, i) {
+  var key = it.type + it.profiles.join(',');
+  var kinds = {confirm: 'Confirm', conflict: 'Conflict', same: 'Same person?', name: 'Who is this?'};
+  var voices = it.profiles.map(function(pid) {
+    var s = (it.samples && it.samples[pid]) || [];
+    return '<span class="vchip"><a onclick="openVoice(' + pid + ')">' + h(voiceName(pid)) + '</a>' +
+           s.map(playBtn).join('') + '</span>';
+  }).join('');
+  var a = '', pid = it.profiles[0], f = 'q' + i;
+  var form = '<input class="txt call" id="' + f + '-call" placeholder="callsign">' +
+             '<input class="txt" id="' + f + '-name" placeholder="name" size="10">' +
+             '<button class="rb rb-sm" onclick="labelFrom(' + pid + ',\'' + f + '\')">Label</button>';
+  if (it.type === 'confirm') {
+    a = '<button class="rb rb-sm" onclick="labelVoice(' + pid + ',\'' + h(it.callsign) + '\',\'\')">Yes, ' + h(it.callsign) + '</button>' +
+        '<button class="rb rb-sm rb-warn" onclick="act({op:\'unlabel\',profile_id:' + pid + '})">No</button>' + form;
+  } else if (it.type === 'conflict') {
+    a = (it.candidates || []).slice(0, 2).map(function(c) {
+          return '<button class="rb rb-sm" onclick="labelVoice(' + pid + ',\'' + h(c.callsign) + '\',\'\')">It\'s ' + h(c.callsign) + '</button>';
+        }).join('') + form;
+  } else if (it.type === 'same') {
+    a = '<button class="rb rb-sm" onclick="act({op:\'merge\',keep:' + it.profiles[0] + ',drop:' + it.profiles[1] + '})">Same person — merge</button>' +
+        '<button class="rb rb-sm rb-warn" onclick="act({op:\'not_same\',a:' + it.profiles[0] + ',b:' + it.profiles[1] + '})">Different people</button>';
+  } else {
+    a = form;
+  }
+  return '<div class="card"><div class="kind ' + it.type + '">' + (kinds[it.type] || it.type) + '</div>' +
+         '<div class="prompt">' + h(it.prompt) + '</div><div class="voices">' + voices + '</div>' +
+         '<div class="actions">' + a + '<button class="rb rb-sm" onclick="_skipped[\'' + h(key) + '\']=1;loadQueue()">Skip</button></div></div>';
+}
+
+// ── voices ─────────────────────────────────────────────────────────────────
+function renderVoices() {
+  var q = document.getElementById('q').value.trim().toLowerCase();
+  var unnamed = document.getElementById('only-unnamed').checked;
+  var rows = _voices.filter(function(p) {
+    if (unnamed && p.identity_id) return false;
+    if (!q) return true;
+    var hay = ('#' + p.id + ' ' + (p.callsign || '') + ' ' + (p.name || '') + ' ' + p.buses.join(' ') + ' ' + p.freqs.join(' ')).toLowerCase();
+    return hay.indexOf(q) >= 0;
+  });
+  document.getElementById('voice-count').textContent = rows.length + ' of ' + _voices.length;
+  document.getElementById('voices').innerHTML = rows.slice(0, 300).map(function(p) {
+    var c = p.candidate;
+    var ev = c ? h(c.callsign) + ' <span class="muted">' + c.weight + 'x, ' + c.days + 'd' +
+                 (c.first_name ? ', ' + h(c.first_name) : '') + '</span>' : '<span class="muted">—</span>';
+    return '<tr data-id="' + p.id + '"' + (p.id === _sel ? ' class="sel"' : '') + '>' +
+           '<td>#' + p.id + '</td><td>' + h(who(p) || '') + ' ' + srcBadge(p) + '</td>' +
+           '<td class="num">' + p.overs + '</td><td class="num">' + Math.round(p.seconds / 60) + ' min</td>' +
+           '<td>' + h(p.buses.join(', ')) + (p.freqs.length ? ' <span class="muted">' + h(p.freqs.join(', ')) + '</span>' : '') + '</td>' +
+           '<td>' + ago(p.last) + '</td><td>' + ev + '</td></tr>';
+  }).join('');
+}
+document.getElementById('voices').addEventListener('click', function(e) {
+  var tr = e.target.closest('tr[data-id]');
+  if (tr) openVoice(parseInt(tr.getAttribute('data-id'), 10));
+});
+
+function openVoice(pid) {
+  _sel = pid;
+  fetch('/speakers/api/profile?id=' + pid).then(function(r) { return r.json(); }).then(function(d) {
+    var box = document.getElementById('detail');
+    box.style.display = '';
+    if (!d.ok) { box.innerHTML = '<span class="err">' + h(d.error) + '</span>'; return; }
+    var p = d.profile, id = d.identity || {}, v = d.verdict || {why: [], candidates: []}, L = d.licence;
+    var title = (id.callsign || id.name) ? h([id.callsign, id.name].filter(Boolean).join(' · ')) : 'Voice #' + p.id;
+    var html = '<h2>' + title + ' <span class="sub">voice #' + p.id + ' · ' + p.overs + ' overs · ' +
+               Math.round((p.seconds || 0) / 60) + ' min · ' + h((p.buses || []).join(', ')) + '</span></h2>';
+    html += '<div class="form"><input class="txt call" id="d-call" placeholder="callsign" value="' + h(id.callsign || '') + '">' +
+            '<input class="txt" id="d-name" placeholder="name" value="' + h(id.name || '') + '">' +
+            '<button class="rb rb-sm" onclick="labelFrom(' + p.id + ',\'d\')">Save label</button>' +
+            (p.identity_id ? '<button class="rb rb-sm rb-warn" onclick="act({op:\'unlabel\',profile_id:' + p.id + '})">Not this person</button>' : '') +
+            '<input class="txt" id="d-merge" placeholder="voice #" size="6">' +
+            '<button class="rb rb-sm" onclick="mergeInto(' + p.id + ')">Merge that voice into this</button>' +
+            '<button class="rb rb-sm" onclick="document.getElementById(\'detail\').style.display=\'none\';_sel=null;renderVoices()">Close</button></div>';
+    html += '<div class="detail-grid"><div>';
+    html += '<div class="muted">Why we think so</div><ul class="why">' +
+            (v.why || []).map(function(w) { return '<li>' + h(w) + '</li>'; }).join('') +
+            (p.label_source ? '<li>label source: ' + h(p.label_source) + '</li>' : '') + '</ul>';
+    if (L) html += '<p class="muted">FCC: ' + h(L.name) + ', ' + h(L.city) + ' ' + h(L.state) +
+                   ' · class ' + h(L.class || '?') + (L.status === 'A' ? '' : ' · <span class="err">not active</span>') + '</p>';
+    if ((v.candidates || []).length > 1) html += '<p class="muted">Other calls heard from this voice: ' +
+        v.candidates.slice(1).map(function(c) { return h(c.callsign) + ' ' + c.weight + 'x'; }).join(', ') + '</p>';
+    html += '<div class="muted">Best samples</div><div class="row-actions">' + (d.samples || []).map(playBtn).join('') + '</div>';
+    html += '</div><div><div class="muted">Recent overs (▶ play · ⇄ belongs to another voice)</div><div class="overs">' +
+      (d.overs || []).map(function(o) {
+        return '<div class="over"><span class="t">' + when(o.ts) + '</span>' + (o.clip ? playBtn(o.id) : '<span></span>') +
+               '<span class="x">' + h(o.text || '(no transcript)') + ' <span class="muted">' + h(o.bus) +
+               (o.score != null ? ' · ' + Number(o.score).toFixed(2) : '') + '</span></span>' +
+               '<button class="rb rb-sm" title="Move this over to another voice" onclick="moveOver(' + o.id + ')">⇄</button></div>';
+      }).join('') + '</div></div></div>';
+    box.innerHTML = html;
+    renderVoices();
+    box.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  });
+}
+function mergeInto(keep) {
+  var drop = parseInt((document.getElementById('d-merge').value || '').replace('#', ''), 10);
+  if (!drop) { alert('Type the number of the voice to merge into this one'); return; }
+  if (confirm('Merge ' + voiceName(drop) + ' into ' + voiceName(keep) + '? (can be undone)')) act({op: 'merge', keep: keep, drop: drop});
+}
+function moveOver(uttId) {
+  var to = prompt('Move this over to which voice? Type a voice number, or "new" for a voice of its own.', 'new');
+  if (to === null) return;
+  to = to.trim().replace('#', '');
+  act({op: 'move_over', utt_id: uttId, to_profile: to === 'new' || to === '' ? null : parseInt(to, 10)});
+}
+
+function runNightly(btn) {
+  btn.disabled = true; btn.textContent = 'Re-clustering…';
+  act({op: 'nightly'}).then(function(d) {
+    btn.disabled = false; btn.textContent = 'Re-cluster now';
+    if (d && d.ok && d.result) {
+      var r = d.result;
+      alert('Re-cluster: ' + (r.reassigned || 0) + ' overs moved, ' + (r.adopted || 0) + ' adopted, ' +
+            (r.merged || 0) + ' voices merged, ' + (r.named || 0) + ' named' +
+            (r.clips_removed ? ', ' + r.clips_removed + ' old clips pruned' : '') + '.');
+    }
+  });
+}
+
+// ── audit ──────────────────────────────────────────────────────────────────
+function loadAudit() {
+  fetch('/speakers/api/audit').then(function(r) { return r.json(); }).then(function(d) {
+    var undone = {};
+    (d.rows || []).forEach(function(r) { if (r.action === 'undo') undone[r.payload.of] = 1; });
+    var rows = (d.rows || []).filter(function(r) { return r.action !== 'undo'; }).slice(0, 25);
+    document.getElementById('audit').innerHTML = rows.length ? rows.map(function(r) {
+      var p = r.payload, t;
+      if (r.action === 'label') t = 'labelled voice #' + p.profile_id + ' ' + [p.callsign, p.name].filter(Boolean).join(' · ');
+      else if (r.action === 'name_profile') t = 'auto-named voice #' + p.profile_id + ' ' + p.callsign + ' (' + p.self_ids + ' self-IDs)';
+      else if (r.action === 'unlabel') t = 'cleared the name of voice #' + p.profile_id;
+      else if (r.action === 'merge') t = 'merged voice #' + p.drop + ' into #' + p.keep + ' (' + (p.moved || []).length + ' overs)';
+      else if (r.action === 'move_over') t = 'moved an over from #' + p.frm + ' to #' + p.to;
+      else if (r.action === 'not_same') t = 'voices #' + p.a + ' and #' + p.b + ' are different people';
+      else if (r.action === 'reassign') t = 're-cluster moved ' + (p.moves || []).length + ' overs';
+      else if (r.action === 'recluster_done') return '';
+      else if (r.action === 'model_switch') t = 'switched fingerprints ' + p.frm + ' → ' + p.to + ' (' + p.voices + ' voices)';
+      else t = r.action;
+      return '<div class="a"><span class="muted">' + when(r.ts) + '</span><span>' + (r.actor === 'auto' ? 'auto: ' : '') + h(t) + '</span>' +
+             (undone[r.id] ? '<span class="muted">undone</span>'
+                           : '<button class="rb rb-sm" onclick="act({op:\'undo\',audit_id:' + r.id + '})">Undo</button>') + '</div>';
+    }).join('') : '<span class="muted">No changes yet.</span>';
+  });
+}
+
+// ── status + refresh ───────────────────────────────────────────────────────
+function refresh() {
+  fetch('/speakers/api/profiles').then(function(r) { return r.json(); }).then(function(d) {
+    if (!d.ok) { document.getElementById('status').innerHTML = '<span class="err">' + h(d.error) + '</span>'; return; }
+    _voices = d.profiles || [];
+    var s = d.status || {}, c = s.counters || {}, cs = s.callsigns || {}, uls = cs.uls || {};
+    var named = _voices.filter(function(p) { return p.identity_id; }).length;
+    var overs = _voices.reduce(function(a, p) { return a + p.overs; }, 0);
+    document.getElementById('status').innerHTML =
+      '<span><b>' + _voices.length + '</b> voices</span><span><b>' + named + '</b> named</span>' +
+      '<span><b>' + overs + '</b> overs</span>' +
+      '<span>model <b>' + h(s.model || '?') + '</b></span>' +
+      '<span>queue <b>' + (s.queue || 0) + '</b>' + (c.dropped ? ' · <span class="err">' + c.dropped + ' dropped</span>' : '') + '</span>' +
+      '<span>FCC table <b>' + h(uls.state || 'off') + '</b></span>' +
+      (s.last_error ? '<span class="err" title="' + h(s.last_error) + '">last error</span>' : '');
+    renderVoices();
+  });
+  loadQueue();
+  loadAudit();
+}
+refresh();
+setInterval(refresh, 60000);
+var m = location.hash.match(/voice-(\d+)/);
+if (m) openVoice(parseInt(m[1], 10));
+</script>
+</body>
+</html>

@@ -68,6 +68,13 @@ transcription_dispatched_total = Counter(
     registry=REGISTRY,
 )
 
+speaker_id_voices = Gauge(
+    'rg_speaker_id_voices',
+    'Speaker ID voices: kind=voices (live profiles), named (tied to an identity), human (named by you)',
+    ['kind'],
+    registry=REGISTRY,
+)
+
 speaker_id_events_total = Counter(
     'rg_speaker_id_events_total',
     'Speaker ID per-over outcomes: embedded, matched, matched_learn, new_profile, '

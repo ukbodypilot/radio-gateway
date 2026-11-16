@@ -18,13 +18,14 @@ Pick the path that matches what you're trying to do.
 | [web-ui.md](web-ui.md) | The shell + dashboard sub-pages (Overview / Endpoints / Services / Operate) |
 | [fleet-manager.md](fleet-manager.md) | Document-driven autonomous monitoring + repairs |
 | [transcription-pool.md](transcription-pool.md) | Multi-machine ASR (Moonshine + Whisper) |
+| [speaker-id.md](speaker-id.md) | Who is talking: voice fingerprints, callsign evidence, the Speakers page, nightly re-cluster |
 | [audio-routing.md](audio-routing.md) | Bus mixer, processing chain, streaming, speaker modes |
 | [radio-plugins.md](radio-plugins.md) | TH-9800 / TH-D75 / KV4P / SDR / link endpoints (FTM-150, IC-7100) |
 | [windows-client.md](windows-client.md) | Windows operator position — program feed + mic, live device switching, self-update |
 | [allstar_bridge.md](allstar_bridge.md) | AllStarLink bridge node + in-gateway USRP plugin + `/usrp` panel |
 | [packet-radio.md](packet-radio.md) | Packet TNC + APRS + Winlink email |
 | [loop-recorder.md](loop-recorder.md) | Per-bus rolling buffer + scrubback |
-| [mcp.md](mcp.md) | 164 MCP tools for AI control, and what is deliberately not exposed |
+| [mcp.md](mcp.md) | 168 MCP tools for AI control, and what is deliberately not exposed |
 | [TTS_TEXT_COMMANDS_GUIDE.md](TTS_TEXT_COMMANDS_GUIDE.md) | TTS engines + voices, soundboard, background music + repeating message, smart announcements, AI text |
 
 ## 🔌 I want to extend it — write a plugin or endpoint

@@ -30,7 +30,7 @@ import time
 
 import numpy as np
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 2: profiles.merged_into (soft merge, so a merge can be undone)
 
 _SCHEMA = '''
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -91,6 +91,11 @@ CREATE TABLE IF NOT EXISTS audit (
     action TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS reembed (
+    utt_id INTEGER PRIMARY KEY,
+    model TEXT NOT NULL,
+    emb BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS cannot_link (
     a INTEGER NOT NULL,
     b INTEGER NOT NULL,
@@ -122,7 +127,10 @@ class SpeakerStore:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(_SCHEMA)
-            self._conn.execute('INSERT OR IGNORE INTO meta(key, value) VALUES (?, ?)',
+            cols = {r[1] for r in self._conn.execute('PRAGMA table_info(profiles)')}
+            if 'merged_into' not in cols:
+                self._conn.execute('ALTER TABLE profiles ADD COLUMN merged_into INTEGER')
+            self._conn.execute('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)',
                                ('schema_version', str(SCHEMA_VERSION)))
             self._conn.commit()
 
@@ -197,7 +205,8 @@ class SpeakerStore:
         """[(id, centroid, n, identity_id)] for one model."""
         with self._lock:
             rows = self._conn.execute(
-                'SELECT id, centroid, n, identity_id FROM profiles WHERE model=? ORDER BY id',
+                'SELECT id, centroid, n, identity_id FROM profiles '
+                'WHERE model=? AND merged_into IS NULL ORDER BY id',
                 (model,)).fetchall()
         return [(r[0], _vec(r[1]), r[2], r[3]) for r in rows]
 
@@ -236,6 +245,275 @@ class SpeakerStore:
                 'identities': c.execute('SELECT COUNT(*) FROM identities').fetchone()[0],
                 'evidence': c.execute('SELECT COUNT(*) FROM evidence').fetchone()[0],
             }
+
+    # ── evidence / identity ─────────────────────────────────────────────
+    def clear_rule_evidence(self, utt_id, source):
+        """Drop one rule-source's evidence on an over before re-scoring it (never human)."""
+        with self._lock:
+            self._conn.execute('DELETE FROM evidence WHERE utt_id=? AND source=?', (utt_id, source))
+            self._conn.commit()
+
+    def profile_evidence(self, profile_id):
+        """[(kind, value, weight, source, utt_ts)] over every over assigned to a profile."""
+        with self._lock:
+            return self._conn.execute(
+                'SELECT e.kind, e.value, e.weight, e.source, u.ts FROM evidence e '
+                'JOIN utterances u ON u.id = e.utt_id WHERE u.profile_id=?',
+                (profile_id,)).fetchall()
+
+    def profile(self, profile_id):
+        with self._lock:
+            r = self._conn.execute(
+                'SELECT id, identity_id, model, n, created, last_seen, label_source '
+                'FROM profiles WHERE id=?', (profile_id,)).fetchone()
+        if not r:
+            return None
+        return dict(zip(('id', 'identity_id', 'model', 'n', 'created', 'last_seen',
+                         'label_source'), r))
+
+    def identity_for_call(self, callsign, create_name=None):
+        """Existing identity id for a callsign, or a new one if create_name is given."""
+        with self._lock:
+            r = self._conn.execute('SELECT id FROM identities WHERE callsign=? ORDER BY id LIMIT 1',
+                                   (callsign,)).fetchone()
+            if r:
+                return r[0]
+            if create_name is None:
+                return None
+            cur = self._conn.execute('INSERT INTO identities(callsign, name, created) VALUES (?,?,?)',
+                                     (callsign, create_name or '', time.time()))
+            self._conn.commit()
+            return cur.lastrowid
+
+    def identity_call(self, identity_id):
+        with self._lock:
+            r = self._conn.execute('SELECT callsign FROM identities WHERE id=?', (identity_id,)).fetchone()
+        return r[0] if r else None
+
+    def max_utterance_id(self):
+        with self._lock:
+            return self._conn.execute('SELECT COALESCE(MAX(id), 0) FROM utterances').fetchone()[0]
+
+    def set_profile_identity(self, profile_id, identity_id, label_source):
+        with self._lock:
+            self._conn.execute('UPDATE profiles SET identity_id=?, label_source=? WHERE id=?',
+                               (identity_id, label_source, profile_id))
+            self._conn.commit()
+
+    def texted_utterances(self, after_id=0, limit=500):
+        """[(id, ts, bus, freq, text, profile_id)] with a transcript, in id order."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, ts, bus, freq, text, profile_id FROM utterances "
+                "WHERE id > ? AND text <> '' ORDER BY id LIMIT ?", (after_id, limit)).fetchall()
+
+    def meta_get(self, key, default=None):
+        with self._lock:
+            r = self._conn.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+        return r[0] if r else default
+
+    def meta_set(self, key, value):
+        with self._lock:
+            self._conn.execute('INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)', (key, str(value)))
+            self._conn.commit()
+
+    # ── curation (human) ────────────────────────────────────────────────
+    def list_profiles(self):
+        """Every live voice with its counts and label, busiest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT p.id, p.model, p.identity_id, p.label_source, i.callsign, i.name, '
+                '  COUNT(u.id), MIN(u.ts), MAX(u.ts), COALESCE(SUM(u.duration), 0), '
+                "  GROUP_CONCAT(DISTINCT u.bus), GROUP_CONCAT(DISTINCT NULLIF(u.freq, '')) "
+                'FROM profiles p LEFT JOIN identities i ON i.id = p.identity_id '
+                'LEFT JOIN utterances u ON u.profile_id = p.id '
+                'WHERE p.merged_into IS NULL GROUP BY p.id ORDER BY COUNT(u.id) DESC').fetchall()
+        keys = ('id', 'model', 'identity_id', 'label_source', 'callsign', 'name', 'overs',
+                'first', 'last', 'seconds', 'buses', 'freqs')
+        out = []
+        for r in rows:
+            d = dict(zip(keys, r))
+            d['buses'] = sorted(filter(None, (d['buses'] or '').split(',')))
+            d['freqs'] = sorted(filter(None, (d['freqs'] or '').split(',')))
+            d['seconds'] = round(d['seconds'] or 0, 1)
+            out.append(d)
+        return out
+
+    def profile_overs(self, profile_id, limit=50, best=False):
+        """Overs of one voice: newest first, or best-matching first (for sample clips)."""
+        order = 'u.score DESC, u.duration DESC' if best else 'u.ts DESC'
+        cond = " AND u.clip <> ''" if best else ''
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT u.id, u.ts, u.bus, u.freq, u.duration, u.text, u.score, u.decision, u.clip '
+                f'FROM utterances u WHERE u.profile_id=?{cond} ORDER BY {order} LIMIT ?',
+                (profile_id, limit)).fetchall()
+        keys = ('id', 'ts', 'bus', 'freq', 'duration', 'text', 'score', 'decision', 'clip')
+        return [dict(zip(keys, r)) for r in rows]
+
+    def over_ids(self, profile_id):
+        with self._lock:
+            return [r[0] for r in self._conn.execute(
+                'SELECT id FROM utterances WHERE profile_id=?', (profile_id,))]
+
+    def move_overs(self, utt_ids, to_profile):
+        ids = list(utt_ids)
+        if not ids:
+            return
+        with self._lock:
+            self._conn.executemany('UPDATE utterances SET profile_id=? WHERE id=?',
+                                   [(to_profile, i) for i in ids])
+            self._conn.commit()
+
+    def set_merged(self, profile_id, into):
+        with self._lock:
+            self._conn.execute('UPDATE profiles SET merged_into=? WHERE id=?', (into, profile_id))
+            self._conn.commit()
+
+    def recompute_centroid(self, profile_id, min_secs=0.0, model=None):
+        """Centroid = normalised mean of the voice's over embeddings (of `model`). Returns n used.
+
+        Falls back to every over when none is long enough, so a voice built
+        from short overs still has a centroid.
+        """
+        mcond, margs = ('AND model=? ', (model,)) if model else ('', ())
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT emb FROM utterances WHERE profile_id=? AND emb IS NOT NULL AND duration>=? '
+                + mcond, (profile_id, min_secs) + margs).fetchall()
+            if not rows:
+                rows = self._conn.execute(
+                    'SELECT emb FROM utterances WHERE profile_id=? AND emb IS NOT NULL ' + mcond,
+                    (profile_id,) + margs).fetchall()
+            if not rows:
+                return 0
+            m = np.mean([_vec(r[0]) for r in rows], axis=0)
+            n = float(np.linalg.norm(m))
+            if n > 0:
+                self._conn.execute('UPDATE profiles SET centroid=?, n=? WHERE id=?',
+                                   (_blob(m / n), len(rows), profile_id))
+                self._conn.commit()
+            return len(rows)
+
+    def embeddings(self, model, min_secs=0.0, limit=200_000):
+        """[(utt_id, profile_id, emb)] for every over of `model`, newest first, bounded."""
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT id, profile_id, emb FROM utterances WHERE model=? AND emb IS NOT NULL '
+                'AND duration>=? ORDER BY id DESC LIMIT ?', (model, min_secs, limit)).fetchall()
+        return [(r[0], r[1], _vec(r[2])) for r in rows]
+
+    # ── model swap ──────────────────────────────────────────────────────
+    def reembed_todo(self, target, limit=10):
+        """Overs with a clip that have no `target`-model fingerprint yet."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT u.id, u.clip FROM utterances u LEFT JOIN reembed r ON r.utt_id = u.id "
+                "WHERE u.clip <> '' AND u.model <> ? AND r.utt_id IS NULL ORDER BY u.id LIMIT ?",
+                (target, limit)).fetchall()
+
+    def reembed_put(self, utt_id, model, emb):
+        with self._lock:
+            self._conn.execute('INSERT OR REPLACE INTO reembed(utt_id, model, emb) VALUES (?,?,?)',
+                               (utt_id, model, _blob(emb)))
+            self._conn.commit()
+
+    def reembed_finish(self, target):
+        """Swap every re-fingerprinted over to `target` and move the voices with them."""
+        with self._lock:
+            c = self._conn
+            n = c.execute('UPDATE utterances SET emb=(SELECT emb FROM reembed r WHERE r.utt_id=utterances.id), '
+                          'model=? WHERE id IN (SELECT utt_id FROM reembed WHERE model=?)',
+                          (target, target)).rowcount
+            c.execute('DELETE FROM reembed')
+            pids = [r[0] for r in c.execute('SELECT DISTINCT profile_id FROM utterances '
+                                            'WHERE model=? AND profile_id IS NOT NULL', (target,))]
+            c.commit()
+        moved = 0
+        for pid in pids:
+            if self.recompute_centroid(pid, 0.0, model=target):
+                with self._lock:
+                    self._conn.execute('UPDATE profiles SET model=? WHERE id=?', (target, pid))
+                    self._conn.commit()
+                moved += 1
+        return n, moved
+
+    def reembed_count(self, target):
+        with self._lock:
+            done = self._conn.execute('SELECT COUNT(*) FROM reembed WHERE model=?', (target,)).fetchone()[0]
+            left = self._conn.execute(
+                "SELECT COUNT(*) FROM utterances u LEFT JOIN reembed r ON r.utt_id=u.id "
+                "WHERE u.clip <> '' AND u.model <> ? AND r.utt_id IS NULL", (target,)).fetchone()[0]
+        return done, left
+
+    def set_decisions(self, utt_ids, decision):
+        ids = list(utt_ids)
+        if not ids:
+            return
+        with self._lock:
+            self._conn.executemany('UPDATE utterances SET decision=? WHERE id=?', [(decision, i) for i in ids])
+            self._conn.commit()
+
+    def utterance_emb(self, utt_id):
+        with self._lock:
+            r = self._conn.execute('SELECT emb, model, ts FROM utterances WHERE id=?', (utt_id,)).fetchone()
+        return (_vec(r[0]), r[1], r[2]) if r and r[0] is not None else (None, None, None)
+
+    def update_identity(self, identity_id, name=None, notes=None):
+        with self._lock:
+            if name is not None:
+                self._conn.execute('UPDATE identities SET name=? WHERE id=?', (name, identity_id))
+            if notes is not None:
+                self._conn.execute('UPDATE identities SET notes=? WHERE id=?', (notes, identity_id))
+            self._conn.commit()
+
+    def new_identity(self, callsign='', name=''):
+        with self._lock:
+            cur = self._conn.execute('INSERT INTO identities(callsign, name, created) VALUES (?,?,?)',
+                                     (callsign, name, time.time()))
+            self._conn.commit()
+            return cur.lastrowid
+
+    def identity(self, identity_id):
+        with self._lock:
+            r = self._conn.execute('SELECT id, callsign, name, notes FROM identities WHERE id=?',
+                                   (identity_id,)).fetchone()
+        return dict(zip(('id', 'callsign', 'name', 'notes'), r)) if r else None
+
+    def add_cannot_link(self, a, b):
+        a, b = sorted((int(a), int(b)))
+        with self._lock:
+            self._conn.execute('INSERT OR IGNORE INTO cannot_link(a, b, ts) VALUES (?,?,?)',
+                               (a, b, time.time()))
+            self._conn.commit()
+
+    def remove_cannot_link(self, a, b):
+        a, b = sorted((int(a), int(b)))
+        with self._lock:
+            self._conn.execute('DELETE FROM cannot_link WHERE a=? AND b=?', (a, b))
+            self._conn.commit()
+
+    def cannot_links(self):
+        with self._lock:
+            return {(r[0], r[1]) for r in self._conn.execute('SELECT a, b FROM cannot_link')}
+
+    def audit_rows(self, limit=50):
+        with self._lock:
+            rows = self._conn.execute('SELECT id, ts, actor, action, payload FROM audit '
+                                      'ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+        return [{'id': r[0], 'ts': r[1], 'actor': r[2], 'action': r[3],
+                 'payload': json.loads(r[4] or '{}')} for r in rows]
+
+    def audit_row(self, audit_id):
+        with self._lock:
+            r = self._conn.execute('SELECT id, ts, actor, action, payload FROM audit WHERE id=?',
+                                   (audit_id,)).fetchone()
+        return {'id': r[0], 'ts': r[1], 'actor': r[2], 'action': r[3],
+                'payload': json.loads(r[4] or '{}')} if r else None
+
+    def last_audit_id(self):
+        with self._lock:
+            return self._conn.execute('SELECT COALESCE(MAX(id), 0) FROM audit').fetchone()[0]
 
     def by_tx_ids(self, tx_ids):
         """{tx_id: {profile_id, score, decision}} for transcription rows (for the UI chip)."""

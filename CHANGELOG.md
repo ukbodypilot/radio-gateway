@@ -4,6 +4,46 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Speaker ID, part 2: callsigns, curation, learning loop, offload.**
+  See `docs/speaker-id.md`.
+  - *Callsign evidence:* each transcript is read for callsigns (written out,
+    phonetic, ASR-mangled: "Killer"/"6th"/"K06") and roles ("this is X" =
+    the speaker; "thank you, X" = addressed), checked against an offline
+    copy of the FCC amateur database (public weekly download, rebuilt in a
+    child process, `~/.config/radio-gateway/uls.db`). Turn-taking cues
+    ("thanks Jeff" names the previous speaker, "go ahead Jeff" the next) are
+    matched against FCC first names. Near-miss calls fold onto an
+    established regular. A voice is named once its evidence clears a bar
+    (>= 70% share and 2+ self-IDs on 2+ days, or 5+, or 3+ with a matching
+    name cue): on 24 h of SDR1 that named 2 voices, each with a "why".
+    `SPEAKER_ID_CALLSIGNS`.
+  - *`/speakers`:* voices with their evidence, FCC licence, sample clips and
+    recent overs; label, "not this person", merge, move an over, "different
+    people", all audited and undoable. A review queue ranks the questions
+    where one click settles most traffic (confirm, conflict, same person?,
+    who is this?). Chips on `/transcribe` link to the voice. Human labels
+    are never overridden by automation.
+  - *Nightly (`SPEAKER_ID_NIGHTLY_TIME`, also "Re-cluster now"):* re-assigns
+    overs that now clearly fit another voice (>= 0.70), merges only voices
+    >= `SPEAKER_ID_MERGE_AT` (0.80, complete linkage), never across a human
+    "different people" or two identities, then prunes clips older than
+    `SPEAKER_ID_CLIP_DAYS` except each voice's best 20. Measured: different
+    people's average voices reach 0.76 on one repeater, so lower thresholds
+    merged strangers (88% -> 47%); with these, 88% -> 89% and 33 -> 36 of 40
+    self-ID'd overs placed, the close calls left to the review queue.
+  - *Model swap:* change `SPEAKER_ID_MODEL` and the old model stays live
+    while every kept clip is re-fingerprinted in idle time, then voices and
+    labels switch over at once.
+  - *Offload (`SPEAKER_ID_OFFLOAD=auto`):* transcribe workers gain `/embed`
+    (same code, same vector: cosine 1.0000 vs local); the gateway uses a
+    worker that lists the model in `/status` `embed_models`, falling back to
+    local per over with a 2-minute backoff.
+  - *Integrations:* `SPEAKER_ID_ALERT` emails when a listed callsign or name
+    is heard (once per person per 30 min); MCP `speakers_list`,
+    `speaker_whois`, `speaker_review`, `speaker_label` (168 tools);
+    `rg_speaker_id_voices` and a Speaker ID row in Grafana; backups with
+    `python -m speaker_id.retention backup out.tar.gz`.
+
 - **Speaker ID, part 1: voice fingerprints on every transcribed over**
   (`speaker_id/`, off by default: `ENABLE_SPEAKER_ID`). Each over the
   transcriber cuts is fingerprinted with ERes2Net (3D-Speaker, ONNX, vendored

@@ -201,6 +201,7 @@
   .latest-source { color: var(--t-text); text-transform: uppercase; letter-spacing: 0.05em; font-size: var(--f-xs); }
   .latest-freq   { color: var(--t-text-dim); }
   /* Speaker ID chip: who the voice is (or which unnamed voice) */
+  a.spk { text-decoration: none; }
   .spk { display: inline-block; padding: 0 6px; border-radius: 999px; font-size: var(--f-xs);
          border: 1px solid var(--t-border); color: var(--t-text); white-space: nowrap; }
   .spk.unsure { color: var(--t-text-mute); border-style: dashed; }
@@ -786,7 +787,8 @@ function spkChip(sp) {
   var score = sp.score != null ? ' ' + Number(sp.score).toFixed(2) : '';
   if (!sp.profile_id) return '<span class="spk unsure" title="Voice not recognised yet' + _h(score ? ' (best' + score + ')' : '') + '">voice ?</span>';
   var who = sp.callsign || sp.name || ('Voice #' + sp.profile_id);
-  return '<span class="spk" title="' + _h('voice profile #' + sp.profile_id + ', match' + score) + '">' + _h(who) + '</span>';
+  return '<a class="spk" href="/speakers#voice-' + sp.profile_id + '" title="' +
+         _h('voice #' + sp.profile_id + ', match' + score + ' — open on Speakers') + '">' + _h(who) + '</a>';
 }
 // With several channels the big card shows only the newest over; this keeps
 // the newest line of EVERY channel in view so no repeater scrolls away.
