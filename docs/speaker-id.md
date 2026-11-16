@@ -110,6 +110,32 @@ Private by nature; nothing is in the repo.
 | `~/.config/radio-gateway/uls.db` | FCC amateur licences |
 
 Backup (safe while running): `python3 -m speaker_id.retention backup out.tar.gz`.
+`SPEAKER_ID_DB_PATH` moves the database; the clips live beside it.
+
+### Rebuilding from the recordings
+
+After a change to thresholds, splitting or evidence rules, the history can be
+re-filed as the new code would have filed it live: `tools/speaker_rebuild.py`
+replays the loop recordings (24 h kept) through a fresh speaker-ID service,
+segmenting with the transcriber's own VAD settings and keeping only overs that
+match a TX Log row (so each keeps its `tx_id` and start time). It writes a NEW
+database; the live one is untouched. Human labels are not carried over.
+
+It is heavy (about an hour of CPU per day of audio): run it on a
+transcription worker. Copy this repo, `recordings/loop/<bus>/`, and sqlite
+`.backup` snapshots of `transcriptions.db` and `uls.db` there, then:
+
+```bash
+python3 tools/speaker_rebuild.py --loop loop --tx-db transcriptions.db \
+    --uls uls.db --out out --dry          # check the matching first
+python3 tools/speaker_rebuild.py --loop loop --tx-db transcriptions.db --uls uls.db --out out
+python3 tools/speaker_rebuild.py ... --topup    # later: add what was recorded since
+```
+
+Copy `out/` to `~/.config/radio-gateway/speakers-v2/`, set
+`SPEAKER_ID_DB_PATH` to its `speakers.db`, restart. Rollback: blank the key.
+First run (2026-11-16, 24 h of SDR1 + listener): self-IDs agreeing with
+their voice 63% -> 90%, voices mixing callsigns 3 -> 2.
 
 ## Health
 

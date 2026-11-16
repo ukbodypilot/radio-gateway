@@ -4,6 +4,13 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **`tools/speaker_rebuild.py`: re-file speaker-ID history with the current
+  code.** Replays the loop recordings through a fresh service (transcriber
+  VAD settings, TX Log matching keeps each over's tx_id and start time,
+  Parakeet word timings, nightly at each 03:30), into a new database beside
+  the live one; `--dry` checks the matching, `--topup` adds what came since.
+  Swap in with `SPEAKER_ID_DB_PATH`. First run: self-IDs agreeing with their
+  voice 63% -> 90%. See docs/speaker-id.md.
 - **Speaker ID: tougher matching, no drift.** Accept 0.65 (was 0.60) and a
   match only teaches the voice at `SPEAKER_ID_LEARN_AT` 0.70; the nightly
   pass rebuilds each voice from those confident overs only. On 24 h of SDR1:
