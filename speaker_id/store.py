@@ -30,7 +30,7 @@ import time
 
 import numpy as np
 
-SCHEMA_VERSION = 3   # 2: profiles.merged_into (soft merge); 3: evidence.at (seconds into the over)
+SCHEMA_VERSION = 4   # 2: profiles.merged_into (soft merge); 3: evidence.at; 4: evidence.ch (char offset)
 
 _SCHEMA = '''
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -133,6 +133,8 @@ class SpeakerStore:
             ecols = {r[1] for r in self._conn.execute('PRAGMA table_info(evidence)')}
             if 'at' not in ecols:
                 self._conn.execute('ALTER TABLE evidence ADD COLUMN at REAL')
+            if 'ch' not in ecols:
+                self._conn.execute('ALTER TABLE evidence ADD COLUMN ch INTEGER')
             self._conn.execute('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)',
                                ('schema_version', str(SCHEMA_VERSION)))
             self._conn.commit()
@@ -189,13 +191,13 @@ class SpeakerStore:
                                (last_seen, profile_id))
             self._conn.commit()
 
-    def add_evidence(self, utt_id, kind, value, weight, source, version=1, at=None):
-        """at: where in the over (seconds) the clue was said, if known."""
+    def add_evidence(self, utt_id, kind, value, weight, source, version=1, at=None, ch=None):
+        """at: seconds into the over the clue was said; ch: its char offset in the transcript."""
         with self._lock:
             self._conn.execute(
-                'INSERT INTO evidence(utt_id, kind, value, weight, source, version, ts, at) '
-                'VALUES (?,?,?,?,?,?,?,?)',
-                (utt_id, kind, str(value), float(weight), source, int(version), time.time(), at))
+                'INSERT INTO evidence(utt_id, kind, value, weight, source, version, ts, at, ch) '
+                'VALUES (?,?,?,?,?,?,?,?,?)',
+                (utt_id, kind, str(value), float(weight), source, int(version), time.time(), at, ch))
             self._conn.commit()
 
     def audit(self, actor, action, **payload):
@@ -322,6 +324,31 @@ class SpeakerStore:
                 f"SELECT utt_id, value, MIN(COALESCE(at, 0)) FROM evidence WHERE kind='callsign_self' "
                 f"AND utt_id IN ({q}) GROUP BY utt_id", ids).fetchall()
         return {r[0]: (r[1], r[2]) for r in rows}
+
+    def voice_calls(self, profile_id):
+        """Callsigns this voice has given as its own."""
+        with self._lock:
+            return {r[0] for r in self._conn.execute(
+                "SELECT DISTINCT e.value FROM evidence e JOIN utterances u ON u.id = e.utt_id "
+                "WHERE u.profile_id=? AND e.kind='callsign_self'", (profile_id,))}
+
+    def callsign_quotes(self, profile_id, callsign, limit=3, width=(45, 70)):
+        """[{id, at, quote}] where this voice said `callsign`: the words around it, to judge by."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT u.id, e.at, e.ch, u.text, u.clip <> '' FROM utterances u "
+                "JOIN evidence e ON e.utt_id = u.id WHERE u.profile_id=? AND e.kind='callsign_self' "
+                "AND e.value=? ORDER BY u.ts DESC LIMIT ?", (profile_id, callsign, limit)).fetchall()
+        out = []
+        for uid, at, ch, text, has_clip in rows:
+            text = text or ''
+            if ch is None:
+                q = text[:width[0] + width[1]]
+            else:
+                a, b = max(0, ch - width[0]), min(len(text), ch + width[1])
+                q = ('…' if a else '') + text[a:b].strip() + ('…' if b < len(text) else '')
+            out.append({'id': uid, 'at': at, 'quote': q, 'clip': bool(has_clip)})
+        return out
 
     def callsign_overs(self, profile_id, callsign, limit=3):
         """[(utt_id, at)] overs of this voice where it said `callsign`, clip kept, best first."""
@@ -538,6 +565,25 @@ class SpeakerStore:
     def last_audit_id(self):
         with self._lock:
             return self._conn.execute('SELECT COALESCE(MAX(id), 0) FROM audit').fetchone()[0]
+
+    def speakers_for_tx(self, tx_ids):
+        """{tx_id: {profile_id, callsign, name, label_source, said}} for transcription rows.
+
+        said = the callsign the speaker gave in that over (rule evidence), if any.
+        """
+        ids = [int(i) for i in tx_ids if i is not None]
+        if not ids:
+            return {}
+        q = ','.join('?' * len(ids))
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT u.tx_id, u.profile_id, i.callsign, i.name, p.label_source, '
+                "  (SELECT e.value FROM evidence e WHERE e.utt_id = u.id AND e.kind = 'callsign_self' LIMIT 1) "
+                'FROM utterances u LEFT JOIN profiles p ON p.id = u.profile_id '
+                'LEFT JOIN identities i ON i.id = p.identity_id '
+                f'WHERE u.tx_id IN ({q})', ids).fetchall()
+        return {r[0]: {'profile_id': r[1], 'callsign': r[2] or '', 'name': r[3] or '',
+                       'label_source': r[4] or '', 'said': r[5] or ''} for r in rows}
 
     def by_tx_ids(self, tx_ids):
         """{tx_id: {profile_id, score, decision}} for transcription rows (for the UI chip)."""

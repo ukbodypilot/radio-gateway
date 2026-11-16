@@ -22,6 +22,9 @@
   .card .kind { font-size: var(--f-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--t-text-dim); }
   .card .kind.conflict { color: var(--t-warn); }
   .card .prompt { font-size: var(--f-sm); }
+  .quotes { display: grid; gap: 2px; font-size: var(--f-sm); color: var(--t-text-dim); }
+  .quote { display: flex; gap: var(--s-2); align-items: baseline; }
+  .quote .qc { color: var(--t-text); font-weight: 600; white-space: nowrap; }
   .card .voices { display: flex; flex-wrap: wrap; gap: var(--s-3); }
   .card .actions, .row-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center; }
   .vchip { display: inline-flex; gap: 6px; align-items: center; font-size: var(--f-sm); }
@@ -256,8 +259,13 @@ function card(it, i) {
   } else {
     a = form;
   }
+  var quotes = (it.quotes || []).map(function(q) {
+    return '<div class="quote">' + (q.clip ? playBtn(q.id, q.at) : '') +
+           '<span class="qc">' + h(q.callsign) + '</span> “' + h(q.quote) + '”</div>';
+  }).join('');
   return '<div class="card"><div class="kind ' + it.type + '">' + (kinds[it.type] || it.type) + '</div>' +
-         '<div class="prompt">' + h(it.prompt) + '</div><div class="voices">' + voices + '</div>' +
+         '<div class="prompt">' + h(it.prompt) + '</div>' + (quotes ? '<div class="quotes">' + quotes + '</div>' : '') +
+         '<div class="voices">' + voices + '</div>' +
          '<div class="actions">' + a + '<button class="rb rb-sm" onclick="_skipped[\'' + h(key) + '\']=1;loadQueue()">Skip</button></div></div>';
 }
 

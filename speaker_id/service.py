@@ -438,7 +438,8 @@ class SpeakerID:
                              freq=result.get('freq') or None, source=result.get('source') or None)
         self.counters['texted'] += 1
         if self._ident:
-            filed = self._ident.file(row, ts, dur, bus, text, word_times=result.get('word_times'))
+            filed = self._ident.file(row, ts, dur, bus, text, word_times=result.get('word_times'),
+                                     profile_id=pid)
             if filed:
                 self.counters['evidence_overs'] += 1
             # A self-ID on this voice, or a cue that landed on a neighbour,

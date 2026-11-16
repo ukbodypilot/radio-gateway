@@ -226,6 +226,42 @@ res = sid.run_on_worker(lambda s: 'ran on ' + __import__('threading').current_th
 check("run_on_worker runs on the SpeakerID thread", res == 'ran on SpeakerID', res)
 sid.stop()
 
+print("\n7b. TX Log callsign column")
+st = SpeakerStore(st.path)          # the service closed its handle on stop()
+st.set_profile_identity(C, st.identity_for_call('KX7QZB', create_name='Bernard Cole'), 'human')
+tx_named = 9001
+st._conn.execute('UPDATE utterances SET tx_id=? WHERE id=?', (tx_named, c_ids[0]))
+st._conn.commit()
+fake_sid = types.SimpleNamespace(store=st, _uls=FakeUls())
+gw = types.SimpleNamespace(speaker_id=fake_sid)
+rows = W.annotate_tx_rows(gw, [{'id': tx_named, 'text': 'hello'},
+                               {'id': 1, 'text': 'This is KX7QZA, clear.'},
+                               {'id': 2, 'text': 'nothing to see'}])
+check("a row from a named voice shows its callsign", rows[0]['speaker']['callsign'] == 'KX7QZB'
+      and rows[0]['speaker']['profile_id'] == C, str(rows[0]))
+check("a row with no fingerprint still shows the call said in it (history)",
+      rows[1]['speaker'] == {'said': 'KX7QZA'}, str(rows[1]))
+check("a row with neither has no speaker", 'speaker' not in rows[2])
+check("the TX Log page has the column", '<th>Callsign</th>' in open(os.path.join(ROOT, 'web_pages', 'txlog.html')).read())
+rows = W.annotate_tx_rows(gw, [{'id': 3, 'text': 'Thanks, this is KX7QZA. Good evening, this is KX7QZB.'}])
+check("an over with two self-IDs shows the LAST (fast turnaround)", rows[0]['speaker']['said'] == 'KX7QZB', str(rows[0]))
+
+print("\n7c. a labelled voice that self-IDs as another call is a conflict, even once")
+E_, e_ids = voice([0, 1, 0, 0], 6, ts0=7000.0)
+st.set_profile_identity(E_, st.identity_for_call('KX7QZA', create_name='Quentin Ames'), 'human')
+u = e_ids[0]
+st.set_text(u, 'This is Steve, KX7QZB, net control tonight.')
+idf2 = Identifier(st, FakeUls())
+idf2.file(u, 7000.0, 4.0, 'sdr1', 'This is Steve, KX7QZB, net control tonight.', profile_id=E_)
+items = review.build(st, idf2, 'fake')
+conf = [i for i in items if i['type'] == 'conflict' and i['profiles'] == [E_]]
+check("one contrary self-ID raises a conflict card", len(conf) == 1, str([(i['type'], i['profiles']) for i in items]))
+check("the card quotes the words it is based on",
+      conf and any('net control' in q['quote'] and q['callsign'] == 'KX7QZB' for q in conf[0].get('quotes', [])),
+      str(conf[0].get('quotes') if conf else None))
+check("...and offers both calls to choose from",
+      conf and [c['callsign'] for c in conf[0]['candidates']][:2] == ['KX7QZA', 'KX7QZB'])
+
 print("\n8. the page")
 html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()
 check("the page is served at /speakers and in the nav",

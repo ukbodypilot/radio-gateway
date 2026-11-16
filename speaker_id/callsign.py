@@ -150,9 +150,14 @@ def extract(text, valid):
 
 
 def self_call(text, valid):
-    """The one callsign the speaker gave as their own, or None if absent/ambiguous."""
-    calls = {c for c, r, _ in extract(text, valid) if r == 'self'}
-    return calls.pop() if len(calls) == 1 else None
+    """The callsign the speaker gave as their own, or None.
+
+    When an over holds more than one self-ID, the LAST one applies: on a fast
+    turnaround (no 1 s gap, so one utterance) the earlier call belongs to the
+    station handing over and the last to whoever is speaking at the end.
+    """
+    calls = [c for c, r, _ in extract(text, valid) if r == 'self']
+    return calls[-1] if calls else None
 
 
 # ── turn-taking name cues ──────────────────────────────────────────────────

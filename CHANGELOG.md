@@ -4,6 +4,19 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **TX Log callsign column.** Each row shows who spoke: the voice's name
+  (linked to /speakers), else the callsign said in that over (marked "?"),
+  else the unnamed voice. Rows from before speaker ID get the callsign read
+  from their transcript, so the whole history has one where it was said.
+- **Speaker evidence: last self-ID wins, folding scoped to the voice,
+  conflicts raised early.** An over with two self-IDs is a fast turnaround
+  and the last call applies. A near-miss folds onto a regular only if that
+  voice has given the regular's call (a rare real licence was being absorbed
+  into a common one). A labelled voice that self-IDs as another call is a
+  conflict card even once, and every callsign card quotes the words it is
+  based on with a play-from-the-call button. (Found on the first live net: a
+  voice labelled from one ambiguous over was really net control.)
+
 - **Speakers page: play from just before the callsign, and clicks that land.**
   Play buttons marked ▶⇥ start 1 s before the call; callsign questions play
   overs where the voice actually says it. Positions come from Parakeet's

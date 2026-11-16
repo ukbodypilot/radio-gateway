@@ -26,11 +26,20 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
         human = (p['label_source'] or '').startswith('human')
         v = identifier.verdict(pid) if identifier else {'candidates': [], 'callsign': None}
         cands = v['candidates']
-        if p['callsign'] and cands and cands[0]['callsign'] != p['callsign'] and cands[0]['weight'] >= 2:
-            items.append({'type': 'conflict', 'profiles': [pid], 'score': p['overs'] * 2.0,
-                          'prompt': f"Voice #{pid} is labelled {p['callsign']}, but its own overs "
-                                    f"say {cands[0]['callsign']} ({cands[0]['weight']:.0f}x)",
-                          'candidates': cands[:3]})
+        others = [c for c in cands if p['callsign'] and c['callsign'] != p['callsign']]
+        if others:
+            # Even ONE self-ID of another call in a labelled voice is worth a
+            # look: 2026-11-15 a voice labelled from a single over was really
+            # net control, who gave a different call twenty minutes later.
+            o = others[0]
+            items.append({'type': 'conflict', 'profiles': [pid],
+                          'score': p['overs'] * (1.0 + sum(c['weight'] for c in others)),
+                          'prompt': f"Voice #{pid} is labelled {p['callsign']}, but in its overs people say they are "
+                                    + ', '.join(f"{c['callsign']}" + (f" ({c['first_name']})" if c['first_name'] else '')
+                                                + (f" {c['weight']:.0f}x" if c['weight'] > 1 else '') for c in others)
+                                    + ". Wrong label, or more than one person in this voice?",
+                          'callsign': p['callsign'],
+                          'candidates': ([{'callsign': p['callsign']}] + others)[:3]})
             continue
         if human:
             continue
@@ -57,6 +66,12 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
     for it in items[:limit]:
         it['samples'] = {pid: _samples(store, pid, it) for pid in it['profiles']}
         it['voices'] = {pid: _brief(profiles.get(pid)) for pid in it['profiles']}
+        # The words each callsign was heard in, so a confirm is judged on
+        # what was said, not on a bare count.
+        calls = [c['callsign'] for c in it.get('candidates') or [] if c.get('callsign')]
+        if calls:
+            it['quotes'] = [dict(q, callsign=c) for c in calls
+                            for q in store.callsign_quotes(it['profiles'][0], c, 2)]
     return items[:limit]
 
 

@@ -33,7 +33,8 @@ import time
 
 from speaker_id import callsign as cs
 
-VERSION = 2          # 2: evidence carries `at`, where in the over the call was said
+VERSION = 3          # 2: evidence `at` (seconds into the over); 3: `ch` (char offset),
+                     # last self-ID wins, folds only onto a call this voice has given
 SOURCE = 'rules'
 WEIGHT = {'callsign_self': 1.0, 'name_cue_back': 0.3, 'name_cue_fwd': 0.2, 'mention': 0.0}
 MIN_SELF_IDS = 2
@@ -95,7 +96,8 @@ class Identifier:
         self.counters = collections.Counter()
 
     # ── per over ────────────────────────────────────────────────────────
-    def file(self, utt_id, ts, duration, bus, text, count_regular=True, word_times=None):
+    def file(self, utt_id, ts, duration, bus, text, count_regular=True, word_times=None,
+             profile_id=None):
         """File the rule evidence for one over (and its neighbours' cues). Returns kinds filed.
 
         count_regular=False for history: the regulars were seeded from the
@@ -106,20 +108,31 @@ class Identifier:
             return []
         self.store.clear_rule_evidence(utt_id, SOURCE)
         filed = []
-        selfs = {}
+        selfs = []
         starts = [m.start() for m in cs._TOK.finditer(text)]
+        voice_calls = self.store.voice_calls(profile_id) if profile_id else set()
         for call, role, i in cs.extract(text, self.uls.valid):
             at = self.position(text, starts, i, duration, word_times)
+            ch = starts[i] if i < len(starts) else None
             if count_regular:
                 self.regulars.add(call, ts)
             if role == 'self':
-                selfs.setdefault(self.regulars.fold(call), at)
+                # Fold a near-miss onto a regular only if THIS voice has given
+                # that regular's call before: otherwise a rare but real
+                # licence is absorbed into a common one.
+                folded = self.regulars.fold(call)
+                selfs.append((folded if folded in voice_calls else call, at, ch))
             else:
-                self._add(utt_id, 'mention', call, at)
-        if len(selfs) == 1:                       # two different "self" calls = ambiguous
-            call, at = selfs.popitem()
-            self._add(utt_id, 'callsign_self', call, at)
+                self._add(utt_id, 'mention', call, at, ch)
+        if selfs:
+            # The LAST self-ID applies: an over with two is a fast turnaround,
+            # and the speaker at the end is the one who gave the last call.
+            call, at, ch = selfs[-1]
+            self._add(utt_id, 'callsign_self', call, at, ch)
             filed.append('callsign_self')
+            for c, a, h in selfs[:-1]:
+                if c != call:
+                    self._add(utt_id, 'mention', c, a, h)
         # turn-taking: this over's opening thanks names the PREVIOUS speaker,
         # a pending "go ahead X" from the previous over names THIS speaker.
         prev = self._last.get(bus)
@@ -138,8 +151,8 @@ class Identifier:
             self.counters[k] += 1
         return filed
 
-    def _add(self, utt_id, kind, value, at=None):
-        self.store.add_evidence(utt_id, kind, value, WEIGHT[kind], SOURCE, VERSION, at)
+    def _add(self, utt_id, kind, value, at=None, ch=None):
+        self.store.add_evidence(utt_id, kind, value, WEIGHT[kind], SOURCE, VERSION, at, ch)
 
     EST_BIAS = 2.0
 
@@ -268,7 +281,7 @@ class Identifier:
                 if not rows:
                     break
                 for uid, ts, bus, freq, text, pid, dur in rows:
-                    self.file(uid, ts, dur or 0.0, bus, text, count_regular=False)
+                    self.file(uid, ts, dur or 0.0, bus, text, count_regular=False, profile_id=pid)
                     upto = uid
                     n += 1
                     if pid:

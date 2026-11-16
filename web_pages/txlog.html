@@ -98,6 +98,11 @@
   .chan-hint { color: var(--t-text-dim); font-size: var(--f-sm); }
   .tx-table tbody tr:hover td { background: var(--t-panel-hi); }
   .col-time { white-space: nowrap; color: var(--t-accent); font-variant-numeric: tabular-nums; }
+  .col-call { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .col-call a, .hit-call a { text-decoration: none; }
+  .call-named { color: var(--t-text); font-weight: 600; }
+  .call-said { color: var(--t-text-dim); font-style: italic; }
+  .call-voice, .call-none { color: var(--t-text-mute); }
   .col-src  { white-space: nowrap; color: var(--t-text-dim); text-transform: uppercase; font-size: var(--f-xs); }
   .col-freq { white-space: nowrap; color: var(--t-text-dim); font-variant-numeric: tabular-nums; }
   .col-dur  { white-space: nowrap; color: var(--t-text-mute); text-align: right; }
@@ -225,6 +230,7 @@
       <thead>
         <tr>
           <th>Time</th>
+          <th>Callsign</th>
           <th>Source</th>
           <th>Freq</th>
           <th>Dur</th>
@@ -232,7 +238,7 @@
         </tr>
       </thead>
       <tbody id="hist-body">
-        <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+        <tr class="empty-row"><td colspan="6">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -322,6 +328,24 @@ function _esc(s) {
   return d.innerHTML;
 }
 function _escA(s) { return _esc(s).replace(/"/g, '&quot;'); }   // inside an attribute
+
+// Who spoke, most certain first: the voice's name (named by you or by its
+// callsign evidence), else the callsign said in this over (not yet confirmed
+// for the voice), else the unnamed voice's number.
+function callCell(sp) {
+  if (!sp) return '<span class="call-none">—</span>';
+  var link = sp.profile_id ? ' href="/speakers#voice-' + sp.profile_id + '"' : '';
+  if (sp.callsign || sp.name) {
+    var by = (sp.label_source || '').indexOf('human') === 0 ? 'named by you' : 'named from its callsign evidence';
+    return '<a class="call-named"' + link + ' title="' + _escA((sp.name ? sp.name + ' · ' : '') + 'voice #' + sp.profile_id + ', ' + by) + '">' +
+           _esc(sp.callsign || sp.name) + '</a>';
+  }
+  if (sp.said) {
+    return '<a class="call-said"' + link + ' title="' + _escA('said in this over; not confirmed for the voice yet' +
+           (sp.profile_id ? ' (voice #' + sp.profile_id + ')' : '')) + '">' + _esc(sp.said) + '?</a>';
+  }
+  return '<a class="call-voice"' + link + ' title="unnamed voice">voice #' + sp.profile_id + '</a>';
+}
 
 // Today's rows show the time alone; anything older carries its date, so a
 // log that has not been written for a while does not read as "last night".
@@ -428,13 +452,14 @@ function loadPage(offset) {
       _offset = offset;
       var tbody = document.getElementById('hist-body');
       if (!rows.length && offset === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No transcriptions stored yet.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No transcriptions stored yet.</td></tr>';
       } else if (!rows.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No more records.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No more records.</td></tr>';
       } else {
         tbody.innerHTML = rows.map(function(r) {
           return '<tr' + chAttrs(r) + '>' +
             '<td class="col-time">' + _esc(_fmtTime(r.ts)) + '</td>' +
+            '<td class="col-call">' + callCell(r.speaker) + '</td>' +
             '<td class="col-src">'  + _esc(r.source || '—') + '</td>' +
             '<td class="col-freq">' + _esc(r.freq   || '—') + '</td>' +
             '<td class="col-dur">'  + (r.duration ? _esc(r.duration.toFixed(1)) + 's' : '—') + '</td>' +
@@ -452,7 +477,7 @@ function loadPage(offset) {
     })
     .catch(function() {
       document.getElementById('hist-body').innerHTML =
-        '<tr class="empty-row"><td colspan="5">Failed to load history.</td></tr>';
+        '<tr class="empty-row"><td colspan="6">Failed to load history.</td></tr>';
     });
 }
 
@@ -570,6 +595,13 @@ function renderHits(rows) {
     time.className = 'hit-time';
     time.textContent = _fmtFullTime(r.ts);
     row.appendChild(time);
+
+    if (r.speaker) {
+      var cc = document.createElement('span');
+      cc.className = 'hit-call';
+      cc.innerHTML = callCell(r.speaker);
+      row.appendChild(cc);
+    }
 
     var meta = document.createElement('span');
     meta.className = 'hit-meta';

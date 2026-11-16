@@ -128,9 +128,11 @@ check("the voice is tied to an identity carrying the ULS name",
 check("the change is audited", st._conn.execute("SELECT COUNT(*) FROM audit WHERE action='name_profile'").fetchone()[0] == 1)
 check("the UI label follows", st.profile_labels().get(pid) == ('KX7QZA', 'Quentin Ames'))
 
-amb = over(2 * DAY + 100, 'This is KX7QZA. Sorry, this is KX7QZB.', other)
-check("two different calls both given as 'this is' file no self-ID (ambiguous)",
-      not [e for e in st.evidence_for(amb) if e['kind'] == 'callsign_self'])
+amb = over(2 * DAY + 100, 'Thanks, this is KX7QZA. Good evening, this is KX7QZB.', other)
+check("two self-IDs in one over: the LAST applies (fast turnaround)",
+      [e['value'] for e in st.evidence_for(amb) if e['kind'] == 'callsign_self'] == ['KX7QZB']
+      and [e['value'] for e in st.evidence_for(amb) if e['kind'] == 'mention'] == ['KX7QZA'],
+      str(st.evidence_for(amb)))
 
 one = st.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
 for k in range(4):
@@ -171,6 +173,30 @@ check("every stored over is filed", n == 3, str(n))
 check("history alone can name a voice", st2.profile_labels().get(p2, ('',))[0] == 'KX7QZA')
 check("a second pass files nothing (resumable, no duplicates)", idf2.backfill(5, st2.max_utterance_id()) == 0
       and st2._conn.execute("SELECT COUNT(*) FROM evidence WHERE kind='callsign_self'").fetchone()[0] == 2)
+
+print("\n7b. folding only onto a call this voice has given")
+stf = SpeakerStore(os.path.join(tmp, 'fold.db'))
+idff = Identifier(stf, U)
+for d in range(10):
+    for _ in range(9):
+        idff.regulars.add('KX7QZA', d * DAY)
+pf = stf.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+pg = stf.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+
+
+def fover(pid, text, ts):
+    u = stf.add_utterance(ts=ts, bus='sdr1', source='', freq='', duration=3.0, model='fake', emb=None,
+                          profile_id=pid, score=0.9, decision='matched')
+    stf.set_text(u, text)
+    idff.file(u, ts, 3.0, 'sdr1', text, profile_id=pid)
+    return [e['value'] for e in stf.evidence_for(u) if e['kind'] == 'callsign_self']
+
+
+check("a rare near-miss from a voice that never gave the regular call stays as heard",
+      fover(pg, 'This is KX7QZB.', 1.0) == ['KX7QZB'])
+fover(pf, 'This is KX7QZA.', 2.0)
+check("...but folds once the voice has given the regular call itself",
+      fover(pf, 'This is KX7QZB.', 3.0) == ['KX7QZA'])
 
 print("\n8. where in the over the call was said (play from just before it)")
 from transcribe_engine import word_times  # noqa: E402

@@ -241,6 +241,8 @@ def handle_transcription_log(handler, parent):
     tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
     if tl:
         rows = tl.get_recent(limit=limit, offset=offset, channels=_tx_channels(handler))
+        from web_routes_speakers import annotate_tx_rows
+        rows = annotate_tx_rows(parent.gateway, rows)
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')
@@ -382,6 +384,9 @@ def handle_transcript_search(handler, parent):
     tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
     out = tl.search_keyword(query, limit=limit, channels=_tx_channels(handler)) if tl else {
         'results': [], 'error': 'log unavailable'}
+    if out.get('results'):
+        from web_routes_speakers import annotate_tx_rows
+        out['results'] = annotate_tx_rows(parent.gateway, out['results'])
     # Enrich each hit with loop-recorder availability so the front-end can
     # grey/enable the play button without a separate HEAD probe per row.
     lr = getattr(parent.gateway, 'loop_recorder', None) if parent.gateway else None

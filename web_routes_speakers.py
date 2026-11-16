@@ -143,6 +143,37 @@ def _clip(handler, sid, utt_id):
         pass
 
 
+def annotate_tx_rows(gateway, rows):
+    """Add row['speaker'] to TX Log rows: the voice's name, else the call said in the over.
+
+    Rows from before speaker ID (or from a bus it skips) have no fingerprint;
+    for those the transcript is read for a self-identified callsign against
+    the FCC table, so the whole history gets a callsign where one was said.
+    """
+    sid = getattr(gateway, 'speaker_id', None) if gateway else None
+    if sid is None or sid.store is None or not rows:
+        return rows
+    try:
+        known = sid.store.speakers_for_tx([r.get('id') for r in rows])
+    except Exception:
+        log_exc()
+        known = {}
+    uls = getattr(sid, '_uls', None)
+    valid = uls.valid if uls is not None and uls.ready() else None
+    if valid is not None:
+        from speaker_id.callsign import self_call
+    for r in rows:
+        sp = dict(known.get(r.get('id')) or {})
+        if not sp.get('said') and valid is not None and r.get('text'):
+            try:
+                sp['said'] = self_call(r['text'], valid) or ''
+            except Exception:
+                log_exc()
+        if sp.get('callsign') or sp.get('said') or sp.get('profile_id'):
+            r['speaker'] = sp
+    return rows
+
+
 _OPS = {
     'label': lambda c, b: c.label(b['profile_id'], b.get('callsign', ''), b.get('name', ''), b.get('notes')),
     'unlabel': lambda c, b: c.unlabel(b['profile_id']),
