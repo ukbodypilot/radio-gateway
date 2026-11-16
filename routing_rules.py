@@ -1,12 +1,13 @@
 """Routing-graph rules shared by the UI, the HTTP API and BusManager.
 
-One rule so far: a sink may be fed by at most one bus.
+One rule so far: a sink may be fed by at most one bus — except the sinks in
+MULTI_BUS_SINKS, which keep a separate stream per feeding bus.
 
 Nothing used to enforce it, and the graph editor happily draws the second
 connection. What happens next depends entirely on the sink, and none of the
 outcomes are "the two mix":
 
-- Queue sinks (mumble, broadcastify, transcription, remote_audio_tx, speaker)
+- Queue sinks (mumble, broadcastify, remote_audio_tx, speaker)
   share ONE bounded deque keyed by sink_id in BusManager._enqueue_sink. Two
   buses append into it and the drain thread sends each payload in turn, so the
   far end gets 50 ms fragments of the two sources ALTERNATING, at twice the
@@ -35,6 +36,17 @@ ducking and priorities that go with it). Put the sources on one bus instead.
 # load and on save, and never count as a conflict.
 RETIRED_SINKS = frozenset({'recording', 'nul'})
 
+# Sinks that handle each feeding bus as its own stream, so several buses do
+# not interleave. 'transcription': BusManager calls transcriber.feed(audio,
+# source_id=bus_id) directly (no shared _enqueue_sink deque), and
+# RadioTranscriber keeps a feed queue, Silero VAD state, utterance buffer and
+# worker thread PER bus (_get_or_create_stream), so every result carries the
+# bus it came from. Before this rule existed (fd4812d, 2026-08) th9800, sdr2
+# and main were transcribed at once. Speaker ID rides on the same streams.
+# web_pages/routing.html carries the same list; tests/test_routing_sink_conflicts.py
+# keeps the two in step.
+MULTI_BUS_SINKS = frozenset({'transcription'})
+
 
 def strip_retired_sinks(connections):
     """Return `connections` without bus->sink edges to a retired sink."""
@@ -56,7 +68,7 @@ def find_sink_conflicts(connections):
             continue
         sink = c.get('to')
         bus = c.get('from')
-        if not sink or not bus or sink in RETIRED_SINKS:
+        if not sink or not bus or sink in RETIRED_SINKS or sink in MULTI_BUS_SINKS:
             continue
         by_sink.setdefault(sink, [])
         if bus not in by_sink[sink]:

@@ -239,6 +239,17 @@ class _LifecycleMixin:
             except Exception as e:
                 print(f'  [TxLog] Failed to open log: {e}')
 
+        # Speaker ID listens to the transcriber's utterances, so it must exist
+        # BEFORE the transcriber is constructed (which attaches it).
+        if self.config.ENABLE_SPEAKER_ID and getattr(self.config, 'ENABLE_TRANSCRIPTION', False):
+            try:
+                from speaker_id.service import SpeakerID
+                self.speaker_id = SpeakerID(self.config, self)
+                self.speaker_id.start()
+            except Exception as e:
+                print(f"[SpeakerID] Failed to start: {e}")
+                self.speaker_id = None
+
         # Start Transcriber if enabled
         if getattr(self.config, 'ENABLE_TRANSCRIPTION', False):
             try:
@@ -423,6 +434,7 @@ class _LifecycleMixin:
         for obj, what, method in (
             (self.automation_engine, 'automation', 'stop'),
             (self.transcriber, 'transcriber', 'stop'),
+            (self.speaker_id, 'speaker ID', 'stop'),
             (self.transcription_log, 'transcription log', 'close'),
             (self.smart_announce, 'smart announce', 'stop'),
             (self.manager_engine, 'manager', 'stop'),

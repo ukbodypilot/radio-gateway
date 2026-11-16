@@ -13,6 +13,7 @@ Mumble, and keyword hits are emailed.
 
 from log_util import log_exc
 import collections
+import itertools
 import json
 import logging
 import os
@@ -450,6 +451,17 @@ class RadioTranscriber:
 
         self._pending = collections.deque(maxlen=500)
         self._pending_evt = threading.Event()
+        # Listeners (speaker ID) get each utterance and, later, its transcript
+        # under the same uid. Called inline on transcriber threads, so a
+        # listener must only enqueue; every call is wrapped in log_exc.
+        self._listeners = []
+        self._utt_seq = itertools.count(1)
+        # Speaker ID attaches itself here rather than at each construction
+        # site: web_routes_transcribe rebuilds the transcriber on a model
+        # switch, and a listener added only at boot would silently stop.
+        _sid = getattr(gateway, 'speaker_id', None) if gateway else None
+        if _sid is not None:
+            self.add_listener(_sid)
 
         # Per-stream queues live on each _StreamState. RadioTranscriber
         # keeps one lock to guard `_feed_stats` updates from multiple worker
@@ -586,6 +598,15 @@ class RadioTranscriber:
     # -----------------------------------------------------------------
     # Self-registering workers
     # -----------------------------------------------------------------
+
+    def add_listener(self, listener):
+        """listener.on_utterance(item) and listener.on_result(uid, result); must not block."""
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+    def remove_listener(self, listener):
+        if listener in self._listeners:
+            self._listeners.remove(listener)
 
     def register_worker(self, url: str, name: str = '', meta: dict | None = None) -> dict:
         """Add or refresh a self-registering remote worker.
@@ -958,14 +979,22 @@ class RadioTranscriber:
             _dominant = None
             if stream.upstream_counts:
                 _dominant = max(stream.upstream_counts.items(), key=lambda kv: kv[1])[0]
-            self._pending.append({
+            item = {
+                'uid': next(self._utt_seq),
                 'audio_16k': audio_16k,
+                'audio_boost': self._audio_boost,
                 'start_time': stream.buf_start_time,
                 'duration': duration,
                 'source_id': source_id,
                 'upstream_source': _dominant,
-            })
+            }
+            self._pending.append(item)
             self._pending_evt.set()
+            for _l in self._listeners:
+                try:
+                    _l.on_utterance(item)
+                except Exception:
+                    log_exc()
         stream.audio_buf_16k = []
         stream.audio_buf_samples = 0
         stream.upstream_counts = {}
@@ -1325,6 +1354,7 @@ class RadioTranscriber:
                     # worker's model_key once it has polled /status.
                     'model': getattr(engine, 'model_key', '') or '',
                     'time_str': time.strftime('%H:%M:%S', time.localtime(item['start_time'])),
+                    'uid': item.get('uid'),
                 }
             # Track per-engine ratio (LocalInferenceEngine only — RemoteEngine
             # gets its avg_ratio from the worker's /status payload).
@@ -1357,7 +1387,12 @@ class RadioTranscriber:
         _tl = getattr(self._gateway, 'transcription_log', None) if self._gateway else None
         if _tl:
             try:
-                _tl.insert(result)
+                result['tx_id'] = _tl.insert(result)
+            except Exception:
+                log_exc()
+        for _l in self._listeners:
+            try:
+                _l.on_result(result.get('uid'), result)
             except Exception:
                 log_exc()
             try:

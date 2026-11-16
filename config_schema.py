@@ -534,6 +534,20 @@ DEFAULTS.update({
     'TRANSCRIPTION_LOG_PATH': '',
     'TRANSCRIPTION_ALERT_KEYWORDS': '',
 })
+
+# Speaker ID (speaker_id/): voice fingerprints on every transcribed over.
+# Thresholds from the 2026-11-15 bake-off (ERes2Net, 24 h of SDR1, simulated live).
+DEFAULTS.update({
+    'ENABLE_SPEAKER_ID': False,
+    'SPEAKER_ID_MODEL': 'eres2net',
+    'SPEAKER_ID_BUSES': '',
+    'SPEAKER_ID_ACCEPT': 0.60,
+    'SPEAKER_ID_NEW': 0.45,
+    'SPEAKER_ID_MIN_SECS': 1.5,
+    'SPEAKER_ID_LEARN_SECS': 3.0,
+    'SPEAKER_ID_KEEP_CLIPS': True,
+    'SPEAKER_ID_DB_PATH': '',
+})
 _FILE_ONLY_DOCUMENTED = (
     'MANUAL_PTT_MAX_SECS', 'STREAM_SAMPLE_RATE', 'STREAM_DUAL_CHANNEL',
     'STREAM_MOUNT_WAIT', 'STREAM_CONNECT_CONFIRM', 'STREAM_FLOW_STALE_AFTER',
@@ -788,6 +802,11 @@ LAYOUT = [
         'TRANSCRIBE_MIN_DURATION',
         'TRANSCRIBE_FORWARD_MUMBLE',
     ]),
+    ('speaker_id', 'Speaker ID', [
+        'ENABLE_SPEAKER_ID', 'SPEAKER_ID_MODEL', 'SPEAKER_ID_BUSES',
+        'SPEAKER_ID_ACCEPT', 'SPEAKER_ID_NEW',
+        'SPEAKER_ID_MIN_SECS', 'SPEAKER_ID_LEARN_SECS', 'SPEAKER_ID_KEEP_CLIPS',
+    ]),
     ('advanced', 'Advanced / Diagnostics', [
         'HEADLESS_MODE', 'START_CLAUDE_CODE', 'LOG_BUFFER_LINES', 'LOG_FILE_DAYS',
         'VERBOSE_LOGGING', 'STATUS_UPDATE_INTERVAL',
@@ -796,6 +815,7 @@ LAYOUT = [
 ]
 
 NOT_IN_FORM = {
+    'SPEAKER_ID_DB_PATH': 'a path to private data; blank default is right for every install',
     # Set in the file only; none of these has ever had a form field.
     'ENABLE_CAT_CONTROL': 'alias of ENABLE_TH9800, kept in sync by Config',
     'PACKET_APRS_IS_PASSCODE': 'secret',

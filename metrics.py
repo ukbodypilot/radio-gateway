@@ -68,6 +68,14 @@ transcription_dispatched_total = Counter(
     registry=REGISTRY,
 )
 
+speaker_id_events_total = Counter(
+    'rg_speaker_id_events_total',
+    'Speaker ID per-over outcomes: embedded, matched, matched_learn, new_profile, '
+    'unsure, dropped, errors',
+    ['event'],
+    registry=REGISTRY,
+)
+
 stream_bytes_sent_total = Counter(
     'rg_stream_bytes_sent_total',
     'Bytes sent to each outbound stream (Broadcastify/Icecast)',

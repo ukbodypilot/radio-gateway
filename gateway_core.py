@@ -346,6 +346,7 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
         # Transcriber
         self.transcriber = None
         self.transcription_log = None
+        self.speaker_id = None
         self.transcription_audio_level = 0
 
         # Web configuration UI

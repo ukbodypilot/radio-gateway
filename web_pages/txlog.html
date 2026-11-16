@@ -83,6 +83,19 @@
     text-align: left;
   }
   .tx-table td { padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--t-border); vertical-align: top; }
+  /* Channel (bus + freq) stripe, so a mixed list stays readable */
+  .tx-table tr[data-ch] td:first-child { box-shadow: inset 3px 0 0 var(--ch, transparent); }
+  .hit[data-ch] { box-shadow: inset 3px 0 0 var(--ch, transparent); }
+  .chan-bar { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center;
+              padding: var(--s-2) 0; }
+  .chan-bar .lbl { color: var(--t-text-dim); font-size: var(--f-sm); margin-right: var(--s-1); }
+  .chan { border: 1px solid var(--t-border); background: var(--t-btn); color: var(--t-text);
+          border-radius: 999px; padding: 2px var(--s-2); font: inherit; font-size: var(--f-sm);
+          cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+  .chan .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ch, var(--t-text-dim)); }
+  .chan .n { color: var(--t-text-dim); font-variant-numeric: tabular-nums; }
+  .chan.on { border-color: var(--t-accent); background: var(--t-panel-hi); }
+  .chan-hint { color: var(--t-text-dim); font-size: var(--f-sm); }
   .tx-table tbody tr:hover td { background: var(--t-panel-hi); }
   .col-time { white-space: nowrap; color: var(--t-accent); font-variant-numeric: tabular-nums; }
   .col-src  { white-space: nowrap; color: var(--t-text-dim); text-transform: uppercase; font-size: var(--f-xs); }
@@ -162,6 +175,9 @@
   <div class="answer-box" id="q-answer"></div>
 </div>
 
+<!-- Channel filter: applies to search, activity and history -->
+<div class="chan-bar" id="chan-bar"></div>
+
 <!-- Keyword search -->
 <div class="search-panel">
   <div class="search-row">
@@ -223,6 +239,79 @@
 </div>
 
 <script>
+// ── Channel filter ─────────────────────────────────────────────────────────
+// A channel is bus + frequency tag (the repeater, and the receiver it came in
+// on). With several buses feeding transcription the log is one mixed list;
+// the filter narrows every view on this page and is remembered per browser.
+var _chans = [];          // [{bus, freq, n, last}] from /transcription/channels
+var _chSel = [];          // selected keys 'bus|freq'; empty = all
+try { var _cs = JSON.parse(localStorage.getItem('txlog.channels') || '[]');
+      if (Array.isArray(_cs)) _chSel = _cs; } catch (e) {}
+
+function chKey(r) { return (r.bus || '') + '|' + (r.freq || ''); }
+function chColor(key) {
+  var h = 0;
+  for (var i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return 'hsl(' + (h % 360) + ' 65% 55%)';
+}
+function chLabel(c) {
+  var b = c.bus ? c.bus.toUpperCase() : '(no bus)';
+  return c.freq ? b + ' · ' + c.freq : b;
+}
+function chQuery() {
+  return _chSel.length ? '&ch=' + encodeURIComponent(_chSel.join(',')) : '';
+}
+function chAttrs(r) {
+  var k = chKey(r);
+  return ' data-ch="' + _escA(k) + '" style="--ch:' + chColor(k) + '"';
+}
+function chLoad() {
+  fetch('/transcription/channels?days=' + ACT_DAYS)
+    .then(function(r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function(d) {
+      _chans = d.channels || [];
+      // Forget selections that no longer exist, so a stale filter never hides everything.
+      var have = {}; _chans.forEach(function(c) { have[chKey(c)] = 1; });
+      var kept = _chSel.filter(function(k) { return have[k]; });
+      if (kept.length !== _chSel.length) { _chSel = kept; chSave(); chApply(); }
+      chRender();
+    })
+    .catch(function() { document.getElementById('chan-bar').style.display = 'none'; });
+}
+function chRender() {
+  var bar = document.getElementById('chan-bar');
+  if (_chans.length < 2 && !_chSel.length) { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  var h = '<span class="lbl">Channels</span>' +
+          '<button class="chan' + (_chSel.length ? '' : ' on') + '" data-k="">All</button>';
+  _chans.forEach(function(c) {
+    var k = chKey(c);
+    h += '<button class="chan' + (_chSel.indexOf(k) >= 0 ? ' on' : '') + '" data-k="' + _escA(k) +
+         '" style="--ch:' + chColor(k) + '" title="' + _escA(c.n + ' transmissions, last ' + _fmtFullTime(c.last)) + '">' +
+         '<span class="dot"></span>' + _esc(chLabel(c)) + '<span class="n">' + c.n + '</span></button>';
+  });
+  h += '<span class="chan-hint">click = only that channel · shift-click = add/remove</span>';
+  bar.innerHTML = h;
+}
+function chSave() { try { localStorage.setItem('txlog.channels', JSON.stringify(_chSel)); } catch (e) {} }
+function chApply() {
+  _newestTs = 0;
+  loadPage(0);
+  actLoad();
+  if (document.getElementById('kw-input').value.trim()) doSearch();
+}
+document.addEventListener('click', function(e) {
+  var b = e.target.closest && e.target.closest('#chan-bar .chan');
+  if (!b) return;
+  var k = b.getAttribute('data-k');
+  if (!k) _chSel = [];
+  else if (e.shiftKey || e.ctrlKey || e.metaKey) {
+    var i = _chSel.indexOf(k);
+    if (i >= 0) _chSel.splice(i, 1); else _chSel.push(k);
+  } else _chSel = (_chSel.length === 1 && _chSel[0] === k) ? [] : [k];
+  chSave(); chRender(); chApply();
+});
+
 var _offset   = 0;
 var _limit    = 100;
 var _newestTs = 0;   // ts of most recent row seen; used to skip no-op reloads
@@ -232,6 +321,7 @@ function _esc(s) {
   d.textContent = String(s == null ? '' : s);
   return d.innerHTML;
 }
+function _escA(s) { return _esc(s).replace(/"/g, '&quot;'); }   // inside an attribute
 
 // Today's rows show the time alone; anything older carries its date, so a
 // log that has not been written for a while does not read as "last night".
@@ -246,13 +336,13 @@ function _fmtTime(ts) {
 // 2,000 rows so the charts still work (over a shorter span).
 var ACT_DAYS = 30;
 function actLoad() {
-  fetch('/transcription/stats?days=' + ACT_DAYS)
+  fetch('/transcription/stats?days=' + ACT_DAYS + chQuery())
     .then(function(r) { if (!r.ok) throw 0; return r.json(); })
     .then(function(s) { actRender(s.buckets || [], s.newest || 0, false); })
     .catch(function() {
       var map = {}, newest = 0;
       function page(off) {
-        return fetch('/transcription/log?limit=500&offset=' + off).then(function(r) { return r.json(); }).then(function(d) {
+        return fetch('/transcription/log?limit=500&offset=' + off + chQuery()).then(function(r) { return r.json(); }).then(function(d) {
           var rows = d.rows || [];
           rows.forEach(function(r) {
             var h = Math.floor(r.ts / 3600) * 3600;
@@ -331,7 +421,7 @@ function actRender(buckets, newest, partial) {
 
 function loadPage(offset) {
   offset = Math.max(0, Math.round(offset));
-  fetch('/transcription/log?limit=' + _limit + '&offset=' + offset)
+  fetch('/transcription/log?limit=' + _limit + '&offset=' + offset + chQuery())
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var rows = d.rows || [];
@@ -343,7 +433,7 @@ function loadPage(offset) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No more records.</td></tr>';
       } else {
         tbody.innerHTML = rows.map(function(r) {
-          return '<tr>' +
+          return '<tr' + chAttrs(r) + '>' +
             '<td class="col-time">' + _esc(_fmtTime(r.ts)) + '</td>' +
             '<td class="col-src">'  + _esc(r.source || '—') + '</td>' +
             '<td class="col-freq">' + _esc(r.freq   || '—') + '</td>' +
@@ -404,11 +494,12 @@ function submitQuery() {
 
 loadPage(0);
 actLoad(); setInterval(actLoad, 300000);
+chLoad(); setInterval(chLoad, 300000);
 
 // Auto-refresh: only when on page 0 and there are actually new entries
 setInterval(function() {
   if (_offset !== 0) return;
-  fetch('/transcription/log?limit=1&offset=0')
+  fetch('/transcription/log?limit=1&offset=0' + chQuery())
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var rows = d.rows || [];
@@ -433,7 +524,7 @@ function doSearch() {
   st.className = 'search-status';
   if (!q) { st.textContent = ''; renderHits([]); return; }
   st.textContent = 'searching…';
-  fetch('/transcript_search?q=' + encodeURIComponent(q) + '&limit=200')
+  fetch('/transcript_search?q=' + encodeURIComponent(q) + '&limit=200' + chQuery())
     .then(function(r){ return r.json(); })
     .then(function(d) {
       if (d.error) { st.className = 'search-status err'; st.textContent = d.error; renderHits([]); return; }
@@ -457,6 +548,8 @@ function renderHits(rows) {
     var r = rows[i];
     var row = document.createElement('div');
     row.className = 'hit';
+    row.setAttribute('data-ch', chKey(r));
+    row.style.setProperty('--ch', chColor(chKey(r)));
     var btn = document.createElement('button');
     btn.className = 'rb rb-sm hit-play';
     btn.textContent = '▶';

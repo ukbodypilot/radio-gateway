@@ -197,8 +197,36 @@ def handle_monitor_apk(handler, parent):
         handler.wfile.write(b'APK not built yet')
 
 
+def _tx_channels(handler):
+    """The ?ch=bus|freq,bus|freq filter shared by the TX Log endpoints (None = all)."""
+    import urllib.parse as _up
+    from transcription_log import TranscriptionLog
+    params = _up.parse_qs(_up.urlparse(handler.path).query, keep_blank_values=True)
+    return TranscriptionLog.parse_channels(params.get('ch', [''])[0])
+
+
+def handle_transcription_channels(handler, parent):
+    """GET /transcription/channels?days=30 — channels (bus + freq) in the log, busiest first."""
+    import urllib.parse as _up
+    days = 30
+    try:
+        days = max(1, min(366, int(_up.parse_qs(_up.urlparse(handler.path).query).get('days', ['30'])[0])))
+    except ValueError:
+        pass
+    tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
+    chans = tl.get_channels(days) if tl else []
+    try:
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'application/json')
+        handler.send_header('Cache-Control', 'no-cache')
+        handler.end_headers()
+        handler.wfile.write(json_mod.dumps({'channels': chans}).encode('utf-8'))
+    except BrokenPipeError:
+        pass
+
+
 def handle_transcription_log(handler, parent):
-    """GET /transcription/log?limit=100&offset=0"""
+    """GET /transcription/log?limit=100&offset=0[&ch=bus|freq,...]"""
     limit, offset = 100, 0
     try:
         qs = handler.path.split('?', 1)[1] if '?' in handler.path else ''
@@ -212,7 +240,7 @@ def handle_transcription_log(handler, parent):
     rows = []
     tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
     if tl:
-        rows = tl.get_recent(limit=limit, offset=offset)
+        rows = tl.get_recent(limit=limit, offset=offset, channels=_tx_channels(handler))
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')
@@ -234,7 +262,7 @@ def handle_transcription_stats(handler, parent):
     except Exception:
         log_exc()
     tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
-    data = tl.get_hourly_stats(days) if tl else {'newest': 0, 'total': 0, 'bucket': 3600, 'buckets': []}
+    data = tl.get_hourly_stats(days, channels=_tx_channels(handler)) if tl else {'newest': 0, 'total': 0, 'bucket': 3600, 'buckets': []}
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')
@@ -352,7 +380,7 @@ def handle_transcript_search(handler, parent):
     except ValueError:
         limit = 200
     tl = getattr(parent.gateway, 'transcription_log', None) if parent.gateway else None
-    out = tl.search_keyword(query, limit=limit) if tl else {
+    out = tl.search_keyword(query, limit=limit, channels=_tx_channels(handler)) if tl else {
         'results': [], 'error': 'log unavailable'}
     # Enrich each hit with loop-recorder availability so the front-end can
     # grey/enable the play button without a separate HEAD probe per row.
@@ -391,6 +419,12 @@ def handle_transcriptions(handler, parent):
     if parent.gateway and parent.gateway.transcriber:
         data['results'] = parent.gateway.transcriber.get_results(since=since)
         data['status'] = parent.gateway.transcriber.get_status()
+        _sid = getattr(parent.gateway, 'speaker_id', None)
+        if _sid is not None:
+            # Copies: the chip is recomputed per request (labels change), so it
+            # must never be written into the transcriber's stored results.
+            data['results'] = _sid.chips_for([dict(r) for r in data['results']])
+            data['speaker_id'] = _sid.get_status()
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')

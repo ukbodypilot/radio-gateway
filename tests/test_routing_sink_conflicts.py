@@ -16,7 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from routing_rules import (find_sink_conflicts, describe_conflicts,  # noqa: E402
+from routing_rules import (find_sink_conflicts, describe_conflicts, MULTI_BUS_SINKS,  # noqa: E402
                            strip_retired_sinks, RETIRED_SINKS)
 
 FAIL = []
@@ -60,6 +60,29 @@ check("empty / missing input is handled",
       find_sink_conflicts([]) == [] and find_sink_conflicts(None) == [])
 check("malformed entries do not raise",
       find_sink_conflicts([{'type': 'bus-sink'}, {'type': 'bus-sink', 'to': 'x'}]) == [])
+
+print("\n2b. sinks that keep a stream per bus (MULTI_BUS_SINKS)")
+check("several buses into transcription is legal (per-bus VAD/queue/worker)",
+      find_sink_conflicts([bs('sdr1', 'transcription'), bs('sdr2', 'transcription'),
+                           bs('th9800', 'transcription')]) == [])
+check("the exemption is only transcription",
+      MULTI_BUS_SINKS == frozenset({'transcription'}), str(MULTI_BUS_SINKS))
+check("an exempt sink does not hide a real conflict beside it",
+      find_sink_conflicts([bs('a', 'transcription'), bs('b', 'transcription'),
+                           bs('a', 'mumble'), bs('b', 'mumble')])
+      == [{'sink': 'mumble', 'busses': ['a', 'b']}])
+_rh = open(os.path.join(ROOT, 'web_pages', 'routing.html')).read()
+_js = _rh.split('var MULTI_BUS_SINKS = {', 1)[1].split('}', 1)[0]
+check("routing.html carries the same exempt list",
+      sorted(k.strip(" '\"") for k in (p.split(':')[0] for p in _js.split(',')) if k.strip())
+      == sorted(MULTI_BUS_SINKS), _js)
+_tr = open(os.path.join(ROOT, 'transcriber.py')).read()
+check("the exemption's premise holds: transcriber keeps one stream per source_id",
+      'stream.feed_queue = collections.deque' in _tr and 'self._streams[source_id] = stream' in _tr)
+_bm = open(os.path.join(ROOT, 'bus_manager.py')).read()
+check("...and BusManager feeds it per bus, not through the shared sink deque",
+      "ctx.transcriber.feed(audio, source_id=bus_id" in _bm
+      and "_enqueue_sink('transcription'" not in _bm)
 
 print("\n3. three buses on one sink report all three")
 c = find_sink_conflicts([bs('a', 'mumble'), bs('b', 'mumble'), bs('c', 'mumble')])

@@ -4,6 +4,33 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Speaker ID, part 1: voice fingerprints on every transcribed over**
+  (`speaker_id/`, off by default: `ENABLE_SPEAKER_ID`). Each over the
+  transcriber cuts is fingerprinted with ERes2Net (3D-Speaker, ONNX, vendored
+  in `tools/models/speaker/`) and matched live against the known voices:
+  accept >= 0.60 joins a voice (and teaches it if the over is >= 3 s), below
+  0.45 a long over starts a new voice, in between is stored as "unsure".
+  Chosen by a bake-off on 24 h of SDR audio: ERes2Net 6.3% EER, CAM++
+  zh+en 11.1% (also offered), the VoxCeleb-only CAM++/ResNet exports 30-38%.
+  Replaying that day through the service: 34 voices, 91% of self-identified
+  overs on the right one, 8% of real time on one low-priority thread.
+  Everything is kept for later re-scoring in `~/.config/radio-gateway/speakers.db`
+  (overs, embeddings, evidence, audit) plus a 12 kb/s Opus clip per over
+  (~1.5 KB per second of speech). The transcriber hands over through a
+  bounded queue and never waits: a stuck model drops (and counts) clips,
+  never transcription. Speaker chips on `/transcribe`;
+  `rg_speaker_id_events_total`. Callsign evidence, labelling, the nightly
+  re-cluster and worker offload follow.
+- **Several buses can feed the transcription sink.** The one-bus-per-sink
+  rule exempts `transcription` (`routing_rules.MULTI_BUS_SINKS`): the
+  transcriber always kept a feed queue, VAD state and worker per bus, so
+  repeaters never mix. Enforced the same way on the routing page.
+- **TX Log channel filter.** Chips per channel (bus + frequency) on `/txlog`
+  narrow history, keyword search and both activity charts to one repeater,
+  or a few with shift-click; remembered per browser. Rows carry a colour
+  stripe per channel. `/transcribe` lists the newest over of every channel.
+- Dashboard: CPU temp is the first system-overview graph; Net down before Net up.
+
 ## [6.0.0] -- 2026-11-14
 
 - **Routing page: auto-arrange without crossing wires.** Buses that share a

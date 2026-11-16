@@ -200,6 +200,18 @@
   .latest-time   { color: var(--t-accent); font-weight: 600; }
   .latest-source { color: var(--t-text); text-transform: uppercase; letter-spacing: 0.05em; font-size: var(--f-xs); }
   .latest-freq   { color: var(--t-text-dim); }
+  /* Speaker ID chip: who the voice is (or which unnamed voice) */
+  .spk { display: inline-block; padding: 0 6px; border-radius: 999px; font-size: var(--f-xs);
+         border: 1px solid var(--t-border); color: var(--t-text); white-space: nowrap; }
+  .spk.unsure { color: var(--t-text-mute); border-style: dashed; }
+  /* One line per channel once several repeaters are transcribed */
+  .chan-latest { margin-top: var(--s-2); display: grid; gap: 2px; font-size: var(--f-sm); }
+  .chan-latest .cl { display: grid; grid-template-columns: auto auto auto 1fr; gap: var(--s-2);
+                     align-items: baseline; padding: 2px var(--s-2);
+                     box-shadow: inset 3px 0 0 var(--ch, transparent); }
+  .chan-latest .cl-t { color: var(--t-accent); font-variant-numeric: tabular-nums; }
+  .chan-latest .cl-c { color: var(--t-text-dim); white-space: nowrap; }
+  .chan-latest .cl-x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .latest-dur    { color: var(--t-text-mute); text-align: right; font-size: var(--f-xs); }
   .latest-text {
     font-size: var(--f-md);
@@ -388,8 +400,10 @@
     <span class="latest-source" id="latest-source"></span>
     <span class="latest-freq" id="latest-freq"></span>
     <span class="latest-dur" id="latest-dur"></span>
+    <span id="latest-spk"></span>
   </div>
   <div class="latest-text" id="latest-text" style="display:none"></div>
+  <div class="chan-latest" id="chan-latest"></div>
 </div>
 
 <!-- ── 06 — Controls ──────────────────────────────────────────── -->
@@ -749,9 +763,48 @@ function poll() {
         if (latest.ratio) durStr += ' (' + latest.ratio + 'x)';
         _set('latest-dur', durStr);
         _set('latest-text', latest.text || '');
+        document.getElementById('latest-spk').innerHTML = spkChip(latest.speaker);
+        renderChanLatest(results);
       }
     })
     .catch(function(e){ console.error('Poll error:', e); });
+}
+
+// Same channel key and colour as /txlog, so a repeater looks the same on both pages.
+function chKey(r) { return (r.bus || '') + '|' + (r.freq || ''); }
+function chColor(key) {
+  var h = 0;
+  for (var i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return 'hsl(' + (h % 360) + ' 65% 55%)';
+}
+function _h(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function spkChip(sp) {
+  if (!sp) return '';
+  var score = sp.score != null ? ' ' + Number(sp.score).toFixed(2) : '';
+  if (!sp.profile_id) return '<span class="spk unsure" title="Voice not recognised yet' + _h(score ? ' (best' + score + ')' : '') + '">voice ?</span>';
+  var who = sp.callsign || sp.name || ('Voice #' + sp.profile_id);
+  return '<span class="spk" title="' + _h('voice profile #' + sp.profile_id + ', match' + score) + '">' + _h(who) + '</span>';
+}
+// With several channels the big card shows only the newest over; this keeps
+// the newest line of EVERY channel in view so no repeater scrolls away.
+function renderChanLatest(results) {
+  var box = document.getElementById('chan-latest');
+  var last = {}, order = [];
+  for (var i = results.length - 1; i >= 0; i--) {
+    var k = chKey(results[i]);
+    if (!last[k]) { last[k] = results[i]; order.push(k); }
+  }
+  if (order.length < 2) { box.innerHTML = ''; return; }
+  box.innerHTML = order.map(function(k) {
+    var r = last[k];
+    var ch = (r.bus ? r.bus.toUpperCase() : '—') + (r.freq ? ' · ' + r.freq : '');
+    return '<div class="cl" style="--ch:' + chColor(k) + '"><span class="cl-t">' + _h(r.time_str || '') +
+           '</span><span class="cl-c">' + _h(ch) + '</span><span>' + spkChip(r.speaker) + '</span>' +
+           '<span class="cl-x" title="' + _h(r.text) + '">' + _h(r.text) + '</span></div>';
+  }).join('');
 }
 
 function setConfig(key, value) {

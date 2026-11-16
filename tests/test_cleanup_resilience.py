@@ -50,7 +50,7 @@ class Rec:
 SUBSYSTEMS = [
     'process_supervisor', 'loop_recorder', 'stream_output', 'mumble', 'sdr_plugin',
     'remote_audio_source', 'remote_audio_server', 'announce_input_source', 'relay_radio',
-    'relay_charger', 'automation_engine', 'transcriber', 'transcription_log', 'smart_announce',
+    'relay_charger', 'automation_engine', 'transcriber', 'speaker_id', 'transcription_log', 'smart_announce',
     'manager_engine', 'alert_engine', 'web_config_server', 'gps_manager', 'repeater_manager',
     'ddns_updater', 'cloudflare_tunnel', 'relay_ptt', 'cat_client', 'mumble_server_1',
     'mumble_server_2', 'input_stream', 'speaker_stream', 'output_stream', 'pyaudio_instance',

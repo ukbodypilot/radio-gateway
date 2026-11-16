@@ -1293,6 +1293,7 @@ editor.on('connectionCreated', function(info) {
   if (fromIsBus && toIsSink) {
     // addNode() stores {id: s.id} as the node's data — the sink id itself.
     var sinkId = (toNode.data && toNode.data.id) || '';
+    if (MULTI_BUS_SINKS[sinkId]) return;
     var feeders = busFeedersOf(toNode, info.input_class);
     if (feeders.length > 1) {
       setTimeout(function() {
@@ -1307,6 +1308,9 @@ editor.on('connectionCreated', function(info) {
     }
   }
 });
+
+// Sinks that keep one stream per feeding bus (routing_rules.MULTI_BUS_SINKS).
+var MULTI_BUS_SINKS = {'transcription': 1};
 
 // drawflow node id -> our 'bus-x' / 'sink-x' / 'src-x' id
 function reverseNodeId(nodeId) {
