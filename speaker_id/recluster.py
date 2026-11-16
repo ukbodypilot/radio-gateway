@@ -49,13 +49,15 @@ def _human_moved(store):
 
 
 def run(store, model, accept=REASSIGN_AT, merge_at=0.80, learn_secs=3.0, min_secs=1.5,
-        identifier=None, max_overs=200_000):
+        identifier=None, max_overs=200_000, learn_at=None):
+    """learn_at: rebuild each voice only from overs that matched at least this well
+    (the live learning rule), so old borderline matches stop shaping it."""
     t0 = time.time()
     report = collections.Counter()
     # 1. centroids
     profiles = {pid: (c, n, iid) for pid, c, n, iid in store.load_profiles(model)}
     for pid in profiles:
-        store.recompute_centroid(pid, learn_secs, model=model)
+        store.recompute_centroid(pid, learn_secs, model=model, min_score=learn_at)
     profiles = {pid: (c, n, iid) for pid, c, n, iid in store.load_profiles(model)}
     if not profiles:
         return dict(report, secs=round(time.time() - t0, 1))
@@ -95,7 +97,7 @@ def run(store, model, accept=REASSIGN_AT, merge_at=0.80, learn_secs=3.0, min_sec
     report['adopted'] = sum(1 for m in moves if m[1] is None)
     touched = {m[1] for m in moves if m[1]} | {m[2] for m in moves}
     for pid in touched:
-        store.recompute_centroid(pid, learn_secs, model=model)
+        store.recompute_centroid(pid, learn_secs, model=model, min_score=learn_at)
 
     # 3. merge (greedy, most alike first, every constraint checked per group)
     profiles = {pid: (c, n, iid) for pid, c, n, iid in store.load_profiles(model)}
@@ -138,7 +140,7 @@ def run(store, model, accept=REASSIGN_AT, merge_at=0.80, learn_secs=3.0, min_sec
                 d = store.profile(drop)
                 store.set_profile_identity(keep, d['identity_id'], d['label_source'])
                 took = d['identity_id']
-            store.recompute_centroid(keep, learn_secs, model=model)
+            store.recompute_centroid(keep, learn_secs, model=model, min_score=learn_at)
             store.audit(ACTOR, 'merge', keep=keep, drop=drop, moved=moved, took_identity=took,
                         keep_prev_source=labels.get(keep, {}).get('label_source', '') if labels.get(keep) else '',
                         similarity=round(s, 3))

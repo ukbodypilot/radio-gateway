@@ -30,7 +30,7 @@ import time
 
 import numpy as np
 
-SCHEMA_VERSION = 4   # 2: profiles.merged_into (soft merge); 3: evidence.at; 4: evidence.ch (char offset)
+SCHEMA_VERSION = 5   # 2: profiles.merged_into; 3: evidence.at; 4: evidence.ch; 5: utterances.part/parts (split overs)
 
 _SCHEMA = '''
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -135,6 +135,10 @@ class SpeakerStore:
                 self._conn.execute('ALTER TABLE evidence ADD COLUMN at REAL')
             if 'ch' not in ecols:
                 self._conn.execute('ALTER TABLE evidence ADD COLUMN ch INTEGER')
+            ucols = {r[1] for r in self._conn.execute('PRAGMA table_info(utterances)')}
+            if 'part' not in ucols:
+                self._conn.execute('ALTER TABLE utterances ADD COLUMN part INTEGER NOT NULL DEFAULT 0')
+                self._conn.execute('ALTER TABLE utterances ADD COLUMN parts INTEGER NOT NULL DEFAULT 1')
             self._conn.execute('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)',
                                ('schema_version', str(SCHEMA_VERSION)))
             self._conn.commit()
@@ -148,13 +152,14 @@ class SpeakerStore:
 
     # ── writes ──────────────────────────────────────────────────────────
     def add_utterance(self, *, ts, bus, source, freq, duration, model, emb,
-                      profile_id, score, decision, clip=''):
+                      profile_id, score, decision, clip='', part=0, parts=1):
+        """part/parts: one utterance split at a speaker change is stored as `parts` rows."""
         with self._lock:
             cur = self._conn.execute(
                 'INSERT INTO utterances(ts, bus, source, freq, duration, model, emb, '
-                'profile_id, score, decision, clip) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                'profile_id, score, decision, clip, part, parts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (ts, bus, source or '', freq or '', duration, model, _blob(emb),
-                 profile_id, score, decision, clip))
+                 profile_id, score, decision, clip, part, parts))
             self._conn.commit()
             return cur.lastrowid
 
@@ -421,13 +426,17 @@ class SpeakerStore:
             self._conn.execute('UPDATE profiles SET merged_into=? WHERE id=?', (into, profile_id))
             self._conn.commit()
 
-    def recompute_centroid(self, profile_id, min_secs=0.0, model=None):
+    def recompute_centroid(self, profile_id, min_secs=0.0, model=None, min_score=None):
         """Centroid = normalised mean of the voice's over embeddings (of `model`). Returns n used.
 
         Falls back to every over when none is long enough, so a voice built
         from short overs still has a centroid.
         """
         mcond, margs = ('AND model=? ', (model,)) if model else ('', ())
+        if min_score is not None:
+            # Only confident overs shape the voice (the over that started it counts).
+            mcond += "AND (score >= ? OR decision = 'new_profile') "
+            margs += (min_score,)
         with self._lock:
             rows = self._conn.execute(
                 'SELECT emb FROM utterances WHERE profile_id=? AND emb IS NOT NULL AND duration>=? '
@@ -581,9 +590,17 @@ class SpeakerStore:
                 "  (SELECT e.value FROM evidence e WHERE e.utt_id = u.id AND e.kind = 'callsign_self' LIMIT 1) "
                 'FROM utterances u LEFT JOIN profiles p ON p.id = u.profile_id '
                 'LEFT JOIN identities i ON i.id = p.identity_id '
-                f'WHERE u.tx_id IN ({q})', ids).fetchall()
-        return {r[0]: {'profile_id': r[1], 'callsign': r[2] or '', 'name': r[3] or '',
-                       'label_source': r[4] or '', 'said': r[5] or ''} for r in rows}
+                f'WHERE u.tx_id IN ({q}) ORDER BY u.tx_id, u.part', ids).fetchall()
+        out = {}
+        for r in rows:
+            d = {'profile_id': r[1], 'callsign': r[2] or '', 'name': r[3] or '',
+                 'label_source': r[4] or '', 'said': r[5] or ''}
+            prev = out.get(r[0])
+            parts = (prev['parts'] if prev else []) + [d]
+            # The row's headline is the LAST speaker (the one handing over next);
+            # 'parts' lists everyone when one utterance held a speaker change.
+            out[r[0]] = dict(d, parts=parts)
+        return out
 
     def by_tx_ids(self, tx_ids):
         """{tx_id: {profile_id, score, decision}} for transcription rows (for the UI chip)."""
@@ -593,6 +610,7 @@ class SpeakerStore:
         q = ','.join('?' * len(ids))
         with self._lock:
             rows = self._conn.execute(
-                f'SELECT tx_id, profile_id, score, decision FROM utterances WHERE tx_id IN ({q})',
+                f'SELECT tx_id, profile_id, score, decision FROM utterances WHERE tx_id IN ({q}) '
+                'ORDER BY tx_id, part',
                 ids).fetchall()
         return {r[0]: {'profile_id': r[1], 'score': r[2], 'decision': r[3]} for r in rows}

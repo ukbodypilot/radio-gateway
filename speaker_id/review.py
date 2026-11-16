@@ -114,10 +114,50 @@ def _similar_pairs(store, model, profiles, lo, hi):
             pa, pb = profiles[a], profiles[b]
             if pa['callsign'] and pb['callsign'] and pa['callsign'] != pb['callsign']:
                 continue          # two differently-named voices: not a question worth asking
+            if pa['identity_id'] and pb['identity_id'] and pa['identity_id'] == pb['identity_id']:
+                continue          # already the same person (two voice profiles of one identity)
+            named = pa if pa['identity_id'] else pb if pb['identity_id'] else None
+            if named is pb:
+                a, b, pa, pb = b, a, pb, pa          # named voice first: "Yes" merges INTO it
+            base = min(pa['overs'], pb['overs']) * (1 + 2 * (s - lo) / max(1e-6, hi - lo))
+            if named:
+                prompt = (f"Voice #{b} sounds {alike_words(s)} {_label(pa)} ({s:.2f}). Same person?")
+            else:
+                prompt = f"Voices #{a} and #{b} sound {alike_words(s)} each other ({s:.2f}). Same person?"
             out.append({'type': 'same', 'profiles': [a, b], 'similarity': round(s, 3),
-                        'score': min(pa['overs'], pb['overs']) * (1 + 2 * (s - lo) / max(1e-6, hi - lo)),
-                        'prompt': f"Voices #{a} and #{b} sound alike ({s:.2f}). Same person?"})
+                        'score': base * (2.0 if named else 1.0), 'prompt': prompt})
     return out
+
+
+def alike_words(s):
+    """Plain words for a centroid similarity on this channel (strangers reach ~0.76)."""
+    return 'very like' if s >= 0.72 else 'like' if s >= 0.62 else 'a bit like'
+
+
+def _label(p):
+    who = ' '.join(x for x in (p.get('callsign'), f"({p['name']})" if p.get('name') else '') if x)
+    return who or f"voice #{p['id']}"
+
+
+def similar_to(store, model, pid, k=3):
+    """The k voices that sound most like voice `pid`: [{id, callsign, name, overs, similarity, different}]."""
+    rows = store.load_profiles(model)
+    mine = next((c for p, c, _n, _i in rows if p == pid), None)
+    if mine is None:
+        return []
+    profiles = {p['id']: p for p in store.list_profiles()}
+    blocked = store.cannot_links()
+    out = []
+    for p, c, _n, _i in rows:
+        if p == pid or p not in profiles:
+            continue
+        s = float(c @ mine)
+        q = profiles[p]
+        out.append({'id': p, 'callsign': q['callsign'], 'name': q['name'], 'overs': q['overs'],
+                    'similarity': round(s, 3), 'words': alike_words(s),
+                    'different': (min(p, pid), max(p, pid)) in blocked})
+    out.sort(key=lambda x: -x['similarity'])
+    return out[:k]
 
 
 def _brief(p):

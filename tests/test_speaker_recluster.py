@@ -182,10 +182,10 @@ if shutil.which('ffmpeg'):
             u = st.add_utterance(ts=1000.0, bus='sdr1', source='', freq='', duration=1.0, model='old',
                                  emb=unit([0, 0, 1, 0]) if pid == pl else unit([0, 0, 0, 1]),
                                  profile_id=pid, score=0.9, decision='matched', clip=path)
-    cfg = types.SimpleNamespace(SPEAKER_ID_MODEL='new', SPEAKER_ID_ACCEPT=0.6, SPEAKER_ID_NEW=0.45,
+    cfg = types.SimpleNamespace(SPEAKER_ID_MODEL='new', SPEAKER_ID_ACCEPT=0.6, SPEAKER_ID_LEARN_AT=0.6, SPEAKER_ID_NEW=0.45,
                                 SPEAKER_ID_MIN_SECS=0.5, SPEAKER_ID_LEARN_SECS=0.5, SPEAKER_ID_KEEP_CLIPS=True,
                                 SPEAKER_ID_BUSES='', SPEAKER_ID_DB_PATH=db, SPEAKER_ID_CALLSIGNS=False,
-                                SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30, SPEAKER_ID_MERGE_AT=0.8, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='')
+                                SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30, SPEAKER_ID_MERGE_AT=0.8, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='', SPEAKER_ID_SPLIT=False, SPEAKER_ID_SPLIT_AT=0.30)
     import speaker_id.embedder as E
     real = E.Embedder
     E.Embedder = Emb

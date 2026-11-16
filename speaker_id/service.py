@@ -9,11 +9,13 @@ clips (counted), never transcription.
 Live assignment (thresholds from the 2026-11-15 bake-off, ERes2Net on 24 h of
 SDR1, simulated in time order):
   score >= accept           -> that profile; the centroid learns from the over
-                               only if it is >= learn_secs long
+                               only if it is >= learn_secs long AND
+                               score >= learn_at (no drift from borderline matches)
   score <  new  (and long)  -> start a new provisional profile
   otherwise                 -> 'unsure': stored, scored, but teaches nothing
-accept 0.60 / new 0.45 gave 88% correct on self-ID'd overs; the nightly
-re-cluster (batch 5) is expected to do better (92-94% in the simulation).
+accept 0.60 / learn 0.60 gave 88% right with 2 voices mixing two people;
+accept 0.65 / learn 0.70 gave 100% right and no mixed voices, placing 24 of
+40 self-ID'd overs live (33 before); the nightly pass adopts more at 0.70.
 """
 import collections
 import os
@@ -40,6 +42,7 @@ class SpeakerID:
         self._gateway = gateway
         self.model_key = config.SPEAKER_ID_MODEL
         self.accept = float(config.SPEAKER_ID_ACCEPT)
+        self.learn_at = max(self.accept, float(config.SPEAKER_ID_LEARN_AT))
         self.new = float(config.SPEAKER_ID_NEW)
         self.min_secs = float(config.SPEAKER_ID_MIN_SECS)
         self.learn_secs = float(config.SPEAKER_ID_LEARN_SECS)
@@ -66,6 +69,10 @@ class SpeakerID:
         self.callsigns = bool(config.SPEAKER_ID_CALLSIGNS)
         self.offload = str(config.SPEAKER_ID_OFFLOAD or 'auto').strip().lower()
         self.alert_for = {x.strip().upper() for x in str(config.SPEAKER_ID_ALERT or '').split(',') if x.strip()}
+        from speaker_id import split as _split
+        self._split_mod = _split
+        self.split = bool(config.SPEAKER_ID_SPLIT)
+        self.split_at = float(config.SPEAKER_ID_SPLIT_AT)
         self._alert_last = {}
         self._uls = uls
         self._ident = None
@@ -155,7 +162,12 @@ class SpeakerID:
         while not self._stop.is_set():
             self._evt.wait(1.0)
             self._evt.clear()
-            self._idle_work()
+            try:
+                self._idle_work()
+            except Exception as e:          # idle work must never take the worker down
+                self.counters['errors'] += 1
+                self.last_error = f'idle: {type(e).__name__}: {e}'
+                log_exc()
             while not self._stop.is_set():
                 with self._lock:
                     job = self._q.popleft() if self._q else None
@@ -302,7 +314,7 @@ class SpeakerID:
         from speaker_id import recluster, retention
         self._store.meta_set('last_nightly_day', time.strftime('%Y-%m-%d'))
         rep = recluster.run(self._store, self.model_key, accept=max(self.accept, recluster.REASSIGN_AT),
-                            merge_at=self.merge_at,
+                            merge_at=self.merge_at, learn_at=self.learn_at,
                             learn_secs=self.learn_secs, min_secs=self.min_secs, identifier=self._ident)
         if self.keep_clips and self.clip_days > 0:
             rep.update(retention.prune(self._store, self._clip_dir, self.clip_days))
@@ -375,33 +387,59 @@ class SpeakerID:
 
     def _handle_utterance(self, item):
         audio = self.raw_audio(item)
-        t0 = time.perf_counter()
-        emb = self._ensure_embedder().embed(audio)
-        self._embed_ms.append((time.perf_counter() - t0) * 1000)
-        if emb is None:
-            self.counters['too_short'] += 1
-            return
-        self.counters['embedded'] += 1
-        self._metric('embedded')
         ts = float(item.get('start_time') or time.time())
         dur = float(item.get('duration') or len(audio) / 16000)
-        pid, score, decision = self.assign(emb, dur, ts)
-        self.counters[decision] += 1
-        self._metric(decision)
-        row = self._store.add_utterance(
-            ts=ts, bus=item.get('source_id', ''), source=item.get('upstream_source') or '',
-            freq='', duration=round(dur, 2), model=self.model_key, emb=emb,
-            profile_id=pid, score=None if score is None else round(float(score), 4),
-            decision=decision)
-        if self.keep_clips:
-            clip = self._save_clip(row, ts, audio)
-            if clip:
-                self._store.set_clip(row, clip)
+        cuts = self._find_cuts(audio)
+        bounds = [0.0] + cuts + [len(audio) / 16000]
+        parts = []
+        for k in range(len(bounds) - 1):
+            a0, a1 = bounds[k], bounds[k + 1]
+            seg = audio[int(a0 * 16000):int(a1 * 16000)]
+            t0 = time.perf_counter()
+            emb = self._ensure_embedder().embed(seg)
+            self._embed_ms.append((time.perf_counter() - t0) * 1000)
+            if emb is None:
+                self.counters['too_short'] += 1
+                continue
+            self.counters['embedded'] += 1
+            self._metric('embedded')
+            pdur = a1 - a0 if cuts else dur
+            pid, score, decision = self.assign(emb, pdur, ts + a0)
+            self.counters[decision] += 1
+            self._metric(decision)
+            row = self._store.add_utterance(
+                ts=ts + a0, bus=item.get('source_id', ''), source=item.get('upstream_source') or '',
+                freq='', duration=round(pdur, 2), model=self.model_key, emb=emb,
+                profile_id=pid, score=None if score is None else round(float(score), 4),
+                decision=decision, part=k, parts=len(bounds) - 1)
+            if self.keep_clips:
+                clip = self._save_clip(row, ts + a0, seg)
+                if clip:
+                    self._store.set_clip(row, clip)
+            parts.append((row, ts + a0, pdur, item.get('source_id', ''), pid, a0, a1))
+        if cuts:
+            self.counters['split_overs'] += 1
+            self._metric('split')
         uid = item.get('uid')
-        if uid is not None:
-            self._uid_to_row[uid] = (row, ts, dur, item.get('source_id', ''), pid)
+        if uid is not None and parts:
+            self._uid_to_row[uid] = (parts, cuts, dur)
             while len(self._uid_to_row) > 500:
                 self._uid_to_row.popitem(last=False)
+
+    def _find_cuts(self, audio):
+        """Speaker-change times inside one utterance ([] = one speaker). Never raises."""
+        if not self.split or len(audio) < self._split_mod.MIN_SECS * 16000:
+            return []
+        try:
+            cuts = self._split_mod.find_boundaries(audio, self._ensure_embedder().embed,
+                                                   split_at=self.split_at)
+            self.counters['split_checked'] += 1
+            return cuts
+        except Exception as e:
+            self.counters['split_errors'] += 1
+            self.last_error = f'split: {type(e).__name__}: {e}'
+            log_exc()
+            return []
 
     def assign(self, emb, dur, ts):
         """Online assignment. Returns (profile_id or None, best score or None, decision)."""
@@ -413,7 +451,9 @@ class SpeakerID:
             best = float(sc[best_i])
         if best is not None and best >= self.accept:
             p = self._profiles[best_i]
-            if dur >= self.learn_secs:
+            # Only a confident match moves the voice's average: borderline ones
+            # dragged voices towards other people on busy nets (drift).
+            if dur >= self.learn_secs and best >= self.learn_at:
                 v = p[1] * p[2] + emb
                 p[1] = (v / np.linalg.norm(v)).astype(np.float32)
                 p[2] += 1
@@ -432,23 +472,30 @@ class SpeakerID:
         if entry is None:
             self.counters['text_orphan'] += 1      # over was too short, dropped or skipped
             return
-        row, ts, dur, bus, pid = entry
+        parts, cuts, dur = entry
         text = result.get('text', '')
-        self._store.set_text(row, text, tx_id=result.get('tx_id'),
-                             freq=result.get('freq') or None, source=result.get('source') or None)
-        self.counters['texted'] += 1
-        if self._ident:
-            filed = self._ident.file(row, ts, dur, bus, text, word_times=result.get('word_times'),
-                                     profile_id=pid)
-            if filed:
-                self.counters['evidence_overs'] += 1
-            # A self-ID on this voice, or a cue that landed on a neighbour,
-            # may tip a voice over the naming bar.
-            if pid and 'callsign_self' in filed:
-                if self._ident.maybe_name(pid):
-                    self._refresh_identity(pid)
-        if pid and self.alert_for:
-            self._maybe_alert(pid, ts, bus, result)
+        wt = result.get('word_times')
+        from speaker_id.split import split_text, part_word_times
+        texts, starts = split_text(text, cuts, wt, dur)
+        ends = starts[1:] + [len(text) + 1]
+        by_start = {round(a0, 3): k for k, a0 in enumerate([0.0] + cuts)}
+        for row, ts, pdur, bus, pid, a0, a1 in parts:
+            k = by_start.get(round(a0, 3), 0)
+            ptext = texts[k] if k < len(texts) else ''
+            pwt = part_word_times(wt, starts[k], ends[k], a0) if cuts else wt
+            self._store.set_text(row, ptext, tx_id=result.get('tx_id'),
+                                 freq=result.get('freq') or None, source=result.get('source') or None)
+            self.counters['texted'] += 1
+            if self._ident:
+                filed = self._ident.file(row, ts, pdur, bus, ptext, word_times=pwt, profile_id=pid)
+                if filed:
+                    self.counters['evidence_overs'] += 1
+                # A self-ID on this voice may tip it over the naming bar.
+                if pid and 'callsign_self' in filed:
+                    if self._ident.maybe_name(pid):
+                        self._refresh_identity(pid)
+            if pid and self.alert_for:
+                self._maybe_alert(pid, ts, bus, dict(result, text=ptext))
 
     ALERT_COOLDOWN = 1800.0
 
@@ -530,7 +577,7 @@ class SpeakerID:
             'enabled': True,
             'model': self.model_key,
             'buses': sorted(self.buses),
-            'thresholds': {'accept': self.accept, 'new': self.new,
+            'thresholds': {'accept': self.accept, 'learn_at': self.learn_at, 'new': self.new,
                            'min_secs': self.min_secs, 'learn_secs': self.learn_secs},
             'queue': qlen,
             'profiles_loaded': len(self._profiles),

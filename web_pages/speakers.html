@@ -53,6 +53,8 @@
   .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-3); }
   @media (max-width: 760px) { .detail-grid { grid-template-columns: minmax(0, 1fr); } }
   .why { margin: 0; padding-left: 1.2em; font-size: var(--f-sm); }
+  .simlist { display: grid; gap: 2px; font-size: var(--f-sm); margin-bottom: var(--s-2); }
+  .sim a { color: var(--t-accent); cursor: pointer; }
   .overs { display: grid; gap: 2px; font-size: var(--f-sm); max-height: 420px; overflow-y: auto; }
   .over { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: var(--s-2); align-items: baseline;
           padding: 2px var(--s-1); border-bottom: 1px solid var(--t-border); }
@@ -321,6 +323,18 @@ function openVoice(pid) {
                    ' · class ' + h(L.class || '?') + (L.status === 'A' ? '' : ' · <span class="err">not active</span>') + '</p>';
     if ((v.candidates || []).length > 1) html += '<p class="muted">Other calls heard from this voice: ' +
         v.candidates.slice(1).map(function(c) { return h(c.callsign) + ' ' + c.weight + 'x'; }).join(', ') + '</p>';
+    if ((d.similar || []).length) {
+      html += '<div class="muted">Sounds like</div><div class="simlist">' + d.similar.map(function(x) {
+        var nm = [x.callsign, x.name].filter(Boolean).join(' · ') || 'Voice #' + x.id;
+        return '<div class="sim"><a onclick="openVoice(' + x.id + ')">' + h(nm) + '</a> <span class="muted">' +
+               h(x.words) + ' (' + x.similarity.toFixed(2) + '), ' + x.overs + ' overs</span> ' +
+               (x.samples || []).map(function(s) { return playBtn(s.id, s.at); }).join('') +
+               (x.different ? ' <span class="muted">marked different people</span>' :
+                ' <button class="rb rb-sm" onclick="sameAs(' + p.id + ',' + x.id + ',' + (x.callsign || x.name ? 1 : 0) + ')">Same person</button>' +
+                '<button class="rb rb-sm rb-warn" onclick="act({op:\'not_same\',a:' + p.id + ',b:' + x.id + '})">Different</button>') +
+               '</div>';
+      }).join('') + '</div>';
+    }
     html += '<div class="muted">Samples (▶⇥ starts just before the callsign)</div><div class="row-actions">' +
             (d.samples || []).map(function(x) { return playBtn(x.id, x.at); }).join('') + '</div>';
     html += '</div><div><div class="muted">Recent overs (▶ play · ⇄ belongs to another voice)</div><div class="overs">' +
@@ -334,6 +348,13 @@ function openVoice(pid) {
     renderVoices();
     box.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   });
+}
+// "Same person": merge into the NAMED voice when one of them has a name, so
+// the name carries over; otherwise into the voice being viewed.
+function sameAs(here, other, otherNamed) {
+  var keep = otherNamed ? other : here, drop = otherNamed ? here : other;
+  if (confirm('Merge ' + voiceName(drop) + ' into ' + voiceName(keep) + '? (can be undone)'))
+    act({op: 'merge', keep: keep, drop: drop}).then(function(d) { if (d && d.ok) openVoice(keep); });
 }
 function mergeInto(keep) {
   var drop = parseInt((document.getElementById('d-merge').value || '').replace('#', ''), 10);

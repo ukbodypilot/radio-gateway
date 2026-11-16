@@ -57,10 +57,10 @@ class FakeEmbedder:
 
 
 def cfg(**kw):
-    c = dict(SPEAKER_ID_MODEL='fake', SPEAKER_ID_ACCEPT=0.60, SPEAKER_ID_NEW=0.45,
+    c = dict(SPEAKER_ID_MODEL='fake', SPEAKER_ID_ACCEPT=0.60, SPEAKER_ID_LEARN_AT=0.60, SPEAKER_ID_NEW=0.45,
              SPEAKER_ID_MIN_SECS=1.5, SPEAKER_ID_LEARN_SECS=3.0, SPEAKER_ID_KEEP_CLIPS=False,
              SPEAKER_ID_BUSES='', SPEAKER_ID_DB_PATH='', SPEAKER_ID_CALLSIGNS=False,
-             SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30, SPEAKER_ID_MERGE_AT=0.80, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='')
+             SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30, SPEAKER_ID_MERGE_AT=0.80, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='', SPEAKER_ID_SPLIT=False, SPEAKER_ID_SPLIT_AT=0.30)
     c.update(kw)
     return types.SimpleNamespace(**c)
 
@@ -110,6 +110,19 @@ s.on_utterance(utt(2.0, dur=1.0)); drain(s)
 check("an over under MIN_SECS is not fingerprinted", s.counters['too_short'] == 1)
 check("every fingerprinted over is stored", st.counts()['utterances'] == 5, str(st.counts()))
 s.stop()
+
+print("\n1b. a borderline match is accepted but does not teach the voice (no drift)")
+sb, stb = make(SPEAKER_ID_ACCEPT=0.65, SPEAKER_ID_LEARN_AT=0.70)
+sb.on_utterance(utt(1.0)); drain(sb)
+before = sb._profiles[0][1].copy()
+FakeEmbedder.VOICES[5.0] = unit([1, 1.1, 0, 0])      # cos 0.67 to A: between accept and learn_at
+sb.on_utterance(utt(5.0)); drain(sb)
+check("a 0.67 match is placed on the voice", sb.counters['matched'] == 1, str(dict(sb.counters)))
+check("...but leaves the voice's average where it was",
+      np.allclose(sb._profiles[0][1], before) and sb._profiles[0][2] == 1)
+sb.on_utterance(utt(3.0)); drain(sb)
+check("a confident (0.96) match still teaches it", sb.counters['matched_learn'] == 1 and sb._profiles[0][2] == 2)
+sb.stop()
 
 print("\n2. profiles survive a restart")
 s2 = SpeakerID(cfg(), None, store=SpeakerStore(st.path), embedder=FakeEmbedder())

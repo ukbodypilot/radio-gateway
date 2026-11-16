@@ -761,7 +761,12 @@ SPEAKER_ID_MODEL = eres2net
 SPEAKER_ID_BUSES =
 # Cosine score to accept a match / below which a long over starts a new voice.
 # Between the two the over is stored as 'unsure' and teaches nothing.
-SPEAKER_ID_ACCEPT = 0.60
+# A match only TEACHES the voice (moves its average) at LEARN_AT or above: at
+# 0.60/0.60 borderline matches dragged voices towards other people on busy
+# nets (2 mixed voices on 24 h of SDR1); 0.65/0.70 had none, at some cost in
+# overs placed live (the nightly pass and the review queue pick those up).
+SPEAKER_ID_ACCEPT = 0.65
+SPEAKER_ID_LEARN_AT = 0.70
 SPEAKER_ID_NEW = 0.45
 # Overs shorter than MIN are not fingerprinted; only overs >= LEARN update a voice
 SPEAKER_ID_MIN_SECS = 1.5
@@ -793,6 +798,14 @@ SPEAKER_ID_OFFLOAD = auto
 # Email (EMAIL_* settings) when one of these is heard: callsigns or names,
 # comma-separated, matched against a voice's label. Once per person per 30 min.
 SPEAKER_ID_ALERT =
+# Split an utterance where the speaker changes (a fast turnaround on a net,
+# with no 1 s gap for the VAD): at a short pause, compare the voice either
+# side and split if they are less alike than SPLIT_AT. Each part gets its own
+# voice, words and callsign. OFF by default: measured 2026-11-15, a few
+# seconds of FM voice is too noisy to tell people apart reliably -- at 0.30
+# it caught 73% of real turnarounds but also split 22% of ordinary long overs.
+SPEAKER_ID_SPLIT = false
+SPEAKER_ID_SPLIT_AT = 0.30
 
 # Override the pool and send every job to one fixed worker URL
 TRANSCRIBE_REMOTE_URL =

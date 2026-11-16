@@ -117,10 +117,13 @@ def _profile(sid, pid):
     v = _verdict(sid, pid)
     from speaker_id.review import _samples
     top = (ident or {}).get('callsign') or (v['candidates'][0]['callsign'] if v and v['candidates'] else None)
+    from speaker_id.review import similar_to
     return {'profile': {**p, **{k: brief.get(k) for k in ('overs', 'first', 'last', 'seconds',
                                                           'buses', 'freqs')}},
             'identity': ident, 'licence': licence, 'verdict': v, 'overs': overs,
-            'samples': _samples(sid.store, pid, {'callsign': top}, k=5)}
+            'samples': _samples(sid.store, pid, {'callsign': top}, k=5),
+            'similar': [dict(x, samples=_samples(sid.store, x['id'], {}, k=2))
+                        for x in similar_to(sid.store, sid.model_key, pid, 3)]}
 
 
 def _clip(handler, sid, utt_id):

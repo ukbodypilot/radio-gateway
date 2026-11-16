@@ -4,6 +4,25 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Speaker ID: tougher matching, no drift.** Accept 0.65 (was 0.60) and a
+  match only teaches the voice at `SPEAKER_ID_LEARN_AT` 0.70; the nightly
+  pass rebuilds each voice from those confident overs only. On 24 h of SDR1:
+  2 voices that mixed two people -> none, 89% -> 100% right, at the cost of
+  fewer overs placed live (36 -> 25 of 40 after the nightly pass).
+- **"This sounds like the same person, is it?"** An unnamed voice that
+  sounds like a named one gets a review card naming them, ranked first;
+  "Same person" merges into the named voice. Each voice lists the three it
+  sounds most like, with clips and Same / Different buttons.
+- **Speaker-change splitting (off by default, `SPEAKER_ID_SPLIT`).** Splits
+  an utterance at a short pause where the voice changes; each part gets its
+  own voice, words (via word timings) and callsign; the TX Log shows
+  "A -> B". Off because a few seconds of FM voice is too noisy to separate
+  people: at 0.30 it caught 73% of real turnarounds but split 22% of
+  ordinary long overs. Next: split only when the halves match different
+  known voices.
+- Speaker ID worker: an exception in idle-time work can no longer stop the
+  worker thread.
+
 - **TX Log callsign column.** Each row shows who spoke: the voice's name
   (linked to /speakers), else the callsign said in that over (marked "?"),
   else the unnamed voice. Rows from before speaker ID get the callsign read

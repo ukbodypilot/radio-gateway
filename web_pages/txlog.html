@@ -334,6 +334,10 @@ function _escA(s) { return _esc(s).replace(/"/g, '&quot;'); }   // inside an att
 // for the voice), else the unnamed voice's number.
 function callCell(sp) {
   if (!sp) return '<span class="call-none">—</span>';
+  if (sp.parts && sp.parts.length > 1) {
+    // One utterance, a speaker change inside it (fast turnaround on a net)
+    return sp.parts.map(function(x) { return callCell(x); }).join('<span class="call-none"> → </span>');
+  }
   var link = sp.profile_id ? ' href="/speakers#voice-' + sp.profile_id + '"' : '';
   if (sp.callsign || sp.name) {
     var by = (sp.label_source || '').indexOf('human') === 0 ? 'named by you' : 'named from its callsign evidence';

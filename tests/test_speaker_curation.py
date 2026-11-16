@@ -163,10 +163,10 @@ print("\n7. web API (fake request)")
 import web_routes_speakers as W   # noqa: E402
 from speaker_id.service import SpeakerID   # noqa: E402
 
-cfg = types.SimpleNamespace(SPEAKER_ID_MODEL='fake', SPEAKER_ID_ACCEPT=0.60, SPEAKER_ID_NEW=0.45,
+cfg = types.SimpleNamespace(SPEAKER_ID_MODEL='fake', SPEAKER_ID_ACCEPT=0.60, SPEAKER_ID_LEARN_AT=0.60, SPEAKER_ID_NEW=0.45,
                             SPEAKER_ID_MIN_SECS=1.5, SPEAKER_ID_LEARN_SECS=3.0, SPEAKER_ID_KEEP_CLIPS=False,
                             SPEAKER_ID_BUSES='', SPEAKER_ID_DB_PATH='', SPEAKER_ID_CALLSIGNS=False,
-             SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30, SPEAKER_ID_MERGE_AT=0.80, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='')
+             SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30, SPEAKER_ID_MERGE_AT=0.80, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='', SPEAKER_ID_SPLIT=False, SPEAKER_ID_SPLIT_AT=0.30)
 sid = SpeakerID(cfg, None, store=st)
 sid._clip_dir = os.path.join(tmp, 'clips')
 sid.start()
@@ -261,6 +261,30 @@ check("the card quotes the words it is based on",
       str(conf[0].get('quotes') if conf else None))
 check("...and offers both calls to choose from",
       conf and [c['callsign'] for c in conf[0]['candidates']][:2] == ['KX7QZA', 'KX7QZB'])
+
+print("\n7d. 'this sounds like the same person, is it?'")
+st7 = SpeakerStore(os.path.join(tmp, 'sounds.db'))
+pn = st7.add_profile('fake', unit([1, 0, 0, 0]), 0)
+pu = st7.add_profile('fake', unit([1, 0.8, 0, 0]), 0)      # 0.78 to the named voice
+px = st7.add_profile('fake', unit([0, 0, 1, 0]), 0)
+for pid, v in ((pn, [1, 0, 0, 0]), (pu, [1, 0.8, 0, 0]), (px, [0, 0, 1, 0])):
+    for k in range(6):
+        st7.add_utterance(ts=100.0 + k, bus='sdr1', source='', freq='', duration=4.0, model='fake',
+                          emb=unit(v), profile_id=pid, score=0.9, decision='matched')
+st7.set_profile_identity(pn, st7.identity_for_call('KX7QZA', create_name='Quentin Ames'), 'human')
+items = review.build(st7, None, 'fake')
+same = [i for i in items if i['type'] == 'same']
+check("an unnamed voice that sounds like a named one is asked about, by name",
+      len(same) == 1 and 'KX7QZA' in same[0]['prompt'] and 'sounds very like' in same[0]['prompt'], str(same))
+check("...with the named voice first, so 'Same person' merges into it and keeps the name",
+      same and same[0]['profiles'] == [pn, pu])
+sim = review.similar_to(st7, 'fake', pu, 3)
+check("a voice lists the voices it sounds most like, closest first",
+      [x['id'] for x in sim][:1] == [pn] and sim[0]['callsign'] == 'KX7QZA' and sim[0]['similarity'] > 0.7, str(sim))
+Curator(st7).not_same(pn, pu)
+check("'Different' is remembered on the list and the card goes away",
+      review.similar_to(st7, 'fake', pu, 3)[0]['different']
+      and not [i for i in review.build(st7, None, 'fake') if i['type'] == 'same'])
 
 print("\n8. the page")
 html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()
