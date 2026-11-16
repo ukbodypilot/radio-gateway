@@ -801,11 +801,17 @@ SPEAKER_ID_ALERT =
 # Split an utterance where the speaker changes (a fast turnaround on a net,
 # with no 1 s gap for the VAD): at a short pause, compare the voice either
 # side and split if they are less alike than SPLIT_AT. Each part gets its own
-# voice, words and callsign. OFF by default: measured 2026-11-15, a few
-# seconds of FM voice is too noisy to tell people apart reliably -- at 0.30
-# it caught 73% of real turnarounds but also split 22% of ordinary long overs.
-SPEAKER_ID_SPLIT = false
-SPEAKER_ID_SPLIT_AT = 0.30
+# voice, words and callsign. A few seconds of FM voice alone is too noisy
+# (at 0.30 it split 22% of ordinary long overs), so the VETO also requires
+# each whole side to match a known voice (heard VETO_MIN_N+ times, scoring
+# VETO_AT+) and the two to be different people. Measured 2026-11-16: 0 of 76
+# same-person joins and 1 of 300 long overs split; catches ~21% of
+# turnarounds once the regulars' voices are well heard, nothing before.
+SPEAKER_ID_SPLIT = true
+SPEAKER_ID_SPLIT_AT = 0.40
+SPEAKER_ID_SPLIT_VETO = true
+SPEAKER_ID_SPLIT_VETO_AT = 0.65
+SPEAKER_ID_SPLIT_VETO_MIN_N = 3
 
 # Override the pool and send every job to one fixed worker URL
 TRANSCRIBE_REMOTE_URL =

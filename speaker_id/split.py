@@ -16,9 +16,16 @@ people with a 0.3 s gap, 76 same-person joins, 300 real long overs): the
 same person either side of a pause is only ~0.37 alike at the median, so
 side fingerprints alone separate poorly. At 0.30: 73% of two-speaker joins
 caught, 22% of same-person joins and 22% of real long overs wrongly split;
-at 0.20: 38% / 12% / 11%. Hence SPEAKER_ID_SPLIT defaults to off. The next
-step is a veto from the known voices: split only if the halves match
-DIFFERENT known voices.
+at 0.20: 38% / 12% / 11%. Side fingerprints alone are not enough.
+
+The veto (2026-11-16, same cases): split only where each whole side matches
+a KNOWN voice (one heard 3+ times) at the accept level, and they are
+different people. With one well-heard voice per person: side 0.40 + veto
+0.65 caught 21% of two-speaker joins and split 0 of 76 same-person joins and
+1 of 300 real long overs (0.55: 46% caught, 8% / 1% false). Against the live
+voices of the first day (15 heard 3+ times, mostly not these people) it
+caught 0% and split nothing. So the veto makes splitting safe to leave on;
+what it catches grows as the regulars' voices mature.
 """
 import importlib.util
 import os
@@ -32,7 +39,7 @@ WIN = 4.0                    # seconds of audio either side of a pause to compar
 MIN_SIDE = 1.5               # each side needs this much speech to fingerprint
 MIN_PAUSE = 0.16             # seconds of low VAD probability that count as a gap
 PAUSE_PROB = 0.15
-SPLIT_AT = 0.30              # measured: see module docstring / CHANGELOG
+SPLIT_AT = 0.40              # measured with the veto: see module docstring
 MIN_SECS = 5.0               # shorter utterances are never split
 MAX_CANDIDATES = 4           # longest pauses only: bounded cost per utterance
 MAX_PARTS = 3
@@ -111,11 +118,26 @@ def _side_cos(audio, embed, gap, lo, hi):
     return float(el @ er)
 
 
-def find_boundaries(audio, embed, probs=None, split_at=SPLIT_AT):
+def _different_known(audio, embed, known, lo, t, hi):
+    """True if [lo, t) and [t, hi) each match a known voice, and not the same one."""
+    el = embed(audio[int(lo * SR):int(t * SR)])
+    er = embed(audio[int(t * SR):int(hi * SR)])
+    if el is None or er is None:
+        return False
+    kl, kr = known(el), known(er)
+    return kl is not None and kr is not None and kl != kr
+
+
+def find_boundaries(audio, embed, probs=None, split_at=SPLIT_AT, known=None):
     """Times (s) where the speaker changes, in order; [] for a single-speaker utterance.
 
     embed(audio) -> unit vector or None. Bounded: at most MAX_CANDIDATES
     pauses are tested per segment, MAX_PARTS parts in all.
+
+    known(emb) -> a key for the known voice it matches, or None (the veto).
+    When given, a pause below split_at is only cut if the whole of each side
+    matches a known voice and the two are different people. Candidates are
+    tried least-alike first until one passes.
     """
     dur = len(audio) / SR
     if dur < MIN_SECS:
@@ -130,14 +152,19 @@ def find_boundaries(audio, embed, probs=None, split_at=SPLIT_AT):
             return
         inside = [g for g in gaps if g[0] - lo >= MIN_SIDE and hi - g[1] >= MIN_SIDE]
         inside = sorted(inside, key=lambda g: g[0] - g[1])[:MAX_CANDIDATES]   # longest gaps first
-        best = None
+        scored = []
         for g in inside:
             c = _side_cos(audio, embed, g, lo, hi)
-            if c is not None and (best is None or c < best[0]):
-                best = (c, g)
-        if best is None or best[0] >= split_at:
+            if c is not None and c < split_at:
+                scored.append((c, g))
+        t = None
+        for c, g in sorted(scored):
+            tc = round((g[0] + g[1]) / 2, 3)
+            if known is None or _different_known(audio, embed, known, lo, tc, hi):
+                t = tc
+                break
+        if t is None:
             return
-        t = round((best[1][0] + best[1][1]) / 2, 3)
         cuts.append(t)
         if depth < MAX_PARTS - 1:
             search(lo, t, depth + 1)

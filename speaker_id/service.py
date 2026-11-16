@@ -73,6 +73,9 @@ class SpeakerID:
         self._split_mod = _split
         self.split = bool(config.SPEAKER_ID_SPLIT)
         self.split_at = float(config.SPEAKER_ID_SPLIT_AT)
+        self.split_veto = bool(getattr(config, 'SPEAKER_ID_SPLIT_VETO', True))
+        self.veto_at = float(getattr(config, 'SPEAKER_ID_SPLIT_VETO_AT', 0.65))
+        self.veto_min_n = int(getattr(config, 'SPEAKER_ID_SPLIT_VETO_MIN_N', 3))
         self._alert_last = {}
         self._uls = uls
         self._ident = None
@@ -431,8 +434,9 @@ class SpeakerID:
         if not self.split or len(audio) < self._split_mod.MIN_SECS * 16000:
             return []
         try:
+            kw = {'known': self._known_voice} if self.split_veto else {}
             cuts = self._split_mod.find_boundaries(audio, self._ensure_embedder().embed,
-                                                   split_at=self.split_at)
+                                                   split_at=self.split_at, **kw)
             self.counters['split_checked'] += 1
             return cuts
         except Exception as e:
@@ -440,6 +444,23 @@ class SpeakerID:
             self.last_error = f'split: {type(e).__name__}: {e}'
             log_exc()
             return []
+
+    def _known_voice(self, emb):
+        """The split veto's view of a fingerprint: who it is, or None if not a known voice.
+
+        Known = a voice with at least veto_min_n overs that this matches at
+        veto_at or better. Two voices tied to the same identity are the same
+        person, so the key is the identity when there is one.
+        """
+        best, key = None, None
+        for pid, cen, n, ident in self._profiles:
+            if n < self.veto_min_n:
+                continue
+            sc = float(cen @ emb)
+            if sc >= self.veto_at and (best is None or sc > best):
+                best, key = sc, ('identity', ident) if ident else ('voice', pid)
+        self.counters['veto_known' if key else 'veto_unknown'] += 1
+        return key
 
     def assign(self, emb, dur, ts):
         """Online assignment. Returns (profile_id or None, best score or None, decision)."""

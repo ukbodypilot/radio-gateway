@@ -88,6 +88,35 @@ S.find_boundaries(audio, lambda x: (calls.append(1), fake_embed(x))[1],
 check("cost is bounded: at most MAX_CANDIDATES gaps tested per segment",
       len(calls) <= 2 * S.MAX_CANDIDATES * S.MAX_PARTS, str(len(calls)))
 
+print("\n2b. the known-voice veto")
+who = {A.tobytes(): 'qa', B.tobytes(): 'qb'}
+k_both = lambda e: who.get(np.asarray(e, np.float32).tobytes())
+check("halves that match two different known voices are split",
+      len(S.find_boundaries(audio, fake_embed, probs=p, split_at=0.3, known=k_both)) == 1)
+check("a side that is not a known voice vetoes the split",
+      S.find_boundaries(audio, fake_embed, probs=p, split_at=0.3,
+                        known=lambda e: 'qa' if k_both(e) == 'qa' else None) == [])
+check("two voices of the same person (one identity) veto the split",
+      S.find_boundaries(audio, fake_embed, probs=p, split_at=0.3, known=lambda e: 'q') == [])
+C = unit([0, 0, 1])
+
+
+def embed_c(seg):
+    """+0.3 is voice C, which is not a known voice; otherwise as fake_embed."""
+    m = float(np.mean(seg))
+    return C if m > 0.15 and abs(m - 0.3) < 0.05 else fake_embed(seg)
+
+
+cab = np.full(12 * SR, 0.1, np.float32)       # C 0-2.7 s, A 2.7-6.2 s, B after
+cab[:int(2.7 * SR)] = 0.3
+cab[int(6.2 * SR):] = -0.1
+pv = probs_with_gaps(12, [(2.5, 2.9), (6.0, 6.4)])
+free = S.find_boundaries(cab, embed_c, probs=pv, split_at=0.3)
+cv = S.find_boundaries(cab, embed_c, probs=pv, split_at=0.3, known=k_both)
+check("without the veto both gaps are cut (so the C gap really is a candidate)", len(free) == 2, str(free))
+check("the gap next to an unknown voice is vetoed, the A -> B gap still cut",
+      len(cv) == 1 and 6.0 <= cv[0] <= 6.4, str(cv))
+
 print("\n3. splitting the transcript")
 text = 'Copy that, go ahead. Good evening, this is KX7QZA in town.'
 wt = [[0, 0.2], [5, 0.5], [11, 0.9], [14, 1.2], [21, 6.5], [26, 6.8], [35, 7.1], [40, 7.3], [43, 7.5], [50, 8.4], [53, 8.6]]
@@ -136,11 +165,13 @@ cfg = types.SimpleNamespace(SPEAKER_ID_MODEL='fake', SPEAKER_ID_ACCEPT=0.65, SPE
                             SPEAKER_ID_KEEP_CLIPS=False, SPEAKER_ID_BUSES='', SPEAKER_ID_DB_PATH='',
                             SPEAKER_ID_CALLSIGNS=False, SPEAKER_ID_NIGHTLY_TIME='', SPEAKER_ID_CLIP_DAYS=30,
                             SPEAKER_ID_MERGE_AT=0.80, SPEAKER_ID_OFFLOAD='local', SPEAKER_ID_ALERT='',
-                            SPEAKER_ID_SPLIT=True, SPEAKER_ID_SPLIT_AT=0.30)
+                            SPEAKER_ID_SPLIT=True, SPEAKER_ID_SPLIT_AT=0.30,
+                            SPEAKER_ID_SPLIT_VETO=True, SPEAKER_ID_SPLIT_VETO_AT=0.65,
+                            SPEAKER_ID_SPLIT_VETO_MIN_N=3)
 tmp = tempfile.mkdtemp()
 st = SpeakerStore(os.path.join(tmp, 'speakers.db'))
 s = SpeakerID(cfg, None, store=st, embedder=Emb())
-s._split_mod = types.SimpleNamespace(MIN_SECS=5.0, find_boundaries=lambda audio, embed, split_at: [6.2])
+s._split_mod = types.SimpleNamespace(MIN_SECS=5.0, find_boundaries=lambda audio, embed, split_at, known=None: [6.2])
 s._ident = Identifier(st, Uls())
 s.start()
 s._uls = Uls()
@@ -168,6 +199,15 @@ check("the TX Log row lists both speakers, the last as its headline",
 check("the split is counted", s.counters['split_overs'] == 1)
 check("the worker survived the whole run", s._thread.is_alive())
 s.stop()
+
+print("\n4b. the service's view of a known voice")
+s3 = SpeakerID(cfg, None, store=SpeakerStore(os.path.join(tmp, 'c.db')), embedder=Emb())
+s3._profiles = [[1, A, 5, None], [2, B, 1, None], [3, unit([0.9, 0.1, 0]), 4, 9], [4, unit([0.1, 0.9, 0]), 6, 9]]
+check("a well-heard voice it matches is known, by voice id", s3._known_voice(A) == ('voice', 1),
+      str(s3._known_voice(A)))
+check("a voice heard fewer than MIN_N times is not known", s3._known_voice(unit([0, 0, 1])) is None)
+check("two voices tied to one identity give the same key",
+      s3._known_voice(unit([0.9, 0.1, 0])) == s3._known_voice(unit([0.1, 0.9, 0])) == ('identity', 9))
 
 print("\n5. an exception in idle work never kills the worker")
 s2 = SpeakerID(cfg, None, store=SpeakerStore(os.path.join(tmp, 'b.db')), embedder=Emb())

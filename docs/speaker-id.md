@@ -48,6 +48,23 @@ established regular) are what make a name stick.
 
 The chip on `/transcribe` links to the voice.
 
+## Two speakers in one over
+
+On a busy net the next station often keys up within the transcriber's 1 s
+hold, so one "over" holds two people. `SPEAKER_ID_SPLIT` (on) looks for
+short pauses inside overs of 5 s or more and compares the voice either side.
+A side comparison alone is too noisy on FM (it split 22% of ordinary long
+overs), so a cut also needs the **veto** to pass: each whole side must match
+a known voice (heard `SPLIT_VETO_MIN_N`+ times, score `SPLIT_VETO_AT`+) and
+the two must be different people (two voices tied to one identity count as
+one person). Each part becomes its own over with its own words and callsign;
+the TX Log shows "A -> B".
+
+Measured 2026-11-16: 0 of 76 same-person joins and 1 of 300 real long overs
+split; about 21% of turnarounds caught once regulars are well heard. It
+catches nothing until voices mature, which is the point: it never guesses.
+Counters: `split_checked`, `split_overs`, `veto_known`, `veto_unknown`.
+
 ## Nightly
 
 At `SPEAKER_ID_NIGHTLY_TIME` (default 03:30; "Re-cluster now" on the page):

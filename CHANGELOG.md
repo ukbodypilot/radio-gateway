@@ -13,13 +13,16 @@ All notable changes to Radio Gateway.
   sounds like a named one gets a review card naming them, ranked first;
   "Same person" merges into the named voice. Each voice lists the three it
   sounds most like, with clips and Same / Different buttons.
-- **Speaker-change splitting (off by default, `SPEAKER_ID_SPLIT`).** Splits
-  an utterance at a short pause where the voice changes; each part gets its
-  own voice, words (via word timings) and callsign; the TX Log shows
-  "A -> B". Off because a few seconds of FM voice is too noisy to separate
-  people: at 0.30 it caught 73% of real turnarounds but split 22% of
-  ordinary long overs. Next: split only when the halves match different
-  known voices.
+- **Speaker-change splitting with a known-voice veto (`SPEAKER_ID_SPLIT`,
+  on).** Splits an utterance at a short pause where the voice changes; each
+  part gets its own voice, words (via word timings) and callsign; the TX Log
+  shows "A -> B". The side fingerprints alone split 22% of ordinary long
+  overs, so a cut now also needs each whole side to match a known voice
+  (heard 3+ times, scoring 0.65+) and the two to be different people.
+  Measured: 0 of 76 same-person joins and 1 of 300 long overs split; ~21% of
+  turnarounds caught once regulars are well heard (nothing on day one).
+  New keys `SPEAKER_ID_SPLIT_VETO`, `_VETO_AT`, `_VETO_MIN_N`; `SPLIT_AT`
+  0.30 -> 0.40.
 - Speaker ID worker: an exception in idle-time work can no longer stop the
   worker thread.
 
