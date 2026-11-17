@@ -77,6 +77,7 @@
 
 <div class="panel">
   <h2>Review <span class="sub">the questions where one click settles the most traffic</span></h2>
+  <div class="queue" id="suggest"></div>
   <div class="queue" id="queue"><span class="muted">Loading…</span></div>
 </div>
 
@@ -294,7 +295,41 @@ function splitOff(pid, f) {
   var ids = Array.prototype.slice.call(document.querySelectorAll('.split-tick[data-card="' + f + '"]:checked'))
                  .map(function(x) { return parseInt(x.value, 10); });
   if (!ids.length) { alert('Tick the overs that are a different person first.'); return; }
-  act({op: 'split_off', profile_id: pid, utt_ids: ids, callsign: document.getElementById(f + '-scall').value});
+  act({op: 'split_off', profile_id: pid, utt_ids: ids, callsign: document.getElementById(f + '-scall').value})
+    .then(function(d) { if (d && d.ok && d.result) showSuggest(d.result.from, d.result.to, d.result.suggest || [], true); });
+}
+// After a split: the old voice's other overs that sound more like the new one,
+// ticked, for the human to listen to and move in one go.
+var _sugN = 0;
+function showSuggest(frm, to, list, quiet) {
+  if (!list.length) { if (!quiet) alert('Nothing else in voice #' + frm + ' sounds closer to #' + to + '.'); return; }
+  var f = 's' + (_sugN++);
+  var rows = list.map(function(x) {
+    return '<div class="quote"><input type="checkbox" class="move-tick" data-card="' + f + '" value="' + x.id + '" checked>' +
+           (x.clip ? playBtn(x.id, null) : '') + '<span class="muted">over #' + x.id + ': ' +
+           Math.round(x.score * 100) + '% like #' + to + ', ' + Math.round(x.was * 100) + '% like the rest of #' + frm + '</span></div>';
+  }).join('');
+  var c = document.createElement('div');
+  c.className = 'card';
+  c.innerHTML = '<div class="kind conflict">Also move?</div>' +
+    '<div class="prompt">' + list.length + ' more over' + (list.length > 1 ? 's' : '') + ' in voice #' + frm +
+    ' sound more like the new voice #' + to + '. Listen, untick any that are not, then move the rest.</div>' +
+    '<div class="quotes">' + rows + '</div>' +
+    '<div class="actions"><button class="rb rb-sm" onclick="moveTicked(' + frm + ',' + to + ',\'' + f + '\')">Move ticked to #' + to + '</button>' +
+    '<button class="rb rb-sm" onclick="this.closest(\'.card\').remove()">Leave them</button></div>';
+  document.getElementById('suggest').prepend(c);
+}
+function moveTicked(frm, to, f) {
+  var ids = Array.prototype.slice.call(document.querySelectorAll('.move-tick[data-card="' + f + '"]:checked'))
+                 .map(function(x) { return parseInt(x.value, 10); });
+  if (!ids.length) { alert('Nothing ticked: use "Leave them".'); return; }
+  act({op: 'move_overs', from: frm, to: to, utt_ids: ids});
+}
+function findMore(frm, to) {
+  fetch('/speakers/api/action', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                 body: JSON.stringify({op: 'closer_to', from: frm, to: to})})
+    .then(function(r) { return r.json(); })
+    .then(function(d) { if (!d.ok) { alert(d.error || 'failed'); return; } showSuggest(frm, to, d.result.suggest || []); window.scrollTo(0, 0); });
 }
 
 // ── voices ─────────────────────────────────────────────────────────────────
@@ -422,6 +457,7 @@ function loadAudit() {
       else if (r.action === 'move_over') t = 'moved an over from #' + p.frm + ' to #' + p.to;
       else if (r.action === 'keep_label') t = 'kept voice #' + p.profile_id + ' as ' + p.callsign + ' (not ' + Object.keys(p.dismissed || {}).join(', ') + ')';
       else if (r.action === 'split_off') t = 'split ' + (p.utt_ids || []).length + ' overs of voice #' + p.frm + ' into new voice #' + p.to;
+      else if (r.action === 'move_overs') t = 'moved ' + (p.utt_ids || []).length + ' overs from #' + p.frm + ' to #' + p.to;
       else if (r.action === 'not_same') t = 'voices #' + p.a + ' and #' + p.b + ' are different people';
       else if (r.action === 'reassign') t = 're-cluster moved ' + (p.moves || []).length + ' overs';
       else if (r.action === 'release') t = 're-cluster released ' + (p.releases || []).length + ' overs that no longer fit their voice';
@@ -430,7 +466,10 @@ function loadAudit() {
       else t = r.action;
       return '<div class="a"><span class="muted">' + when(r.ts) + '</span><span>' + (r.actor === 'auto' ? 'auto: ' : '') + h(t) + '</span>' +
              (undone[r.id] ? '<span class="muted">undone</span>'
-                           : '<button class="rb rb-sm" onclick="act({op:\'undo\',audit_id:' + r.id + '})">Undo</button>') + '</div>';
+                           : (r.action === 'split_off'
+                              ? '<button class="rb rb-sm" title="Other overs of #' + p.frm + ' that sound like #' + p.to + '" ' +
+                                'onclick="findMore(' + p.frm + ',' + p.to + ')">Find more</button>' : '') +
+                             '<button class="rb rb-sm" onclick="act({op:\'undo\',audit_id:' + r.id + '})">Undo</button>') + '</div>';
     }).join('') : '<span class="muted">No changes yet.</span>';
   });
 }

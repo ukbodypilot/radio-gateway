@@ -184,6 +184,9 @@ _OPS = {
     'move_over': lambda c, b: c.move_over(b['utt_id'], b.get('to_profile')),
     'not_same': lambda c, b: c.not_same(b['a'], b['b']),
     'keep_label': lambda c, b: c.keep_label(b['profile_id'], b.get('dismiss') or {}),
+    'move_overs': lambda c, b: c.move_overs(b['from'], b['to'], b['utt_ids']),
+    'closer_to': lambda c, b: {'from': int(b['from']), 'to': int(b['to']),
+                               'suggest': c.closer_to(int(b['from']), int(b['to']))},   # read-only
     'split_off': lambda c, b: c.split_off(b['profile_id'], b['utt_ids'], b.get('callsign', ''), b.get('name', '')),
     'note': lambda c, b: c.note(b['profile_id'], b.get('notes', '')),
     'undo': lambda c, b: c.undo(b['audit_id']),

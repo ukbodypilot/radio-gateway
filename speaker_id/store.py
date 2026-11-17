@@ -295,6 +295,14 @@ class SpeakerStore:
             }
 
     # ── evidence / identity ─────────────────────────────────────────────
+    def evidence_positions(self, utt_id, source):
+        """{char offset: seconds into the over} of one source's evidence on an over."""
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT ch, at FROM evidence WHERE utt_id=? AND source=? AND ch IS NOT NULL '
+                'AND at IS NOT NULL', (utt_id, source)).fetchall()
+        return dict(rows)
+
     def clear_rule_evidence(self, utt_id, source):
         """Drop one rule-source's evidence on an over before re-scoring it (never human)."""
         with self._lock:

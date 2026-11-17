@@ -336,6 +336,7 @@ check("the old voice is rebuilt without them",
 check("the two are marked different people (never merged back)", (min(pv, new), max(pv, new)) in st.cannot_links())
 check("the new voice gets the call given", st.profile_labels().get(new, (None,))[0] == 'KX7QZB',
       str(st.profile_labels()))
+check("nothing left sounds like the new voice: no suggestions", r['suggest'] == [], str(r['suggest']))
 try:
     cu.split_off(pv, mine, '')
     check("splitting off EVERY over is refused (label it instead)", False)
@@ -352,6 +353,42 @@ check("undo puts the overs back and retires the new voice",
       all(st.utterance(u)['profile_id'] == pv for u in theirs)
       and new not in {i for i, *_ in st.load_profiles('m')}
       and (min(pv, new), max(pv, new)) not in st.cannot_links())
+
+print("\n7d. after a split, the rest of the voice is re-sorted on request")
+st = SpeakerStore(os.path.join(tmp, 'resort.db'))
+cu = Curator(st, FakeUls(), 0.0)
+NEAR_B = unit([0.15, 1, 0.1])            # the second person, not word for word the ticked over
+pv = st.add_profile('m', VA, 0)
+mk = lambda e, k: st.add_utterance(ts=300.0 + k, bus='sdr1', source='', freq='', duration=4.0, model='m',
+                                   emb=e, profile_id=pv, score=0.7, decision='matched', clip='c/%d.opus' % k)
+a_ids = [mk(VA, k) for k in range(4)]
+tick = [mk(VB, 10)]
+b_ids = [mk(NEAR_B, 11 + k) for k in range(2)]
+r = cu.split_off(pv, tick)
+check("the split offers the untouched overs that sound like the new voice, and only those",
+      sorted(x['id'] for x in r['suggest']) == sorted(b_ids), str(r['suggest']))
+check("...with both scores, so the page can show why",
+      all(x['score'] >= 0.65 and x['score'] > x['was'] and x['clip'] for x in r['suggest']), str(r['suggest']))
+check("asking again gives the same answer (Find more on the audit row)",
+      sorted(x['id'] for x in cu.closer_to(pv, r['to'])) == sorted(b_ids))
+m = cu.move_overs(pv, r['to'], b_ids)
+check("moving the ticked suggestions is one change",
+      m['moved'] == 2 and all(st.utterance(u)['profile_id'] == r['to'] for u in b_ids)
+      and all(st.utterance(u)['profile_id'] == pv for u in a_ids))
+check("...after which nothing more is offered", cu.closer_to(pv, r['to']) == [])
+try:
+    cu.move_overs(pv, r['to'], a_ids)
+    check("moving EVERY over is refused (merge instead)", False)
+except CurationError:
+    check("moving EVERY over is refused (merge instead)", True)
+row = [a for a in st.audit_rows(20) if a['action'] == 'move_overs'][0]
+cu.undo(row['id'])
+check("undo puts them back", all(st.utterance(u)['profile_id'] == pv for u in b_ids))
+html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()
+check("the page shows the suggestions and a Find more on split rows",
+      'showSuggest(' in html and "op: 'move_overs'" in html and 'findMore(' in html)
+check("the op is wired", "'move_overs'" in open(os.path.join(ROOT, 'web_routes_speakers.py')).read()
+      and "'closer_to'" in open(os.path.join(ROOT, 'web_routes_speakers.py')).read())
 
 print("\n8. the page")
 html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()

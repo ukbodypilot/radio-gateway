@@ -33,8 +33,9 @@ import time
 
 from speaker_id import callsign as cs
 
-VERSION = 3          # 2: evidence `at` (seconds into the over); 3: `ch` (char offset),
-                     # last self-ID wins, folds only onto a call this voice has given
+VERSION = 4          # 2: evidence `at` (seconds into the over); 3: `ch` (char offset),
+                     # last self-ID wins, folds only onto a call this voice has given;
+                     # 4: a call in a question ("...? K0XYZ?") is not a self-ID
 SOURCE = 'rules'
 WEIGHT = {'callsign_self': 1.0, 'name_cue_back': 0.3, 'name_cue_fwd': 0.2, 'mention': 0.0}
 MIN_SELF_IDS = 2
@@ -106,14 +107,18 @@ class Identifier:
         if not self.uls.ready():
             self.counters['no_uls'] += 1
             return []
+        # Re-filing history has no word timings: keep the positions measured
+        # when the over was first filed (Parakeet's, or the rebuild's) rather
+        # than replace them with the character-share estimate.
+        kept = {} if word_times else self.store.evidence_positions(utt_id, SOURCE)
         self.store.clear_rule_evidence(utt_id, SOURCE)
         filed = []
         selfs = []
         starts = [m.start() for m in cs._TOK.finditer(text)]
         voice_calls = self.store.voice_calls(profile_id) if profile_id else set()
         for call, role, i in cs.extract(text, self.uls.valid):
-            at = self.position(text, starts, i, duration, word_times)
             ch = starts[i] if i < len(starts) else None
+            at = kept[ch] if ch in kept else self.position(text, starts, i, duration, word_times)
             if count_regular:
                 self.regulars.add(call, ts)
             if role == 'self':

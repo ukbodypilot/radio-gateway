@@ -4,7 +4,10 @@ extract(text, valid) -> [(call, role, token_index)]
   role 'self'    the speaker identifying themselves ("this is K0XYZ", call at
                  the end of an over, "... K0XYZ clear")
        'other'   a station being addressed ("thank you for that, K0XYZ",
-                 "K0XYZ this is ...")
+                 "K0XYZ this is ...") or asked about: a call in a sentence
+                 ending '?' is never a self-ID ("Who is that on frequency?
+                 K0XYZ?", "Is this K0XYZ?") unless the sentence OPENS with
+                 the self cue ("This is K0XYZ, who's on frequency?")
        'unknown'
   valid(call) -> bool is required (ULS lookup): Parakeet mangles phonetics
   ("Killer Quad 6" for KO6, "6th" for six, "K06" for KO6, "Ocean" for Oscar),
@@ -48,6 +51,9 @@ OTHER_BEFORE = {'calling', 'copy', 'thanks', 'thank', 'qsl', 'roger', 'hello', '
 SELF_AFTER = {'clear', 'clearing', 'listening', 'monitoring', 'mobile', 'portable',
               'standing', 'out'}
 
+ASKING = {'is', 'was', 'who', "who's", 'whos', 'are', 'were', 'what', "what's", 'did', 'do',
+          'does', 'which', 'where', 'and'}
+
 _TOK = re.compile(r"[A-Za-z0-9']+(?:-[A-Za-z0-9]+)*")
 
 
@@ -78,8 +84,26 @@ def _variants(s):
         yield ''.join(out)
 
 
+def _question_sentences(text, spans):
+    """Per token: (is its sentence a question, index of the sentence's first token)."""
+    out, first, j = [], 0, 0
+    ends = [(m.start(), m.group()) for m in re.finditer(r'[.?!]+', text)]
+    for k, (a, _b) in enumerate(spans):
+        while j < len(ends) and ends[j][0] < a:
+            j += 1
+            first = k                       # a terminator before this token opens a sentence
+        out.append(first)
+    res = []
+    for k, (a, b) in enumerate(spans):
+        nxt = next((e for e in ends if e[0] >= b), None)
+        res.append(('?' in nxt[1]) if nxt else False)
+    return list(zip(res, out))
+
+
 def extract(text, valid):
-    toks = _TOK.findall(text)
+    spans = [m.span() for m in _TOK.finditer(text)]
+    toks = [text[a:b] for a, b in spans]
+    sent = _question_sentences(text, spans)
     low = [t.lower() for t in toks]
     runs, cur = [], []
     for i, t in enumerate(toks):
@@ -135,7 +159,17 @@ def extract(text, valid):
             return None
         d_self = nearest(SELF_BEFORE, 4)
         d_other = nearest(OTHER_BEFORE, 8)       # "thank you for the input, K0XYZ"
-        if d_self and (not d_other or d_self < d_other):
+        question, s0 = sent[i1]
+        cue = i0 - d_self if d_self else None
+        opens = cue is not None and (cue == s0 or (cue == s0 + 1 and low[s0] not in ASKING))
+        if question and not opens:
+            # Asked, not given: 2026-11-16 "Who is that on frequency? KX7QZA?"
+            # and "KX7QZB, okay?" were filed as self-IDs and put a false
+            # conflict card on a voice. Only "This is K0XYZ, ...?" (the cue
+            # opening the sentence: first word, or second after "yeah"/"ok",
+            # never after "is"/"was") is the speaker's own call.
+            role = 'other'
+        elif d_self and (not d_other or d_self < d_other):
             role = 'self'
         elif d_other or (at_start and {'this'} & set(low[i1 + 1:i1 + 3])):
             role = 'other'

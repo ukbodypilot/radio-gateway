@@ -229,5 +229,22 @@ sm = _samples(st3, p3, {'callsign': 'KX7QZA'})
 check("callsign questions play overs where the call is SAID first, with the position",
       sm[0] == {'id': u3, 'at': 4.0, 'callsign': 'KX7QZA'} and sm[1]['id'] == u4, str(sm))
 
+print("\n9. a call that is asked about is not a self-ID")
+check("'Who is that? KX7QZA?' asks, it does not identify",
+      calls('Who is that on frequency? KX7QZA?') == [('KX7QZA', 'other')], str(calls('Who is that on frequency? KX7QZA?')))
+check("a tag question after a call is not a self-ID ('KX7QZA, okay?')",
+      calls("That's just old school, I guess. KX7QZA, okay?") == [('KX7QZA', 'other')])
+check("'Is this KX7QZA?' asks", calls('Is this KX7QZA?') == [('KX7QZA', 'other')])
+check("'This is KX7QZA, who's on frequency?' still identifies",
+      calls("This is KX7QZA, who's on frequency?") == [('KX7QZA', 'self')])
+check("'Yeah, it's KX7QZA, you there?' still identifies",
+      calls("Yeah, it's KX7QZA, you there?") == [('KX7QZA', 'self')])
+check("a question in ANOTHER sentence does not stop a self-ID",
+      calls('This is KX7QZA. You hanging out there?') == [('KX7QZA', 'self')])
+# Re-filing history (no word timings) keeps the position measured first time.
+idf3.file(u3, 1.0, 7.0, 'sdr1', txt)
+check("re-filing without word timings keeps the measured position",
+      st3.callsign_at([u3]) == {u3: ('KX7QZA', 4.0)}, str(st3.callsign_at([u3])))
+
 print('FAILED' if failed else 'OK')
 sys.exit(1 if failed else 0)

@@ -4,6 +4,16 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Speaker ID: a callsign in a question is not a self-ID.** "Who is that on
+  frequency? K0XYZ?" and "K0XYZ, okay?" were filed as the speaker giving
+  their own call and raised false conflict cards. Evidence version 4: the
+  backfill re-files history after the restart (on the live data this drops
+  exactly those two of 100 self-IDs) and keeps measured call positions.
+- **After a split, re-sort the rest of the voice.** The page offers the old
+  voice's other overs that sound more like the new one, ticked, to move in
+  one undoable change ("Move ticked"); "Find more" on a split in Recent
+  changes asks again later.
+
 - **Speaker ID accuracy trend.** `rg_speaker_id_quality{kind,window}` (1 d,
   7 d): self-IDs agreeing with their voice, self-IDs equal to the voice name,
   overs placed, overs in named voices, sample size. Grafana panel "Speaker

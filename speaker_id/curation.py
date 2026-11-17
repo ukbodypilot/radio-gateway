@@ -15,6 +15,14 @@ import time
 import numpy as np
 
 ACTOR = 'human'
+# After a split: an over left in the old voice is offered for the new one if it
+# scores at least SUGGEST_AT against the new voice AND SUGGEST_MARGIN more
+# than against what is left of the old. Measured on the first real split
+# (2026-11-16, one ticked over out of 75): 6 overs cleared both; on the other
+# split none came within 0.11. Only ever a suggestion: the human ticks.
+SUGGEST_AT = 0.65
+SUGGEST_MARGIN = 0.05
+SUGGEST_MAX = 20
 
 
 class CurationError(ValueError):
@@ -166,7 +174,66 @@ class Curator:
         out = {'from': p['id'], 'to': to, 'moved': len(ids)}
         if (callsign or '').strip() or (name or '').strip():
             out['label'] = self.label(to, callsign, name)
+        out['suggest'] = self.closer_to(p['id'], to)
         return out
+
+    def _unit_embs(self, profile_id, model):
+        ids, vecs = [], []
+        for uid in self.store.over_ids(profile_id):
+            emb, m, _ts = self.store.utterance_emb(uid)
+            if emb is None or m != model:
+                continue
+            nrm = float(np.linalg.norm(emb))
+            if nrm > 0:
+                ids.append(uid)
+                vecs.append(emb / nrm)
+        return ids, (np.array(vecs, np.float32) if vecs else np.zeros((0, 1), np.float32))
+
+    def closer_to(self, frm, to, at=SUGGEST_AT, margin=SUGGEST_MARGIN, limit=SUGGEST_MAX):
+        """Overs still in `frm` that sound more like `to`: [{'id', 'score', 'was', 'clip'}], best first.
+
+        Both sides are the mean of the voices' own overs as they stand now, so
+        the ticked overs define the new voice and the rest define the old.
+        """
+        model = self._profile(to)['model']
+        t_ids, t = self._unit_embs(to, model)
+        f_ids, f = self._unit_embs(frm, model)
+        if not t_ids or len(f_ids) < 2:
+            return []
+        ct = t.mean(axis=0)
+        ct /= np.linalg.norm(ct)
+        out = []
+        total = f.sum(axis=0)
+        for k, uid in enumerate(f_ids):
+            rest = total - f[k]                  # the old voice WITHOUT this over
+            cf = rest / (np.linalg.norm(rest) or 1.0)
+            sn, so = float(f[k] @ ct), float(f[k] @ cf)
+            if sn >= at and sn >= so + margin:
+                out.append({'id': uid, 'score': round(sn, 3), 'was': round(so, 3)})
+        out.sort(key=lambda r: r['was'] - r['score'])
+        out = out[:limit]
+        for r in out:
+            r['clip'] = bool((self.store.utterance(r['id']) or {}).get('clip'))
+        return out
+
+    def move_overs(self, frm, to, utt_ids):
+        """Move these overs of voice `frm` to voice `to` (one change, one undo)."""
+        f, t = self._profile(frm), self._profile(to)
+        if f['id'] == t['id']:
+            raise CurationError('that is the same voice')
+        ids = sorted({int(u) for u in utt_ids})
+        if not ids:
+            raise CurationError('tick the overs to move')
+        for uid in ids:
+            u = self.store.utterance(uid)
+            if not u or u['profile_id'] != f['id']:
+                raise CurationError(f'over #{uid} is not in voice #{f["id"]}')
+        if len(ids) >= len(self.store.over_ids(f['id'])):
+            raise CurationError('that is every over in the voice: merge it instead')
+        self.store.move_overs(ids, t['id'])
+        self._recompute(f['id'], t['id'])
+        self.store.audit(ACTOR, 'move_overs', frm=f['id'], to=t['id'], utt_ids=ids)
+        return {'from': f['id'], 'to': t['id'], 'moved': len(ids)}
 
     def not_same(self, a, b):
         """These two voices are different people: never merged, by hand or by the re-cluster."""
@@ -210,6 +277,9 @@ class Curator:
             self.store.move_overs([p['utt_id']], p['frm'])
             if p.get('created'):
                 self.store.set_merged(p['to'], p['frm'])     # retire the voice it created
+            self._recompute(p['frm'], p['to'])
+        elif a == 'move_overs':
+            self.store.move_overs(p['utt_ids'], p['frm'])
             self._recompute(p['frm'], p['to'])
         elif a == 'not_same':
             self.store.remove_cannot_link(p['a'], p['b'])

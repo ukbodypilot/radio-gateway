@@ -15,10 +15,11 @@ feed it; each keeps its own stream) unless `SPEAKER_ID_BUSES` names a subset.
 ```
 over (16 kHz, from the transcriber)
   -> fingerprint (ERes2Net, 192-d)             speaker_id/embedder.py, features.py
-  -> live match against known voices           service.py   accept 0.60 / new < 0.45
+  -> live match against known voices           service.py   accept 0.65 / new < 0.45
   -> transcript arrives under the same id
   -> evidence filed on the over                identify.py
-       callsign_self   "this is K0XYZ", call at the end, "... clear"
+       callsign_self   "this is K0XYZ", call at the end, "... clear";
+                       never a call in a question ("Who's that? K0XYZ?")
        name_cue        "thanks Jeff" (previous over), "go ahead Jeff" (next over)
        mention         a call addressed or heard (activity only)
   -> verdict per voice from all its overs' evidence
@@ -26,6 +27,11 @@ over (16 kHz, from the transcriber)
                                                 or 5+, or 3+ plus a matching FCC first name
   -> you confirm / correct on /speakers         always wins, never overridden
 ```
+
+A call in a sentence ending "?" is asked about, not given, unless the
+sentence opens with the cue ("This is K0XYZ, who's on frequency?"). Changing
+the rules bumps `identify.VERSION`; the idle backfill then re-files every
+stored over, keeping each call's measured position in the over.
 
 Every callsign must be a real FCC licence (offline copy of the weekly public
 ULS dump, `~/.config/radio-gateway/uls.db`, refreshed weekly in a child
@@ -44,6 +50,13 @@ established regular) are what make a name stick.
   licence, best samples and recent overs.
 - Label, "not this person", merge two voices, move one over to another voice
   (or a voice of its own), mark two voices as different people.
+- **A voice that is two people** (a conflict card): tick the quoted overs
+  that are someone else, "Split ticked into a new voice". The page then
+  offers the voice's *other* overs that sound more like the new voice
+  (score >= 0.65 against it and 0.05 above the rest of the old voice),
+  ticked, with play buttons: untick any that are wrong, "Move ticked".
+  "Find more" on a split in Recent changes asks again later, once the new
+  voice has more overs. Always a suggestion; nothing moves without a click.
 - **Recent changes**: every change, by you or by automation, with Undo.
 
 The chip on `/transcribe` links to the voice.
