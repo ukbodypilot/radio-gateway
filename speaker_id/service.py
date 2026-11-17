@@ -77,6 +77,7 @@ class SpeakerID:
         self.veto_at = float(getattr(config, 'SPEAKER_ID_SPLIT_VETO_AT', 0.65))
         self.veto_min_n = int(getattr(config, 'SPEAKER_ID_SPLIT_VETO_MIN_N', 3))
         self._alert_last = {}
+        self.quality = {}          # window -> store.quality(), refreshed every 10 min when idle
         self._uls = uls
         self._ident = None
         self._seeded = False
@@ -283,6 +284,20 @@ class SpeakerID:
                 sum(1 for p in ps if p['identity_id'] and (p['label_source'] or '').startswith('human')))
         except Exception:
             log_exc()
+        if now - getattr(self, '_quality_at', -1e9) < 600:
+            return
+        self._quality_at = now
+        try:
+            import metrics as _m
+            wall = time.time()
+            for win, secs in (('1d', 86400), ('7d', 7 * 86400)):
+                q = self._store.quality(wall - secs)
+                self.quality[win] = q
+                for k in ('placed_share', 'named_share', 'selfid_purity', 'selfid_agree', 'selfids'):
+                    if q[k] is not None:
+                        _m.speaker_id_quality.labels(kind=k, window=win).set(q[k])
+        except Exception:
+            log_exc()
 
     def _idle_nightly_and_migration(self):
         with self._lock:
@@ -317,7 +332,7 @@ class SpeakerID:
         from speaker_id import recluster, retention
         self._store.meta_set('last_nightly_day', time.strftime('%Y-%m-%d'))
         rep = recluster.run(self._store, self.model_key, accept=max(self.accept, recluster.REASSIGN_AT),
-                            merge_at=self.merge_at, learn_at=self.learn_at,
+                            merge_at=self.merge_at, learn_at=self.learn_at, release_at=self.accept,
                             learn_secs=self.learn_secs, min_secs=self.min_secs, identifier=self._ident)
         if self.keep_clips and self.clip_days > 0:
             rep.update(retention.prune(self._store, self._clip_dir, self.clip_days))
@@ -608,6 +623,7 @@ class SpeakerID:
                         else {'mode': 'local'}),
             'db': counts,
             'last_error': self.last_error,
+            'quality': self.quality,
             'running': bool(self._thread and self._thread.is_alive()),
             'nightly': {'time': self.nightly_time or None, 'last': self.last_nightly,
                         'last_day': self._store.meta_get('last_nightly_day') if self._store else None},

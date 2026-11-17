@@ -75,6 +75,15 @@ speaker_id_voices = Gauge(
     registry=REGISTRY,
 )
 
+speaker_id_quality = Gauge(
+    'rg_speaker_id_quality',
+    'Speaker ID accuracy over the last window (1d / 7d): placed_share, named_share, '
+    'selfid_purity (self-IDs agreeing with their voice), selfid_agree (self-IDs equal to '
+    'the voice name), selfids (sample size)',
+    ['kind', 'window'],
+    registry=REGISTRY,
+)
+
 speaker_id_events_total = Counter(
     'rg_speaker_id_events_total',
     'Speaker ID per-over outcomes: embedded, matched, matched_learn, new_profile, '

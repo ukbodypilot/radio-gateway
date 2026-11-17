@@ -69,10 +69,15 @@ Counters: `split_checked`, `split_overs`, `veto_known`, `veto_unknown`.
 
 At `SPEAKER_ID_NIGHTLY_TIME` (default 03:30; "Re-cluster now" on the page):
 
-1. recompute each voice from all its overs;
+1. recompute each voice from its confident overs (matched at >= 0.70);
 2. move overs that now clearly fit another voice (>= 0.70 and 0.05 better),
    adopt "unsure" overs that now clear 0.70 — never out of a voice you
    labelled, never an over you placed;
+   then **release** overs that no longer fit their own voice (below the live
+   accept, 0.65) back to "unsure" — same exemptions, never a voice's first
+   or last over; audited and undoable. This keeps an over placed under
+   looser rules, or before a merge reshaped the voice, from staying for ever
+   (first run on the rebuilt data: 9 of ~500);
 3. merge voices >= `SPEAKER_ID_MERGE_AT` (0.80) alike — complete linkage,
    never across "different people" or two identities;
 4. re-check names; prune clips older than `SPEAKER_ID_CLIP_DAYS` (30) except
@@ -139,7 +144,15 @@ their voice 63% -> 90%, voices mixing callsigns 3 -> 2.
 
 ## Health
 
-- `/speakers` status line: voices, named, queue, dropped, FCC table state.
+- `/speakers` status line: voices, named, queue, dropped, FCC table state,
+  and the 7-day accuracy (below).
+- **Accuracy trend** (`rg_speaker_id_quality{kind,window}`, 1d and 7d,
+  refreshed every 10 min; Grafana "Speaker ID: accuracy"):
+  `selfid_purity` = self-IDs ("this is CALL") sitting in the voice that most
+  often gives CALL — the main signal, below 100% means voices still mix
+  people; `selfid_agree` = self-IDs in named voices equal to the name;
+  `placed_share` / `named_share` = overs put in a voice / a named voice;
+  `selfids` = the sample size (under ~30 the line is noisy).
 - `/transcriptions` → `speaker_id` (counters, offload, nightly, model switch).
 - Prometheus: `rg_speaker_id_events_total{event}`, `rg_speaker_id_voices{kind}`;
   Grafana "Speaker ID" row.

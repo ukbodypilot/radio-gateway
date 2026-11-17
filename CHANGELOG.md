@@ -4,6 +4,13 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Speaker ID accuracy trend.** `rg_speaker_id_quality{kind,window}` (1 d,
+  7 d): self-IDs agreeing with their voice, self-IDs equal to the voice name,
+  overs placed, overs in named voices, sample size. Grafana panel "Speaker
+  ID: accuracy", 7-day line on /speakers, `quality` in the status.
+- **Nightly release step.** Overs that no longer fit their own voice (below
+  the live accept) go back to "unsure"; never from a voice you labelled, an
+  over you placed, or a voice's first or last over; audited, undoable.
 - **`tools/speaker_rebuild.py`: re-file speaker-ID history with the current
   code.** Replays the loop recordings through a fresh service (transcriber
   VAD settings, TX Log matching keeps each over's tx_id and start time,

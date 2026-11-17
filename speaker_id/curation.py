@@ -164,6 +164,10 @@ class Curator:
             from speaker_id.recluster import undo_reassign
             undo_reassign(self.store, p)
             self._recompute(*{m[1] for m in p['moves'] if m[1]}, *{m[2] for m in p['moves']})
+        elif a == 'release':
+            from speaker_id.recluster import undo_release
+            undo_release(self.store, p)
+            self._recompute(*{r[1] for r in p['releases']})
         elif a == 'note':
             self.store.update_identity(p['identity_id'], notes=p.get('prev', ''))
         else:

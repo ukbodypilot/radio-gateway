@@ -537,6 +537,94 @@
           }
         }
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Speaker ID: accuracy (rolling 7 days)",
+      "description": "Self-IDs agreeing: share of overs saying 'this is CALL' that sit in the voice most often giving CALL (below 100% = voices still mix people). Agree with name: self-IDs in named voices equal to the name. Placed / named: share of overs put in a voice / a named voice. Sample size in the speaker_id_quality{kind=selfids} series.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "id": 15,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rg_speaker_id_quality{window=\"7d\", kind=~\"selfid_purity|selfid_agree|placed_share|named_share\"}",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "selfid_purity"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "self-IDs agreeing with their voice"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "selfid_agree"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "self-IDs = voice name"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "placed_share"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "overs placed"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "named_share"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "overs in named voices"
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "refresh": "5s",

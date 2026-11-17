@@ -247,6 +247,43 @@ class SpeakerStore:
                 (utt_id,)).fetchall()
         return [dict(zip(('kind', 'value', 'weight', 'source', 'version'), r)) for r in rows]
 
+    def quality(self, since):
+        """How well the voices are doing over overs since `since` (epoch seconds).
+
+        placed_share   overs put in a voice (vs unsure / released / too short to place)
+        named_share    overs in a voice that has a name
+        selfid_purity  self-IDs ("this is <call>") that agree with the most-given
+                       call in their voice: < 1.0 means voices still mix people
+        selfid_agree   self-IDs in NAMED voices that equal the voice's name
+        selfids        how many self-IDs that rests on (small = noisy)
+        Shares are None when there is nothing to divide by.
+        """
+        with self._lock:
+            c = self._conn
+            n, placed, named = c.execute(
+                'SELECT count(*), count(u.profile_id), count(p.identity_id) FROM utterances u '
+                'LEFT JOIN profiles p ON p.id = u.profile_id WHERE u.ts >= ?', (since,)).fetchone()
+            ids = c.execute(
+                "SELECT u.profile_id, e.value, i.callsign FROM evidence e "
+                "JOIN utterances u ON u.id = e.utt_id "
+                "LEFT JOIN profiles p ON p.id = u.profile_id "
+                "LEFT JOIN identities i ON i.id = p.identity_id "
+                "WHERE e.kind = 'callsign_self' AND u.profile_id IS NOT NULL AND u.ts >= ?",
+                (since,)).fetchall()
+        by = {}
+        for pid, val, _ in ids:
+            by.setdefault(pid, {}).setdefault(val, 0)
+            by[pid][val] += 1
+        maj = sum(max(v.values()) for v in by.values())
+        in_named = [(val, call) for _pid, val, call in ids if call]
+        share = lambda a, b: round(a / b, 4) if b else None
+        return {
+            'overs': n, 'placed_share': share(placed, n), 'named_share': share(named, n),
+            'selfids': len(ids), 'selfid_purity': share(maj, len(ids)),
+            'selfid_agree': share(sum(1 for v, cl in in_named if v == cl), len(in_named)),
+            'selfids_named': len(in_named),
+        }
+
     def counts(self):
         with self._lock:
             c = self._conn
@@ -505,6 +542,18 @@ class SpeakerStore:
                 "SELECT COUNT(*) FROM utterances u LEFT JOIN reembed r ON r.utt_id=u.id "
                 "WHERE u.clip <> '' AND u.model <> ? AND r.utt_id IS NULL", (target,)).fetchone()[0]
         return done, left
+
+    def decisions(self, utt_ids):
+        """{utt_id: decision} for these overs."""
+        ids = list(utt_ids)
+        out = {}
+        with self._lock:
+            for k in range(0, len(ids), 500):
+                chunk = ids[k:k + 500]
+                q = ','.join('?' * len(chunk))
+                out.update(self._conn.execute(
+                    f'SELECT id, decision FROM utterances WHERE id IN ({q})', chunk).fetchall())
+        return out
 
     def set_decisions(self, utt_ids, decision):
         ids = list(utt_ids)

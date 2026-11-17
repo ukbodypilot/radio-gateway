@@ -374,7 +374,7 @@ function runNightly(btn) {
     btn.disabled = false; btn.textContent = 'Re-cluster now';
     if (d && d.ok && d.result) {
       var r = d.result;
-      alert('Re-cluster: ' + (r.reassigned || 0) + ' overs moved, ' + (r.adopted || 0) + ' adopted, ' +
+      alert('Re-cluster: ' + (r.reassigned || 0) + ' overs moved, ' + (r.adopted || 0) + ' adopted, ' + (r.released || 0) + ' released, ' +
             (r.merged || 0) + ' voices merged, ' + (r.named || 0) + ' named' +
             (r.clips_removed ? ', ' + r.clips_removed + ' old clips pruned' : '') + '.');
     }
@@ -396,6 +396,7 @@ function loadAudit() {
       else if (r.action === 'move_over') t = 'moved an over from #' + p.frm + ' to #' + p.to;
       else if (r.action === 'not_same') t = 'voices #' + p.a + ' and #' + p.b + ' are different people';
       else if (r.action === 'reassign') t = 're-cluster moved ' + (p.moves || []).length + ' overs';
+      else if (r.action === 'release') t = 're-cluster released ' + (p.releases || []).length + ' overs that no longer fit their voice';
       else if (r.action === 'recluster_done') return '';
       else if (r.action === 'model_switch') t = 'switched fingerprints ' + p.frm + ' → ' + p.to + ' (' + p.voices + ' voices)';
       else t = r.action;
@@ -407,6 +408,14 @@ function loadAudit() {
 }
 
 // ── status + refresh ───────────────────────────────────────────────────────
+function pct(x) { return x == null ? '–' : Math.round(x * 100) + '%'; }
+function quality(q) {
+  if (!q) return '';
+  return '<span title="Last 7 days. Self-IDs agreeing = an over saying &quot;this is CALL&quot; sits in the voice ' +
+         'that most often gives CALL (below 100% = voices still mix people). Placed = overs put in a voice.">7 d: <b>' +
+         pct(q.selfid_purity) + '</b> of ' + q.selfids + ' self-IDs agree · <b>' + pct(q.placed_share) + '</b> placed · <b>' +
+         pct(q.named_share) + '</b> named</span>';
+}
 function refresh() {
   fetch('/speakers/api/profiles').then(function(r) { return r.json(); }).then(function(d) {
     if (!d.ok) { document.getElementById('status').innerHTML = '<span class="err">' + h(d.error) + '</span>'; return; }
@@ -420,6 +429,7 @@ function refresh() {
       '<span>model <b>' + h(s.model || '?') + '</b></span>' +
       '<span>queue <b>' + (s.queue || 0) + '</b>' + (c.dropped ? ' · <span class="err">' + c.dropped + ' dropped</span>' : '') + '</span>' +
       '<span>FCC table <b>' + h(uls.state || 'off') + '</b></span>' +
+      quality((s.quality || {})['7d']) +
       (s.last_error ? '<span class="err" title="' + h(s.last_error) + '">last error</span>' : '');
     renderVoices();
   });

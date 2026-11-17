@@ -12,6 +12,13 @@ of GB after a few months):
                  'unsure' overs that now clear REASSIGN_AT are adopted.
                  Never pulled OUT of a human-labelled voice, never moved
                  if a human moved it.
+  2b. release    an over that no longer fits its own voice (below release_at,
+                 the live accept level, against the rebuilt centroid) goes
+                 back to 'unsure', where step 2 can adopt it on a later night
+                 if it clearly fits somewhere. Same exemptions as step 2, and
+                 never a voice's founding over or its last one. Without this
+                 an over placed under looser rules, or before a merge or
+                 relabel reshaped the voice, stays in it for ever.
   3. merge       voices whose centroids are >= merge_at alike are merged
                  (complete linkage: every pair across two groups must clear it),
                  unless a human said "different people" (cannot_link) or
@@ -37,6 +44,7 @@ import numpy as np
 
 MARGIN = 0.05
 REASSIGN_AT = 0.70
+RELEASE_AT = 0.65            # = live SPEAKER_ID_ACCEPT: what would not be placed today
 ACTOR = 'recluster'
 
 
@@ -49,7 +57,7 @@ def _human_moved(store):
 
 
 def run(store, model, accept=REASSIGN_AT, merge_at=0.80, learn_secs=3.0, min_secs=1.5,
-        identifier=None, max_overs=200_000, learn_at=None):
+        identifier=None, max_overs=200_000, learn_at=None, release_at=RELEASE_AT):
     """learn_at: rebuild each voice only from overs that matched at least this well
     (the live learning rule), so old borderline matches stop shaping it."""
     t0 = time.time()
@@ -98,6 +106,30 @@ def run(store, model, accept=REASSIGN_AT, merge_at=0.80, learn_secs=3.0, min_sec
     touched = {m[1] for m in moves if m[1]} | {m[2] for m in moves}
     for pid in touched:
         store.recompute_centroid(pid, learn_secs, model=model, min_score=learn_at)
+
+    # 2b. release
+    if release_at:
+        profiles = {pid: (c, n, iid) for pid, c, n, iid in store.load_profiles(model)}
+        by_voice = collections.defaultdict(list)
+        for uid, pid, emb in store.embeddings(model, min_secs, max_overs):
+            if pid in profiles and pid not in human and uid not in pinned:
+                by_voice[pid].append((float(profiles[pid][0] @ emb), uid))
+        dec = store.decisions(uid for v in by_voice.values() for _s, uid in v)
+        releases = []
+        for pid, scored in by_voice.items():
+            keep_one = len(store.over_ids(pid)) <= sum(1 for sc, u in scored if sc < release_at)
+            weak = sorted((sc, u) for sc, u in scored if sc < release_at and dec.get(u) != 'new_profile')
+            if keep_one and weak:
+                weak = weak[:-1]                    # never empty a voice: its best stays
+            releases += [(u, pid, dec.get(u)) for _sc, u in weak]
+        if releases:
+            store.move_overs([r[0] for r in releases], None)
+            store.set_decisions([r[0] for r in releases], 'released')
+            store.audit(ACTOR, 'release', releases=releases, below=release_at)
+            for pid in {r[1] for r in releases}:
+                store.recompute_centroid(pid, learn_secs, model=model, min_score=learn_at)
+                touched.add(pid)
+        report['released'] = len(releases)
 
     # 3. merge (greedy, most alike first, every constraint checked per group)
     profiles = {pid: (c, n, iid) for pid, c, n, iid in store.load_profiles(model)}
@@ -161,6 +193,20 @@ def run(store, model, accept=REASSIGN_AT, merge_at=0.80, learn_secs=3.0, min_sec
     store.meta_set('last_recluster', time.time())
     store.audit(ACTOR, 'recluster_done', **{k: v for k, v in report.items()})
     return dict(report)
+
+
+def undo_release(store, payload):
+    """Put every over a 'release' row let go back in its voice, with its old decision."""
+    back = collections.defaultdict(list)
+    for uid, pid, prev in payload['releases']:
+        back[pid].append(uid)
+    for pid, uids in back.items():
+        store.move_overs(uids, pid)
+    by_dec = collections.defaultdict(list)
+    for uid, _pid, prev in payload['releases']:
+        by_dec[prev or 'matched'].append(uid)
+    for d, uids in by_dec.items():
+        store.set_decisions(uids, d)
 
 
 def undo_reassign(store, payload):
