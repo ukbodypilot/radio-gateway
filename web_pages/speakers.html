@@ -24,6 +24,8 @@
   .card .prompt { font-size: var(--f-sm); }
   .quotes { display: grid; gap: 2px; font-size: var(--f-sm); color: var(--t-text-dim); }
   .quote { display: flex; gap: var(--s-2); align-items: baseline; }
+  .quote input[type=checkbox] { align-self: center; }
+  .split-row { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; margin-top: var(--s-2); font-size: var(--f-sm); }
   .quote .qc { color: var(--t-text); font-weight: 600; white-space: nowrap; }
   .card .voices { display: flex; flex-wrap: wrap; gap: var(--s-3); }
   .card .actions, .row-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center; }
@@ -261,14 +263,30 @@ function card(it, i) {
   } else {
     a = form;
   }
+  var split = it.type === 'conflict' && (it.quotes || []).length > 1;
   var quotes = (it.quotes || []).map(function(q) {
-    return '<div class="quote">' + (q.clip ? playBtn(q.id, q.at) : '') +
+    return '<div class="quote">' +
+           (split ? '<input type="checkbox" class="split-tick" data-card="' + f + '" value="' + q.id + '" ' +
+                    'title="Tick the overs that are a DIFFERENT person from the rest">' : '') +
+           (q.clip ? playBtn(q.id, q.at) : '') +
            '<span class="qc">' + h(q.callsign) + '</span> “' + h(q.quote) + '”</div>';
   }).join('');
+  if (split) {
+    quotes += '<div class="split-row muted">Listen, tick the overs that are someone else, then ' +
+              '<input class="txt call" id="' + f + '-scall" placeholder="their call (optional)">' +
+              '<button class="rb rb-sm" onclick="splitOff(' + pid + ',\'' + f + '\')">Split ticked into a new voice</button></div>';
+  }
   return '<div class="card"><div class="kind ' + it.type + '">' + (kinds[it.type] || it.type) + '</div>' +
          '<div class="prompt">' + h(it.prompt) + '</div>' + (quotes ? '<div class="quotes">' + quotes + '</div>' : '') +
          '<div class="voices">' + voices + '</div>' +
          '<div class="actions">' + a + '<button class="rb rb-sm" onclick="_skipped[\'' + h(key) + '\']=1;loadQueue()">Skip</button></div></div>';
+}
+
+function splitOff(pid, f) {
+  var ids = Array.prototype.slice.call(document.querySelectorAll('.split-tick[data-card="' + f + '"]:checked'))
+                 .map(function(x) { return parseInt(x.value, 10); });
+  if (!ids.length) { alert('Tick the overs that are a different person first.'); return; }
+  act({op: 'split_off', profile_id: pid, utt_ids: ids, callsign: document.getElementById(f + '-scall').value});
 }
 
 // ── voices ─────────────────────────────────────────────────────────────────
@@ -394,6 +412,7 @@ function loadAudit() {
       else if (r.action === 'unlabel') t = 'cleared the name of voice #' + p.profile_id;
       else if (r.action === 'merge') t = 'merged voice #' + p.drop + ' into #' + p.keep + ' (' + (p.moved || []).length + ' overs)';
       else if (r.action === 'move_over') t = 'moved an over from #' + p.frm + ' to #' + p.to;
+      else if (r.action === 'split_off') t = 'split ' + (p.utt_ids || []).length + ' overs of voice #' + p.frm + ' into new voice #' + p.to;
       else if (r.action === 'not_same') t = 'voices #' + p.a + ' and #' + p.b + ' are different people';
       else if (r.action === 'reassign') t = 're-cluster moved ' + (p.moves || []).length + ' overs';
       else if (r.action === 'release') t = 're-cluster released ' + (p.releases || []).length + ' overs that no longer fit their voice';

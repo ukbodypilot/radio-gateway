@@ -5,7 +5,7 @@ GET  /speakers/api/profile?id=N      one voice: verdict + why, licence, recent o
 GET  /speakers/api/review            the review queue (speaker_id.review)
 GET  /speakers/api/audit             recent changes (undo targets)
 GET  /speakers/clip?id=N             one over's Opus clip
-POST /speakers/api/action            {op: label|unlabel|merge|move_over|not_same|note|undo, ...}
+POST /speakers/api/action            {op: label|unlabel|merge|move_over|split_off|not_same|note|undo, ...}
 
 Behind the same auth as every page. Embeddings never leave the box: no
 response carries one.
@@ -183,6 +183,7 @@ _OPS = {
     'merge': lambda c, b: c.merge(b['keep'], b['drop']),
     'move_over': lambda c, b: c.move_over(b['utt_id'], b.get('to_profile')),
     'not_same': lambda c, b: c.not_same(b['a'], b['b']),
+    'split_off': lambda c, b: c.split_off(b['profile_id'], b['utt_ids'], b.get('callsign', ''), b.get('name', '')),
     'note': lambda c, b: c.note(b['profile_id'], b.get('notes', '')),
     'undo': lambda c, b: c.undo(b['audit_id']),
 }

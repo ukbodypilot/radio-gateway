@@ -8,6 +8,10 @@ All notable changes to Radio Gateway.
   7 d): self-IDs agreeing with their voice, self-IDs equal to the voice name,
   overs placed, overs in named voices, sample size. Grafana panel "Speaker
   ID: accuracy", 7-day line on /speakers, `quality` in the status.
+- **Split a mixed voice from its conflict card.** Tick the quoted overs that
+  are someone else, optionally give their call, "Split ticked into a new
+  voice": a new voice from just those overs, marked different people from
+  the old one, labelled if a call is given; audited, undoable.
 - **Nightly release step.** Overs that no longer fit their own voice (below
   the live accept) go back to "unsure"; never from a voice you labelled, an
   over you placed, or a voice's first or last over; audited, undoable.

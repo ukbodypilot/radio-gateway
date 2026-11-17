@@ -286,6 +286,44 @@ check("'Different' is remembered on the list and the card goes away",
       review.similar_to(st7, 'fake', pu, 3)[0]['different']
       and not [i for i in review.build(st7, None, 'fake') if i['type'] == 'same'])
 
+print("\n7b. split off: some overs of a voice are someone else")
+st = SpeakerStore(os.path.join(tmp, 'split.db'))
+cu = Curator(st, FakeUls(), 0.0)
+VA, VB = unit([1, 0, 0]), unit([0, 1, 0])
+pv = st.add_profile('m', VA, 0)
+mine = [st.add_utterance(ts=100.0 + k, bus='sdr1', source='', freq='', duration=4.0, model='m', emb=VA,
+                         profile_id=pv, score=0.9, decision='matched') for k in range(3)]
+theirs = [st.add_utterance(ts=200.0 + k, bus='sdr1', source='', freq='', duration=4.0, model='m', emb=VB,
+                           profile_id=pv, score=0.66, decision='matched') for k in range(2)]
+r = cu.split_off(pv, theirs, callsign='kx7qzb')
+new = r['to']
+check("the ticked overs move to a new voice, the rest stay",
+      all(st.utterance(u)['profile_id'] == new for u in theirs)
+      and all(st.utterance(u)['profile_id'] == pv for u in mine), str(r))
+check("the new voice is built from just those overs",
+      float([c for i, c, n, _ in st.load_profiles('m') if i == new][0] @ VB) > 0.99)
+check("the old voice is rebuilt without them",
+      float([c for i, c, n, _ in st.load_profiles('m') if i == pv][0] @ VA) > 0.99)
+check("the two are marked different people (never merged back)", (min(pv, new), max(pv, new)) in st.cannot_links())
+check("the new voice gets the call given", st.profile_labels().get(new, (None,))[0] == 'KX7QZB',
+      str(st.profile_labels()))
+try:
+    cu.split_off(pv, mine, '')
+    check("splitting off EVERY over is refused (label it instead)", False)
+except CurationError:
+    check("splitting off EVERY over is refused (label it instead)", True)
+try:
+    cu.split_off(pv, [theirs[0]], '')
+    check("an over from another voice is refused", False)
+except CurationError:
+    check("an over from another voice is refused", True)
+row = [a for a in st.audit_rows(20) if a['action'] == 'split_off'][0]
+cu.undo(row['id'])
+check("undo puts the overs back and retires the new voice",
+      all(st.utterance(u)['profile_id'] == pv for u in theirs)
+      and new not in {i for i, *_ in st.load_profiles('m')}
+      and (min(pv, new), max(pv, new)) not in st.cannot_links())
+
 print("\n8. the page")
 html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()
 check("the page is served at /speakers and in the nav",

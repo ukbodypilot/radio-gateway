@@ -12,6 +12,8 @@ its own id and overs.
 """
 import time
 
+import numpy as np
+
 ACTOR = 'human'
 
 
@@ -115,6 +117,40 @@ class Curator:
         self.store.audit(ACTOR, 'move_over', utt_id=u['id'], frm=frm, to=to, created=created)
         return {'utt_id': u['id'], 'to': to}
 
+    def split_off(self, profile_id, utt_ids, callsign='', name=''):
+        """These overs of a voice are someone else: they become a voice of their own.
+
+        The new voice starts from just these overs, is marked "different
+        people" from the old one (so no re-cluster or card merges them back),
+        and is labelled if a callsign or name is given. The rest stay put.
+        """
+        p = self._profile(profile_id)
+        ids = sorted({int(u) for u in utt_ids})
+        if not ids:
+            raise CurationError('tick the overs that are someone else')
+        rows = []
+        for uid in ids:
+            u = self.store.utterance(uid)
+            if not u or u['profile_id'] != p['id']:
+                raise CurationError(f'over #{uid} is not in voice #{p["id"]}')
+            emb, model, ts = self.store.utterance_emb(uid)
+            if emb is None:
+                raise CurationError(f'over #{uid} has no fingerprint')
+            rows.append((emb, model, ts))
+        if len(ids) >= len(self.store.over_ids(p['id'])):
+            raise CurationError('that is every over in the voice: label it instead')
+        m = np.mean([r[0] for r in rows], axis=0)
+        to = self.store.add_profile(rows[0][1], (m / np.linalg.norm(m)).astype(np.float32),
+                                    min(r[2] for r in rows))
+        self.store.move_overs(ids, to)
+        self._recompute(p['id'], to)
+        self.store.add_cannot_link(p['id'], to)
+        self.store.audit(ACTOR, 'split_off', frm=p['id'], to=to, utt_ids=ids)
+        out = {'from': p['id'], 'to': to, 'moved': len(ids)}
+        if (callsign or '').strip() or (name or '').strip():
+            out['label'] = self.label(to, callsign, name)
+        return out
+
     def not_same(self, a, b):
         """These two voices are different people: never merged, by hand or by the re-cluster."""
         pa, pb = self._profile(a), self._profile(b)
@@ -160,6 +196,11 @@ class Curator:
             self._recompute(p['frm'], p['to'])
         elif a == 'not_same':
             self.store.remove_cannot_link(p['a'], p['b'])
+        elif a == 'split_off':
+            self.store.move_overs(p['utt_ids'], p['frm'])
+            self.store.remove_cannot_link(p['frm'], p['to'])
+            self.store.set_merged(p['to'], p['frm'])          # retire the voice it made
+            self._recompute(p['frm'])
         elif a == 'reassign':
             from speaker_id.recluster import undo_reassign
             undo_reassign(self.store, p)
