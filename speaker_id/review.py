@@ -13,12 +13,15 @@ Human-labelled voices are settled and only appear as 'conflict'.
 """
 import numpy as np
 
+from speaker_id.callsign import near_miss
+
 MIN_OVERS_TO_ASK = 5
 SAME_LO = 0.55
 
 
 def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
     profiles = {p['id']: p for p in store.list_profiles()}
+    dismissed = dismissed_calls(store)
     items = []
     for pid, p in profiles.items():
         if p['overs'] < MIN_OVERS_TO_ASK:
@@ -26,7 +29,11 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
         human = (p['label_source'] or '').startswith('human')
         v = identifier.verdict(pid) if identifier else {'candidates': [], 'callsign': None}
         cands = v['candidates']
-        others = [c for c in cands if p['callsign'] and c['callsign'] != p['callsign']]
+        # A call one letter off the label is the transcriber mishearing it
+        # (KX7QZA heard as KX7QZB), not a second person: no card for that.
+        others = [c for c in cands if p['callsign'] and c['callsign'] != p['callsign']
+                  and not near_miss(c['callsign'], p['callsign'])
+                  and c['weight'] > dismissed.get((pid, c['callsign']), -1.0)]
         if others:
             # Even ONE self-ID of another call in a labelled voice is worth a
             # look: 2026-11-15 a voice labelled from a single over was really
@@ -73,6 +80,19 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
             it['quotes'] = [dict(q, callsign=c) for c in calls
                             for q in store.callsign_quotes(it['profiles'][0], c, 2)]
     return items[:limit]
+
+
+def dismissed_calls(store):
+    """{(profile_id, callsign): weight} a human said are not that voice ("It's <label>"
+    on a conflict card), not since undone."""
+    rows = store.audit_rows(100_000)
+    undone = {r['payload'].get('of') for r in rows if r['action'] == 'undo'}
+    out = {}
+    for r in reversed(rows):                      # oldest first: later dismissals win
+        if r['action'] == 'keep_label' and r['id'] not in undone:
+            for c, w in (r['payload'].get('dismissed') or {}).items():
+                out[(r['payload']['profile_id'], c)] = float(w)
+    return out
 
 
 def _samples(store, pid, item, k=3):

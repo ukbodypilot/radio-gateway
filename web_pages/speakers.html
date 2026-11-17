@@ -255,6 +255,14 @@ function card(it, i) {
         '<button class="rb rb-sm rb-warn" onclick="act({op:\'unlabel\',profile_id:' + pid + '})">No</button>' + form;
   } else if (it.type === 'conflict') {
     a = (it.candidates || []).slice(0, 2).map(function(c) {
+          if (it.callsign && c.callsign === it.callsign) {
+            // Keeping the label: the other calls in its overs are not this person.
+            var dis = {};
+            (it.candidates || []).forEach(function(o) { if (o.callsign !== it.callsign) dis[o.callsign] = o.weight || 0; });
+            return '<button class="rb rb-sm" title="The label is right: the other calls are mentions or mishearings" ' +
+                   'onclick=\'act({op:"keep_label",profile_id:' + pid + ',dismiss:' + h(JSON.stringify(dis)) + '})\'>It\'s ' +
+                   h(c.callsign) + ' — keep label</button>';
+          }
           return '<button class="rb rb-sm" onclick="labelVoice(' + pid + ',\'' + h(c.callsign) + '\',\'\')">It\'s ' + h(c.callsign) + '</button>';
         }).join('') + form;
   } else if (it.type === 'same') {
@@ -412,6 +420,7 @@ function loadAudit() {
       else if (r.action === 'unlabel') t = 'cleared the name of voice #' + p.profile_id;
       else if (r.action === 'merge') t = 'merged voice #' + p.drop + ' into #' + p.keep + ' (' + (p.moved || []).length + ' overs)';
       else if (r.action === 'move_over') t = 'moved an over from #' + p.frm + ' to #' + p.to;
+      else if (r.action === 'keep_label') t = 'kept voice #' + p.profile_id + ' as ' + p.callsign + ' (not ' + Object.keys(p.dismissed || {}).join(', ') + ')';
       else if (r.action === 'split_off') t = 'split ' + (p.utt_ids || []).length + ' overs of voice #' + p.frm + ' into new voice #' + p.to;
       else if (r.action === 'not_same') t = 'voices #' + p.a + ' and #' + p.b + ' are different people';
       else if (r.action === 'reassign') t = 're-cluster moved ' + (p.moves || []).length + ' overs';

@@ -117,6 +117,23 @@ class Curator:
         self.store.audit(ACTOR, 'move_over', utt_id=u['id'], frm=frm, to=to, created=created)
         return {'utt_id': u['id'], 'to': to}
 
+    def keep_label(self, profile_id, dismiss):
+        """The voice IS who it is labelled: the other calls heard in its overs are not
+        this person (mentions, mishearings), so stop raising them as a conflict.
+
+        dismiss: {callsign: weight seen}. A call is raised again only if more
+        of it turns up later (weight above what was dismissed).
+        """
+        p = self._profile(profile_id)
+        call = self.store.identity_call(p['identity_id']) if p['identity_id'] else None
+        if not call:
+            raise CurationError(f'voice #{p["id"]} has no callsign to keep')
+        if p['label_source'] != 'human':
+            self.label(p['id'], call)
+        dis = {str(c).strip().upper(): float(w) for c, w in (dismiss or {}).items() if str(c).strip()}
+        self.store.audit(ACTOR, 'keep_label', profile_id=p['id'], callsign=call, dismissed=dis)
+        return {'profile_id': p['id'], 'callsign': call, 'dismissed': sorted(dis)}
+
     def split_off(self, profile_id, utt_ids, callsign='', name=''):
         """These overs of a voice are someone else: they become a voice of their own.
 
@@ -196,6 +213,8 @@ class Curator:
             self._recompute(p['frm'], p['to'])
         elif a == 'not_same':
             self.store.remove_cannot_link(p['a'], p['b'])
+        elif a == 'keep_label':
+            pass                                   # only the dismissal; undone = raised again
         elif a == 'split_off':
             self.store.move_overs(p['utt_ids'], p['frm'])
             self.store.remove_cannot_link(p['frm'], p['to'])

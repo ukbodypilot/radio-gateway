@@ -41,7 +41,7 @@ def unit(v):
 
 
 class FakeUls:
-    CALLS = {'KX7QZA': 'Quentin Ames', 'KX7QZB': 'Bernard Cole'}
+    CALLS = {'KX7QZA': 'Quentin Ames', 'KX7QZB': 'Bernard Cole', 'KW4RTJ': 'Steve Nolan'}
 
     def ready(self):
         return True
@@ -135,8 +135,8 @@ idf = Identifier(st, FakeUls())
 for k in range(6):
     u = st.add_utterance(ts=5000.0 + k * 90000, bus='sdr1', source='', freq='', duration=3.0, model='fake',
                          emb=unit([1, 0, 0, 0]), profile_id=A, score=0.9, decision='matched')
-    st.set_text(u, 'This is KX7QZB.')
-    idf.file(u, 5000.0 + k * 90000, 3.0, 'sdr1', 'This is KX7QZB.')
+    st.set_text(u, 'This is KW4RTJ.')
+    idf.file(u, 5000.0 + k * 90000, 3.0, 'sdr1', 'This is KW4RTJ.')
 check("strong contrary evidence does not rename a human-labelled voice",
       idf.maybe_name(A) is None and st.identity_call(st.profile(A)['identity_id']) == 'KX7QZA')
 items = review.build(st, idf, 'fake')
@@ -250,17 +250,46 @@ print("\n7c. a labelled voice that self-IDs as another call is a conflict, even 
 E_, e_ids = voice([0, 1, 0, 0], 6, ts0=7000.0)
 st.set_profile_identity(E_, st.identity_for_call('KX7QZA', create_name='Quentin Ames'), 'human')
 u = e_ids[0]
-st.set_text(u, 'This is Steve, KX7QZB, net control tonight.')
+st.set_text(u, 'This is Steve, KW4RTJ, net control tonight.')
 idf2 = Identifier(st, FakeUls())
-idf2.file(u, 7000.0, 4.0, 'sdr1', 'This is Steve, KX7QZB, net control tonight.', profile_id=E_)
+idf2.file(u, 7000.0, 4.0, 'sdr1', 'This is Steve, KW4RTJ, net control tonight.', profile_id=E_)
 items = review.build(st, idf2, 'fake')
 conf = [i for i in items if i['type'] == 'conflict' and i['profiles'] == [E_]]
 check("one contrary self-ID raises a conflict card", len(conf) == 1, str([(i['type'], i['profiles']) for i in items]))
 check("the card quotes the words it is based on",
-      conf and any('net control' in q['quote'] and q['callsign'] == 'KX7QZB' for q in conf[0].get('quotes', [])),
+      conf and any('net control' in q['quote'] and q['callsign'] == 'KW4RTJ' for q in conf[0].get('quotes', [])),
       str(conf[0].get('quotes') if conf else None))
 check("...and offers both calls to choose from",
-      conf and [c['callsign'] for c in conf[0]['candidates']][:2] == ['KX7QZA', 'KX7QZB'])
+      conf and [c['callsign'] for c in conf[0]['candidates']][:2] == ['KX7QZA', 'KW4RTJ'])
+
+cu7 = Curator(st, FakeUls(), 0.0)
+w = conf[0]['candidates'][1].get('weight', 1.0)
+cu7.keep_label(E_, {'KW4RTJ': w})
+items = review.build(st, idf2, 'fake')
+check("'It's <label> — keep label' clears the conflict",
+      not [i for i in items if i['type'] == 'conflict' and i['profiles'] == [E_]], str([(i['type'], i['profiles']) for i in items]))
+st.set_text(e_ids[1], 'This is KW4RTJ again.')
+idf2.file(e_ids[1], 7100.0, 4.0, 'sdr1', 'This is KW4RTJ again.', profile_id=E_)
+items = review.build(st, idf2, 'fake')
+check("...but it comes back if more of the other call turns up later",
+      [i for i in items if i['type'] == 'conflict' and i['profiles'] == [E_]])
+cu7.keep_label(E_, {'KW4RTJ': 99})
+kl = [r for r in st.audit_rows(50) if r['action'] == 'keep_label'][0]
+cu7.undo(kl['id'])
+check("undoing the dismissal raises the conflict again",
+      [i for i in review.build(st, idf2, 'fake') if i['type'] == 'conflict' and i['profiles'] == [E_]])
+try:
+    cu7.keep_label(st.add_profile('fake', unit([0, 0, 0, 1]), 0), {'KW4RTJ': 1})
+    check("keeping a label on an unlabelled voice is refused", False)
+except CurationError:
+    check("keeping a label on an unlabelled voice is refused", True)
+
+E2, e2 = voice([0, 0, 0, 1], 6, ts0=9000.0)
+st.set_profile_identity(E2, st.identity_for_call('KX7QZA', create_name='Quentin Ames'), 'human')
+st.set_text(e2[0], 'This is KX7QZB.')
+idf2.file(e2[0], 9000.0, 4.0, 'sdr1', 'This is KX7QZB.', profile_id=E2)
+check("a call one letter off the label (a mishearing) raises no conflict",
+      not [i for i in review.build(st, idf2, 'fake') if i['type'] == 'conflict' and i['profiles'] == [E2]])
 
 print("\n7d. 'this sounds like the same person, is it?'")
 st7 = SpeakerStore(os.path.join(tmp, 'sounds.db'))
