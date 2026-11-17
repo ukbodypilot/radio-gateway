@@ -13,7 +13,7 @@ Human-labelled voices are settled and only appear as 'conflict'.
 """
 import numpy as np
 
-from speaker_id.callsign import near_miss
+from speaker_id.callsign import misheard
 
 MIN_OVERS_TO_ASK = 5
 SAME_LO = 0.55
@@ -29,10 +29,11 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
         human = (p['label_source'] or '').startswith('human')
         v = identifier.verdict(pid) if identifier else {'candidates': [], 'callsign': None}
         cands = v['candidates']
-        # A call one letter off the label is the transcriber mishearing it
-        # (KX7QZA heard as KX7QZB), not a second person: no card for that.
+        # A call one letter off the label (swapped or dropped) is the
+        # transcriber mishearing it (KX7QZA heard as KX7QZB or KX7QZ), not a
+        # second person: no card for that.
         others = [c for c in cands if p['callsign'] and c['callsign'] != p['callsign']
-                  and not near_miss(c['callsign'], p['callsign'])
+                  and not misheard(c['callsign'], p['callsign'])
                   and c['weight'] > dismissed.get((pid, c['callsign']), -1.0)]
         if others:
             # Even ONE self-ID of another call in a labelled voice is worth a

@@ -41,7 +41,8 @@ def unit(v):
 
 
 class FakeUls:
-    CALLS = {'KX7QZA': 'Quentin Ames', 'KX7QZB': 'Bernard Cole', 'KW4RTJ': 'Steve Nolan'}
+    CALLS = {'KX7QZA': 'Quentin Ames', 'KX7QZB': 'Bernard Cole', 'KW4RTJ': 'Steve Nolan',
+             'KX7QZ': 'Dana Quill'}
 
     def ready(self):
         return True
@@ -290,6 +291,15 @@ st.set_text(e2[0], 'This is KX7QZB.')
 idf2.file(e2[0], 9000.0, 4.0, 'sdr1', 'This is KX7QZB.', profile_id=E2)
 check("a call one letter off the label (a mishearing) raises no conflict",
       not [i for i in review.build(st, idf2, 'fake') if i['type'] == 'conflict' and i['profiles'] == [E2]])
+st.set_text(e2[1], 'This is KX7QZ.')
+idf2.file(e2[1], 9100.0, 4.0, 'sdr1', 'This is KX7QZ.', profile_id=E2)
+check("...nor does the label with a letter DROPPED (KX7QZA heard as KX7QZ)",
+      not [i for i in review.build(st, idf2, 'fake') if i['type'] == 'conflict' and i['profiles'] == [E2]],
+      str([i['prompt'] for i in review.build(st, idf2, 'fake') if i['profiles'] == [E2]]))
+from speaker_id.callsign import misheard  # noqa: E402
+check("dropped or swapped letter is a mishearing; two dropped, or a different call, is not",
+      misheard('KX7QZA', 'KX7QZ') and misheard('KX7QZ', 'KX7QZA') and misheard('KX7QZA', 'KX7ZA')
+      and misheard('KX7QZA', 'KX7QZB') and not misheard('KX7QZA', 'KX7Q') and not misheard('KX7QZA', 'KW4RTJ'))
 
 print("\n7d. 'this sounds like the same person, is it?'")
 st7 = SpeakerStore(os.path.join(tmp, 'sounds.db'))
@@ -315,7 +325,7 @@ check("'Different' is remembered on the list and the card goes away",
       review.similar_to(st7, 'fake', pu, 3)[0]['different']
       and not [i for i in review.build(st7, None, 'fake') if i['type'] == 'same'])
 
-print("\n7b. split off: some overs of a voice are someone else")
+print("\n7e. split off: some overs of a voice are someone else")
 st = SpeakerStore(os.path.join(tmp, 'split.db'))
 cu = Curator(st, FakeUls(), 0.0)
 VA, VB = unit([1, 0, 0]), unit([0, 1, 0])
@@ -354,7 +364,7 @@ check("undo puts the overs back and retires the new voice",
       and new not in {i for i, *_ in st.load_profiles('m')}
       and (min(pv, new), max(pv, new)) not in st.cannot_links())
 
-print("\n7d. after a split, the rest of the voice is re-sorted on request")
+print("\n7f. after a split, the rest of the voice is re-sorted on request")
 st = SpeakerStore(os.path.join(tmp, 'resort.db'))
 cu = Curator(st, FakeUls(), 0.0)
 NEAR_B = unit([0.15, 1, 0.1])            # the second person, not word for word the ticked over

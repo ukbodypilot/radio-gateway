@@ -50,6 +50,9 @@ established regular) are what make a name stick.
   licence, best samples and recent overs.
 - Label, "not this person", merge two voices, move one over to another voice
   (or a voice of its own), mark two voices as different people.
+- A call one letter off a voice's label (swapped, or dropped: K0XYZ heard
+  as K0XY) raises no conflict card: that is the transcriber, not a second
+  person.
 - **A voice that is two people** (a conflict card): tick the quoted overs
   that are someone else, "Split ticked into a new voice". The page then
   offers the voice's *other* overs that sound more like the new voice

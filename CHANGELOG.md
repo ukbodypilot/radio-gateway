@@ -22,7 +22,7 @@ All notable changes to Radio Gateway.
   dismisses the other calls heard in the voice (mentions, mishearings); the
   card returns only if more of them turn up. Before, it relabelled to the
   same call, saved nothing, and the card came straight back. Calls one letter
-  off the label (ASR slips) no longer raise a conflict at all.
+  off the label, swapped or dropped (ASR slips), no longer raise a conflict.
 - **Split a mixed voice from its conflict card.** Tick the quoted overs that
   are someone else, optionally give their call, "Split ticked into a new
   voice": a new voice from just those overs, marked different people from

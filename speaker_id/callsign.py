@@ -251,3 +251,20 @@ def name_matches(spoken, first_name):
 def near_miss(a, b):
     """Same length, one character different: the commonest ASR callsign slip."""
     return len(a) == len(b) and a != b and sum(x != y for x, y in zip(a, b)) == 1
+
+
+def misheard(a, b):
+    """near_miss, or one character dropped (KX7QZA heard as KX7QZ).
+
+    For the review queue only: a labelled voice whose overs give its own call
+    with a letter missing is the ASR, not a second person (2026-11-17, a
+    six-character label heard as its first five raised a conflict card).
+    Not used for folding evidence: a short call one letter shorter than a
+    regular's can be a real, different licence.
+    """
+    if near_miss(a, b):
+        return True
+    if abs(len(a) - len(b)) != 1:
+        return False
+    long_, short = (a, b) if len(a) > len(b) else (b, a)
+    return any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
