@@ -260,6 +260,13 @@ check("one contrary self-ID raises a conflict card", len(conf) == 1, str([(i['ty
 check("the card quotes the words it is based on",
       conf and any('net control' in q['quote'] and q['callsign'] == 'KW4RTJ' for q in conf[0].get('quotes', [])),
       str(conf[0].get('quotes') if conf else None))
+check("a label the voice never gave itself is thin, and the card says so",
+      conf and conf[0].get('thin') and 'rests on 0 self-IDs' in conf[0]['prompt'], str(conf and conf[0]['prompt']))
+check("the voices list carries the label's own self-ID count",
+      W.label_support({'callsign': 'KX7QZA'}, {'candidates': [{'callsign': 'KX7QZA', 'weight': 2.0}]}) == 2
+      and W.label_support({'callsign': 'KX7QZA'}, {'candidates': []}) == 0 and W.label_support({'callsign': ''}, None) == 0)
+html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()
+check("the page badges thin labels and can filter to them", 'src thin' in html and 'only-thin' in html)
 check("...and offers both calls to choose from",
       conf and [c['callsign'] for c in conf[0]['candidates']][:2] == ['KX7QZA', 'KW4RTJ'])
 
@@ -399,6 +406,37 @@ check("the page shows the suggestions and a Find more on split rows",
       'showSuggest(' in html and "op: 'move_overs'" in html and 'findMore(' in html)
 check("the op is wired", "'move_overs'" in open(os.path.join(ROOT, 'web_routes_speakers.py')).read()
       and "'closer_to'" in open(os.path.join(ROOT, 'web_routes_speakers.py')).read())
+
+print("\n7g. a conflict card suggests the split: overs that sound like the other call's")
+st = SpeakerStore(os.path.join(tmp, 'groups.db'))
+idg = Identifier(st, FakeUls())
+pg = st.add_profile('m', VA, 0)
+st.set_profile_identity(pg, st.identity_for_call('KX7QZA', create_name='Quentin Ames'), 'human')
+mk = lambda e, k, txt='': st.add_utterance(ts=500.0 + k, bus='sdr1', source='', freq='', duration=4.0, model='m',
+                                          emb=e, profile_id=pg, score=0.7, decision='matched', clip='g/%d.opus' % k)
+qa = [mk(VA, k) for k in range(5)]
+said = mk(VB, 10)
+st.set_text(said, 'This is KW4RTJ, net control.')
+idg.file(said, 510.0, 4.0, 'sdr1', 'This is KW4RTJ, net control.', profile_id=pg)
+like_b = [mk(NEAR_B, 11 + k) for k in range(3)]
+conf = [i for i in review.build(st, idg, 'm') if i['type'] == 'conflict' and i['profiles'] == [pg]]
+g = conf[0]['groups'] if conf else []
+check("the card carries a group for the other call: its self-ID over plus the overs like it",
+      len(g) == 1 and g[0]['callsign'] == 'KW4RTJ' and g[0]['seeds'] == [said]
+      and sorted(x['id'] for x in g[0]['overs']) == sorted(like_b), str(g))
+check("...and no home voice while nobody else carries that call", g and 'home' not in g[0], str(g))
+home = st.add_profile('m', VB, 0)
+st.set_profile_identity(home, st.identity_for_call('KW4RTJ', create_name='Steve Nolan'), 'human')
+st.add_utterance(ts=900.0, bus='sdr1', source='', freq='', duration=4.0, model='m', emb=VB,
+                 profile_id=home, score=0.9, decision='matched')
+conf = [i for i in review.build(st, idg, 'm') if i['type'] == 'conflict' and i['profiles'] == [pg]]
+check("once another voice carries the call, the group points there (move, not a new voice)",
+      conf and conf[0]['groups'][0].get('home') == home, str(conf and conf[0]['groups']))
+Curator(st, FakeUls(), 0.0).move_overs(pg, home, [said] + like_b)
+check("moving the group clears the card",
+      not [i for i in review.build(st, idg, 'm') if i['type'] == 'conflict' and i['profiles'] == [pg]])
+html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()
+check("the page renders the groups with Move / Split buttons", 'groupMove(' in html and 'groupSplit(' in html)
 
 print("\n8. the page")
 html = open(os.path.join(ROOT, 'web_pages', 'speakers.html')).read()

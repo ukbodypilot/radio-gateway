@@ -70,6 +70,7 @@ def build_from_zip(zip_path, db_path):
             if call not in rows or st == 'A':      # prefer the active licence
                 rows[call] = r
         db.executemany('INSERT INTO calls VALUES (?,?,?,?,?,?)', rows.values())
+        db.execute('CREATE INDEX calls_city ON calls(city)')      # by_name_city
         db.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
         db.execute("INSERT INTO meta VALUES ('built', ?)", (str(time.time()),))
         db.commit()
@@ -85,6 +86,7 @@ class UlsLookup:
         self._conn = None
         self._lock = threading.Lock()
         self._cache = {}
+        self._cities = {}
         self.state = 'missing'
         self.last_error = ''
         self.built = 0.0
@@ -99,6 +101,7 @@ class UlsLookup:
                 self._conn.close()
                 self._conn = None
             self._cache.clear()
+            self._cities.clear()
             if not os.path.exists(self.path):
                 return
             try:
@@ -135,6 +138,41 @@ class UlsLookup:
     def first_name(self, call):
         r = self.get(call)
         return r[1].split()[0] if r and r[1] else ''
+
+    def _city(self, city):
+        """[(call, first name)] active licences in a city, cached (0.16 s unindexed)."""
+        key = city.title()
+        if key in self._cities:
+            return self._cities[key]
+        with self._lock:
+            if not self._conn:
+                return []
+            rows = self._conn.execute("SELECT call, name, state FROM calls WHERE city=? AND status='A'",
+                                      (key,)).fetchall()
+        if len(self._cities) > 2000:
+            self._cities.clear()
+        self._cities[key] = [(c, (n or '').split()[0] if n else '', st) for c, n, st in rows]
+        return self._cities[key]
+
+    def by_name_city(self, first, place, matches, states=None):
+        """(city, [calls]) for active licensees with a fitting first name in the place.
+
+        `place` may run on past the city ("Oak Park California"), so the
+        longest leading run of words that is a licence city wins.
+        `matches(spoken, first_name)` is callsign.name_matches. `states`
+        limits it to licences in those states: there is an Oak Park in
+        California, Michigan and Illinois.
+        """
+        words = (place or '').split()
+        for k in range(min(3, len(words)), 0, -1):
+            rows = [r for r in self._city(' '.join(words[:k])) if not states or r[2] in states]
+            if rows:
+                return ' '.join(words[:k]).title(), [c for c, fn, _s in rows if matches(first, fn)]
+        return None, []
+
+    def state_of(self, call):
+        r = self.get(call)
+        return r[3] if r else None
 
     def stop(self):
         self._stop.set()

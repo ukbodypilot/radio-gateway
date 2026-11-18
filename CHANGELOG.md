@@ -4,6 +4,21 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Conflict cards suggest the split.** For each other call in a voice: the
+  overs where it was given plus the overs that sound like them, ticked, with
+  play buttons; "Move ticked to #N" when that call already has a voice, else
+  "Split ticked off as CALL".
+- **Introductions as evidence.** "This is Quentin ... in Pine Hollow" / "my name is
+  Nora and I'm in Cedar Flat" are filed as `intro` evidence (version 5, the
+  backfill re-files history). Name + city is looked up in the FCC table,
+  limited to the states the named voices are licensed in; exactly one
+  licensee gives a confirm card on a voice that never gave a call, or name
+  support when it agrees with a self-ID. Never names a voice by itself. The
+  ULS build now indexes city.
+- **Thin labels.** A label the voice gave as its own call fewer than twice
+  is badged on /speakers ("1 self-ID", filter "thin labels only"); conflicts
+  on thin labels rank higher and say so.
+
 - **Speaker ID: a callsign in a question is not a self-ID.** "Who is that on
   frequency? K0XYZ?" and "K0XYZ, okay?" were filed as the speaker giving
   their own call and raised false conflict cards. Evidence version 4: the

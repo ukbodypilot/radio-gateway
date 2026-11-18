@@ -21,12 +21,22 @@ over (16 kHz, from the transcriber)
        callsign_self   "this is K0XYZ", call at the end, "... clear";
                        never a call in a question ("Who's that? K0XYZ?")
        name_cue        "thanks Jeff" (previous over), "go ahead Jeff" (next over)
+       intro           "this is Quentin ... in Pine Hollow", "my name is Nora, I'm in Cedar Flat"
        mention         a call addressed or heard (activity only)
   -> verdict per voice from all its overs' evidence
   -> named when the bar is met                 >= 70% share and 2+ self-IDs on 2+ days,
                                                 or 5+, or 3+ plus a matching FCC first name
   -> you confirm / correct on /speakers         always wins, never overridden
 ```
+
+An introduction with a place is looked up in the FCC table: active
+licensees with that first name (nicknames allowed) in that city, limited to
+the states this channel's named voices hold licences in (there is an Oak
+Park in California, Michigan and Illinois). Exactly one -> a "confirm" card
+on a voice that never gave a call, or name support when it agrees with a
+self-ID. It never names a voice by itself. Measured on 34k transcripts:
+33 overs give a name and a city, 9 of them fit one licensee, and the 4 that
+also spelled a call all agreed.
 
 A call in a sentence ending "?" is asked about, not given, unless the
 sentence opens with the cue ("This is K0XYZ, who's on frequency?"). Changing
@@ -53,6 +63,15 @@ established regular) are what make a name stick.
 - A call one letter off a voice's label (swapped, or dropped: K0XYZ heard
   as K0XY) raises no conflict card: that is the transcriber, not a second
   person.
+- **Thin labels**: a label the voice has given as its own call fewer than
+  twice is badged "1 self-ID" (filter: "thin labels only"). A conflict on a
+  thin label ranks higher and says so: it is the likeliest to hide a second
+  person.
+- **Suggested split on a conflict card**: per other call, the overs where
+  the voice gave it plus the overs that sound like them (same scoring as
+  after a split), ticked with play buttons. If that call already has a
+  voice the button moves them there; otherwise it splits them off as a new
+  voice labelled with the call.
 - **A voice that is two people** (a conflict card): tick the quoted overs
   that are someone else, "Split ticked into a new voice". The page then
   offers the voice's *other* overs that sound more like the new voice

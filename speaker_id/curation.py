@@ -29,6 +29,58 @@ class CurationError(ValueError):
     pass
 
 
+def _unit(rows):
+    ids, vecs = [], []
+    for uid, emb in rows:
+        n = float(np.linalg.norm(emb)) if emb is not None else 0.0
+        if n > 0:
+            ids.append(uid)
+            vecs.append(emb / n)
+    return ids, vecs
+
+
+def closer_set(store, frm, model, seed_ids, at=SUGGEST_AT, margin=SUGGEST_MARGIN, limit=SUGGEST_MAX,
+               exclude=()):
+    """Overs of voice `frm` that sound more like the overs `seed_ids` than like the rest of `frm`.
+
+    -> [{'id', 'score', 'was', 'clip'}], best first. `score` is the cosine to
+    the mean of the seeds, `was` to the mean of the rest of `frm` WITHOUT that
+    over (and without the seeds or `exclude`). Used after a split (seeds = the
+    new voice) and on a conflict card (seeds = the overs where the voice gave
+    the other call). A suggestion only: the human listens and ticks.
+    """
+    seeds = set(int(u) for u in seed_ids)
+    skip = seeds | set(int(u) for u in exclude)
+    rows = store.profile_embs(frm, model)
+    s_ids, s_vecs = _unit([r for r in rows if r[0] in seeds])
+    if len(s_ids) < len(seeds):               # seeds in another voice (after a split)
+        for uid in seeds - set(s_ids):
+            emb, m, _ts = store.utterance_emb(uid)
+            if emb is not None and m == model:
+                i2, v2 = _unit([(uid, emb)])
+                s_ids += i2
+                s_vecs += v2
+    f_ids, f_vecs = _unit([r for r in rows if r[0] not in skip])
+    if not s_ids or len(f_ids) < 2:
+        return []
+    ct = np.mean(s_vecs, axis=0)
+    ct /= np.linalg.norm(ct)
+    f = np.array(f_vecs, np.float32)
+    total = f.sum(axis=0)
+    out = []
+    for k, uid in enumerate(f_ids):
+        rest = total - f[k]
+        cf = rest / (np.linalg.norm(rest) or 1.0)
+        sn, so = float(f[k] @ ct), float(f[k] @ cf)
+        if sn >= at and sn >= so + margin:
+            out.append({'id': uid, 'score': round(sn, 3), 'was': round(so, 3)})
+    out.sort(key=lambda r: r['was'] - r['score'])
+    out = out[:limit]
+    for r in out:
+        r['clip'] = bool((store.utterance(r['id']) or {}).get('clip'))
+    return out
+
+
 class Curator:
     def __init__(self, store, uls=None, learn_secs=3.0):
         self.store = store
@@ -177,44 +229,11 @@ class Curator:
         out['suggest'] = self.closer_to(p['id'], to)
         return out
 
-    def _unit_embs(self, profile_id, model):
-        ids, vecs = [], []
-        for uid in self.store.over_ids(profile_id):
-            emb, m, _ts = self.store.utterance_emb(uid)
-            if emb is None or m != model:
-                continue
-            nrm = float(np.linalg.norm(emb))
-            if nrm > 0:
-                ids.append(uid)
-                vecs.append(emb / nrm)
-        return ids, (np.array(vecs, np.float32) if vecs else np.zeros((0, 1), np.float32))
-
     def closer_to(self, frm, to, at=SUGGEST_AT, margin=SUGGEST_MARGIN, limit=SUGGEST_MAX):
-        """Overs still in `frm` that sound more like `to`: [{'id', 'score', 'was', 'clip'}], best first.
-
-        Both sides are the mean of the voices' own overs as they stand now, so
-        the ticked overs define the new voice and the rest define the old.
-        """
+        """Overs still in `frm` that sound more like voice `to`: see closer_set."""
         model = self._profile(to)['model']
-        t_ids, t = self._unit_embs(to, model)
-        f_ids, f = self._unit_embs(frm, model)
-        if not t_ids or len(f_ids) < 2:
-            return []
-        ct = t.mean(axis=0)
-        ct /= np.linalg.norm(ct)
-        out = []
-        total = f.sum(axis=0)
-        for k, uid in enumerate(f_ids):
-            rest = total - f[k]                  # the old voice WITHOUT this over
-            cf = rest / (np.linalg.norm(rest) or 1.0)
-            sn, so = float(f[k] @ ct), float(f[k] @ cf)
-            if sn >= at and sn >= so + margin:
-                out.append({'id': uid, 'score': round(sn, 3), 'was': round(so, 3)})
-        out.sort(key=lambda r: r['was'] - r['score'])
-        out = out[:limit]
-        for r in out:
-            r['clip'] = bool((self.store.utterance(r['id']) or {}).get('clip'))
-        return out
+        seeds = [u for u, _e in self.store.profile_embs(to, model)]
+        return closer_set(self.store, frm, model, seeds, at=at, margin=margin, limit=limit)
 
     def move_overs(self, frm, to, utt_ids):
         """Move these overs of voice `frm` to voice `to` (one change, one undo)."""

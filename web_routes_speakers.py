@@ -88,11 +88,25 @@ def _verdict(sid, pid):
         return None
 
 
+THIN_BELOW = 2
+
+
+def label_support(p, v):
+    """Self-IDs of the voice's label call among its overs (0 if it never said it)."""
+    if not p.get('callsign') or not v:
+        return 0
+    return int(next((c['weight'] for c in v['candidates'] if c['callsign'] == p['callsign']), 0))
+
+
 def _profiles(sid):
     out = []
     for p in sid.store.list_profiles():
         v = _verdict(sid, p['id'])
         p['candidate'] = v['candidates'][0] if v and v['candidates'] else None
+        # How many times the voice gave its own label as a self-ID: a label
+        # resting on one (or none) is the likeliest to hide a second person.
+        p['support'] = label_support(p, v)
+        p['thin'] = bool(p['callsign']) and p['support'] < THIN_BELOW
         out.append(p)
     return out
 

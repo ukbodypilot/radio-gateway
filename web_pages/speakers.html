@@ -25,6 +25,7 @@
   .quotes { display: grid; gap: 2px; font-size: var(--f-sm); color: var(--t-text-dim); }
   .quote { display: flex; gap: var(--s-2); align-items: baseline; }
   .quote input[type=checkbox] { align-self: center; }
+  .gt { display: inline-flex; align-items: center; gap: 2px; }
   .split-row { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; margin-top: var(--s-2); font-size: var(--f-sm); }
   .quote .qc { color: var(--t-text); font-weight: 600; white-space: nowrap; }
   .card .voices { display: flex; flex-wrap: wrap; gap: var(--s-3); }
@@ -49,6 +50,7 @@
   .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .src { font-size: var(--f-xs); padding: 0 5px; border-radius: 999px; border: 1px solid var(--t-border); color: var(--t-text-dim); }
   .src.human { color: var(--t-ok); border-color: var(--t-ok); }
+  .src.thin { color: var(--t-warn); border-color: var(--t-warn); }
   .src.auto { color: var(--t-accent); border-color: var(--t-accent); }
 
   /* detail */
@@ -88,6 +90,7 @@
   <div class="tools">
     <input class="txt" id="q" placeholder="Filter: callsign, name, #id, channel" oninput="renderVoices()">
     <label class="muted"><input type="checkbox" id="only-unnamed" onchange="renderVoices()"> unnamed only</label>
+    <label class="muted"><input type="checkbox" id="only-thin" onchange="renderVoices()"> thin labels only</label>
   </div>
   <div class="scroll">
     <table>
@@ -135,8 +138,11 @@ function who(p) {
 function srcBadge(p) {
   var src = p.label_source || '';
   if (!p.identity_id) return src === 'human:cleared' ? '<span class="src human">cleared</span>' : '';
-  return src.indexOf('human') === 0 ? '<span class="src human">you</span>'
-       : '<span class="src auto" title="' + h(src) + '">auto</span>';
+  var thin = p.thin ? ' <span class="src thin" title="This voice gave its label as its own call only ' + p.support +
+             ' time(s). A thin label is the likeliest to hide a second person: listen before trusting it.">' +
+             p.support + ' self-ID' + (p.support === 1 ? '' : 's') + '</span>' : '';
+  return (src.indexOf('human') === 0 ? '<span class="src human">you</span>'
+       : '<span class="src auto" title="' + h(src) + '">auto</span>') + thin;
 }
 function voiceName(id) {
   var p = _voices.find(function(v) { return v.id === id; });
@@ -280,6 +286,25 @@ function card(it, i) {
            (q.clip ? playBtn(q.id, q.at) : '') +
            '<span class="qc">' + h(q.callsign) + '</span> “' + h(q.quote) + '”</div>';
   }).join('');
+  // Suggested split: per other call, the overs where it was given plus the
+  // ones that sound like them, ticked; to that call's own voice if it has one.
+  (it.type === 'conflict' ? (it.groups || []) : []).forEach(function(g, k) {
+    var gf = f + 'g' + k, n = g.seeds.length + g.overs.length;
+    var ticks = g.seeds.map(function(id) {
+      return '<label class="gt"><input type="checkbox" class="grp-tick" data-card="' + gf + '" value="' + id + '" checked>' +
+             playBtn(id, null) + '<span class="qc">said ' + h(g.callsign) + '</span></label>';
+    }).concat(g.overs.map(function(x) {
+      return '<label class="gt" title="' + Math.round(x.score * 100) + '% like the ' + h(g.callsign) + ' over(s), ' +
+             Math.round(x.was * 100) + '% like the rest"><input type="checkbox" class="grp-tick" data-card="' + gf +
+             '" value="' + x.id + '" checked>' + (x.clip ? playBtn(x.id, null) : '') + '<span class="muted">#' + x.id + '</span></label>';
+    })).join('');
+    var btn = g.home
+      ? '<button class="rb rb-sm" onclick="groupMove(' + pid + ',' + g.home + ',\'' + gf + '\')">Move ticked to #' + g.home + ' (' + h(g.callsign) + ')</button>'
+      : '<button class="rb rb-sm" onclick="groupSplit(' + pid + ',\'' + h(g.callsign) + '\',\'' + gf + '\')">Split ticked off as ' + h(g.callsign) + '</button>';
+    quotes += '<div class="split-row"><span><b>' + h(g.callsign) + '</b>: ' + g.seeds.length + ' over' + (g.seeds.length > 1 ? 's' : '') +
+              ' giving the call' + (g.overs.length ? ' + ' + g.overs.length + ' that sound like ' + (g.seeds.length > 1 ? 'them' : 'it') : '') +
+              '. Listen, untick any that are not ' + h(g.callsign) + ':</span>' + ticks + btn + '</div>';
+  });
   if (split) {
     quotes += '<div class="split-row muted">Listen, tick the overs that are someone else, then ' +
               '<input class="txt call" id="' + f + '-scall" placeholder="their call (optional)">' +
@@ -296,6 +321,21 @@ function splitOff(pid, f) {
                  .map(function(x) { return parseInt(x.value, 10); });
   if (!ids.length) { alert('Tick the overs that are a different person first.'); return; }
   act({op: 'split_off', profile_id: pid, utt_ids: ids, callsign: document.getElementById(f + '-scall').value})
+    .then(function(d) { if (d && d.ok && d.result) showSuggest(d.result.from, d.result.to, d.result.suggest || [], true); });
+}
+function groupIds(gf) {
+  return Array.prototype.slice.call(document.querySelectorAll('.grp-tick[data-card="' + gf + '"]:checked'))
+              .map(function(x) { return parseInt(x.value, 10); });
+}
+function groupMove(frm, to, gf) {
+  var ids = groupIds(gf);
+  if (!ids.length) { alert('Nothing ticked.'); return; }
+  act({op: 'move_overs', from: frm, to: to, utt_ids: ids});
+}
+function groupSplit(pid, call, gf) {
+  var ids = groupIds(gf);
+  if (!ids.length) { alert('Nothing ticked.'); return; }
+  act({op: 'split_off', profile_id: pid, utt_ids: ids, callsign: call})
     .then(function(d) { if (d && d.ok && d.result) showSuggest(d.result.from, d.result.to, d.result.suggest || [], true); });
 }
 // After a split: the old voice's other overs that sound more like the new one,
@@ -336,8 +376,10 @@ function findMore(frm, to) {
 function renderVoices() {
   var q = document.getElementById('q').value.trim().toLowerCase();
   var unnamed = document.getElementById('only-unnamed').checked;
+  var thinOnly = document.getElementById('only-thin').checked;
   var rows = _voices.filter(function(p) {
     if (unnamed && p.identity_id) return false;
+    if (thinOnly && !p.thin) return false;
     if (!q) return true;
     var hay = ('#' + p.id + ' ' + (p.callsign || '') + ' ' + (p.name || '') + ' ' + p.buses.join(' ') + ' ' + p.freqs.join(' ')).toLowerCase();
     return hay.indexOf(q) >= 0;

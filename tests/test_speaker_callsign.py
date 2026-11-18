@@ -246,5 +246,87 @@ idf3.file(u3, 1.0, 7.0, 'sdr1', txt)
 check("re-filing without word timings keeps the measured position",
       st3.callsign_at([u3]) == {u3: ('KX7QZA', 4.0)}, str(st3.callsign_at([u3])))
 
+print("\n10. introductions: own name, and place, against the FCC table")
+check("'this is NAME in PLACE'", cs.self_intro('Thanks Jeff, this is Quentin in Pine Hollow, Kilo X-ray.')
+      == [('Quentin', 'Pine Hollow', 13)], str(cs.self_intro('Thanks Jeff, this is Quentin in Pine Hollow, Kilo X-ray.')))
+check("'my name is NAME and I'm in PLACE'",
+      [x[:2] for x in cs.self_intro("My name is Nora and I'm in Cedar Flat, California")] == [('Nora', 'Cedar Flat')])
+check("a place in the NEXT sentence counts only after 'I live / I'm in'",
+      [x[:2] for x in cs.self_intro('My name is Nora. I live in Cedar Flat.')] == [('Nora', 'Cedar Flat')]
+      and [x[:2] for x in cs.self_intro('This is Nora. Big news from Cedar Flat.')] == [('Nora', None)])
+check("phonetics are not names ('this is Kilo X-ray ...')", cs.self_intro('This is Kilo X-ray seven.') == [])
+import sqlite3  # noqa: E402
+from speaker_id.uls import UlsLookup  # noqa: E402
+up = os.path.join(tmp, 'uls.db')
+db = sqlite3.connect(up)
+db.execute('CREATE TABLE calls(call TEXT PRIMARY KEY, status TEXT, name TEXT, city TEXT, state TEXT, class TEXT)')
+db.executemany('INSERT INTO calls VALUES (?,?,?,?,?,?)', [
+    ('KX7QZA', 'A', 'Quentin Ames', 'Pine Hollow', 'CA', 'G'),
+    ('KX7QZB', 'A', 'Bernard Cole', 'Pine Hollow', 'CA', 'T'),
+    ('NX6MND', 'A', 'Nora Gale', 'Cedar Flat', 'CA', 'T'),
+    ('KX9QQQ', 'A', 'Nora Hill', 'Cedar Flat', 'MI', 'T'),       # same town name, other state
+    ('KX0QFD', 'A', 'Austin Fry', 'Pine Hollow', 'CA', 'E'),
+    ('KX0QFE', 'A', 'Austin Gray', 'Pine Hollow', 'CA', 'E'),
+    ('KX7OLD', 'E', 'Quentin Old', 'Pine Hollow', 'CA', 'G')])  # expired: not counted
+db.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+db.execute("INSERT INTO meta VALUES ('built', '1')")
+db.commit()
+db.close()
+uls = UlsLookup(up, auto_refresh=False)
+check("name + city -> the licensees of that first name there (active only)",
+      uls.by_name_city('Quentin', 'Pine Hollow', cs.name_matches) == ('Pine Hollow', ['KX7QZA']))
+check("the place may run on past the city", uls.by_name_city('Nora', 'Cedar Flat California', cs.name_matches,
+                                                            {'CA'}) == ('Cedar Flat', ['NX6MND']))
+check("...and only in the home states (a Cedar Flat in Michigan too)",
+      len(uls.by_name_city('Nora', 'Cedar Flat', cs.name_matches)[1]) == 2)
+st5 = SpeakerStore(os.path.join(tmp, 'intro.db'))
+idf5 = Identifier(st5, uls)
+for c in ('KX7QZB', 'KX0QFD', 'KX0QFE'):           # three CA voices already named here
+    q = st5.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+    st5.set_profile_identity(q, st5.identity_for_call(c, create_name='x'), 'human')
+check("home states come from the named voices' licences", idf5.home_states() == {'CA'}, str(idf5.home_states()))
+pn = st5.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+
+
+def over5(ts, text, profile):
+    u = st5.add_utterance(ts=ts, bus='sdr1', source='', freq='', duration=4.0, model='fake', emb=None,
+                          profile_id=profile, score=0.9, decision='matched', clip='i/%d.opus' % int(ts))
+    st5.set_text(u, text)
+    idf5.file(u, ts, 4.0, 'sdr1', text, profile_id=profile)
+    return u
+
+
+for k in range(5):
+    over5(100.0 + k, 'Good evening all.', pn)
+over5(200.0, "My name is Nora and I'm in Cedar Flat. Glad to be on.", pn)
+v5 = idf5.verdict(pn)
+check("a voice that never gave a call gets the one licensee its introduction fits",
+      [c['callsign'] for c in v5['candidates']] == ['NX6MND'] and v5['callsign'] is None, str(v5))
+check("...and the why list says so", any('Nora in Cedar Flat' in w for w in v5['why']), str(v5['why']))
+from speaker_id import review  # noqa: E402
+cards = [i for i in review.build(st5, idf5, 'fake') if i['profiles'] == [pn]]
+check("it becomes a confirm card quoting the introduction",
+      cards and cards[0]['type'] == 'confirm' and cards[0]['callsign'] == 'NX6MND'
+      and any('Cedar Flat' in q['quote'] for q in cards[0].get('quotes', [])), str(cards))
+check("an introduction alone never names a voice", idf5.maybe_name(pn) is None)
+amb = st5.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+for k in range(5):
+    over5(300.0 + k, 'Good evening all.', amb)
+over5(400.0, 'This is Austin in Pine Hollow.', amb)
+check("two Austins in Pine Hollow: no candidate", idf5.verdict(amb)['candidates'] == [])
+pq = st5.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+over5(500.0, 'This is Quentin in Pine Hollow, KX7QZA.', pq)
+vq = idf5.verdict(pq)
+check("an introduction agreeing with the self-ID is name support for it",
+      vq['candidates'][0]['callsign'] == 'KX7QZA' and vq['candidates'][0]['name_support'] >= 1.0
+      and len(vq['candidates']) == 1, str(vq['candidates']))
+lab = st5.add_profile('fake', np.ones(4, np.float32) / 2, 0.0)
+st5.set_profile_identity(lab, st5.identity_for_call('KX7QZB', create_name='x'), 'human')
+for k in range(5):
+    over5(600.0 + k, 'Good evening all.', lab)
+over5(700.0, "My name is Nora and I'm in Cedar Flat.", lab)
+check("an introduction never raises a conflict on a labelled voice",
+      not [i for i in review.build(st5, idf5, 'fake') if i['profiles'] == [lab] and i['type'] == 'conflict'])
+
 print('FAILED' if failed else 'OK')
 sys.exit(1 if failed else 0)

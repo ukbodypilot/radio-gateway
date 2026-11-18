@@ -16,6 +16,7 @@ import numpy as np
 from speaker_id.callsign import misheard
 
 MIN_OVERS_TO_ASK = 5
+THIN_BELOW = 2          # a label given as a self-ID fewer times than this is "thin"
 SAME_LO = 0.55
 
 
@@ -32,7 +33,7 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
         # A call one letter off the label (swapped or dropped) is the
         # transcriber mishearing it (KX7QZA heard as KX7QZB or KX7QZ), not a
         # second person: no card for that.
-        others = [c for c in cands if p['callsign'] and c['callsign'] != p['callsign']
+        others = [c for c in cands if p['callsign'] and c['weight'] > 0 and c['callsign'] != p['callsign']
                   and not misheard(c['callsign'], p['callsign'])
                   and c['weight'] > dismissed.get((pid, c['callsign']), -1.0)]
         if others:
@@ -40,12 +41,16 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
             # look: 2026-11-15 a voice labelled from a single over was really
             # net control, who gave a different call twenty minutes later.
             o = others[0]
-            items.append({'type': 'conflict', 'profiles': [pid],
-                          'score': p['overs'] * (1.0 + sum(c['weight'] for c in others)),
+            own = int(next((c['weight'] for c in cands if c['callsign'] == p['callsign']), 0))
+            thin = own < THIN_BELOW
+            items.append({'type': 'conflict', 'profiles': [pid], 'thin': thin,
+                          'score': p['overs'] * (1.0 + sum(c['weight'] for c in others)) * (1.5 if thin else 1.0),
                           'prompt': f"Voice #{pid} is labelled {p['callsign']}, but in its overs people say they are "
                                     + ', '.join(f"{c['callsign']}" + (f" ({c['first_name']})" if c['first_name'] else '')
                                                 + (f" {c['weight']:.0f}x" if c['weight'] > 1 else '') for c in others)
-                                    + ". Wrong label, or more than one person in this voice?",
+                                    + ". Wrong label, or more than one person in this voice?"
+                                    + (f" (The label rests on {own} self-ID{'' if own == 1 else 's'} of its own.)"
+                                       if thin else ''),
                           'callsign': p['callsign'],
                           'candidates': ([{'callsign': p['callsign']}] + others)[:3]})
             continue
@@ -56,6 +61,15 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
                           'prompt': f"Voice #{pid} gives two calls: {cands[0]['callsign']} and "
                                     f"{cands[1]['callsign']}. One person, or two voices merged?",
                           'candidates': cands[:3]})
+        elif cands and not cands[0]['weight']:
+            # Never gave a call, but introduced themselves with a name and a
+            # place that fit exactly one FCC licensee.
+            c, d = cands[0], cands[0]['intro']
+            items.append({'type': 'confirm', 'profiles': [pid],
+                          'score': p['overs'] * (1.0 + 0.5 * d['n']),
+                          'prompt': f"Is voice #{pid} {c['callsign']}? Introduced as {d['name']} in {d['city']} "
+                                    f"{d['n']}x; the FCC lists one {d['name']} there: {c['callsign']}",
+                          'callsign': c['callsign'], 'candidates': cands[:3], 'intro': d})
         elif cands:
             c = cands[0]
             named = p['callsign'] == c['callsign']
@@ -70,6 +84,10 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
             items.append({'type': 'name', 'profiles': [pid], 'score': p['overs'] * 0.8,
                           'prompt': f"Voice #{pid}: {p['overs']} overs, never gave a callsign. Who is it?"})
     items.extend(_similar_pairs(store, model, profiles, same_lo, same_hi))
+    homes = {}
+    for p in sorted(profiles.values(), key=lambda p: p['overs']):
+        if p['callsign']:
+            homes[p['callsign']] = p['id']        # the busiest voice carrying each call
     items.sort(key=lambda i: -i['score'])
     for it in items[:limit]:
         it['samples'] = {pid: _samples(store, pid, it) for pid in it['profiles']}
@@ -80,7 +98,40 @@ def build(store, identifier, model, limit=30, same_lo=SAME_LO, same_hi=0.80):
         if calls:
             it['quotes'] = [dict(q, callsign=c) for c in calls
                             for q in store.callsign_quotes(it['profiles'][0], c, 2)]
+        if it.get('intro'):
+            it['quotes'] = [dict(q, callsign=it['intro']['name'] + ', ' + it['intro']['city'])
+                            for v in it['intro']['values'] for q in store.evidence_quotes(it['profiles'][0], 'intro', v)]
+        if it['type'] == 'conflict':
+            keep = it.get('callsign') or (calls[0] if calls else None)
+            it['groups'] = split_groups(store, it['profiles'][0], model, keep, calls)
+            for g in it['groups']:
+                # The other call already has a voice: move these there, not to a new one.
+                home = homes.get(g['callsign'])
+                if home and home != it['profiles'][0]:
+                    g['home'] = home
     return items[:limit]
+
+
+def split_groups(store, pid, model, keep, calls, limit=40):
+    """A conflict card's suggested split: per call other than `keep`, the overs
+    where the voice gave it (seeds) plus the overs that sound more like those
+    than like the rest of the voice. An over that fits two groups goes to the
+    one it scores higher with. [{'callsign', 'seeds': [id], 'overs': [...]}]
+    """
+    from speaker_id.curation import closer_set
+    sids = store.self_id_overs(pid)
+    others = [c for c in calls if c != keep and sids.get(c)]
+    seeded = {u for c in others for u in sids[c]}
+    groups, best = [], {}
+    for c in others:
+        g = closer_set(store, pid, model, sids[c], exclude=seeded - set(sids[c]), limit=limit)
+        for r in g:
+            if r['id'] not in best or r['score'] > best[r['id']][1]:
+                best[r['id']] = (c, r['score'])
+        groups.append({'callsign': c, 'seeds': list(sids[c]), 'overs': g})
+    for grp in groups:
+        grp['overs'] = [r for r in grp['overs'] if best[r['id']][0] == grp['callsign']]
+    return groups
 
 
 def dismissed_calls(store):

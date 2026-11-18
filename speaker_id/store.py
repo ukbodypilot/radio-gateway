@@ -341,6 +341,17 @@ class SpeakerStore:
             self._conn.commit()
             return cur.lastrowid
 
+    def labelled_calls(self):
+        """Callsigns of every live voice that has one (the stations this channel hears)."""
+        with self._lock:
+            return [r[0] for r in self._conn.execute(
+                "SELECT i.callsign FROM profiles p JOIN identities i ON i.id = p.identity_id "
+                "WHERE p.merged_into IS NULL AND i.callsign <> ''")]
+
+    def evidence_quotes(self, profile_id, kind, value, limit=2, width=(20, 80)):
+        """callsign_quotes for any evidence kind (e.g. an 'intro' row)."""
+        return self.callsign_quotes(profile_id, value, limit, width, kind=kind)
+
     def identity_call(self, identity_id):
         with self._lock:
             r = self._conn.execute('SELECT callsign FROM identities WHERE id=?', (identity_id,)).fetchone()
@@ -382,13 +393,13 @@ class SpeakerStore:
                 "SELECT DISTINCT e.value FROM evidence e JOIN utterances u ON u.id = e.utt_id "
                 "WHERE u.profile_id=? AND e.kind='callsign_self'", (profile_id,))}
 
-    def callsign_quotes(self, profile_id, callsign, limit=3, width=(45, 70)):
+    def callsign_quotes(self, profile_id, callsign, limit=3, width=(45, 70), kind='callsign_self'):
         """[{id, at, quote}] where this voice said `callsign`: the words around it, to judge by."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT u.id, e.at, e.ch, u.text, u.clip <> '' FROM utterances u "
-                "JOIN evidence e ON e.utt_id = u.id WHERE u.profile_id=? AND e.kind='callsign_self' "
-                "AND e.value=? ORDER BY u.ts DESC LIMIT ?", (profile_id, callsign, limit)).fetchall()
+                "JOIN evidence e ON e.utt_id = u.id WHERE u.profile_id=? AND e.kind=? "
+                "AND e.value=? ORDER BY u.ts DESC LIMIT ?", (profile_id, kind, callsign, limit)).fetchall()
         out = []
         for uid, at, ch, text, has_clip in rows:
             text = text or ''
@@ -398,6 +409,25 @@ class SpeakerStore:
                 a, b = max(0, ch - width[0]), min(len(text), ch + width[1])
                 q = ('…' if a else '') + text[a:b].strip() + ('…' if b < len(text) else '')
             out.append({'id': uid, 'at': at, 'quote': q, 'clip': bool(has_clip)})
+        return out
+
+    def profile_embs(self, profile_id, model):
+        """[(utt_id, emb)] every over of a voice with a fingerprint of `model`, one query."""
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT id, emb FROM utterances WHERE profile_id=? AND model=? AND emb IS NOT NULL',
+                (profile_id, model)).fetchall()
+        return [(r[0], _vec(r[1])) for r in rows]
+
+    def self_id_overs(self, profile_id):
+        """{callsign: [utt_id]} the overs of a voice where it gave each call as its own."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT e.value, u.id FROM utterances u JOIN evidence e ON e.utt_id = u.id "
+                "WHERE u.profile_id=? AND e.kind='callsign_self' ORDER BY u.ts", (profile_id,)).fetchall()
+        out = {}
+        for call, uid in rows:
+            out.setdefault(call, []).append(uid)
         return out
 
     def callsign_overs(self, profile_id, callsign, limit=3):

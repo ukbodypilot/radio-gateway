@@ -15,6 +15,15 @@ extract(text, valid) -> [(call, role, token_index)]
   ~820k active US calls, a garbled letter run often IS somebody's licence.
   Repetition across days and agreement with one voice are what make it real.
 
+self_intro(text) -> [(name, place or None, char offset)]
+  "this is Quentin ... in Pine Hollow", "my name is Nora and I'm in Cedar Flat": the
+  speaker's own first name, and a place only when it follows the name in the
+  same sentence (or a next sentence opening "I live / I'm in"). Measured on
+  34k transcripts (2026-11-17): 33 overs give a name and a California licence
+  city; 9 of those match exactly one FCC licensee by first name in that city,
+  and where the over also spelled a call the two agreed 4 of 4. A place
+  taken from elsewhere in the over was the one miss, hence the tie to the name.
+
 name_cues(text) -> [(direction, name)]
   'back' "thanks Jeff" opening an over -> the PREVIOUS speaker was Jeff
   'fwd'  "go ahead Jeff"                 -> the NEXT speaker is Jeff
@@ -226,6 +235,28 @@ _FWD = [re.compile(p) for p in (
 _BACK = re.compile(r"^\W*(?i:(?:(?:okay|ok|yeah|well|alright|all right|and)[, ]+)?"
                    r"(?:thanks|thank you|roger|copy|good (?:morning|evening|afternoon)|hey|hi|hello)"
                    r"(?: (?:so much|very much|that|you|for that))?[, ]+)" + _NAME + r"\b")
+
+
+_INTRO = re.compile(r"\b(?:[Tt]his is|[Mm]y name(?:'s| is))\s+([A-Z][a-z]{2,})\b")
+_PLACE = re.compile(r"\b(?:in|from|out of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})")
+_NEXT_PLACE = re.compile(r"^\W*I(?:'m| am|\s+live)\b[^.?!]{0,40}?\b(?:in|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})")
+
+
+def self_intro(text):
+    out = []
+    text = text or ''
+    for m in _INTRO.finditer(text):
+        name = m.group(1)
+        if name in _NOT_NAMES or name.lower() in NATO or name.lower() in DIGITS:
+            continue
+        tail = text[m.end():m.end() + 90]
+        end = re.search(r'[.?!]', tail)
+        sentence = tail[:end.start()] if end else tail
+        p = _PLACE.search(sentence)
+        if not p and end:
+            p = _NEXT_PLACE.search(text[m.end() + end.end():])
+        out.append((name, p.group(1) if p else None, m.start()))
+    return out
 
 
 def name_cues(text):
