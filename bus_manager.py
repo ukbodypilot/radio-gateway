@@ -17,7 +17,7 @@ import time
 import numpy as np
 
 from routing_rules import find_sink_conflicts, strip_retired_sinks, RETIRED_SINKS
-from pcm_taps import tap_sources, tap_bus_id
+from pcm_taps import tap_sources, take_chunk as take_tap_chunk
 from audio_bus import SoloBus, DuplexRepeaterBus, SimplexRepeaterBus, ListenBus, additive_mix
 from audio_util import AudioProcessor, pcm_level, update_level, apply_gain
 
@@ -1696,23 +1696,17 @@ class BusManager:
             # never both. Mixing them meant pressing AS1 also brought in every
             # bus with 'P' set, which is not what "monitor this node" means.
             # Selecting a tap therefore discards this tick's bus contributions.
-            # Bus-following taps (SDR tuners, tap_from_bus=True) carry the
-            # PROCESSED output of the bus the source is routed to — the same
-            # audio a 'P' sink on that bus would get, so the bus's G/H/L/N/D
-            # buttons are audible. Other taps (AllStar nodes) carry their own
-            # queue.
+            # Taps are bus-following (SDR tuners and AllStar nodes,
+            # tap_from_bus=True): they carry the PROCESSED output of the bus
+            # the source is routed to — the same audio a 'P' sink on that bus
+            # would get, so the source gain slider and the bus's D/C/...
+            # buttons are audible. An AllStar node on no bus falls back to its
+            # own raw queue (pcm_taps.take_chunk).
             _taps = [src for src in tap_sources(gw) if src.pcm_tap]
             if _taps:
                 self._pcm_tick.clear()
                 for _plg in _taps:
-                    if getattr(_plg, 'tap_from_bus', False):
-                        _bid = tap_bus_id(self._busses, _plg)
-                        _plg.tap_bus = _bid
-                        _tapped = self._bus_final_tick.get(_bid) if _bid else None
-                        if _tapped:
-                            _plg.tap_chunks += 1
-                    else:
-                        _tapped = _plg.take_tap()
+                    _tapped = take_tap_chunk(self._busses, self._bus_final_tick, _plg)
                     if _tapped:
                         self._pcm_tick.append(_tapped)
 

@@ -156,6 +156,33 @@ check('refused when tuner missing', r.get('ok') is False)
 r = sdr.execute({'cmd': 'pcm_tap', 'tuner': 'x', 'on': '1'})
 check('refused bad tuner', r.get('ok') is False)
 
+# --- AllStar taps follow their bus, raw queue only as the fallback ---
+from plugins.usrp import UsrpPlugin  # noqa: E402
+u = UsrpPlugin()
+check('usrp is bus-following', u.tap_from_bus is True)
+raw = (np.full(2400, 1000, dtype=np.int16)).tobytes()
+u._tap_queue.append(raw)
+ubus = FakeBus(u)
+fin = {'as1': b'PROCESSED'}
+check('routed: tap plays the bus output',
+      pcm_taps.take_chunk({'as1': ubus}, fin, u) == b'PROCESSED' and u.tap_bus == 'as1'
+      and u.tap_chunks == 1 and u.tap_raw_chunks == 0)
+check('routed, bus silent this tick: nothing (raw queue not used)',
+      pcm_taps.take_chunk({'as1': ubus}, {}, u) is None and len(u._tap_queue) == 1)
+u.audio_boost = 3.16
+got = pcm_taps.take_chunk({}, {}, u)
+peak = int(np.abs(np.frombuffer(got, dtype=np.int16)).max()) if got else 0
+check('unrouted: falls back to the raw queue', got is not None and u.tap_bus is None
+      and u.tap_raw_chunks == 1)
+check('raw fallback applies the gain slider', 2900 < peak < 3300, peak)
+check('unrouted, empty queue -> None', pcm_taps.take_chunk({}, {}, u) is None)
+st = u.get_status()
+check('usrp status reports tap path counters',
+      st['tap_chunks'] == 1 and st['tap_raw_chunks'] == 1 and 'tap_bus' in st)
+t_unrouted = make_tuner('SDR9')
+check('unrouted SDR tuner stays silent (no raw queue)',
+      pcm_taps.take_chunk({}, {}, t_unrouted) is None)
+
 check('parse_on', pcm_taps.parse_on('1') and pcm_taps.parse_on(True)
       and not pcm_taps.parse_on('0') and not pcm_taps.parse_on('') and not pcm_taps.parse_on(None))
 

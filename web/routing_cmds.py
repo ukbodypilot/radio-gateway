@@ -411,6 +411,16 @@ class _RoutingCmdsMixin:
             'remote_audio': getattr(gw, 'remote_audio_source', None),
         }
         result = _map.get(id)
+        # Discovered plugins (usrp, usrp2, ...): 'usrp' is the RX source and
+        # 'usrp_tx' its sink. Without this the routing gain slider and mute
+        # silently did nothing for every plugin (bus_manager._get_source and
+        # _apply_source_gains already resolved them, so a saved gain worked
+        # after a restart but the slider never moved the live value).
+        if result is None:
+            _ext = getattr(gw, '_external_plugins', None) or {}
+            result = _ext.get(id)
+            if result is None and id.endswith('_tx'):
+                result = _ext.get(id[:-3])
         # Link endpoint lookup by source_id or sink_id
         if result is None:
             for name, src in gw.link_endpoints.items():

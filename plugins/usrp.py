@@ -53,7 +53,7 @@ try:
 except ImportError:  # pragma: no cover - scipy is a hard dep of the gateway
     resample_poly = None
 
-from audio_util import pcm_level
+from audio_util import apply_gain, pcm_level
 
 # Plugin contract capability flags
 try:
@@ -679,6 +679,14 @@ class UsrpPlugin:
         # not wired to any bus.
         self.pcm_tap = False
         self._tap_queue = collections.deque(maxlen=4)
+        # Bus-following (pcm_taps.take_chunk): while this node is routed to a
+        # bus, the tap plays that bus's PROCESSED output (gain slider,
+        # denoise, ...). AllStar arrives ~-35 dBFS, so the raw queue alone
+        # was quiet; it is now only the fallback when the node is on no bus.
+        self.tap_from_bus = True
+        self.tap_bus = None            # bus id the tap last followed (status)
+        self.tap_chunks = 0            # chunks played from the bus
+        self.tap_raw_chunks = 0        # chunks played from the raw fallback
         self._recent = []              # last 10 connected node numbers (dropdown)
         self._recent_path = None       # JSON persistence path (set in setup)
         # Desired link set — what SHOULD be connected on THIS node, plus the
@@ -869,9 +877,15 @@ class UsrpPlugin:
         the same queue.
         """
         try:
-            return self._tap_queue.popleft()
+            chunk = self._tap_queue.popleft()
         except IndexError:
             return None
+        self.tap_raw_chunks += 1
+        # The bus path applies the routing gain slider; the fallback must too
+        # or the same node sounds different depending on whether it's routed.
+        if self.audio_boost != 1.0:
+            chunk = apply_gain(chunk, self.audio_boost)
+        return chunk
 
     def get_audio(self, chunk_size=None):
         """Return one 48 kHz bus chunk of RX audio, or (None, False)."""
@@ -1541,6 +1555,9 @@ class UsrpPlugin:
             'ami_ready': bool(self.ami_user),
             'last_ctrl': self._last_ctrl,
             'pcm_tap': self.pcm_tap,
+            'tap_bus': self.tap_bus,
+            'tap_chunks': self.tap_chunks,
+            'tap_raw_chunks': self.tap_raw_chunks,
             'links': list(self._links_cache),
             'links_direct': list(self._links_direct),
             'links_indirect': list(self._links_indirect),

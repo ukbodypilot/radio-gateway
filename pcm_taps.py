@@ -60,6 +60,29 @@ def parse_on(value):
     return str(value).lower() not in ('0', 'false', 'off', '', 'none')
 
 
+def take_chunk(busses, final_tick, src):
+    """This tick's audio for one active tap, or None.
+
+    A bus-following source plays the PROCESSED output of its bus (final_tick
+    is the BusManager's per-tick {bus_id: chunk}), so the bus's gain slider
+    and D/C/... buttons are audible on the tap. A bus-following source that is
+    on no bus falls back to its own raw queue when it has one (AllStar nodes),
+    so the button never goes silent just because the node isn't routed; SDR
+    tuners have no queue and stay silent, as before.
+    """
+    if getattr(src, 'tap_from_bus', False):
+        bid = tap_bus_id(busses, src)
+        src.tap_bus = bid
+        if bid is not None:
+            chunk = final_tick.get(bid)
+            if chunk:
+                src.tap_chunks += 1
+            return chunk
+        if not hasattr(src, 'take_tap'):
+            return None
+    return src.take_tap()
+
+
 def tap_bus_id(busses, src):
     """Bus id whose output a bus-following tap on src should carry.
 
