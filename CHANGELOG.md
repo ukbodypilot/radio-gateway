@@ -4,6 +4,21 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [6.1.0] -- 2026-11-18
+
+- **AllStar AS1/AS2 buttons play their bus.** The AS1/AS2 PCM monitor
+  buttons played the raw USRP audio with no gain and no processing.
+  AllStar arrives quiet: about -35 dBFS speech, measured identical through
+  both hubs and both ASL installs, and passed through ASL with +0.0 dB
+  change, so the level comes from the far nodes. Like SDR1/SDR2, the AS
+  buttons now play the processed output of the bus the node is routed to
+  (gain slider, denoise, compressor); a node on no bus falls back to its
+  raw audio with the gain slider applied. `/usrp/status` reports
+  `tap_bus`, `tap_chunks` and `tap_raw_chunks`.
+- **Routing gain slider and mute work on plugins.** The `/routing` slider
+  and mute for discovered plugins (usrp, usrp2, ...) answered "unknown
+  source/sink" and changed nothing live; a gain saved to file was still
+  applied at startup, which hid it.
 - **Conflict cards suggest the split.** For each other call in a voice: the
   overs where it was given plus the overs that sound like them, ticked, with
   play buttons; "Move ticked to #N" when that call already has a voice, else
