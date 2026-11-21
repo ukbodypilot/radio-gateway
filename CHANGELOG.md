@@ -4,6 +4,15 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **`/family/` proxy for Family Locator.** The gateway now reverse-proxies
+  `/family/` to the Family Locator app on `:8790` (`handle_family_proxy`),
+  so it works from a phone over the Cloudflare tunnel with no extra port.
+  The gateway login still applies first. The proxy strips the prefix,
+  passes the real client address in `X-Forwarded-For`, relays `Set-Cookie`,
+  and allows 90 s for slow device locates. `/family` redirects to
+  `/family/`, and both may be opened from links in other sites (the app's
+  alert emails), like `/config`.
+
 ## [8.0.0] -- 2026-11-21
 
 - **New look: "rig front panel".** The web UI takes its visual language

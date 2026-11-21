@@ -77,7 +77,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     _LINK_WS_PATH = '/ws/link'
     # Pages a link on another site may open (Sec-Fetch-Mode: navigate).
     # Anything else fetched cross-site is refused.
-    _NAVIGABLE_EXTRA = frozenset({'/config'})
+    # /family/: Family Locator (proxied); its alert/summary emails link here from Gmail.
+    _NAVIGABLE_EXTRA = frozenset({'/config', '/family', '/family/'})
 
     def _check_access(self):
         path = self.path.split('?', 1)[0]
@@ -353,6 +354,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         '/config':                'g:handle_config',
         # Accepts ?instance=vhf|uhf for multi-radio routing.
         '/kv4pstatus':            'g:handle_kv4pstatus',
+        '/family':                'g:handle_family_redirect',
     }
     _GET_PREFIX = (
         ('/pages/',               'g:handle_pages'),
@@ -369,6 +371,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         ('/adsb/',                'g:handle_adsb_proxy'),
         ('/pat/',                 'g:handle_pat_proxy'),
         ('/grafana/',             'g:handle_grafana_proxy'),
+        ('/family/',              'g:handle_family_proxy'),
         ('/prometheus/',          'g:handle_prometheus_proxy'),
         ('/loop/',                'g:handle_loop_api'),
         ('/api/endpoint_logs',    'g:handle_endpoint_logs'),
@@ -499,6 +502,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         ('/loop/',       'l:handle_loop_post'),
         ('/pat/',        'g:handle_pat_proxy'),
         ('/grafana/',    'g:handle_grafana_proxy'),
+        ('/family/',     'g:handle_family_proxy'),
         ('/prometheus/', 'g:handle_prometheus_proxy'),
         ('/packet/',     'p:handle_packet_cmd'),
         ('/speakers/',   'k:handle_speakers_post'),

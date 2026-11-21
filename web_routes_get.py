@@ -1104,6 +1104,74 @@ def handle_grafana_proxy(handler, parent):
             pass
 
 
+FAMILY_LOCATOR_PORT = 8790
+
+
+def handle_family_redirect(handler, parent):
+    """GET /family -> /family/ so the app's relative asset and API URLs resolve under the prefix."""
+    handler.send_response(301)
+    handler.send_header('Location', '/family/')
+    handler.send_header('Content-Length', '0')
+    handler.end_headers()
+
+
+def handle_family_proxy(handler, parent):
+    """GET/POST /family/* — reverse proxy to the Family Locator app (~/Downloads/family-locator, :8790).
+
+    Lets the app work from a phone over the Cloudflare tunnel. The gateway's own login applies first
+    (_check_access runs before dispatch); the app then asks for its own password. The prefix is
+    stripped, the real client address is passed in X-Forwarded-For (the app throttles failed logins
+    per client), and Set-Cookie headers are passed back. The app tunnels PUT/PATCH/DELETE as POST with
+    X-HTTP-Method-Override because this server only implements GET and POST.
+    """
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    _target = f'http://127.0.0.1:{FAMILY_LOCATOR_PORT}{handler.path[len("/family"):]}'
+    _client = (handler.headers.get('Cf-Connecting-Ip')
+               or (handler.client_address[0] if handler.client_address else ''))
+
+    def _relay(status, headers, body):
+        handler.send_response(status)
+        for _hk, _hv in headers:
+            if _hk.lower() in ('transfer-encoding', 'content-encoding', 'content-length', 'connection'):
+                continue
+            handler.send_header(_hk, _hv)
+        handler.send_header('Content-Length', str(len(body)))
+        handler.end_headers()
+        if body:
+            handler.wfile.write(body)
+
+    try:
+        _content_len = int(handler.headers.get('Content-Length', 0))
+        _body_in = handler.rfile.read(_content_len) if _content_len > 0 else None
+        _req = _ureq.Request(_target, data=_body_in, method=handler.command or 'GET')
+        for _h in ('Accept', 'Accept-Language', 'Content-Type', 'Cookie', 'User-Agent',
+                   'X-HTTP-Method-Override'):
+            _v = handler.headers.get(_h)
+            if _v:
+                _req.add_header(_h, _v)
+        if _client:
+            _req.add_header('X-Forwarded-For', _client)
+        _req.add_header('Accept-Encoding', 'identity')
+        # "Locate now" waits up to ~40 s for a device to answer.
+        with _ureq.urlopen(_req, timeout=90) as _resp:
+            _relay(_resp.status, _resp.headers.items(), _resp.read())
+    except _uerr.HTTPError as _e:
+        try:
+            _relay(_e.code, _e.headers.items() if _e.headers else [], _e.read() if hasattr(_e, 'read') else b'')
+        except BrokenPipeError:
+            pass
+    except BrokenPipeError:
+        pass
+    except Exception:
+        _err = (b'<html><body style="font-family:sans-serif;text-align:center;padding-top:80px">'
+                b'<h3>Family Locator is not running</h3><p>systemctl --user status family-locator</p></body></html>')
+        try:
+            _relay(503, [('Content-Type', 'text/html')], _err)
+        except BrokenPipeError:
+            pass
+
+
 def handle_pat_proxy(handler, parent):
     """GET /pat or /pat/* — reverse proxy to Pat Winlink web UI."""
     import urllib.request as _ureq
