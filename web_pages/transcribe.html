@@ -34,8 +34,8 @@
     margin: var(--s-5) 0 var(--s-2);
     font-size: var(--f-xs);
     color: var(--t-text-dim);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
   }
   .sect-head .num { color: var(--t-accent); font-weight: 600; }
   .sect-head .lbl { color: var(--t-text); font-weight: 600; }
@@ -62,8 +62,8 @@
   .kv .k {
     color: var(--t-text-dim);
     font-size: var(--f-xs);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
   }
   .kv .v {
     font-variant-numeric: tabular-nums;
@@ -85,8 +85,8 @@
   .meter-head .k {
     font-size: var(--f-xs);
     color: var(--t-text-dim);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
   }
   .meter-head .v { font-variant-numeric: tabular-nums; font-size: var(--f-sm); }
   .bar-wrap {
@@ -129,8 +129,8 @@
   .worker-head .who {
     font-size: var(--f-xs);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
     color: var(--t-text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
@@ -167,8 +167,8 @@
   .workers-foot .lbl {
     color: var(--t-text-dim);
     font-size: var(--f-xs);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
   }
 
   /* Latest transmission card — uses .panel feel with an accent edge */
@@ -198,7 +198,7 @@
     font-variant-numeric: tabular-nums;
   }
   .latest-time   { color: var(--t-accent); font-weight: 600; }
-  .latest-source { color: var(--t-text); text-transform: uppercase; letter-spacing: 0.05em; font-size: var(--f-xs); }
+  .latest-source { color: var(--t-text); text-transform: none; letter-spacing: 0.02em; font-size: var(--f-xs); }
   .latest-freq   { color: var(--t-text-dim); }
   /* Speaker ID chip: who the voice is (or which unnamed voice) */
   a.spk { text-decoration: none; }
@@ -237,8 +237,8 @@
     display: flex; justify-content: space-between; align-items: baseline;
     font-size: var(--f-xs);
     color: var(--t-text-dim);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
   }
   .ctrl-head .v {
     color: var(--t-accent);
@@ -280,8 +280,8 @@
   }
   .util-strip .group { display: inline-flex; align-items: baseline; gap: 6px; }
   .util-strip .lbl {
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
     color: var(--t-text-mute);
   }
   .util-strip .v { color: var(--t-text); }
@@ -318,7 +318,7 @@
 
   <div class="panel">
     <div class="panel-head">
-      <span class="panel-title"><span class="cyan">01</span> · Signal</span>
+      <span class="panel-title">Signal</span>
       <span class="panel-meta">VAD-gated input</span>
     </div>
 
@@ -345,7 +345,7 @@
 
   <div class="panel">
     <div class="panel-head">
-      <span class="panel-title"><span class="cyan">02</span> · Throughput</span>
+      <span class="panel-title">Throughput</span>
       <span class="panel-meta"><span id="ps-count">0</span> samples</span>
     </div>
     <div class="kv"><span class="k">Avg ratio</span><span class="v" id="ps-ratio">—<span class="unit">x</span></span></div>
@@ -357,7 +357,7 @@
 
   <div class="panel">
     <div class="panel-head">
-      <span class="panel-title"><span class="cyan">03</span> · Resources</span>
+      <span class="panel-title">Resources</span>
       <span class="panel-meta" id="res-workers-meta">— workers</span>
     </div>
     <div class="kv"><span class="k">Pending</span><span class="v" id="ps-queue-depth">0</span></div>
@@ -370,7 +370,7 @@
 
 <!-- ── 04 — Workers ───────────────────────────────────────────── -->
 <div class="sect-head">
-  <span class="num">04</span><span class="lbl">Workers</span>
+  <span class="lbl">Workers</span>
   <span class="rule"></span>
   <span class="meta" id="workers-meta">—</span>
 </div>
@@ -391,7 +391,7 @@
 
 <!-- ── 05 — Latest ────────────────────────────────────────────── -->
 <div class="sect-head">
-  <span class="num">05</span><span class="lbl">Latest transmission</span>
+  <span class="lbl">Latest transmission</span>
   <span class="rule"></span>
 </div>
 <div class="latest" id="latest-card">
@@ -409,7 +409,7 @@
 
 <!-- ── 06 — Controls ──────────────────────────────────────────── -->
 <div class="sect-head">
-  <span class="num">06</span><span class="lbl">Controls</span>
+  <span class="lbl">Controls</span>
   <span class="rule"></span>
 </div>
 
@@ -498,7 +498,7 @@
 
 <!-- ── 07 — Feed health ───────────────────────────────────────── -->
 <div class="sect-head">
-  <span class="num">07</span><span class="lbl">Feed health</span>
+  <span class="lbl">Feed health</span>
   <span class="rule"></span>
 </div>
 <div class="util-strip">

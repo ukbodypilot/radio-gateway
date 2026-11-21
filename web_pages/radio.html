@@ -66,8 +66,8 @@
     color: var(--t-accent);
     font-weight: 600;
     font-size: var(--f-sm);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
   }
   .icon-badge {
     display: none;
@@ -77,7 +77,7 @@
     color: var(--t-bg);
     font-size: var(--f-xs);
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.02em;
   }
   .icon-badge.on { display: inline-block; }
 
@@ -93,7 +93,7 @@
     padding: 2px var(--s-2);
     border-radius: var(--r-sm);
     font-size: var(--f-xs);
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
   }
   .icon-off {
     background: transparent;
@@ -286,8 +286,8 @@
     color: var(--t-accent);
     font-weight: 600;
     font-size: var(--f-sm);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
     margin-bottom: var(--s-2);
   }
 
@@ -297,9 +297,86 @@
   .slider-stack { margin-bottom: var(--s-2); }
   .icon-row.mt-3 { margin-top: var(--s-3); }
   .ptt-spacer { height: 10px; }
+  /* ── Rig front panel overrides ─────────────────────────────────── */
+  .conn-bar { gap: var(--s-2) var(--s-3); }
+  .conn-bar .sep { width: 1px; height: 20px; background: var(--t-border); }
+  .conn-bar .state { width: auto; min-width: 6em; text-align: left; font-weight: 600; }
+  .conn-danger { margin-left: auto; display: inline-flex; gap: var(--s-2); }
+  .vfo-card { padding: var(--s-4); }
+  .vfo-title { color: var(--t-text); font-size: var(--f-md); }
+  .icon-badge { background: var(--t-accent); color: #1f1504; }
+  .sec-head { color: var(--t-text); font-size: var(--f-md); margin-bottom: var(--s-3); }
+
+  /* The LCD window: smoked glass, annunciators along the top, amber
+     segment digits. Off annunciators are ghosted the way an unlit LCD
+     segment still shows faintly. */
+  .freq-box {
+    background: var(--t-glass);
+    border: 1px solid #000;
+    border-radius: var(--r-md);
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.7), 0 0 0 1px var(--t-border);
+    padding: var(--s-3) var(--s-4) var(--s-2);
+    margin-bottom: var(--s-3);
+  }
+  .freq-box .icon-row { gap: 2px var(--s-2); margin-bottom: var(--s-2); }
+  .freq-box .icon-row span { padding: 0 3px; border: none; font-size: var(--f-xs); font-weight: 700; letter-spacing: 0.04em; border-radius: 2px; }
+  .freq-box .icon-off { color: color-mix(in srgb, var(--t-accent) 14%, var(--t-glass)); background: none; }
+  .freq-box .icon-on  { color: var(--t-accent); background: none; text-shadow: 0 0 8px color-mix(in srgb, var(--t-accent) 60%, transparent); }
+  .freq-box .icon-on[id$="-tx"]   { color: #fff; background: var(--t-err); text-shadow: none; }
+  .freq-box .icon-on[id$="-busy"] { color: #10200f; background: var(--t-ok); text-shadow: none; }
+  .freq-head { color: color-mix(in srgb, var(--t-accent) 60%, var(--t-glass)); font-size: var(--f-sm); }
+  .freq-head .ch-val { color: var(--t-accent); font-family: var(--font-display); }
+  .freq-head .pwr    { color: var(--t-accent); }
+  .freq-text {
+    font-family: var(--font-display);
+    color: var(--t-accent);
+    font-size: clamp(36px, 5vw, 52px);
+    letter-spacing: 0.04em;
+    text-align: right;
+    margin: var(--s-1) 0 0;
+    line-height: 1.1;
+    text-shadow: 0 0 14px color-mix(in srgb, var(--t-accent) 40%, transparent);
+  }
+  .freq-box.tx { background: color-mix(in srgb, var(--t-err) 16%, var(--t-glass)); border-color: var(--t-err); }
+  .freq-box.tx .freq-text { color: #ff8a7d; text-shadow: 0 0 14px color-mix(in srgb, var(--t-err) 60%, transparent); }
+
+  .sig-row .lbl, .slider-row .lbl { font-size: var(--f-sm); min-width: 4.2em; }
+  .sig-bar { height: 16px; background: var(--t-well); border-color: #0b0c0d; }
+  .slider-row .val { font-size: var(--f-sm); }
+  .dial-row .rb, .fn-row .rb:not(.rb-sm) { min-height: var(--h-ctl); min-width: 56px; }
+  .fn-row.secondary { opacity: 1; }
+  .fn-row.secondary .rb { color: var(--t-text-dim); }
+  .keypad { grid-template-columns: repeat(4, 52px); }
+  .keypad .rb { min-height: 40px; font-size: var(--f-md); font-weight: 600; }
+
+  /* Push to talk — the biggest control on the page. */
+  .ptt-wrap { display: block; }
+  .ptt-col { align-items: stretch; gap: var(--s-2); }
+  .ptt-pad {
+    width: 100%; height: 88px; border-radius: var(--r-md);
+    font-size: var(--f-lg); font-weight: 700; letter-spacing: 0.02em;
+    background: var(--t-btn);
+    border: 1px solid var(--t-btn-border);
+    border-bottom: 3px solid color-mix(in srgb, var(--t-btn-border) 50%, #000);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  .ptt-pad:hover { border-color: var(--t-err); color: var(--t-err); }
+  .ptt-pad.on, .ptt-pad.on:hover {
+    background: var(--t-err); border-color: var(--t-err); color: #fff;
+    border-bottom-width: 1px; transform: translateY(2px);
+    box-shadow: 0 0 24px color-mix(in srgb, var(--t-err) 45%, transparent);
+    animation: heartbeat 1.4s ease-in-out infinite;
+  }
+  .ptt-live { display: none; }
+  .ptt-col:has(.ptt-pad.on) .ptt-idle { display: none; }
+  .ptt-col:has(.ptt-pad.on) .ptt-live { display: inline; }
+  .ptt-hint { font-size: var(--f-sm); text-align: center; }
+
   /* Phone: stack the paired panels (kept last so it wins over the grids above). */
   @media (max-width: 700px) {
     .common-grid, .mem-grid { grid-template-columns: minmax(0, 1fr); }
+    .conn-danger { margin-left: 0; width: 100%; }
+    .conn-danger .rb { flex: 1; }
   }
 </style>
 </head><body>
@@ -314,21 +391,22 @@
 
   <!-- Connection + RTS Control -->
   <div class="conn-bar">
-    <span class="lbl">TCP:</span>
-    <button onclick="catDisconnect()" class="rb rb-sm rb-danger">Disconnect</button>
-    <button onclick="catReconnect()" class="rb rb-sm">Reconnect</button>
-    <span class="sep">|</span>
-    <span class="lbl">Serial:</span>
+    <span class="lbl">Serial</span>
     <span id="serial-state" class="state">&mdash;</span>
-    <button onclick="serialDisconnect()" class="rb rb-sm rb-danger">Disconnect</button>
     <button onclick="serialConnect()" class="rb rb-sm">Connect</button>
+    <button onclick="catReconnect()" class="rb rb-sm" title="Reconnect the TCP control link">Reconnect link</button>
     <button onclick="setupRadio()" class="rb rb-sm">Setup</button>
-    <button id="radio-power-btn" onclick="radioPower()" class="rb rb-sm">Radio Power</button>
+    <span class="sep"></span>
+    <button id="radio-power-btn" onclick="radioPower()" class="rb rb-sm">Radio power</button>
     <button onclick="chargerToggle()" class="rb rb-sm">Charger</button>
-    <span class="sep">|</span>
-    <span class="lbl">RTS TX:</span>
+    <span class="sep"></span>
+    <span class="lbl">RTS keying</span>
     <span id="rts-state" class="rts-state">&mdash;</span>
     <button onclick="catCmd('TOGGLE_RTS')" class="rb rb-sm">Toggle RTS</button>
+    <span class="conn-danger">
+      <button onclick="serialDisconnect()" class="rb rb-sm rb-danger">Disconnect serial</button>
+      <button onclick="catDisconnect()" class="rb rb-sm rb-danger">Disconnect link</button>
+    </span>
   </div>
 
   <!-- Two-column VFO display -->
@@ -340,29 +418,29 @@
         <span class="vfo-title">Left VFO</span>
         <span id="l-main" class="icon-badge">MAIN</span>
       </div>
-      <div class="icon-row">
-        <span id="l-enc"  class="icon-off">ENC</span>
-        <span id="l-dec"  class="icon-off">DEC</span>
-        <span id="l-pos"  class="icon-off">+</span>
-        <span id="l-neg"  class="icon-off">-</span>
-        <span id="l-tx"   class="icon-off">TX</span>
-        <span id="l-pref" class="icon-off">PREF</span>
-        <span id="l-skip" class="icon-off">SKIP</span>
-        <span id="l-dcs"  class="icon-off">DCS</span>
-        <span id="l-mute" class="icon-off">MUTE</span>
-        <span id="l-mt"   class="icon-off">MT</span>
-        <span id="l-busy" class="icon-off">BUSY</span>
-        <span id="l-am"   class="icon-off">AM</span>
-      </div>
       <div id="l-freq-box" class="freq-box">
+        <div class="icon-row">
+          <span id="l-enc"  class="icon-off">ENC</span>
+          <span id="l-dec"  class="icon-off">DEC</span>
+          <span id="l-pos"  class="icon-off">+</span>
+          <span id="l-neg"  class="icon-off">-</span>
+          <span id="l-tx"   class="icon-off">TX</span>
+          <span id="l-pref" class="icon-off">PREF</span>
+          <span id="l-skip" class="icon-off">SKIP</span>
+          <span id="l-dcs"  class="icon-off">DCS</span>
+          <span id="l-mute" class="icon-off">MUTE</span>
+          <span id="l-mt"   class="icon-off">MT</span>
+          <span id="l-busy" class="icon-off">BUSY</span>
+          <span id="l-am"   class="icon-off">AM</span>
+        </div>
         <div class="freq-head">
-          <span>CH: <span id="l-ch" class="ch-val">&mdash;</span></span>
+          <span>Ch <span id="l-ch" class="ch-val">&mdash;</span></span>
           <span id="l-power" class="pwr">&mdash;</span>
         </div>
         <div id="l-freq" class="freq-text">&mdash;&mdash;&mdash;</div>
       </div>
       <div class="sig-row">
-        <span class="lbl">S:</span>
+        <span class="lbl">Signal</span>
         <div class="sig-bar">
           <div id="l-sig-bar" class="sig-fill"></div>
           <span id="l-sig-text" class="sig-text">S0</span>
@@ -370,17 +448,17 @@
       </div>
       <div class="dial-row">
         <button class="rb" onclick="catCmd('L_DIAL_LEFT')">&#9664; Down</button>
-        <button class="rb" onclick="catCmd('L_DIAL_PRESS')">SEL</button>
+        <button class="rb" onclick="catCmd('L_DIAL_PRESS')">Select</button>
         <button class="rb" onclick="catCmd('L_DIAL_RIGHT')">Up &#9654;</button>
       </div>
       <div class="slider-stack">
         <div class="slider-row">
-          <span class="lbl">VOL</span>
+          <span class="lbl">Volume</span>
           <input id="l-vol" type="range" min="0" max="100" value="25" oninput="catVol('LEFT',this.value)">
           <span id="l-vol-val" class="val">25</span>
         </div>
         <div class="slider-row">
-          <span class="lbl">SQ</span>
+          <span class="lbl">Squelch</span>
           <input id="l-sq" class="sq-slider" type="range" min="0" max="100" value="25" oninput="catVol('LEFT_SQ',this.value)">
           <span id="l-sq-val" class="val">25</span>
         </div>
@@ -391,7 +469,7 @@
         <button class="rb" onclick="catCmd('L_HM')">HM</button>
         <button class="rb" onclick="catCmd('L_SCN')">SCN</button>
       </div>
-      <div class="fn-row secondary">
+      <div class="fn-row secondary" title="Same keys, held">
         <button class="rb rb-sm" onclick="catCmd('L_LOW_HOLD')">LOW2</button>
         <button class="rb rb-sm" onclick="catCmd('L_VM_HOLD')">V/M2</button>
         <button class="rb rb-sm" onclick="catCmd('L_HM_HOLD')">HM2</button>
@@ -405,29 +483,29 @@
         <span class="vfo-title">Right VFO</span>
         <span id="r-main" class="icon-badge">MAIN</span>
       </div>
-      <div class="icon-row">
-        <span id="r-enc"  class="icon-off">ENC</span>
-        <span id="r-dec"  class="icon-off">DEC</span>
-        <span id="r-pos"  class="icon-off">+</span>
-        <span id="r-neg"  class="icon-off">-</span>
-        <span id="r-tx"   class="icon-off">TX</span>
-        <span id="r-pref" class="icon-off">PREF</span>
-        <span id="r-skip" class="icon-off">SKIP</span>
-        <span id="r-dcs"  class="icon-off">DCS</span>
-        <span id="r-mute" class="icon-off">MUTE</span>
-        <span id="r-mt"   class="icon-off">MT</span>
-        <span id="r-busy" class="icon-off">BUSY</span>
-        <span id="r-am"   class="icon-off">AM</span>
-      </div>
       <div id="r-freq-box" class="freq-box">
+        <div class="icon-row">
+          <span id="r-enc"  class="icon-off">ENC</span>
+          <span id="r-dec"  class="icon-off">DEC</span>
+          <span id="r-pos"  class="icon-off">+</span>
+          <span id="r-neg"  class="icon-off">-</span>
+          <span id="r-tx"   class="icon-off">TX</span>
+          <span id="r-pref" class="icon-off">PREF</span>
+          <span id="r-skip" class="icon-off">SKIP</span>
+          <span id="r-dcs"  class="icon-off">DCS</span>
+          <span id="r-mute" class="icon-off">MUTE</span>
+          <span id="r-mt"   class="icon-off">MT</span>
+          <span id="r-busy" class="icon-off">BUSY</span>
+          <span id="r-am"   class="icon-off">AM</span>
+        </div>
         <div class="freq-head">
-          <span>CH: <span id="r-ch" class="ch-val">&mdash;</span></span>
+          <span>Ch <span id="r-ch" class="ch-val">&mdash;</span></span>
           <span id="r-power" class="pwr">&mdash;</span>
         </div>
         <div id="r-freq" class="freq-text">&mdash;&mdash;&mdash;</div>
       </div>
       <div class="sig-row">
-        <span class="lbl">S:</span>
+        <span class="lbl">Signal</span>
         <div class="sig-bar">
           <div id="r-sig-bar" class="sig-fill"></div>
           <span id="r-sig-text" class="sig-text">S0</span>
@@ -435,17 +513,17 @@
       </div>
       <div class="dial-row">
         <button class="rb" onclick="catCmd('R_DIAL_LEFT')">&#9664; Down</button>
-        <button class="rb" onclick="catCmd('R_DIAL_PRESS')">SEL</button>
+        <button class="rb" onclick="catCmd('R_DIAL_PRESS')">Select</button>
         <button class="rb" onclick="catCmd('R_DIAL_RIGHT')">Up &#9654;</button>
       </div>
       <div class="slider-stack">
         <div class="slider-row">
-          <span class="lbl">VOL</span>
+          <span class="lbl">Volume</span>
           <input id="r-vol" type="range" min="0" max="100" value="25" oninput="catVol('RIGHT',this.value)">
           <span id="r-vol-val" class="val">25</span>
         </div>
         <div class="slider-row">
-          <span class="lbl">SQ</span>
+          <span class="lbl">Squelch</span>
           <input id="r-sq" class="sq-slider" type="range" min="0" max="100" value="25" oninput="catVol('RIGHT_SQ',this.value)">
           <span id="r-sq-val" class="val">25</span>
         </div>
@@ -456,7 +534,7 @@
         <button class="rb" onclick="catCmd('R_HM')">HM</button>
         <button class="rb" onclick="catCmd('R_SCN')">SCN</button>
       </div>
-      <div class="fn-row secondary">
+      <div class="fn-row secondary" title="Same keys, held">
         <button class="rb rb-sm" onclick="catCmd('R_LOW_HOLD')">LOW2</button>
         <button class="rb rb-sm" onclick="catCmd('R_VM_HOLD')">V/M2</button>
         <button class="rb rb-sm" onclick="catCmd('R_HM_HOLD')">HM2</button>
@@ -469,7 +547,7 @@
   <!-- Common controls: Menu/SET + PTT -->
   <div class="common-grid">
     <div class="vfo-card">
-      <div class="sec-head">Menu / SET</div>
+      <div class="sec-head">Menu</div>
       <div class="fn-row">
         <button class="rb" onclick="catCmd('N_SET')">SET</button>
         <button class="rb" onclick="catCmd('N_SET_HOLD')">SET (Hold)</button>
@@ -486,12 +564,13 @@
     </div>
 
     <div class="vfo-card">
-      <div class="sec-head">PTT</div>
+      <div class="sec-head">Transmit</div>
       <div class="ptt-wrap">
         <div class="ptt-col">
-          <div class="ptt-spacer"></div>
-          <button id="ptt-btn" class="ptt-pad" onclick="togglePTT()">PTT</button>
-          <span class="ptt-hint">Toggle TX</span>
+          <button id="ptt-btn" class="ptt-pad" onclick="togglePTT()" aria-label="Push to talk">
+            <span class="ptt-idle">Push to talk</span><span class="ptt-live">On air</span>
+          </button>
+          <span class="ptt-hint"><span class="ptt-idle">Click once to key the radio, again to release.</span><span class="ptt-live">Click to release. The transmit timeout still applies.</span></span>
         </div>
       </div>
     </div>
@@ -500,7 +579,7 @@
   <!-- Hyper Memories + Mic Keypad + P1-P4/UP/DOWN -->
   <div class="mem-grid">
     <div class="vfo-card">
-      <div class="sec-head">Hyper Memories</div>
+      <div class="sec-head">Hyper memories</div>
       <div class="fn-row">
         <button class="rb" onclick="catCmd('HYPER_A')">A</button>
         <button class="rb" onclick="catCmd('HYPER_B')">B</button>
@@ -512,7 +591,7 @@
     </div>
 
     <div class="vfo-card">
-      <div class="sec-head">Mic Keypad</div>
+      <div class="sec-head">Mic keypad</div>
       <div class="keypad">
         <button class="rb" onclick="catCmd('MIC_1')">1</button>
         <button class="rb" onclick="catCmd('MIC_2')">2</button>
@@ -534,7 +613,7 @@
     </div>
 
     <div class="vfo-card">
-      <div class="sec-head">Mic Controls</div>
+      <div class="sec-head">Mic keys</div>
       <div class="fn-row">
         <button class="rb" onclick="catCmd('MIC_P1')">P1</button>
         <button class="rb" onclick="catCmd('MIC_P2')">P2</button>
@@ -595,9 +674,9 @@ function catConnect() {
     }).catch(function(){ btn.disabled = false; btn.textContent = 'Connect'; });
 }
 
-function catDisconnect()  { postJson('/catcmd', {cmd:'CAT_DISCONNECT'}); }
+function catDisconnect()  { if (confirm('Disconnect the TCP control link? This page stops controlling the radio until you reconnect.')) postJson('/catcmd', {cmd:'CAT_DISCONNECT'}); }
 function catReconnect()   { postJson('/catcmd', {cmd:'CAT_RECONNECT'}); }
-function serialDisconnect(){ postJson('/catcmd', {cmd:'SERIAL_DISCONNECT'}); }
+function serialDisconnect(){ if (confirm('Disconnect the serial port? The radio stops responding until you press Connect.')) postJson('/catcmd', {cmd:'SERIAL_DISCONNECT'}); }
 
 function serialConnect() {
   var el = document.getElementById('serial-state');

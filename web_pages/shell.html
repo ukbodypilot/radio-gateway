@@ -3,61 +3,64 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Radio Gateway</title>
-<link rel="preload" href="/pages/fonts/JetBrainsMono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/pages/fonts/BarlowSemiCondensed-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/pages/fonts/DSEG7Classic-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/pages/common.css">
 <style>
   /* Shell-local styles. Theme vars come from common.css. */
   * { margin: 0; padding: 0; }
   body { display: flex; flex-direction: column; height: 100vh; padding: 0; }
 
+  /* Header — one row: identity plate, menus, monitor keys. */
   #shell-bar {
-    background: var(--t-panel);
-    border-bottom: 1px solid var(--t-border);
-    padding: var(--s-1) var(--s-3);
-    display: flex; align-items: center; flex-wrap: wrap;
+    background: color-mix(in srgb, var(--t-panel) 70%, var(--t-bg));
+    border-bottom: 1px solid #0d0f10;
+    box-shadow: inset 0 -1px 0 var(--t-border);
+    padding: 0 var(--s-3);
+    display: flex; align-items: stretch; flex-wrap: wrap;
     gap: var(--s-3);
-    flex-shrink: 0; min-height: 34px; z-index: 100;
+    flex-shrink: 0; min-height: 48px; z-index: 100;
   }
 
-  /* Nav items — uppercase micro-caps, dim default, accent on hover/active */
+  /* Menus — sentence case, dim until lit. The lit menu gets an amber
+     underline on the header's bottom edge, like a backlit key. */
   #shell-bar a,
   .nav-group > .nav-label {
     color: var(--t-text-dim);
     text-decoration: none;
     font-size: var(--f-md);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
     font-weight: 500;
-    padding: var(--s-1) var(--s-3);
+    padding: 0 var(--s-3);
     cursor: pointer;
     user-select: none;
     transition: color 0.1s;
   }
+  .nav-group > .nav-label {
+    display: flex; align-items: center; height: 100%;
+    border-bottom: 2px solid transparent;
+    padding-top: 2px;
+  }
   #shell-bar a:hover,
   .nav-group > .nav-label:hover,
-  .nav-group.open > .nav-label,
-  .nav-group.has-active > .nav-label { color: var(--t-accent); text-decoration: none; }
+  .nav-group.open > .nav-label { color: var(--t-text); text-decoration: none; }
+  .nav-group.has-active > .nav-label { color: var(--t-accent); border-bottom-color: var(--t-accent); }
   #shell-bar a.active { color: var(--t-accent); }
 
-  .shell-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
-  .shell-nav > a + a,
-  .shell-nav > a + .nav-group,
-  .shell-nav > .nav-group + a,
-  .shell-nav > .nav-group + .nav-group {
-    border-left: 1px solid var(--t-border);
-  }
+  .shell-nav { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; flex: 1 1 auto; min-width: 0; }
 
-  .nav-group { position: relative; }
+  .nav-group { position: relative; display: flex; }
   .nav-group > .nav-label::after {
-    content: ' \25BE'; font-size: 0.7em; opacity: 0.5; margin-left: 2px;
+    content: ''; width: 0; height: 0; margin-left: 6px; margin-top: 2px;
+    border: 4px solid transparent; border-top-color: currentColor; border-bottom: 0;
+    opacity: 0.55;
   }
   .nav-drop {
     display: none; position: absolute; top: 100%; left: 0;
-    background: var(--t-panel);
-    border: 1px solid var(--t-border);
-    border-top: none;
-    min-width: 140px; z-index: 200;
-    box-shadow: 0 6px 16px rgba(0,0,0,0.6);
+    background: var(--t-panel-hi);
+    border: 1px solid var(--t-border-hi);
+    border-radius: 0 0 var(--r-md) var(--r-md);
+    min-width: 180px; z-index: 200;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.5);
     padding: var(--s-1) 0;
   }
   .nav-group.open > .nav-drop { display: block; }
@@ -67,244 +70,212 @@
      devices have no hover and keep the tap-to-open path. */
   @media (hover: hover) and (pointer: fine) {
     .nav-group:hover:not(.nav-suppress) > .nav-drop { display: block; }
-    .nav-group:hover:not(.nav-suppress) > .nav-label { color: var(--t-accent); }
+    .nav-group:hover:not(.nav-suppress) > .nav-label { color: var(--t-text); }
+    .nav-group.has-active:hover:not(.nav-suppress) > .nav-label { color: var(--t-accent); }
   }
   .nav-drop a {
-    display: block;
-    padding: var(--s-1) var(--s-3) !important;
-    border-left: none !important;
+    display: flex !important; align-items: center;
+    min-height: 36px;
+    padding: 0 var(--s-4) !important;
+    border-left: 3px solid transparent !important;
     white-space: nowrap;
-    letter-spacing: 0.04em;
+    font-size: var(--f-base) !important;
+    color: var(--t-text) !important;
   }
-  .nav-drop a:hover { background: var(--t-panel-hi); color: var(--t-accent); }
-  .nav-drop a.active { background: var(--t-btn-active); color: var(--t-accent); }
+  .nav-drop a:hover { background: var(--t-btn-hover); }
+  .nav-drop a.active { background: var(--t-btn-active); color: var(--t-accent) !important; border-left-color: var(--t-accent) !important; }
   .nav-drop a.active::after { display: none; }
 
-  /* Audio control cluster */
+  /* Monitor keys — listen (MP3 / PCM), talk (MIC), and the tap selectors. */
   .shell-pcm {
-    display: inline-flex; gap: var(--s-1); align-items: center;
-    padding-left: var(--s-3);
-    border-left: 1px solid var(--t-border);
+    display: inline-flex; gap: var(--s-2); align-items: center;
     margin-left: auto;
   }
-  /* Uses .rb-caps + .rb-sm from common.css — only the min-width is shell-local. */
-  .shell-pcm .rb { min-width: 56px; text-align: center; }
+  .shell-pcm .rb { min-width: 52px; min-height: 30px; text-align: center; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
   .shell-pcm .rb.connecting { color: var(--t-warn); border-color: var(--t-warn); }
-  .shell-pcm .rb.live { color: var(--t-err); border-color: var(--t-err); }
+  .shell-pcm .rb.live { color: #fff; background: var(--t-err); border-color: var(--t-err); box-shadow: 0 0 10px color-mix(in srgb, var(--t-err) 50%, transparent); }
   /* MIC only: mic open and ready, NOT transmitting. Deliberately reads as
      an unpressed button — the red .live state is the only "on air" look. */
-  .shell-pcm .rb.armed { border-color: var(--t-accent); }
+  .shell-pcm .rb.armed { border-color: var(--t-accent); color: var(--t-accent); }
   #mic-btn { touch-action: none; user-select: none; -webkit-user-select: none; }
-  .shell-pcm input[type="range"] { width: 52px; height: 3px; }
+  .shell-pcm input[type="range"] { width: 56px; height: 3px; }
+  .shell-pcm .pcm-sep { width: 1px; align-self: stretch; margin: 10px 2px; background: var(--t-border); }
+  #lvl-toggle[aria-pressed="true"] { color: var(--t-accent); border-color: color-mix(in srgb, var(--t-accent) 50%, var(--t-btn-border)); }
 
   #shell-frame { flex: 1; border: none; width: 100%; background: var(--t-bg); }
 
-  /* Level meter strip — primary signal real-estate. This is the gateway's
-     vital-sign display: give it weight, inset channels, phosphor glow. */
+  /* Level strip — every source on one slim row: name over a bar. RX/in is
+     the top lane, TX/out the bottom lane. */
   #shell-bars {
-    background:
-      linear-gradient(180deg, var(--t-panel) 0%, color-mix(in srgb, var(--t-panel) 92%, #000) 100%);
-    border-top: 1px solid var(--t-border);
-    border-bottom: 1px solid var(--t-border);
-    padding: var(--s-2) var(--s-3);
-    display: flex; flex-wrap: wrap;
-    gap: var(--s-2) var(--s-4);
-    align-items: center;
+    background: var(--t-panel);
+    border-bottom: 1px solid #0d0f10;
+    padding: 6px var(--s-3) 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 4px var(--s-3);
     flex-shrink: 0;
-    min-height: 44px;
   }
+  body.levels-hidden #shell-bars { display: none; }
   #shell-bars .sb {
-    display: flex; gap: var(--s-2); align-items: center;
-    white-space: nowrap;
+    display: grid; grid-template-columns: 1fr auto; align-items: center;
+    row-gap: 3px; min-width: 0;
   }
   #shell-bars .sb-label {
     color: var(--t-text-dim);
     font-size: var(--f-xs);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
     font-weight: 600;
-    /* Wide enough for the longest label ("IC7100", 6 chars) so every
-       bar's track starts at the same offset — labels are right-aligned. */
-    min-width: 4.5em;
-    text-align: right;
-    flex-shrink: 0;
+    letter-spacing: 0.03em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
   }
   #shell-bars .sb-pct {
-    width: 2.8em; text-align: right;
     font-size: var(--f-xs);
     color: var(--t-text-dim);
-    flex-shrink: 0;
-    font-variant-numeric: tabular-nums;
   }
   #shell-bars .sb-pct.ducked { color: var(--t-warn); }
   #shell-bars .sb-track {
+    grid-column: 1 / -1;
     position: relative;
-    width: 140px; height: 18px;
-    background: #05080b;
-    border: 1px solid var(--t-border);
-    border-radius: var(--r-sm);
-    flex-shrink: 0; overflow: hidden;
-    box-shadow:
-      inset 0 1px 2px rgba(0,0,0,0.7),
-      inset 0 -1px 0 rgba(255,255,255,0.02);
+    width: 100%; height: 12px;
+    background: var(--t-well);
+    border: 1px solid #0b0c0d;
+    border-radius: 2px;
+    overflow: hidden;
   }
-  /* Zone ticks at 70% (warn onset) and 95% (ceiling) — live inside the track,
-     behind the bar fill but visible through it, so you can read headroom. */
+  /* Zone ticks at 70% (warn onset) and 95% (ceiling). */
   #shell-bars .sb-track::before,
   #shell-bars .sb-track::after {
     content: '';
     position: absolute;
-    top: 2px; bottom: 2px;
+    top: 0; bottom: 0;
     width: 1px;
     pointer-events: none;
     z-index: 2;
   }
-  #shell-bars .sb-track::before { left: 70%; background: var(--t-warn); opacity: 0.6; }
-  #shell-bars .sb-track::after  { left: 95%; background: var(--t-err);  opacity: 0.7; }
+  #shell-bars .sb-track::before { left: 70%; background: var(--t-warn); opacity: 0.35; }
+  #shell-bars .sb-track::after  { left: 95%; background: var(--t-err);  opacity: 0.5; }
   /* Bars use clip-path to reveal only the leftmost portion of a
-     full-width gradient. With transform:scaleX (previous approach) the
-     gradient got compressed into the visible portion, so yellow/red
-     showed at low levels — the user-reported bug. clip-path keeps the
-     gradient anchored so amber/red become visible only once the bar
-     actually reaches their tick positions (70% and 95%). */
+     full-width gradient, so amber/red show only once the bar actually
+     reaches their tick positions (70% and 95%). */
   #shell-bars .sb-bar {
     display: block;
     position: absolute;
     left: 0; width: 100%;
-    height: calc(50% - 3px);
+    height: calc(50% - 1px);
     clip-path: inset(0 100% 0 0);
     z-index: 1;
-    /* No CSS transition — JS rAF tick updates clip-path every frame
-       with proper attack/decay envelope, so we'd just fight ourselves. */
   }
-  #shell-bars .sb-bar.sb-in         { background: linear-gradient(to right, var(--t-ok) 70%, var(--t-warn) 70%, var(--t-warn) 95%, var(--t-err) 95%); top: 2px; }
-  #shell-bars .sb-bar.sb-out        { background: var(--t-err);    bottom: 2px; }
-  #shell-bars .sb-bar.sb-loc        { background: var(--t-accent); bottom: 2px; }
-  #shell-bars .sb-bar.sb-ducked-bar { background: var(--t-warn);   top: 2px; }
-  /* Dual-lane bars: RX (green) top half, TX (red) bottom half — no pct label. */
+  #shell-bars .sb-bar.sb-in         { background: linear-gradient(to right, var(--t-ok) 70%, var(--t-warn) 70%, var(--t-warn) 95%, var(--t-err) 95%); top: 1px; }
+  #shell-bars .sb-bar.sb-out        { background: var(--t-err);    bottom: 1px; }
+  #shell-bars .sb-bar.sb-loc        { background: var(--t-accent); bottom: 1px; }
+  #shell-bars .sb-bar.sb-ducked-bar { background: var(--t-warn);   top: 1px; }
   .sb-bar-rx, .sb-bar-tx {
     position: absolute; left: 0;
     width: 100%;
-    height: calc(50% - 3px);
+    height: calc(50% - 1px);
     clip-path: inset(0 100% 0 0);
     z-index: 1;
-    /* rAF tick handles motion — see _sbUpdateDual. */
   }
-  .sb-bar-rx { top: 2px;
+  .sb-bar-rx { top: 1px;
                background: linear-gradient(to right, var(--t-ok) 70%, var(--t-warn) 70%, var(--t-warn) 95%, var(--t-err) 95%);
                color: var(--t-ok); }
-  .sb-bar-tx { bottom: 2px;
+  .sb-bar-tx { bottom: 1px;
                background: var(--t-err); color: var(--t-err); }
 
-  /* Peak-hold tick: marks the loudest recent level for ~1.5 s so a short
-     burst is still readable after the bar has fallen back. */
+  /* Peak-hold tick: marks the loudest recent level for ~1.5 s. */
   #shell-bars .sb-peak {
     position: absolute; width: 2px; margin-left: -1px; left: 0;
-    height: calc(50% - 3px); top: 2px;
+    height: calc(50% - 1px); top: 1px;
     background: var(--t-text); opacity: 0; z-index: 3; pointer-events: none;
   }
-  #shell-bars .sb-peak.tx { top: auto; bottom: 2px; }
-  #shell-bars .sb-peak.one { height: auto; top: 2px; bottom: 2px; }
+  #shell-bars .sb-peak.tx { top: auto; bottom: 1px; }
+  #shell-bars .sb-peak.one { height: auto; top: 1px; bottom: 1px; }
   #shell-bars .mute-ind {
     color: var(--t-err);
     font-weight: 700;
     font-size: var(--f-xs);
-    letter-spacing: 0.1em;
+    line-height: 1;
   }
 
   /* Gateway not answering /status: the strip is showing stale levels. */
   #shell-bars.stale .sb-track { opacity: 0.35; }
 
-  /* Mobile: let bars scroll off screen */
-  @media (max-width: 768px) {
-    body { height: auto; overflow: auto; }
-    #shell-frame { flex: none; height: calc(100vh - 78px); }
-
-    /* Header becomes three tidy rows instead of a ragged wrap:
-       identity plate / five equal menu buttons / audio controls (the audio
-       row scrolls sideways rather than pushing the page wider). */
-    #shell-bar { padding: var(--s-1) var(--s-2); }
-    .shell-nav { width: 100%; row-gap: var(--s-1); }
-    .id-cluster.shell-id { flex: 1 0 100%; justify-content: center; }
-    .shell-nav > .nav-group { flex: 1 1 0; text-align: center; }
-    .shell-nav > .nav-group > .nav-label {
-      display: block; font-size: var(--f-sm); letter-spacing: 0.04em;
-      padding: var(--s-2) 0; white-space: nowrap;
-    }
-    .nav-group > .nav-label::after { display: none; }
-    .nav-drop { text-align: left; min-width: 150px; }
-    .nav-drop a { padding: var(--s-2) var(--s-3) !important; }
-    /* Right-hand menus open leftwards so they stay on screen. */
-    .shell-nav > .nav-group:nth-of-type(n+5) > .nav-drop { left: auto; right: 0; }
-    .shell-pcm {
-      flex: 1 0 100%; min-width: 0; margin-left: 0; padding-left: 0; border-left: none;
-      overflow-x: auto; scrollbar-width: none;
-    }
-    .shell-pcm::-webkit-scrollbar { display: none; }
-    .shell-pcm .rb { flex-shrink: 0; padding: 6px var(--s-2); }
-    .shell-pcm input[type="range"] { flex-shrink: 0; width: 64px; }
-
-    /* Meters: two columns with stretchy tracks (was one fixed-width column
-       that took half the screen). */
-    #shell-bars {
-      display: grid; grid-template-columns: 1fr 1fr;
-      gap: var(--s-1) var(--s-3);
-      padding: var(--s-2);
-      min-height: 0;
-    }
-    #shell-bars .sb { min-width: 0; gap: var(--s-1); }
-    #shell-bars .sb-label { min-width: 0; width: 5.6em; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.04em; }
-    #shell-bars .sb-track { flex: 1 1 0; width: auto; min-width: 0; height: 14px; }
-  }
-
-  /* Header identity cluster — sits directly after the nav groups (left-packed),
-     styled as a callsign plate. Small beacon LED (pulses green when server
-     healthy), callsign in display font + phosphor, site name, local clock. */
+  /* Identity plate — callsign, site, and a seven-segment clock. */
   .id-cluster.shell-id {
-    padding: 2px var(--s-3);
+    padding: 0 var(--s-3) 0 0;
+    margin-right: var(--s-2);
     display: inline-flex;
     align-items: center;
     gap: var(--s-2);
-    background: linear-gradient(180deg, #0a0f14 0%, #05080b 100%);
-    border: 1px solid var(--t-border);
-    border-radius: var(--r-sm);
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,0.02),
-      inset 0 -1px 0 rgba(0,0,0,0.4);
+    border-right: 1px solid var(--t-border);
   }
   .id-led {
-    width: 7px; height: 7px; border-radius: 50%;
+    width: 8px; height: 8px; border-radius: 50%;
     background: var(--t-ok);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--t-ok) 70%, transparent);
     flex-shrink: 0;
     animation: id-beacon 2.4s ease-in-out infinite;
   }
-  .id-led.stale { background: var(--t-warn); }
-  .id-led.dead  { background: var(--t-err);  animation: none; }
+  .id-led.stale { background: var(--t-warn); box-shadow: 0 0 6px var(--t-warn); }
+  .id-led.dead  { background: var(--t-err); box-shadow: 0 0 6px var(--t-err); animation: none; }
   @keyframes id-beacon {
     0%, 100% { opacity: 1; }
-    50%      { opacity: 0.3; }
+    50%      { opacity: 0.35; }
   }
   .id-cluster.shell-id .id-call {
-    font-family: var(--font-display);
     color: var(--t-text);
     font-weight: 700;
     font-size: var(--f-md);
-    letter-spacing: 0.08em;
+    letter-spacing: 0.02em;
   }
   .id-cluster.shell-id .id-site {
-    color: var(--t-text);
-    font-size: var(--f-base);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    color: var(--t-text-dim);
+    font-size: var(--f-sm);
   }
   .id-cluster.shell-id .id-clock {
     font-family: var(--font-display);
-    color: var(--t-text);
-    font-size: var(--f-md);
-    letter-spacing: 0.06em;
-    margin-left: 0;
+    color: var(--t-accent);
+    font-size: var(--f-sm);
+    letter-spacing: 0.02em;
+    background: var(--t-glass);
+    padding: 4px 7px 3px;
+    border-radius: var(--r-sm);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.7);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--t-accent) 45%, transparent);
+    margin-left: var(--s-1);
   }
-  .id-cluster.shell-id .id-sep { color: var(--t-border-hi); }
+  .id-cluster.shell-id .id-sep { display: none !important; }
+
+  /* Phones and narrow tablets: identity + levels toggle / five equal menus /
+     monitor keys (scrolls sideways rather than widening the page). */
+  @media (max-width: 900px) {
+    body { height: auto; overflow: auto; }
+    #shell-frame { flex: none; height: calc(100vh - 96px); }
+    #shell-bar { padding: 0 var(--s-2); gap: 0; }
+    .shell-nav { width: 100%; }
+    .id-cluster.shell-id { flex: 1 0 100%; justify-content: flex-start; border-right: none; min-height: 40px; margin: 0; padding: 0 var(--s-1); }
+    .id-cluster.shell-id .id-clock { margin-left: auto; }
+    .shell-nav > .nav-group { flex: 1 1 0; justify-content: center; }
+    .shell-nav > .nav-group > .nav-label {
+      justify-content: center; width: 100%;
+      font-size: var(--f-base);
+      min-height: 42px; padding: 0 2px; white-space: nowrap;
+    }
+    .nav-group > .nav-label::after { display: none; }
+    .nav-drop { min-width: 190px; }
+    .nav-drop a { min-height: 44px; }
+    /* Right-hand menus open leftwards so they stay on screen. */
+    .shell-nav > .nav-group:nth-of-type(n+4) > .nav-drop { left: auto; right: 0; }
+    .shell-pcm {
+      flex: 1 0 100%; min-width: 0; margin-left: 0; padding: 6px 0 8px;
+      border-top: 1px solid var(--t-border);
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .shell-pcm::-webkit-scrollbar { display: none; }
+    .shell-pcm .rb { flex-shrink: 0; min-height: 36px; }
+    .shell-pcm input[type="range"] { flex-shrink: 0; width: 64px; }
+    #shell-bars { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); padding: 6px var(--s-2) 8px; }
+  }
 </style>
 </head><body>
 <div id="shell-bar">
@@ -353,11 +324,14 @@
       <input id="vol-slider" type="range" min="0" max="100" value="50" aria-label="MP3 stream volume" oninput="setVolume(this.value)">
       <button id="ws-btn" class="rb rb-caps rb-sm" onclick="toggleWS()"><span class="icon icon-play"></span> PCM</button>
       <input id="ws-vol" type="range" min="0" max="100" value="50" aria-label="PCM stream volume" oninput="setWSVol(this.value)">
+      <span class="pcm-sep"></span>
       <button id="mic-btn" type="button" class="rb rb-caps rb-sm" title="Hold to talk (or hold Space)"><span class="icon icon-mic"></span> MIC</button>
       <button id="as1-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('as1-btn')" title="Monitor AllStar 1 in the PCM stream" style="display:none">AS1</button>
       <button id="as2-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('as2-btn')" title="Monitor AllStar 2 in the PCM stream" style="display:none">AS2</button>
       <button id="sdr1-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('sdr1-btn')" title="Monitor SDR1 in the PCM stream" style="display:none">SDR1</button>
       <button id="sdr2-btn" class="rb rb-caps rb-sm" onclick="togglePcmTap('sdr2-btn')" title="Monitor SDR2 in the PCM stream" style="display:none">SDR2</button>
+      <span class="pcm-sep"></span>
+      <button id="lvl-toggle" type="button" class="rb rb-sm" aria-pressed="true" aria-controls="shell-bars" title="Show or hide the level meters" onclick="toggleLevels()">Levels</button>
     </span>
   </div>
 </div>
@@ -365,6 +339,23 @@
 <iframe id="shell-frame" name="content" title="Page content"></iframe>
 <script src="/pages/common.js"></script>
 <script>
+// Level strip visibility — a per-browser preference. Phones start hidden
+// (the strip would push the page below the fold); desktops start shown.
+function _lvlApply(show) {
+  document.body.classList.toggle('levels-hidden', !show);
+  var b = document.getElementById('lvl-toggle');
+  if (b) b.setAttribute('aria-pressed', show ? 'true' : 'false');
+}
+function toggleLevels() {
+  var show = document.body.classList.contains('levels-hidden');
+  _lvlApply(show);
+  try { localStorage.setItem('rg.levels', show ? '1' : '0'); } catch (e) {}
+}
+(function() {
+  var pref = null;
+  try { pref = localStorage.getItem('rg.levels'); } catch (e) {}
+  _lvlApply(pref === null ? !window.matchMedia('(max-width: 900px)').matches : pref === '1');
+})();
 
 function setActive(el) {
   document.querySelectorAll('.shell-nav a').forEach(function(a){ a.classList.remove('active'); });

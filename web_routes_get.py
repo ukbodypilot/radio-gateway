@@ -97,7 +97,8 @@ def handle_theme(handler, parent):
     # Theme config JSON — used by static HTML pages
     t = parent._get_theme()
     gw_name = str(getattr(parent.config, 'GATEWAY_NAME', '') or '').strip()
-    data = {**t, 'gateway_name': gw_name}
+    theme = str(parent.config.WEB_THEME).lower().strip()
+    data = {**t, 'gateway_name': gw_name, 'theme': theme if theme in parent.THEMES else 'grey'}
     try:
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')
@@ -465,7 +466,14 @@ def handle_d75status(handler, parent):
             data['d75_enabled'] = True
             data['connected'] = True
             data['tcp_connected'] = True
-            data['serial_connected'] = True
+            # The link being up says nothing about the radio. The endpoint
+            # only reports serial_connected/transmitting while it has a serial
+            # session with the D75, so default both to False: a powered-off
+            # radio used to show "Serial connected" and, with `transmitting`
+            # missing, the page's classList.toggle(cls, undefined) flipped the
+            # band windows red on every poll.
+            data['serial_connected'] = False
+            data['transmitting'] = False
             data['d75_mode'] = 'link_endpoint'
             data['service_running'] = True
             data['status_detail'] = ''

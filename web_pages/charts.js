@@ -133,7 +133,7 @@
     }
     st.points = points;
     st.fmt = opts.fmt || function (v) { return String(Math.round(v * 10) / 10); };
-    el.style.color = opts.color || 'var(--t-accent)';
+    el.style.color = opts.color || 'var(--t-text-dim)';
     if (!points || points.length < 2) {
       st.svg.innerHTML = '';
       el.classList.add('rgc-empty');

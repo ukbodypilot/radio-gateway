@@ -19,9 +19,8 @@
   color: var(--t-text-dim);
   cursor: pointer;
   font-family: inherit;
-  font-size: var(--f-xs);
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  font-size: var(--f-sm);
+  font-weight: 500;
   margin-bottom: -1px;
 }
 .panel-tab:hover  { color: var(--t-text); background: var(--t-btn); border-color: var(--t-border); }
@@ -60,36 +59,35 @@
 }
 a.chip {
   display: flex; align-items: center; gap: var(--s-2);
+  min-height: 40px;
   padding: var(--s-2) var(--s-3);
-  background: var(--t-btn);
+  background: var(--t-well);
   border: 1px solid var(--t-border);
   border-radius: var(--r-sm);
   color: var(--t-text);
-  font-size: var(--f-sm);
+  font-size: var(--f-base);
   text-decoration: none;
   transition: border-color 0.12s, background 0.12s;
 }
 a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); text-decoration: none; }
 .chip .chip-dot {
-  width: 7px; height: 7px; border-radius: 50%;
+  width: 8px; height: 8px; border-radius: 50%;
   background: var(--t-text-mute);
   flex-shrink: 0;
 }
-.chip.ok   .chip-dot { background: var(--t-ok);   box-shadow: 0 0 6px rgba(93,196,122,0.5); }
-.chip.warn .chip-dot { background: var(--t-warn); box-shadow: 0 0 6px rgba(232,157,60,0.5); }
-.chip.err  .chip-dot { background: var(--t-err);  box-shadow: 0 0 6px rgba(224,72,72,0.5); }
+.chip.ok   .chip-dot { background: var(--t-ok);   box-shadow: 0 0 6px color-mix(in srgb, var(--t-ok) 60%, transparent); }
+.chip.warn .chip-dot { background: var(--t-warn); box-shadow: 0 0 6px color-mix(in srgb, var(--t-warn) 60%, transparent); }
+.chip.err  .chip-dot { background: var(--t-err);  box-shadow: 0 0 6px color-mix(in srgb, var(--t-err) 60%, transparent); }
 .chip.live .chip-dot { animation: heartbeat 1.4s ease-in-out infinite; }
 .chip .chip-name {
-  color: var(--t-text-dim);
-  font-size: var(--f-xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: var(--t-text);
+  font-size: var(--f-base);
   font-weight: 600;
 }
 .chip .chip-val {
   margin-left: auto;
-  font-size: var(--f-xs);
-  color: var(--t-text);
+  font-size: var(--f-sm);
+  color: var(--t-text-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -149,7 +147,7 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
   transition: width 220ms cubic-bezier(.06, .9, .25, 1);
 }
 /* Tone overrides — fixed colour regardless of level (e.g. RAM as accent). */
-.bar.bar-rx.tone-accent, .bar.bar-tx.tone-accent { background: var(--t-accent); }
+.bar.bar-rx.tone-accent, .bar.bar-tx.tone-accent { background: var(--t-text-dim); }
 .bar.bar-rx.tone-warn,   .bar.bar-tx.tone-warn   { background: var(--t-warn); }
 /* Legacy whole-bar colours — kept for non-sysBar callers. */
 .bar.warn   { background:var(--t-warn); }
@@ -184,14 +182,14 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
    current page is visible and its siblings are one click away. ── */
 .dash-tabs { display:flex; gap:2px; border-bottom:1px solid var(--t-border); margin-bottom:var(--s-3); overflow-x:auto; scrollbar-width:none; }
 .dash-tabs a {
-  padding:var(--s-1) var(--s-4); color:var(--t-text-dim); white-space:nowrap;
-  font-size:var(--f-xs); font-weight:600; letter-spacing:0.08em; text-transform:uppercase;
+  padding:var(--s-2) var(--s-4); color:var(--t-text-dim); white-space:nowrap;
+  font-size:var(--f-base); font-weight:500;
   border-bottom:2px solid transparent; margin-bottom:-1px;
 }
 .dash-tabs a:hover { color:var(--t-text); text-decoration:none; }
 .dash-tabs a.active { color:var(--t-accent); border-bottom-color:var(--t-accent); }
 .dash-tabs + .panel { margin-top:0; }
-@media (max-width:480px) { .dash-tabs a { flex:1; text-align:center; padding:var(--s-2) var(--s-1); letter-spacing:0.04em; } }
+@media (max-width:480px) { .dash-tabs a { flex:1; text-align:center; padding:var(--s-2) var(--s-1); letter-spacing: 0.02em; } }
 
 /* System panel: wider cells so two-value readouts (Disk I/O, Net) fit
    without their halves colliding. */
@@ -202,7 +200,7 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
 .link-body { display:flex; gap:var(--s-3); align-items:flex-start; }
 .link-ptt  { width:80px; height:50px; font-size:var(--f-sm); border:1px solid var(--t-border);
              border-radius:var(--r-sm); background:var(--t-btn); color:var(--t-text); cursor:pointer; }
-.link-ptt.on { background:var(--t-btn-active); border-color:var(--t-accent); color:var(--t-accent); }
+.link-ptt.on { background:var(--t-err); border-color:var(--t-err); color:#fff; }
 .link-col  { flex:1; display:flex; flex-direction:column; gap:var(--s-1); }
 .link-row  { display:flex; align-items:center; gap:var(--s-2); }
 .link-label{ color:var(--t-text-dim); width:2em; text-align:right; font-size:var(--f-xs); }
@@ -230,7 +228,7 @@ a.chip:hover { border-color: var(--t-border-hi); background: var(--t-panel-hi); 
   padding:var(--s-1) var(--s-3); margin:2px;
   border:1px solid var(--t-border); border-radius:var(--r-sm);
   background:var(--t-btn); color:var(--t-text);
-  cursor:pointer; font-family:inherit; font-size:var(--f-xs);
+  cursor:pointer; font-family:inherit; font-size:var(--f-sm); min-height:var(--h-ctl-sm);
 }
 .ctrl-btn:hover  { background:var(--t-btn-hover); border-color:var(--t-border-hi); }
 .ctrl-btn:active { background:var(--t-btn-active); }
@@ -275,7 +273,7 @@ textarea.ctrl-input { width:100%; box-sizing:border-box; padding:var(--s-2); res
   gap:2px; height:42px; padding:2px var(--s-1); overflow:hidden; margin:0;
 }
 .pb-key  { font-weight:700; font-size:var(--f-xs); line-height:1; }
-.pb-name { font-size:9px; color:var(--t-text-dim); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1; }
+.pb-name { font-size: 11px; color:var(--t-text-dim); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1; }
 .smart-row { display:flex; gap:3px; margin-top:var(--s-2); }
 .smart-row .ctrl-btn { flex:1; margin:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; height:42px; overflow:hidden; }
 
@@ -290,16 +288,16 @@ details.tx-opts .tx-opts-body { display:flex; flex-direction:column; gap:var(--s
 /* ── Overview: trend tiles + activity timeline ── */
 .trend-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:var(--s-2);
               margin-top:var(--s-3); padding-top:var(--s-3); border-top:1px solid var(--t-border); }
-.trend { background:var(--t-btn); border:1px solid var(--t-border); border-radius:var(--r-sm); padding:var(--s-2) var(--s-2) 0; overflow:hidden; }
+.trend { background:var(--t-well); border:1px solid #0d0f10; border-radius:var(--r-sm); padding:var(--s-2) var(--s-2) 0; overflow:hidden; }
 .trend-head { display:flex; justify-content:space-between; align-items:baseline; gap:var(--s-2); padding:0 var(--s-1); }
-.trend-name { color:var(--t-text-dim); font-size:var(--f-xs); font-weight:600; letter-spacing:0.06em; text-transform:uppercase; }
-.trend-val  { font-size:var(--f-base); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.trend-name { color:var(--t-text-dim); font-size:var(--f-sm); font-weight:500; }
+.trend-val  { font-size:var(--f-md); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .trend .rgc-spark { margin:var(--s-1) calc(-1 * var(--s-2)) 0; }
 .act-row { display:grid; grid-template-columns:7.5em minmax(0,1fr) 6.5em; gap:var(--s-2); align-items:center; margin:3px 0; }
-.act-name { color:var(--t-text); font-size:var(--f-xs); font-weight:600; letter-spacing:0.04em; text-align:right;
+.act-name { color:var(--t-text); font-size:var(--f-sm); font-weight:600; text-align:right;
             overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .act-sum  { color:var(--t-text-dim); font-size:var(--f-xs); font-variant-numeric:tabular-nums; white-space:nowrap; }
-.act-group { color:var(--t-text-mute); font-size:10px; letter-spacing:0.1em; text-transform:uppercase; margin:var(--s-2) 0 2px; }
+.act-group { color:var(--t-text-dim); font-size:var(--f-sm); margin:var(--s-3) 0 var(--s-1); }
 .act-group:first-child { margin-top:0; }
 .act-axis { margin-left:calc(7.5em + var(--s-2)); margin-right:calc(6.5em + var(--s-2)); }
 .act-legend { display:flex; flex-wrap:wrap; gap:var(--s-1) var(--s-4); margin-top:var(--s-2); color:var(--t-text-dim); font-size:var(--f-xs); }
@@ -311,14 +309,14 @@ details.tx-opts .tx-opts-body { display:flex; flex-direction:column; gap:var(--s
 }
 
 /* ── Endpoint cards: gauges + history line ── */
-.mini-bar { display:inline-block; width:44px; height:5px; background:#05080b; border:1px solid var(--t-border);
+.mini-bar { display:inline-block; width:44px; height:5px; background:var(--t-well); border:1px solid var(--t-border);
             border-radius:var(--r-sm); overflow:hidden; flex-shrink:0; }
 .mini-bar i { display:block; height:100%; background:var(--t-ok); }
 .mini-bar i.yellow { background:var(--t-warn); }
 .mini-bar i.red    { background:var(--t-err); }
 .ep-hist { display:grid; grid-template-columns:auto minmax(0,1fr) 5.5em auto 150px 4.5em; gap:var(--s-2); align-items:center;
            margin-top:var(--s-2); }
-.ep-hist-lbl { color:var(--t-text-dim); font-size:var(--f-xs); letter-spacing:0.06em; text-transform:uppercase; }
+.ep-hist-lbl { color:var(--t-text-dim); font-size:var(--f-xs); letter-spacing: 0.02em; text-transform: none; }
 .ep-hist-sum { color:var(--t-text-dim); font-size:var(--f-xs); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .ep-hist-strip.rgc-strip { height:12px; }
 .ep-hist-ping.rgc-spark { height:20px; }
@@ -328,6 +326,37 @@ details.tx-opts .tx-opts-body { display:flex; flex-direction:column; gap:var(--s
 
 /* ── Services: ADS-B trends, loop retention gauge ── */
 .adsb-trends { display:grid; grid-template-columns:1fr 1fr; gap:var(--s-3); margin-top:var(--s-2); }
-.adsb-cap { display:flex; justify-content:space-between; color:var(--t-text-dim); font-size:10px; letter-spacing:0.06em; text-transform:uppercase; }
+.adsb-cap { display:flex; justify-content:space-between; color:var(--t-text-dim); font-size: 11px; letter-spacing: 0.02em; text-transform: none; }
 .adsb-cap span + span { color:var(--t-text-mute); text-transform:none; letter-spacing:0; }
 .adsb-trends .rgc-spark { height:32px; }
+
+/* Overview: a description beside a panel title, ahead of its controls. */
+.panel-head .act-meta { margin-right: auto; }
+@media (max-width: 700px) { .panel-head .act-meta { display: none; } }
+#status .st-item .led { margin-right: 2px; }
+#status .st-row { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+#status .st-label { min-width: 8.5em; }
+#status .st-item { overflow: hidden; text-overflow: ellipsis; }
+.chip-grid { grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); }
+.chip .chip-name { white-space: nowrap; }
+@media (max-width: 600px) {
+  .trend-grid { grid-template-columns: 1fr 1fr; }
+  .chip-grid { grid-template-columns: 1fr 1fr; }
+  a.chip { flex-wrap: wrap; row-gap: 0; }
+  .chip .chip-val { margin-left: 16px; width: 100%; }
+}
+
+/* Soundboard pads: the sound's name is the label; the slot number (also
+   its keyboard key) is a small tag in the corner. Playing = on air (red). */
+.pb-grid { grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:4px; }
+.pb-grid .ctrl-btn { position:relative; height:52px; align-items:flex-start; justify-content:flex-end; padding:var(--s-1) var(--s-2) 6px; }
+.pb-grid .pb-key  { position:absolute; top:4px; right:6px; font-size:11px; font-weight:600; color:var(--t-text-mute); }
+.pb-grid .pb-name { font-size:var(--f-base); font-weight:600; color:var(--t-text); line-height:1.1; }
+.pb-grid .ctrl-btn.dim .pb-name { color:var(--t-text-mute); font-weight:400; }
+.pb-grid .ctrl-btn.muted, .bgm-row .ctrl-btn.muted { background:color-mix(in srgb,var(--t-err) 22%,var(--t-panel)); border-color:var(--t-err); color:#fff; }
+.pb-grid .ctrl-btn.muted .pb-key { color:#ffd3cd; }
+.pb-controls .ctrl-btn { height:var(--h-ctl); }
+.bgm-row .pb-key, .smart-row .pb-key { font-size:var(--f-base); font-weight:600; }
+.bgm-row .pb-name, .smart-row .pb-name { font-size:var(--f-sm); }
+.bgm-row button { height:48px; }
+.smart-row .ctrl-btn { height:48px; }

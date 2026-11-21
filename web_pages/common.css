@@ -2,17 +2,52 @@
    --t-* variables are referenced across every page; change values here
    to restyle the whole UI. Do not rename without a sweep across all pages.
 
+   ─── Design: "rig front panel" ──────────────────────────────────────────
+   The UI borrows the vocabulary of the radios it drives: a graphite
+   chassis, silkscreened labels, backlit amber readouts and the two LEDs
+   every transceiver has. Colour therefore carries meaning, not mood:
+     --t-ok   busy/RX LED green   receiving, squelch open, healthy
+     --t-err  TX LED red          transmitting, recording, fault
+     --t-accent backlight amber   readouts, the selected/lit control, focus
+     --t-warn sodium yellow       needs attention, ducked, degraded
+   Spend boldness on the readouts (.freq-display, .hero-num, .seg); keep
+   everything else flat and quiet. Sentence case everywhere — no tracked
+   all-caps labels.
+
    ─── Live-signal vocabulary (pick exactly one per element) ───────────────
    Loudest → quietest; never stack two levels on the same element.
-     1. .pulse + --t-err        TX, recording, critical-live (heartbeat red)
-     2. .pulse + --t-accent     RX, listening, active-live (heartbeat cyan)
-     3. .rb-active / cyan border  selected, focused, current tab
+     1. .pulse + --t-err        TX, recording, critical-live
+     2. .pulse + --t-ok         RX, listening, active-live
+     3. .rb-active (lit amber)  selected, focused, current tab
      4. .flash (cell-flash)     value just changed (one-shot 600ms)
-     5. .cyan text              clickable / interactive / link
-   Panel-level status strips should use the .toast accent-edge pattern:
+     5. .cyan text              clickable / interactive (now amber; name kept)
+   Panel-level status strips use the .toast accent-edge pattern:
      border-left: 3px solid var(--t-accent|--t-ok|--t-warn|--t-err).
    ──────────────────────────────────────────────────────────────────────── */
 
+/* Text face — Barlow Semi Condensed (OFL, fonts/Barlow-OFL.txt). A DIN-like
+   instrument face: narrow enough for dense panels, legible at 12px. */
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/pages/fonts/BarlowSemiCondensed-400.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/pages/fonts/BarlowSemiCondensed-500.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/pages/fonts/BarlowSemiCondensed-600.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 700; font-style: normal; font-display: swap;
+  src: url('/pages/fonts/BarlowSemiCondensed-700.woff2') format('woff2'); }
+
+/* Readout face — DSEG7 seven-segment (OFL, fonts/DSEG-LICENSE.txt).
+   unicode-range limits it to digits, '.', '-', '/', ':' and space, so a
+   string like "446.700 MHz" draws the number in segments and the unit in
+   Barlow — no markup changes needed anywhere a readout already exists. */
+@font-face { font-family: 'Readout'; font-weight: 400; font-style: normal; font-display: block;
+  src: url('/pages/fonts/DSEG7Classic-Regular.woff2') format('woff2');
+  unicode-range: U+0020, U+002D-003A; }
+@font-face { font-family: 'Readout'; font-weight: 700; font-style: normal; font-display: block;
+  src: url('/pages/fonts/DSEG7Classic-Bold.woff2') format('woff2');
+  unicode-range: U+0020, U+002D-003A; }
+
+/* Logs and raw protocol text only. */
 @font-face {
   font-family: 'JetBrains Mono';
   src: url('/pages/fonts/JetBrainsMono.woff2') format('woff2-variations'),
@@ -22,54 +57,57 @@
   font-display: swap;
 }
 
-/* Display face — hero numerics only (frequency, clock, big metrics).
-   Drop a woff2 at /pages/fonts/display.woff2 to override the stack;
-   otherwise falls back to narrower/geometric options, then JBM. */
-@font-face {
-  font-family: 'Gateway Display';
-  src: url('/pages/fonts/display.woff2') format('woff2');
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
-  /* Palette — phosphor/instrument-panel: deep base, hairline borders,
-     one bright accent (cyan) + green/red/amber signal colors. */
-  --t-bg:         #0b1014;
-  --t-panel:      #121820;
-  --t-panel-hi:   #1a2230;
-  --t-border:     #1e2a38;
-  --t-border-hi:  #2c3e52;
-  --t-accent:     #4fd6e6;  /* live/active/focused */
-  --t-text:       #d6dee6;
-  --t-text-dim:   #7a8a99;  /* labels, secondary */
-  --t-text-mute:  #6b7a8a;  /* disabled, tertiary (WCAG AA on --t-bg) */
-  --t-ok:         #5dc47a;  /* rx, success */
-  --t-warn:       #e89d3c;
-  --t-err:        #e04848;  /* tx, error */
+  /* Chassis + faceplate */
+  --t-bg:         #1a1d20;  /* chassis */
+  --t-panel:      #23272b;  /* faceplate */
+  --t-panel-hi:   #2c3136;  /* raised / hover */
+  --t-border:     #343a40;  /* panel seam */
+  --t-border-hi:  #4b545c;
+  --t-glass:      #14110b;  /* smoked readout window */
+  --t-well:       #131517;  /* recessed: meter tracks, inputs */
 
-  /* Desaturated variants — for dense log lines, subtle tints.
-     Reserve saturated --t-err/--t-warn for alerts that need to grab the eye. */
-  --t-ok-soft:    #7eb28c;
-  --t-warn-soft:  #c99566;
-  --t-err-soft:   #c47373;
+  /* Silkscreen */
+  --t-text:       #ece7dd;
+  --t-text-dim:   #a8a196;  /* labels, secondary */
+  --t-text-mute:  #847e74;  /* disabled, tertiary (AA on --t-panel at 13px+) */
+
+  /* Lamps */
+  --t-accent:     #ffb23e;  /* backlight amber: readouts, lit control, focus */
+  --t-ok:         #63d46f;  /* RX / busy LED */
+  --t-warn:       #ecd651;  /* attention */
+  --t-err:        #ff5446;  /* TX LED, fault */
+
+  /* Desaturated variants — dense log lines, subtle tints. */
+  --t-ok-soft:    #8dbf8f;
+  --t-warn-soft:  #cbbd78;
+  --t-err-soft:   #d68377;
 
   /* Legacy button aliases — widely referenced across pages */
-  --t-btn:        #0e131a;
-  --t-btn-border: var(--t-border);
-  --t-btn-hover:  var(--t-panel-hi);
-  --t-btn-active: var(--t-border-hi);
+  --t-btn:        #2b3035;
+  --t-btn-border: #3e464d;
+  --t-btn-hover:  #343a40;
+  --t-btn-active: color-mix(in srgb, var(--t-accent) 16%, var(--t-panel));
   --t-checkbox:   var(--t-accent);
 
-  /* Scales — use only these steps; do not introduce new sizes */
+  /* Scales — use only these steps; do not introduce new sizes.
+     A condensed face sets ~15% narrower than the old mono, so the type
+     steps are one notch larger at roughly the same line width. */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px;  --s-4: 16px;  --s-5: 24px;  --s-6: 32px;
-  --f-xs: 11px; --f-sm: 12px; --f-base: 13px; --f-md: 15px; --f-lg: 18px; --f-xl: 24px;
-  --r-sm: 2px; --r-md: 4px;
+  --f-xs: 12px; --f-sm: 13px; --f-base: 14px; --f-md: 16px; --f-lg: 20px; --f-xl: 28px;
+  --r-sm: 3px; --r-md: 6px;
 
-  /* Font stacks — base monospace + display for hero numerics. */
-  --font-base:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-display: 'Gateway Display', 'Chakra Petch', 'Orbitron', 'Rajdhani', 'Teko', var(--font-base);
+  /* Control heights — one place to tune ergonomics. */
+  --h-ctl:    32px;
+  --h-ctl-sm: 26px;
+
+  --font-base:    'Barlow Semi Condensed', 'Roboto Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Readout', var(--font-base);
+}
+/* Touch screens: fat-finger targets. */
+@media (pointer: coarse) {
+  :root { --h-ctl: 40px; --h-ctl-sm: 34px; }
 }
 
 * { box-sizing: border-box; }
@@ -77,41 +115,22 @@
 body {
   font-family: var(--font-base);
   font-size: var(--f-base);
-  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
   color: var(--t-text);
   margin: 0;
   padding: var(--s-3) var(--s-4) var(--s-4);
   -webkit-font-smoothing: antialiased;
-  /* Atmosphere — subtle vignette from phosphor-lit panel centre to dim edges.
-     Fixed attachment so scrolling doesn't drag the highlight. */
-  background:
-    radial-gradient(ellipse 120% 80% at 50% -10%, #0d1520 0%, #080b0e 70%, #05080a 100%);
-  background-attachment: fixed;
-  background-color: var(--t-bg);
+  background: var(--t-bg);
   min-height: 100vh;
 }
 
-/* 2% noise grain — fixed overlay, below content, above the gradient.
-   Fractal-noise SVG avoids an HTTP request. pointer-events:none so it
-   never eats clicks. */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.03;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.85  0 0 0 0 0.87  0 0 0 0 0.9  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-}
-body > * { position: relative; z-index: 1; }
-
-::selection { background: var(--t-accent); color: var(--t-bg); }
-:focus-visible { outline: 1px solid var(--t-accent); outline-offset: 2px; }
+::selection { background: var(--t-accent); color: var(--t-glass); }
+:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
 
 h1, h2, h3 {
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   margin: 0 0 var(--s-3);
   color: var(--t-text);
 }
@@ -120,41 +139,50 @@ h2 { font-size: var(--f-md); }
 h3 { font-size: var(--f-sm); font-weight: 500; color: var(--t-text-dim); margin: 0 0 var(--s-2); }
 
 a { color: var(--t-accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-/* Reusable buttons */
+code, pre, kbd, samp, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+
+/* Reusable buttons — raised rig keys. Three tiers:
+     .rb            secondary (most buttons)
+     .rb-primary    the one action a panel exists for (filled amber)
+     .rb-danger     destructive / keys the transmitter; keep it apart from
+                    its safe neighbour, never adjacent to the primary */
 .rb {
   font: inherit;
   font-size: var(--f-sm);
+  font-weight: 500;
+  min-height: var(--h-ctl-sm);
   background: var(--t-btn);
   border: 1px solid var(--t-btn-border);
+  border-bottom-color: color-mix(in srgb, var(--t-btn-border) 60%, #000);
   color: var(--t-text);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   padding: var(--s-1) var(--s-3);
   cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
   transition: border-color 0.12s, background 0.12s, color 0.12s;
 }
 .rb:hover { background: var(--t-btn-hover); border-color: var(--t-border-hi); }
-.rb-sm { padding: 3px var(--s-2); font-size: var(--f-xs); }
-/* .rb-caps — small uppercase button variant used across the shell/PCM cluster,
-   mode selectors, etc. Pair with .rb (base) and optionally .rb-sm for size.
-   Example: <button class="rb rb-caps">PCM</button>. */
-.rb-caps {
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-}
-.rb-active {
+.rb:active { box-shadow: inset 0 1px 2px rgba(0,0,0,0.4); transform: translateY(1px); }
+.rb-sm { padding: 2px var(--s-2); font-size: var(--f-xs); min-height: 0; }
+/* .rb-caps — historically small uppercase; now a semibold short label.
+   Kept as a class so existing markup keeps its weight. */
+.rb-caps { font-weight: 600; letter-spacing: 0.02em; }
+/* Lit key: amber backlight. */
+.rb-active,
+.rb.rb-active {
   background: var(--t-btn-active);
   border-color: var(--t-accent);
   color: var(--t-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 25%, transparent);
 }
-.rb.rb-danger  { color: var(--t-err); border-color: var(--t-err); }
-.rb.rb-danger:hover { background: var(--t-err); color: var(--t-bg); border-color: var(--t-err); }
-.rb.rb-warn    { color: var(--t-warn); border-color: var(--t-warn); }
-.rb.rb-warn:hover   { background: var(--t-warn); color: var(--t-bg); border-color: var(--t-warn); }
-.rb.rb-primary { color: var(--t-accent); border-color: var(--t-accent); font-weight: 600; }
-.rb.rb-primary:hover { background: var(--t-accent); color: var(--t-bg); border-color: var(--t-accent); }
+.rb.rb-danger  { color: var(--t-err); border-color: color-mix(in srgb, var(--t-err) 55%, var(--t-btn-border)); }
+.rb.rb-danger:hover { background: var(--t-err); color: #1a0c0a; border-color: var(--t-err); }
+.rb.rb-warn    { color: var(--t-warn); border-color: color-mix(in srgb, var(--t-warn) 55%, var(--t-btn-border)); }
+.rb.rb-warn:hover   { background: var(--t-warn); color: #1a170a; border-color: var(--t-warn); }
+.rb.rb-primary { background: var(--t-accent); color: #1f1504; border-color: var(--t-accent); font-weight: 600; }
+.rb.rb-primary:hover { background: color-mix(in srgb, var(--t-accent) 85%, #fff); border-color: var(--t-accent); }
 
 /* Status text colors */
 .green  { color: var(--t-ok); }
@@ -163,107 +191,91 @@ a:hover { text-decoration: underline; }
 .cyan   { color: var(--t-accent); }
 .white  { color: var(--t-text); }
 /* Dim = secondary text (labels, timestamps, inactive).
-   For "faded out" use .dim-op (opacity) instead — keeps semantic meaning
-   but shows an element is disabled/ghosted. */
+   For "faded out" use .dim-op (opacity) instead. */
 .dim    { color: var(--t-text-dim); }
 .mute   { color: var(--t-text-mute); }
 .dim-op { opacity: 0.4; }
 
-/* Status grid rows (key/value readouts) */
-.st-row  { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s-2) var(--s-4); margin: var(--s-2) 0; }
-.st-item { display: flex; gap: var(--s-2); align-items: center; white-space: nowrap; font-size: var(--f-sm); }
-/* Full-width row for long values (URLs, server addresses) that shouldn't share a row. */
+/* Status grid rows (key/value readouts) — label above value reads faster
+   than "Label: value" in a ragged grid, and survives narrow screens. */
+.st-row  { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-3) var(--s-4); margin: var(--s-2) 0; }
+.st-item { display: flex; gap: var(--s-2); align-items: baseline; white-space: nowrap; font-size: var(--f-base); min-width: 0; }
 .st-item-wide { grid-column: 1 / -1; white-space: normal; word-break: break-all; }
-.st-label{ color: var(--t-text-dim); display: inline-block; min-width: 5.5em; text-align: right; margin-right: var(--s-4); flex-shrink: 0; }
-/* Suffix labels: any .st-label after the first one in an .st-item is an inline hint,
-   not a leading key — no min-width, no right-align, no trailing margin. */
-.st-item .st-label ~ .st-label { min-width: 0; text-align: left; margin-right: 0; }
-.st-val  { font-weight: 500; }
+.st-label{ color: var(--t-text-dim); display: inline-block; min-width: 5.5em; font-size: var(--f-sm); margin-right: var(--s-1); flex-shrink: 0; }
+.st-item .st-label ~ .st-label { min-width: 0; margin-right: 0; }
+.st-val  { font-weight: 600; }
 
 /* Level bars */
-.bar { display: inline-block; height: 14px; border-radius: var(--r-sm); min-width: 4px; vertical-align: middle; }
+.bar { display: inline-block; height: 10px; border-radius: 1px; min-width: 4px; vertical-align: middle; }
 .bar-pct { display: inline-block; width: 3.5em; text-align: right; color: var(--t-text-dim); font-size: var(--f-xs); }
 .bar-rx { background: var(--t-ok); }
 .bar-tx { background: var(--t-err); }
 
-/* Panels — reusable card container */
+/* Panels — faceplate sections. A top highlight + bottom shade reads as a
+   machined plate rather than a floating card; no drop shadow. */
 .panel {
   background: var(--t-panel);
   border: 1px solid var(--t-border);
+  border-top-color: color-mix(in srgb, var(--t-border) 70%, #fff 8%);
   border-radius: var(--r-md);
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-3) var(--s-4) var(--s-4);
   margin-top: var(--s-3);
 }
 .panel-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: baseline;
   gap: var(--s-3);
-  margin-bottom: var(--s-2);
+  margin-bottom: var(--s-3);
 }
 .panel-title {
   margin: 0;
-  font-size: var(--f-xs);
+  font-size: var(--f-md);
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--t-text-dim);
+  letter-spacing: 0.01em;
+  color: var(--t-text);
 }
 .panel-meta {
-  font-size: var(--f-xs);
+  font-size: var(--f-sm);
   color: var(--t-text-dim);
-  letter-spacing: 0.04em;
 }
 
 /* Hero — the single "what you came here for" block on a page.
-   Use sparingly: at most one per page. Stronger border, subtle top-edge
-   accent glow, and a panel-hi gradient make it read as "primary" without
-   shouting. Everything else is .panel. */
+   At most one per page. Reads as the radio's display window: smoked
+   glass, amber type. */
 .hero {
   position: relative;
-  background:
-    linear-gradient(180deg, var(--t-panel-hi) 0%, var(--t-panel) 40%);
-  border: 1px solid var(--t-border-hi);
+  background: var(--t-glass);
+  border: 1px solid #000;
   border-radius: var(--r-md);
-  padding: var(--s-4) var(--s-4);
+  padding: var(--s-4);
   margin-top: var(--s-3);
   box-shadow:
-    inset 0 1px 0 rgba(79, 214, 230, 0.06),
-    0 2px 8px rgba(0,0,0,0.25);
-}
-.hero::before {
-  content: '';
-  position: absolute;
-  top: -1px; left: var(--s-4); right: var(--s-4);
-  height: 1px;
-  background: linear-gradient(90deg, transparent 0%, var(--t-accent) 50%, transparent 100%);
-  opacity: 0.5;
-  pointer-events: none;
+    inset 0 2px 8px rgba(0,0,0,0.6),
+    0 0 0 1px var(--t-border);
 }
 
-/* Form controls */
+/* Form controls — recessed wells */
 input, select, textarea, button { font-family: inherit; }
-/* Dark native widgets: scrollbars, select popups, date/time pickers. */
 :root { color-scheme: dark; }
-/* Baseline for text-like fields. :where() keeps specificity at zero, so any
-   page or class rule still wins — this only catches fields a page left
-   unstyled, which otherwise render as white browser-default boxes. */
+/* :where() keeps specificity at zero, so any page or class rule still wins. */
 :where(input:not([type="range"], [type="checkbox"], [type="radio"], [type="file"], [type="color"], [type="button"], [type="submit"]), select, textarea) {
-  background: var(--t-btn);
+  background: var(--t-well);
   color: var(--t-text);
   border: 1px solid var(--t-border);
   border-radius: var(--r-sm);
   padding: var(--s-1) var(--s-2);
-  font-size: var(--f-sm);
+  font-size: var(--f-base);
+  min-height: var(--h-ctl-sm);
 }
-:where(input, select, textarea):focus-visible { outline: none; border-color: var(--t-accent); }
+:where(input, select, textarea):focus-visible { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--t-accent) 25%, transparent); }
 :where(input, select, textarea)::placeholder { color: var(--t-text-mute); }
 :where(select) { max-width: 100%; }
 :where(button, select, summary, label[for], input[type="checkbox"], input[type="radio"]):not(:disabled) { cursor: pointer; }
-:where(button, input, select, textarea):disabled { opacity: 0.5; cursor: not-allowed; }
+:where(button, input, select, textarea):disabled { opacity: 0.45; cursor: not-allowed; }
 input[type="range"] { accent-color: var(--t-accent); }
-input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
-.tgl { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--f-sm); color: var(--t-text-dim); cursor: pointer; user-select: none; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); width: 16px; height: 16px; }
+.tgl { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--f-base); color: var(--t-text-dim); cursor: pointer; user-select: none; }
 
 /* Monochrome icon system — CSS mask approach lets us color glyphs via
    `color` inheritance, just like text. Usage: <span class="icon icon-mic"></span>.
@@ -293,124 +305,103 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
 .icon-signal  { --icon-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1 13h2v2H1v-2zm4-3h2v5H5v-5zm4-3h2v8H9V7zm4-4h2v12h-2V3z'/></svg>"); }
 .icon-close   { --icon-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M3.5 2.5l10 10-1 1-10-10 1-1zm10 0l-10 10-1-1 10-10 1 1z'/></svg>"); }
 
-/* Tags — short all-caps labels (CF, LAN, Band A, encoder mode).
-   Not a button, not a dot — a category marker. */
+
+/* Tags — short category markers (CF, LAN, Band A, encoder mode).
+   Not a button, not a dot. */
 .tag {
   display: inline-block;
   font-size: var(--f-xs);
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 1px var(--s-2);
-  border: 1px solid var(--t-border);
+  letter-spacing: 0.02em;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--t-border-hi);
   border-radius: var(--r-sm);
   color: var(--t-text-dim);
-  background: var(--t-btn);
-  line-height: 1.4;
+  background: transparent;
+  line-height: 1.6;
 }
-.tag.ok     { color: var(--t-ok);     border-color: var(--t-ok); }
-.tag.warn   { color: var(--t-warn);   border-color: var(--t-warn); }
-.tag.err    { color: var(--t-err);    border-color: var(--t-err); }
-.tag.accent { color: var(--t-accent); border-color: var(--t-accent); }
+.tag.ok     { color: var(--t-ok);     border-color: color-mix(in srgb, var(--t-ok) 50%, transparent); }
+.tag.warn   { color: var(--t-warn);   border-color: color-mix(in srgb, var(--t-warn) 50%, transparent); }
+.tag.err    { color: var(--t-err);    border-color: color-mix(in srgb, var(--t-err) 50%, transparent); }
+.tag.accent { color: var(--t-accent); border-color: color-mix(in srgb, var(--t-accent) 50%, transparent); }
 
-/* Metrics — label-over-value readouts. Use .metric-lg for hero numbers
-   (you want at most 2-3 of these on any page). */
+/* LED — the one status-dot primitive. <span class="led ok"></span> */
+.led {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--t-text-mute); flex-shrink: 0; vertical-align: 0.05em;
+}
+.led.ok   { background: var(--t-ok);   box-shadow: 0 0 6px color-mix(in srgb, var(--t-ok) 60%, transparent); }
+.led.warn { background: var(--t-warn); box-shadow: 0 0 6px color-mix(in srgb, var(--t-warn) 60%, transparent); }
+.led.err  { background: var(--t-err);  box-shadow: 0 0 6px color-mix(in srgb, var(--t-err) 60%, transparent); }
+.led.accent { background: var(--t-accent); box-shadow: 0 0 6px color-mix(in srgb, var(--t-accent) 60%, transparent); }
+
+/* Metrics — label-over-value readouts. .metric-lg for hero numbers
+   (at most 2-3 per page). */
 .metric {
   display: inline-flex;
   flex-direction: column;
   gap: 2px;
-  line-height: 1.1;
+  line-height: 1.15;
 }
 .metric .metric-label {
-  font-size: var(--f-xs);
+  font-size: var(--f-sm);
   color: var(--t-text-dim);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 .metric .metric-value {
-  font-size: var(--f-md);
-  font-weight: 500;
+  font-size: var(--f-lg);
+  font-weight: 600;
   color: var(--t-text);
-  font-variant-numeric: tabular-nums;
 }
 .metric-lg .metric-value {
-  font-size: var(--f-xl); font-weight: 600; color: var(--t-accent);
+  font-size: var(--f-xl); font-weight: 400; color: var(--t-accent);
   font-family: var(--font-display);
-  letter-spacing: 0.03em;
-  text-shadow: 0 0 18px rgba(79, 214, 230, 0.22);
 }
 
-/* Hero numeric type — apply display face + phosphor bloom anywhere a value
-   is meant to read as a primary readout. Pages opt in via these selectors
-   or the .phosphor utility. */
-.freq-display, .id-clock, .hero-num {
+/* Readouts — the one bold element. Seven-segment digits in backlit amber.
+   .seg is the opt-in utility; the legacy class names keep working. */
+.freq-display, .hero-num, .seg {
   font-family: var(--font-display);
-  letter-spacing: 0.03em;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--t-accent);
 }
+.id-clock { font-family: var(--font-display); letter-spacing: 0.04em; }
 .phosphor,
 .freq-display,
 .metric-lg .metric-value {
-  text-shadow: 0 0 18px rgba(79, 214, 230, 0.22);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--t-accent) 35%, transparent);
 }
-.phosphor-green { text-shadow: 0 0 14px rgba(93, 196, 122, 0.35); }
-.phosphor-amber { text-shadow: 0 0 14px rgba(232, 157, 60, 0.35); }
-.phosphor-red   { text-shadow: 0 0 14px rgba(224, 72, 72, 0.35); }
+.phosphor-green { text-shadow: 0 0 12px color-mix(in srgb, var(--t-ok) 40%, transparent); }
+.phosphor-amber { text-shadow: 0 0 12px color-mix(in srgb, var(--t-accent) 40%, transparent); }
+.phosphor-red   { text-shadow: 0 0 12px color-mix(in srgb, var(--t-err) 40%, transparent); }
 
-/* Empty state — for panels with no data yet.
-   Center a faint glyph + one-line hint. Don't use for error states.
-   A subtle scanning pulse + swept highlight keep the panel feeling *live*
-   rather than dead. Add .empty .empty-live to animate (opt-in). */
+/* Empty state — for panels with no data yet. Say what to do, not how it
+   feels. Don't use for error states. */
 .empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-5) var(--s-4);
-  color: var(--t-text-mute);
-  font-size: var(--f-sm);
+  color: var(--t-text-dim);
+  font-size: var(--f-base);
   text-align: center;
   position: relative;
   overflow: hidden;
 }
 .empty .empty-glyph { font-size: var(--f-xl); color: var(--t-text-mute); opacity: 0.6; }
-.empty .empty-hint  { font-size: var(--f-xs); color: var(--t-text-mute); }
+.empty .empty-hint  { font-size: var(--f-sm); color: var(--t-text-mute); }
 .empty.err .empty-glyph { color: var(--t-err); opacity: 1; }
-
-/* Scanning sweep — a thin accent line crosses the empty state every few
-   seconds, like a scope refresh. Lightweight; GPU-composited. */
-.empty.empty-live::before {
-  content: '';
-  position: absolute; inset: 0;
-  pointer-events: none;
-  background: linear-gradient(90deg,
-    transparent 0%,
-    rgba(79, 214, 230, 0.12) 48%,
-    rgba(79, 214, 230, 0.18) 50%,
-    rgba(79, 214, 230, 0.12) 52%,
-    transparent 100%);
-  transform: translateX(-100%);
-  animation: empty-sweep 3.8s ease-in-out infinite;
-}
-@keyframes empty-sweep {
-  0%   { transform: translateX(-100%); }
-  55%  { transform: translateX(100%); }
-  100% { transform: translateX(100%); }
-}
-.empty.empty-live .empty-glyph {
-  animation: empty-breath 2.6s ease-in-out infinite;
-}
+/* .empty-live: a slow breath on the glyph, nothing more. */
+.empty.empty-live .empty-glyph { animation: empty-breath 2.6s ease-in-out infinite; }
 @keyframes empty-breath {
   0%, 100% { opacity: 0.4; }
   50%      { opacity: 0.8; }
 }
 
-/* Identity — "which gateway am I looking at?" anchor.
-   .identity-strip = standalone block (use above iframe content).
-   .id-cluster     = compact inline (drop into an existing header bar). */
+/* Identity — "which gateway am I looking at?" anchor. */
 .identity-strip, .id-cluster {
-  font-size: var(--f-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--f-sm);
   color: var(--t-text-dim);
 }
 .identity-strip {
@@ -428,13 +419,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
   align-items: center;
   gap: var(--s-2);
 }
-.id-call  { color: var(--t-accent); font-weight: 700; }
-.id-site  { color: var(--t-text); }
-.id-clock { color: var(--t-text); font-variant-numeric: tabular-nums; }
+.id-call  { color: var(--t-text); font-weight: 700; letter-spacing: 0.06em; }
+.id-site  { color: var(--t-text-dim); }
+.id-clock { color: var(--t-accent); }
 .id-sep   { color: var(--t-text-mute); }
 .identity-strip .id-clock { margin-left: auto; }
 
-/* Toasts — restrained annunciator style: panel-bg + accent edge, no flat brand colors. */
+/* Toasts — annunciator style: panel-bg + lamp edge. */
 .toast-stack {
   position: fixed;
   top: var(--s-3);
@@ -446,15 +437,15 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
   gap: var(--s-1);
 }
 .toast {
-  background: var(--t-panel);
-  border: 1px solid var(--t-border);
+  background: var(--t-panel-hi);
+  border: 1px solid var(--t-border-hi);
   border-left: 3px solid var(--t-accent);
   border-radius: var(--r-sm);
   padding: var(--s-2) var(--s-3);
   color: var(--t-text);
-  font-size: var(--f-sm);
+  font-size: var(--f-base);
   cursor: pointer;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
   transition: opacity 0.4s;
   animation: toast-in 0.2s ease-out;
 }
@@ -464,13 +455,20 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
 .toast.fading  { opacity: 0; }
 @keyframes toast-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 
-/* Motion — slow heartbeat on live dots, quick flash on value changes.
+/* Motion — slow heartbeat on live lamps, quick flash on value changes.
    Opt-in: add .pulse / .flash where wanted, don't make it global. */
 @keyframes heartbeat { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 .pulse { animation: heartbeat 1.4s ease-in-out infinite; }
 
-@keyframes cell-flash { 0% { background: var(--t-accent); color: var(--t-bg); } 100% { background: transparent; color: inherit; } }
+@keyframes cell-flash { 0% { background: color-mix(in srgb, var(--t-accent) 40%, transparent); } 100% { background: transparent; } }
 .flash { animation: cell-flash 0.6s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+
+/* Scrollbars — thin, chassis-coloured. */
+* { scrollbar-width: thin; scrollbar-color: var(--t-border-hi) transparent; }
 
 /* ── Audio meters ──────────────────────────────────────────────────────
    Two tiers:
@@ -500,7 +498,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
       transparent calc(95% + 0.5px),
       transparent 100%
     ),
-    var(--t-bg);
+    var(--t-well);
 }
 
 /* Continuous color zones — the gradient is ANCHORED to the bar's full
@@ -675,7 +673,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
   content: 'collecting\2026'; position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: var(--t-text-mute); font-size: var(--f-xs);
 }
-.rgc-strip { height: 16px; background: #05080b; border: 1px solid var(--t-border); border-radius: var(--r-sm); overflow: hidden; }
+.rgc-strip { height: 16px; background: var(--t-well); border: 1px solid var(--t-border); border-radius: var(--r-sm); overflow: hidden; }
 .rgc-strip canvas { display: block; width: 100%; height: 100%; }
 .rgc-cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--t-text); opacity: 0.5; display: none; pointer-events: none; }
 .rgc-dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%;
@@ -686,7 +684,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); }
 .rgc-bar i { display: block; width: 100%; background: currentColor; opacity: 0.6; border-radius: 2px 2px 0 0; }
 .rgc-bar:hover i { opacity: 1; }
 .rgc-bar.sel i { opacity: 1; box-shadow: 0 0 0 1px var(--t-text); }
-.rgc-axis { position: relative; height: 16px; font-size: 10px; color: var(--t-text-mute); font-variant-numeric: tabular-nums; }
+.rgc-axis { position: relative; height: 16px; font-size: 11px; color: var(--t-text-mute); font-variant-numeric: tabular-nums; }
 .rgc-axis span { position: absolute; top: 2px; padding-left: 3px; border-left: 1px solid var(--t-border-hi); white-space: nowrap; }
 /* Window picker shared by chart panels */
 .rgc-range { display: inline-flex; gap: 2px; }

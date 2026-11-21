@@ -20,16 +20,16 @@
   <div class="pb-controls">
     <button class="ctrl-btn" onclick="sendKey('-')" title="Stop playback">Stop</button>
     <button class="ctrl-btn" onclick="toggleTestLoop(this)" id="btn-test-loop" title="Loop audio/loop.mp3">Loop</button>
-    <button class="ctrl-btn" onclick="refreshSounds()" title="Load a fresh set of random sounds" aria-label="Refresh random sounds">&#x21bb; New</button>
-    <button class="ctrl-btn" onclick="openSoundboardPicker()" title="Choose soundboard categories">Cats</button>
-    <button class="ctrl-btn" onclick="openAnnouncer()" title="Repeating message over the BGM bed">Msg</button>
+    <button class="ctrl-btn" onclick="refreshSounds()" title="Load a fresh set of random sounds" aria-label="Shuffle random sounds">Shuffle</button>
+    <button class="ctrl-btn" onclick="openSoundboardPicker()" title="Choose soundboard categories">Categories</button>
+    <button class="ctrl-btn" onclick="openAnnouncer()" title="Repeating message over the BGM bed">Message</button>
   </div>
   <div class="bgm-row" id="bgm-row"></div>
   <div class="np-panel" id="np-panel" hidden></div>
   <div class="smart-row" id="smart-announce-group">
-    <button class="ctrl-btn" onclick="sendKey('[')"><span class="pb-key">Smart #1</span><span class="pb-name" id="smart-st-1"></span></button>
-    <button class="ctrl-btn" onclick="sendKey(']')"><span class="pb-key">Smart #2</span><span class="pb-name" id="smart-st-2"></span></button>
-    <button class="ctrl-btn" onclick="sendKey(String.fromCharCode(92))"><span class="pb-key">Smart #3</span><span class="pb-name" id="smart-st-3"></span></button>
+    <button class="ctrl-btn" onclick="sendKey('[')"><span class="pb-key">Smart 1</span><span class="pb-name" id="smart-st-1"></span></button>
+    <button class="ctrl-btn" onclick="sendKey(']')"><span class="pb-key">Smart 2</span><span class="pb-name" id="smart-st-2"></span></button>
+    <button class="ctrl-btn" onclick="sendKey(String.fromCharCode(92))"><span class="pb-key">Smart 3</span><span class="pb-name" id="smart-st-3"></span></button>
   </div>
 </div>
 

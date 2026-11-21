@@ -10,7 +10,7 @@
   .gps-grid { display:grid; grid-template-columns:1fr 1fr; gap:var(--s-3); margin-bottom:var(--s-3); }
   @media (max-width: 800px) { .gps-grid { grid-template-columns:1fr; } }
   .gps-big { color:var(--t-ok); font-size:var(--f-xl); text-align:center;
-             letter-spacing:0.04em; margin:var(--s-1) 0; font-weight:700; }
+             letter-spacing: 0.02em; margin:var(--s-1) 0; font-weight:700; }
   .gps-label { color:var(--t-text-dim); font-size:var(--f-xs); }
   .gps-val   { color:var(--t-text); font-weight:600; }
   .gps-row   { display:flex; align-items:center; gap:var(--s-3);
@@ -52,15 +52,15 @@
   .gps-mode-btn { font-size:var(--f-xs); padding:var(--s-1) var(--s-2);
                   background:var(--t-btn); border:1px solid var(--t-border);
                   color:var(--t-text); border-radius:var(--r-sm); cursor:pointer;
-                  font:inherit; font-weight:600; letter-spacing:0.06em;
+                  font:inherit; font-weight:600; letter-spacing: 0.02em;
                   transition:border-color 0.12s, color 0.12s; }
   .gps-mode-btn.sim  { color:var(--t-warn); border-color:var(--t-warn); }
   .gps-mode-btn.live { color:var(--t-ok); border-color:var(--t-ok); }
   .gps-mode-btn.err  { color:var(--t-err); border-color:var(--t-err); }
 
   .panel-title-accent { color:var(--t-accent); font-weight:700;
-                        font-size:var(--f-sm); letter-spacing:0.06em;
-                        text-transform:uppercase; }
+                        font-size:var(--f-sm); letter-spacing: 0.02em;
+                        text-transform: none; }
   .sim-hint { color:var(--t-warn); font-size:var(--f-xs); margin-left:var(--s-2); }
 
   /* Utility helpers */
@@ -81,12 +81,12 @@
   .sky .ring { fill:none; stroke:var(--t-border-hi); stroke-width:1; }
   .sky .rim  { fill:#05080b; stroke:var(--t-border-hi); stroke-width:1; }
   .sky .axis { stroke:var(--t-border); stroke-width:1; }
-  .sky text  { fill:var(--t-text-dim); font-size:9px; font-family:inherit; text-anchor:middle; dominant-baseline:central; }
+  .sky text  { fill:var(--t-text-dim); font-size: 11px; font-family:inherit; text-anchor:middle; dominant-baseline:central; }
   .sky text.prn { fill:var(--t-text); font-size:8px; }
   .sky .sat { stroke:var(--t-panel); stroke-width:2; cursor:default; }
   .sky .sat.ok { fill:var(--t-ok); } .sky .sat.warn { fill:var(--t-warn); }
   .sky .sat.err { fill:var(--t-err); } .sky .sat.mute { fill:var(--t-text-mute); }
-  .sky-key { display:flex; flex-wrap:wrap; gap:2px var(--s-3); justify-content:center; margin-top:var(--s-1); font-size:10px; color:var(--t-text-dim); }
+  .sky-key { display:flex; flex-wrap:wrap; gap:2px var(--s-3); justify-content:center; margin-top:var(--s-1); font-size: 11px; color:var(--t-text-dim); }
   .sky-key i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
   .k-ok { background:var(--t-ok); } .k-warn { background:var(--t-warn); } .k-err { background:var(--t-err); } .k-mute { background:var(--t-text-mute); }
   .gps-input.w-60 { width:60px; }

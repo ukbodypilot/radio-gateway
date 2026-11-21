@@ -361,20 +361,21 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         self._ws_clients = []         # list of (socket, queue) tuples for WebSocket PCM clients
         self._ws_lock = _thr.Lock()
 
-    # Color themes — values here override common.css defaults via /theme endpoint.
-    # Default 'blue' is the phosphor palette (matches common.css).
-    # Non-blue themes only tint the chrome (bg/panel/border/accent/btn); text
-    # and ok/warn/err fall back to common.css defaults so status colors remain
-    # legible and the neutral greys stay neutral across themes.
+    # Color themes. The static pages take their palette from common.css
+    # ("rig front panel"); /theme sends the theme name, and common.js applies
+    # only the ACCENT of a non-default theme, because green/red mean RX/TX
+    # everywhere and must not be retinted. The full dicts below still drive
+    # the server-rendered pages (_wrap_html, e.g. /config).
+    # 'grey' (the default) and 'blue' are the common.css palette.
+    _RIG = {'bg': '#1a1d20', 'panel': '#23272b', 'border': '#343a40', 'accent': '#ffb23e',
+            'btn': '#2b3035', 'btn_border': '#3e464d', 'btn_hover': '#343a40',
+            'btn_active_bg': '#3a3226', 'checkbox': '#ffb23e',
+            'panel_hi': '#2c3136', 'border_hi': '#4b545c',
+            'text': '#ece7dd', 'text_dim': '#a8a196', 'text_mute': '#847e74',
+            'ok': '#63d46f', 'warn': '#ecd651', 'err': '#ff5446'}
     THEMES = {
-        'grey':   {'bg': '#0b1014', 'panel': '#121820', 'border': '#1e2a38', 'accent': '#4fd6e6',
-                   'btn': '#0e131a', 'btn_border': '#1e2a38', 'btn_hover': '#1a2230',
-                   'btn_active_bg': '#2c3e52', 'checkbox': '#4fd6e6',
-                   'panel_hi': '#1a2230', 'border_hi': '#2c3e52'},
-        'blue':   {'bg': '#0b1014', 'panel': '#121820', 'border': '#1e2a38', 'accent': '#4fd6e6',
-                   'btn': '#0e131a', 'btn_border': '#1e2a38', 'btn_hover': '#1a2230',
-                   'btn_active_bg': '#2c3e52', 'checkbox': '#4fd6e6',
-                   'panel_hi': '#1a2230', 'border_hi': '#2c3e52'},
+        'grey':   _RIG,
+        'blue':   _RIG,
         'red':    {'bg': '#1a1212', 'panel': '#2e1616', 'border': '#601010', 'accent': '#ff4444',
                    'btn': '#1e0d0d', 'btn_border': '#5c1b1b', 'btn_hover': '#3a1a1a',
                    'btn_active_bg': '#601010', 'checkbox': '#ff4444',
@@ -785,6 +786,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_title_prefix}Radio Gateway - {title}</title>
+<link rel="stylesheet" href="/pages/common.css">
 <style>
   :root {{
     --t-bg: {t['bg']}; --t-panel: {t['panel']}; --t-border: {t['border']};
@@ -801,8 +803,8 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
     --t-err: {t.get('err', '#e04848')};
   }}
   * {{ box-sizing: border-box; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-         background: var(--t-bg); color: #e0e0e0; margin: 0; padding: 20px; }}
+  body {{ font-family: var(--font-base, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+         background: var(--t-bg); color: var(--t-text); margin: 0; padding: 20px; }}
   h1 {{ color: var(--t-accent); margin: 0 0 20px; font-size: 1.4em; }}
   h2 {{ color: var(--t-accent); margin: 10px 0; font-size: 1.2em; }}
   a {{ color: var(--t-accent); }}

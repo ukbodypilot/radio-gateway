@@ -11,25 +11,17 @@ function loadTheme() {
       _T = t;
       // Alias for shell.html compat (uses camelCase)
       _T.btnBorder = t.btn_border;
+      // The palette lives in common.css. Green and red mean RX and TX across
+      // the whole UI, so a WEB_THEME other than the default only swaps the
+      // accent (readouts, lit keys, focus) — it never recolours the chassis
+      // or the status lamps. No `theme` key = a server older than this
+      // file, which only ever sent the default.
       var root = document.documentElement;
-      root.style.setProperty('--t-bg', t.bg);
-      root.style.setProperty('--t-panel', t.panel);
-      root.style.setProperty('--t-border', t.border);
-      root.style.setProperty('--t-accent', t.accent);
-      root.style.setProperty('--t-btn', t.btn);
-      root.style.setProperty('--t-btn-border', t.btn_border);
-      root.style.setProperty('--t-btn-hover', t.btn_hover);
-      root.style.setProperty('--t-btn-active', t.btn_active_bg);
-      root.style.setProperty('--t-checkbox', t.checkbox);
-      // Semantic tokens — each key optional; common.css defaults apply if absent.
-      if (t.panel_hi)  root.style.setProperty('--t-panel-hi',  t.panel_hi);
-      if (t.border_hi) root.style.setProperty('--t-border-hi', t.border_hi);
-      if (t.text)      root.style.setProperty('--t-text',      t.text);
-      if (t.text_dim)  root.style.setProperty('--t-text-dim',  t.text_dim);
-      if (t.text_mute) root.style.setProperty('--t-text-mute', t.text_mute);
-      if (t.ok)        root.style.setProperty('--t-ok',        t.ok);
-      if (t.warn)      root.style.setProperty('--t-warn',      t.warn);
-      if (t.err)       root.style.setProperty('--t-err',       t.err);
+      var name = String(t.theme || 'grey').toLowerCase();
+      if (name !== 'grey' && name !== 'blue' && t.accent) {
+        root.style.setProperty('--t-accent', t.accent);
+        root.style.setProperty('--t-checkbox', t.accent);
+      }
       if (t.gateway_name) {
         document.title = t.gateway_name + ' - ' + document.title;
       }
@@ -157,7 +149,7 @@ function stVal(text, cls) {
   return '<span class="st-val' + (cls ? ' ' + cls : '') + '">' + text + '</span>';
 }
 function stItem(label, valueHtml) {
-  return '<div class="st-item"><span class="st-label">' + label + ':</span>'
+  return '<div class="st-item"><span class="st-label">' + label + '</span>'
        + valueHtml + '</div>';
 }
 function stRow(items, extraCls) {
@@ -525,8 +517,16 @@ function renderPlaybackGrid(s) {
       b.classList.toggle('dim', !f.loaded);
       b.title = f.name || ('Slot ' + k + ' (empty)');
     }
-    if (n) n.textContent = f.loaded && f.name ? f.name.replace(/\.[^.]+$/, '').substring(0, 11) : '';
+    if (n) n.textContent = f.loaded && f.name ? soundLabel(f.name) : '\u2014';
   });
+}
+
+// "horns_713.mp3" -> "Horns". The trailing number is a library index, not
+// something a person picks a sound by; the full name stays in the tooltip.
+function soundLabel(name) {
+  var t = String(name).replace(/\.[^.]+$/, '').replace(/[_\-\s]*\d+$/, '').replace(/[_\-]+/g, ' ').trim();
+  if (!t) t = String(name).replace(/\.[^.]+$/, '');
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 // ── Loop button ─────────────────────────────────────────────────────────────

@@ -11,30 +11,17 @@
 
 <div id="toast-container" class="toast-stack"></div>
 
-<!-- ═══ System vitals ═══ -->
-<div class="panel" id="system-panel">
-  <div class="panel-head"><h2 class="panel-title">System</h2></div>
-  <div id="sysinfo">Loading...</div>
-  <div class="trend-grid" id="trend-grid" aria-label="Trends, last hour"></div>
-</div>
-
-<!-- ═══ Gateway status flags ═══ -->
-<div class="panel" id="gateway-panel">
-  <div class="panel-head"><h2 class="panel-title">Gateway</h2></div>
-  <div id="status">Loading...</div>
-</div>
-
 <!-- ═══ Annunciator — every subsystem, always visible. Dark lamp = off. ═══ -->
 <div class="panel" id="subsys-panel">
   <div class="panel-head">
     <h2 class="panel-title">Subsystems</h2>
-    <span class="panel-meta">click to open</span>
+    <span class="panel-meta">Select one to open its page</span>
   </div>
   <div class="chip-grid">
     <a class="chip off" id="chip-link"   href="/dashboard/endpoints"><span class="chip-dot"></span><span class="chip-name">Link</span><span class="chip-val">--</span></a>
-    <a class="chip off" id="chip-work"   href="/dashboard/endpoints"><span class="chip-dot"></span><span class="chip-name">Workers</span><span class="chip-val">--</span></a>
+    <a class="chip off" id="chip-work"   href="/dashboard/endpoints"><span class="chip-dot"></span><span class="chip-name">Transcription</span><span class="chip-val">--</span></a>
     <a class="chip off" id="chip-stream" href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">Stream</span><span class="chip-val">--</span></a>
-    <a class="chip off" id="chip-loop"   href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">Loop Rec</span><span class="chip-val">--</span></a>
+    <a class="chip off" id="chip-loop"   href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">Loop recorder</span><span class="chip-val">--</span></a>
     <a class="chip off" id="chip-asl"    href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">AllStar</span><span class="chip-val">--</span></a>
     <a class="chip off" id="chip-gps"    href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">GPS</span><span class="chip-val">--</span></a>
     <a class="chip off" id="chip-adsb"   href="/dashboard/services"><span class="chip-dot"></span><span class="chip-name">ADS-B</span><span class="chip-val">--</span></a>
@@ -46,7 +33,7 @@
 <!-- ═══ Activity — who was busy, and what was connected, over time ═══ -->
 <div class="panel" id="activity-panel">
   <div class="panel-head">
-    <h2 class="panel-title">Activity</h2>
+    <h2 class="panel-title">Activity</h2><span class="panel-meta act-meta">When each bus carried audio, and when each link was up</span>
     <span class="rgc-range" id="act-range" role="group" aria-label="Time window">
       <button type="button" data-h="1">1h</button><button type="button" data-h="6">6h</button><button type="button" data-h="24">24h</button>
     </span>
@@ -54,11 +41,24 @@
   <div id="act-rows"><div class="empty"><span class="empty-hint">Loading history&hellip;</span></div></div>
   <div class="rgc-axis act-axis" id="act-axis"></div>
   <div class="act-legend">
-    <span><i style="background:var(--t-accent)"></i>audio on the bus (brighter = louder)</span>
-    <span><i style="background:var(--t-ok);opacity:.6"></i>connected</span>
-    <span><i style="background:var(--t-err)"></i>down</span>
-    <span><i style="background:#05080b;border:1px solid var(--t-border)"></i>no data</span>
+    <span><i style="background:var(--t-ok)"></i>Audio on the bus, brighter is louder</span>
+    <span><i style="background:var(--t-text-mute)"></i>Connected</span>
+    <span><i style="background:var(--t-err)"></i>Down</span>
+    <span><i style="background:var(--t-well);border:1px solid var(--t-border)"></i>No data</span>
   </div>
+</div>
+
+<!-- ═══ Gateway status flags ═══ -->
+<div class="panel" id="gateway-panel">
+  <div class="panel-head"><h2 class="panel-title">Gateway state</h2></div>
+  <div id="status">Loading...</div>
+</div>
+
+<!-- ═══ System vitals ═══ -->
+<div class="panel" id="system-panel">
+  <div class="panel-head"><h2 class="panel-title">Host</h2><span class="panel-meta" id="host-meta"></span></div>
+  <div id="sysinfo">Loading...</div>
+  <div class="trend-grid" id="trend-grid" aria-label="Trends, last hour"></div>
 </div>
 
 <script src="/pages/common.js"></script>
@@ -87,25 +87,42 @@ var _lastStatusHTML = '';
 createStatusPoller(function(s) {
   handleNotifications(s);
 
+  // One lamp + one plain word per flag. Green = healthy/receiving,
+  // red = transmitting or broken, no colour = idle. Idle is not "good".
   var it=[];
-  it.push(stItem('Mumble', stVal(s.mumble?'OK':'DOWN', (s.mumble?'green':'red')+flashCls('mumble',!!s.mumble))));
-  it.push(stItem('PTT', stVal(s.ptt_active?'ON':'off', (s.ptt_active?'red':'green')+flashCls('ptt',!!s.ptt_active))
-                 + ' <span class="st-label">('+s.ptt_method+')</span>'));
-  if(s.sdr1_enabled&&s.sdr1_duck) it.push(stItem('Duck', stVal('ON','green')));
-  it.push(stItem('Man PTT', stVal(s.manual_ptt?'ON':'off', (s.manual_ptt?'red':'green')+flashCls('manual_ptt',!!s.manual_ptt))));
-  if(s.tx_talkback) it.push(stItem('TX Talkback', stVal('ON','yellow')));
-  if(s.ms1_state) it.push(stItem('MS1', stVal(s.ms1_state==='running'?'ON':'OFF', (s.ms1_state==='running'?'green':s.ms1_state==='error'?'red':'white')+flashCls('ms1',s.ms1_state))));
-  if(s.ms2_state) it.push(stItem('MS2', stVal(s.ms2_state==='running'?'ON':'OFF', (s.ms2_state==='running'?'green':s.ms2_state==='error'?'red':'white')+flashCls('ms2',s.ms2_state))));
-  if(s.cat_enabled) it.push(stItem('CAT', stVal(s.cat==='active'||s.cat==='idle'?'ON':'OFF', (s.cat==='active'?'red':s.cat==='idle'?'green':'white')+flashCls('cat',s.cat))));
-  if(s.d75_enabled){
-    var _d75a=s.d75_mode==='bluetooth'?(s.d75_audio_connected?stVal('BT Audio','green'):stVal('No BT Audio','red'))
-             :s.d75_mode==='link_endpoint'?stVal('Link','green'):stVal('USB','yellow');
-    it.push(stItem('D75', stVal(s.d75_connected?'ON':'OFF', (s.d75_connected?'green':'red')+flashCls('d75_conn',!!s.d75_connected))+' '+_d75a));
+  function flag(label, state, word, key, extra) {
+    var cls = state === 'ok' ? 'green' : state === 'tx' || state === 'err' ? 'red' : state === 'warn' ? 'yellow' : 'white';
+    var led = state === 'ok' ? 'ok' : state === 'tx' || state === 'err' ? 'err' : state === 'warn' ? 'warn' : '';
+    return stItem(label, '<span class="led '+led+'"></span>' + stVal(word, cls + (key ? flashCls(key, word) : '')) + (extra || ''));
   }
-  if(s.relay_radio_enabled) it.push(stItem('PWRB', stVal(s.relay_pressing?'ON':'off', (s.relay_pressing?'red':'green')+flashCls('pwrb',!!s.relay_pressing))));
-  for(var i=0;i<s.smart_countdowns.length;i++){var sc=s.smart_countdowns[i];it.push(stItem('Smart#'+sc.id, stVal(sc.remaining, sc.mode==='manual'?'cyan':'yellow')));}
-  if(s.charger){var _chState=s.charger.startsWith("CHARGING");it.push(stItem('Charger', stVal(s.charger, (_chState?'green':'red')+flashCls('charger',_chState))));}
-  if(s.cat_reliability&&s.cat_reliability.sent){var r=s.cat_reliability;it.push(stItem('CMD', stVal(r.sent,'green')+'/'+stVal(r.missed+' miss', r.missed>0?'red':'green')));}
+  it.push(flag('Mumble', s.mumble ? 'ok' : 'err', s.mumble ? 'Connected' : 'Down', 'mumble'));
+  it.push(flag('Transmit', s.ptt_active ? 'tx' : 'idle', s.ptt_active ? 'Keyed' : 'Idle', 'ptt',
+               ' <span class="st-label">via '+esc(String(s.ptt_method||'').toLowerCase())+'</span>'));
+  it.push(flag('Manual PTT', s.manual_ptt ? 'tx' : 'idle', s.manual_ptt ? 'Keyed' : 'Off', 'manual_ptt'));
+  if(s.sdr1_enabled&&s.sdr1_duck) it.push(flag('SDR ducking', 'ok', 'On'));
+  if(s.tx_talkback) it.push(flag('TX talkback', 'warn', 'On'));
+  [['ms1_state','Mumble server 1'],['ms2_state','Mumble server 2']].forEach(function(m){
+    var v=s[m[0]]; if(!v) return;
+    it.push(flag(m[1], v==='running'?'ok':v==='error'?'err':'idle', v==='running'?'Running':v==='error'?'Error':'Stopped', m[0]));
+  });
+  if(s.cat_enabled) it.push(flag('Radio control', s.cat==='active'?'tx':s.cat==='idle'?'ok':'idle',
+                                 s.cat==='active'?'Sending':s.cat==='idle'?'Ready':'Off', 'cat'));
+  if(s.cat_reliability&&s.cat_reliability.sent){var r=s.cat_reliability;
+    it.push(stItem('Commands', stVal(r.sent+' sent','white')+' '+stVal(r.missed+' missed', r.missed>0?'red':'dim')));}
+  if(s.d75_enabled){
+    var _d75a=s.d75_mode==='bluetooth'?(s.d75_audio_connected?'Bluetooth audio':'No Bluetooth audio')
+             :s.d75_mode==='link_endpoint'?'over link':'USB';
+    // Link up + radio answering = Connected; link up but no serial session
+    // = the radio is off or out of Bluetooth range (not a fault).
+    var _d75r = s.d75_radio_connected !== undefined ? s.d75_radio_connected : s.d75_connected;
+    it.push(flag('TH-D75', !s.d75_connected?'err':_d75r?'ok':'idle',
+                 !s.d75_connected?'Offline':_d75r?'Connected':'Radio off', 'd75_conn',
+                 ' <span class="st-label">'+_d75a+'</span>'));
+  }
+  if(s.relay_radio_enabled) it.push(flag('Power relay', s.relay_pressing?'warn':'idle', s.relay_pressing?'Pressing':'Idle', 'pwrb'));
+  for(var i=0;i<s.smart_countdowns.length;i++){var sc=s.smart_countdowns[i];
+    it.push(stItem('Smart announce '+sc.id, stVal(sc.mode==='manual'?'Manual':sc.remaining, sc.mode==='manual'?'dim':'white')));}
+  if(s.charger){var _chState=s.charger.startsWith("CHARGING");it.push(flag('Charger', _chState?'ok':'err', s.charger.charAt(0)+s.charger.slice(1).toLowerCase(), 'charger'));}
   var h=stRow(it,'info-row');
   if (h !== _lastStatusHTML) { _lastStatusHTML = h; document.getElementById('status').innerHTML = h; }
 
@@ -129,20 +146,23 @@ createStatusPoller(function(s) {
 // ── Sysinfo (2s) ──
 var _lastSysinfoHTML='';
 createPoller('/sysinfo',2000,function(s){
+  // CPU temp, total CPU, RAM and network have trend tiles below, so the
+  // readouts here are only what the tiles don't show.
   var h='<div class="st-row">';
   var crit=(s.cpu_critical_pct!==undefined)?s.cpu_critical_pct:s.cpu_pct;
   var bg=(s.cpu_background_pct!==undefined)?s.cpu_background_pct:0;
-  h+='<div class="st-item"><span class="st-label">CPU:</span>'+sysBar(crit)+'</div>';
-  h+='<div class="st-item"><span class="st-label">CPUBG:</span>'+sysBar(bg,'accent')+'</div>';
-  if(s.cpu_iowait_pct!==undefined&&s.cpu_iowait_pct>5) h+='<div class="st-item"><span class="st-label">IOwait:</span><span class="st-val '+(s.cpu_iowait_pct>15?'red':'yellow')+'">'+s.cpu_iowait_pct+'%</span></div>';
-  h+='<div class="st-item"><span class="st-label">RAM:</span>'+sysBar(s.mem_pct,'accent')+'</div>';
-  if(s.swap_total_mb>0){var swPct=Math.round(100*s.swap_used_mb/s.swap_total_mb);h+='<div class="st-item"><span class="st-label">Swap:</span>'+sysBar(swPct,'warn')+'</div>';}
-  h+='<div class="st-item"><span class="st-label">Disk:</span>'+sysBar(s.disk_pct,'warn')+'</div>';
-  h+='<div class="st-item"><span class="st-label">Disk I/O:</span><span class="st-val green st-fixed" style="min-width:8ch">R:'+fmtBytes(s.disk_read_bps).replace('/s','')+'</span> <span class="st-val yellow st-fixed" style="min-width:8ch">W:'+fmtBytes(s.disk_write_bps).replace('/s','')+'</span></div>';
-  h+='<div class="st-item"><span class="st-label">Net:</span><span class="st-val green st-fixed">R:'+fmtBytes(s.net_rx_bps).replace('/s','')+'</span> <span class="st-val cyan st-fixed">T:'+fmtBytes(s.net_tx_bps).replace('/s','')+'</span></div>';
-  if(s.temps&&s.temps.length){var shownCore=false,shownAcpi=false;for(var i=0;i<s.temps.length;i++){var t=s.temps[i];var isCore=/core/i.test(t.label),isAcpi=/acpitz/i.test(t.label);if(isCore&&shownCore)continue;if(isAcpi&&shownAcpi)continue;if(!isCore&&!isAcpi)continue;if(isCore)shownCore=true;if(isAcpi)shownAcpi=true;var tc=t.temp>80?'red':t.temp>60?'yellow':'green';h+='<div class="st-item"><span class="st-label">'+t.label+':</span><span class="st-val '+tc+'">'+t.temp+'&deg;C</span></div>';}}
-  if(s.ips&&s.ips.length){if(s.hostname)h+='<div class="st-item"><span class="st-label">Host:</span><span class="st-val white">'+s.hostname+'</span></div>';for(var i=0;i<s.ips.length;i++){var ifaceLabel=s.ips[i].iface==='tailscale0'?'TailScl':s.ips[i].iface;h+='<div class="st-item"><span class="st-label">'+ifaceLabel+':</span><span class="st-val white">'+s.ips[i].addr+'</span></div>';}if(s.ddns)h+='<div class="st-item"><span class="st-label">DDNS:</span><span class="st-val green">'+s.ddns+'</span></div>';if(s.tunnel_url)h+='<div class="st-item st-item-wide"><span class="st-label">CF:</span><span class="st-val green"><a href="'+s.tunnel_url+'" target="_blank" class="green">'+s.tunnel_url.replace('https://','').replace('.trycloudflare.com','')+'</a></span></div>';}
-  if(s.uptime)h+='<div class="st-item"><span class="st-label">Uptime:</span><span class="st-val white">'+s.uptime+'</span></div>';
+  h+=stItem('CPU, audio', sysBar(crit));
+  h+=stItem('CPU, other', sysBar(bg,'accent'));
+  if(s.cpu_iowait_pct!==undefined&&s.cpu_iowait_pct>5) h+=stItem('Waiting on disk', stVal(s.cpu_iowait_pct+'%', s.cpu_iowait_pct>15?'red':'yellow'));
+  if(s.swap_total_mb>0){var swPct=Math.round(100*s.swap_used_mb/s.swap_total_mb);h+=stItem('Swap', sysBar(swPct));}
+  h+=stItem('Disk', sysBar(s.disk_pct));
+  h+=stItem('Disk read / write', stVal(fmtBytes(s.disk_read_bps),'white st-fixed')+' <span class="dim">/</span> '+stVal(fmtBytes(s.disk_write_bps),'white st-fixed'));
+  if(s.temps&&s.temps.length){for(var i=0;i<s.temps.length;i++){var t=s.temps[i];if(!/acpitz/i.test(t.label))continue;var tc=t.temp>80?'red':t.temp>60?'yellow':'white';h+=stItem('Board temp', stVal(t.temp+'&deg;C',tc));break;}}
+  if(s.uptime)h+=stItem('Up for', stVal(s.uptime,'white'));
+  if(s.ips&&s.ips.length){for(var i=0;i<s.ips.length;i++){var ifaceLabel=s.ips[i].iface==='tailscale0'?'Tailscale':'LAN ('+s.ips[i].iface+')';h+=stItem(ifaceLabel, stVal(s.ips[i].addr,'white'));}
+    if(s.ddns)h+=stItem('DDNS', stVal(esc(s.ddns),'white'));
+    if(s.tunnel_url)h+='<div class="st-item st-item-wide"><span class="st-label">Public tunnel</span><span class="st-val"><a href="'+s.tunnel_url+'" target="_blank" rel="noopener">'+esc(s.tunnel_url.replace('https://',''))+'</a></span></div>';}
+  setText(document.getElementById('host-meta'), s.hostname||'');
   h+='</div>';
   if(h!==_lastSysinfoHTML){_lastSysinfoHTML=h;document.getElementById('sysinfo').innerHTML=h;}
   trendFeed(s);
@@ -154,18 +174,18 @@ createPoller('/sysinfo',2000,function(s){
 // this page has seen since it was opened and says so in its tooltip.
 function _kb(v){ return fmtBytes(v); }
 var TRENDS = [
-  {id:'temp', name:'CPU temp',  q:'rg_cpu_temp_c', color:'var(--t-warn)',
+  {id:'temp', name:'CPU temp',  q:'rg_cpu_temp_c',
    live:function(s){var t=s.temps||[];for(var i=0;i<t.length;i++)if(/core/i.test(t[i].label))return t[i].temp;return NaN;},
    fmt:function(v){return v.toFixed(0)+'\u00b0C';}, minSpan:10},
   {id:'cpu',  name:'CPU',       q:'100*(1-sum(rate(rg_host_cpu_seconds_total{mode="idle"}[2m]))/sum(rate(rg_host_cpu_seconds_total[2m])))',
    live:function(s){return s.cpu_pct;}, fmt:function(v){return v.toFixed(1)+'%';}, min:0, max:100},
   {id:'ram',  name:'RAM',       q:'rg_host_mem_pct',
    live:function(s){return s.mem_pct;}, fmt:function(v){return v.toFixed(1)+'%';}, min:0, max:100},
-  {id:'gwmem',name:'Gateway memory', q:'rg_process_resident_memory_bytes/1048576',
+  {id:'gwmem',name:'Gateway RAM', q:'rg_process_resident_memory_bytes/1048576',
    live:function(){return NaN;}, fmt:function(v){return v.toFixed(0)+' MB';}, minSpan:50},
-  {id:'rx',   name:'Net down',  q:'rg_host_net_rx_bps', color:'var(--t-ok)',
+  {id:'rx',   name:'Net down',  q:'rg_host_net_rx_bps',
    live:function(s){return s.net_rx_bps;}, fmt:_kb, min:0, minSpan:1024},
-  {id:'tx',   name:'Net up',    q:'rg_host_net_tx_bps', color:'var(--t-ok)',
+  {id:'tx',   name:'Net up',    q:'rg_host_net_tx_bps',
    live:function(s){return s.net_tx_bps;}, fmt:_kb, min:0, minSpan:1024}
 ];
 (function(){
@@ -210,8 +230,8 @@ trendHistory(); setInterval(trendHistory,60000);
 // per endpoint, `up` for the gateway process itself).
 var ACT_BINS=240, _actHours=1, _actTimer=null, _actGen=0;
 try{ var _ah=parseInt(localStorage.getItem('rg.actHours'),10); if(_ah===1||_ah===6||_ah===24)_actHours=_ah; }catch(e){}
-function actPaintAudio(b){ return b>0?{color:'--t-accent',alpha:Math.min(1,0.3+b/70)}:null; }
-function actPaintUp(b){ return b>=0.5?{color:'--t-ok',alpha:0.55}:{color:'--t-err',alpha:1}; }
+function actPaintAudio(b){ return b>0?{color:'--t-ok',alpha:Math.min(1,0.3+b/70)}:null; }
+function actPaintUp(b){ return b>=0.5?{color:'--t-text-mute',alpha:0.6}:{color:'--t-err',alpha:1}; }
 function actLoad(){
   var gen=++_actGen, end=Date.now(), start=end-_actHours*3600000, binMs=(end-start)/ACT_BINS;
   document.querySelectorAll('#act-range button').forEach(function(b){ b.classList.toggle('on', parseInt(b.getAttribute('data-h'),10)===_actHours); });

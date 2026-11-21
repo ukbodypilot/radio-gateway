@@ -11,12 +11,12 @@
               background:var(--t-panel); border:1px solid var(--t-border);
               border-radius:var(--r-md); padding:var(--s-2) var(--s-4);
               margin-bottom:var(--s-3); }
-  .mode-bar .lbl { color:var(--t-text-dim); font-size:var(--f-xs);
-                   letter-spacing:0.08em; text-transform:uppercase; font-weight:600; }
+  .mode-bar .lbl { color:var(--t-text-dim); font-size:var(--f-sm);
+                   letter-spacing: 0.02em; text-transform: none; font-weight:600; }
   .mode-btn { font:inherit; font-size:var(--f-sm); background:var(--t-btn);
               color:var(--t-text-dim); border:1px solid var(--t-border);
               padding:var(--s-2) var(--s-4); border-radius:var(--r-md);
-              cursor:pointer; font-weight:600; letter-spacing:0.04em;
+              cursor:pointer; font-weight:600; letter-spacing: 0.02em;
               transition:border-color 0.12s, color 0.12s, background 0.12s; }
   .mode-btn:hover { border-color:var(--t-border-hi); color:var(--t-text); }
   .mode-btn.active { background:var(--t-btn-active); color:var(--t-accent);
@@ -32,26 +32,26 @@
   .status-card { background:var(--t-panel); border:1px solid var(--t-border);
                  border-radius:var(--r-md); padding:var(--s-3) var(--s-4); }
   .status-head { display:flex; align-items:center; gap:var(--s-3); flex-wrap:wrap; }
-  .sdr-tag { font-size:var(--f-xs); font-weight:600; letter-spacing:0.08em;
-             text-transform:uppercase; }
+  .sdr-tag { font-size:var(--f-xs); font-weight:600; letter-spacing: 0.02em;
+             text-transform: none; }
   .sdr-tag.primary   { color:var(--t-accent); }
   .sdr-tag.secondary { color:var(--t-warn); }
   .proc-badge { font-size:var(--f-xs); font-weight:600; padding:2px var(--s-2);
                 border:1px solid var(--t-border); border-radius:var(--r-sm);
-                color:var(--t-text-dim); text-transform:uppercase; letter-spacing:0.06em; }
+                color:var(--t-text-dim); text-transform: none; letter-spacing: 0.02em; }
   .proc-badge.running { color:var(--t-ok); border-color:var(--t-ok); }
   .proc-badge.stopped { color:var(--t-err); border-color:var(--t-err); }
-  .freq-display { font-size:var(--f-lg); font-weight:700; color:var(--t-ok);
-                  font-family:inherit; letter-spacing:0.02em; }
-  .freq-display.secondary { color:var(--t-warn); }
-  .freq-display.inactive { color:var(--t-text-mute); }
+  .freq-display { font-size:var(--f-xl); font-weight:400; color:var(--t-accent);
+                  font-family:var(--font-display); letter-spacing:0.04em; }
+  .freq-display.secondary { color:var(--t-accent); }
+  .freq-display.inactive { color:color-mix(in srgb, var(--t-accent) 22%, var(--t-panel)); text-shadow:none; }
   .mod-badge { font-size:var(--f-xs); font-weight:600; padding:2px var(--s-2);
                border:1px solid var(--t-border); border-radius:var(--r-sm);
-               color:var(--t-accent); text-transform:uppercase; letter-spacing:0.06em; }
+               color:var(--t-text-dim); text-transform: none; letter-spacing: 0.02em; }
 
   /* Audio level bar (reused) */
   .audio-row { display:flex; align-items:center; gap:var(--s-2); margin-top:var(--s-2); }
-  .audio-row .lbl { color:var(--t-text-dim); font-size:var(--f-xs); min-width:55px; }
+  .audio-row .lbl { color:var(--t-text-dim); font-size:var(--f-sm); min-width:55px; }
   .lvl-wrap { flex:1; background:var(--t-btn); border:1px solid var(--t-border);
               border-radius:var(--r-sm); height:14px; overflow:hidden; }
   .lvl-fill { height:100%; width:0%; background:var(--t-ok); }
@@ -77,7 +77,7 @@
                border-left:3px solid var(--t-accent);
                border-radius:var(--r-sm);
                font-size:var(--f-sm); color:var(--t-accent);
-               text-transform:uppercase; letter-spacing:0.06em; font-weight:700; }
+               text-transform: none; letter-spacing: 0.02em; font-weight:700; }
   .sdr-title.secondary { background:color-mix(in srgb, var(--t-warn) 10%, var(--t-panel));
                          border-left-color:var(--t-warn); color:var(--t-warn); }
 
@@ -86,7 +86,7 @@
               border-radius:var(--r-md); padding:var(--s-3);
               margin-bottom:var(--s-2); }
   .sdr-card h3 { color:var(--t-accent); font-size:var(--f-xs);
-                 text-transform:uppercase; letter-spacing:0.08em;
+                 text-transform: none; letter-spacing: 0.02em;
                  font-weight:600; margin:0 0 var(--s-2); }
   .sdr-card.secondary h3 { color:var(--t-warn); }
 
@@ -110,7 +110,7 @@
   /* Form rows (label + input/select/range) */
   .f-row { display:flex; align-items:center; gap:var(--s-2); margin-bottom:var(--s-2); }
   .f-row:last-child { margin-bottom:0; }
-  .f-row .lbl { color:var(--t-text-dim); font-size:var(--f-xs);
+  .f-row .lbl { color:var(--t-text-dim); font-size:var(--f-sm);
                 min-width:70px; flex-shrink:0; }
   .f-row .lbl-wide { min-width:90px; }
   .f-row .ctl { flex:1; }
@@ -141,16 +141,16 @@
   .apply-btn { flex:1; font:inherit; font-size:var(--f-sm); font-weight:700;
                padding:var(--s-3); background:var(--t-btn);
                color:var(--t-accent); border:1px solid var(--t-accent);
-               border-radius:var(--r-md); cursor:pointer; letter-spacing:0.04em;
-               text-transform:uppercase;
+               border-radius:var(--r-md); cursor:pointer; letter-spacing: 0.02em;
+               text-transform: none;
                transition:background 0.12s, color 0.12s; }
   .apply-btn:hover:not(:disabled) { background:var(--t-accent); color:var(--t-bg); }
   .apply-btn:disabled { opacity:0.5; cursor:not-allowed; }
   .stop-btn { font:inherit; font-size:var(--f-sm); font-weight:700;
               padding:var(--s-3) var(--s-5); background:var(--t-btn);
               color:var(--t-err); border:1px solid var(--t-err);
-              border-radius:var(--r-md); cursor:pointer; letter-spacing:0.04em;
-              text-transform:uppercase;
+              border-radius:var(--r-md); cursor:pointer; letter-spacing: 0.02em;
+              text-transform: none;
               transition:background 0.12s, color 0.12s, opacity 0.12s; }
   .stop-btn:hover:not(:disabled) { background:var(--t-err); color:var(--t-bg); }
   .stop-btn:disabled { opacity:0.4; cursor:not-allowed; }
@@ -158,6 +158,18 @@
                   margin-top:var(--s-2); min-height:1.2em; }
   .apply-status.ok { color:var(--t-ok); }
   .apply-status.err { color:var(--t-err); }
+  /* Primary on the right, Stop parked on the left: the two never sit
+     side by side, and the primary is a normal-width filled key. */
+  .apply-bar { display:grid; grid-template-columns:auto 1fr auto; grid-auto-flow:dense; align-items:center; gap:var(--s-2) var(--s-4); }
+  .apply-bar .apply-hint { grid-column:1 / -1; margin:0; font-size:var(--f-sm); }
+  .apply-bar .apply-row { display:contents; }
+  .apply-bar .stop-btn { grid-column:1; padding:var(--s-2) var(--s-4); background:transparent;
+                         border-color:color-mix(in srgb, var(--t-err) 55%, var(--t-btn-border)); }
+  .apply-bar .apply-btn { grid-column:3; flex:none; padding:var(--s-2) var(--s-5); background:var(--t-accent); color:#1f1504;
+                          border-color:var(--t-accent); font-size:var(--f-base); }
+  .apply-bar .apply-btn:hover:not(:disabled) { background:color-mix(in srgb, var(--t-accent) 85%, #fff); color:#1f1504; }
+  .apply-bar .apply-status { grid-column:2; margin:0; text-align:right; font-size:var(--f-sm); }
+  .f-row input[type="number"].ctl { flex:0 1 9em; }
   .apply-status.working { color:var(--t-warn); }
 
   /* Bandwidth visualization */
@@ -217,8 +229,8 @@
   .auto-hint { color:var(--t-text-mute); font-size:var(--f-xs); }
 
   /* Section headers (SHARED SETTINGS, DEVICE, CHANNELS, BAND OVERVIEW) */
-  .sect-head { color:var(--t-text-dim); font-size:var(--f-xs); font-weight:600;
-               letter-spacing:0.08em; text-transform:uppercase; margin:0; }
+  .sect-head { color:var(--t-text); font-size:var(--f-md); font-weight:600;
+               letter-spacing: 0.02em; text-transform: none; margin:0; }
 
   /* Utility helpers */
   .f-row.tight { margin-bottom:0; }
@@ -248,7 +260,7 @@
 
 <!-- Mode selector -->
 <div class="mode-bar">
-  <span class="lbl">SDR Mode</span>
+  <span class="lbl">SDR mode</span>
   <button id="mode-btn-dual" class="mode-btn active" onclick="switchMode('dual')">Dual Tuner (Master/Slave)</button>
   <button id="mode-btn-single" class="mode-btn" onclick="switchMode('single')">Single Tuner (Multi-Channel)</button>
   <span id="mode-switch-status" class="mode-status"></span>
@@ -257,7 +269,7 @@
 <!-- Channel activity (both modes) -->
 <div class="status-card mb-3" id="sdr-act-card" style="display:none">
   <div class="sa-head">
-    <h3 class="sect-head">Channel Activity</h3>
+    <h3 class="sect-head">Channel activity</h3>
     <span class="rgc-range" id="sdr-act-range" role="group" aria-label="Time window">
       <button type="button" data-h="1">1h</button><button type="button" data-h="6">6h</button><button type="button" data-h="24">24h</button>
     </span>
@@ -299,10 +311,10 @@
 
 <!-- Shared settings (full width) — parameters that are linked between both tuners -->
 <div class="shared-panel">
-  <h3 class="sect-head">Shared Settings <span class="sub">(apply to both tuners)</span></h3>
+  <h3 class="sect-head">Shared settings <span class="sub">(apply to both tuners)</span></h3>
   <div class="shared-row">
     <div class="f-row tight">
-      <label class="lbl">Sample Rate</label>
+      <label class="lbl">Sample rate</label>
       <select id="sdr-sr" class="si" title="Master/Slave mode: the driver only offers 62.5 kHz-2 MHz in powers of two, and only 2.0 MHz divides evenly into rtl_airband's 16 kHz audio (the others cause drops)">
         <option value="2.0" selected>2.0 MHz</option>
       </select>
@@ -393,7 +405,7 @@
   </div>
 
   <div class="sdr-card">
-    <h3>Squelch &amp; Device</h3>
+    <h3>Squelch and device</h3>
     <div class="f-row">
       <label class="lbl">Squelch</label>
       <input type="range" id="sdr-squelch" min="-60" max="0" value="0" class="ctl"
@@ -410,7 +422,7 @@
   </div>
 
   <div class="sdr-card">
-    <h3>Audio Filters</h3>
+    <h3>Audio filters</h3>
     <div class="filter-grid">
       <label class="lbl">Amp</label>
       <input type="number" id="sdr-ampfactor" step="0.1" min="0" max="10" value="1.0" class="si">
@@ -421,7 +433,7 @@
       <label class="lbl">LPF</label>
       <input type="number" id="sdr-lowpass" step="100" min="0" max="8000" value="2500" class="si" title="Audio low-pass, 24 dB/oct, applied by the gateway (0 = off)">
       <span class="unit">Hz</span>
-      <label class="lbl">Ch BW</label>
+      <label class="lbl">Channel width</label>
       <input type="number" id="sdr-chbw" step="500" min="0" max="15000" value="0" class="si">
       <span class="unit">Hz</span>
     </div>
@@ -507,7 +519,7 @@
   </div>
 
   <div class="sdr-card secondary">
-    <h3>Audio Filters</h3>
+    <h3>Audio filters</h3>
     <div class="filter-grid">
       <label class="lbl">Amp</label>
       <input type="number" id="sdr2-ampfactor" step="0.1" min="0" max="10" value="1.0" class="si">
@@ -518,7 +530,7 @@
       <label class="lbl">LPF</label>
       <input type="number" id="sdr2-lowpass" step="100" min="0" max="8000" value="2500" class="si" title="Audio low-pass, 24 dB/oct, applied by the gateway (0 = off)">
       <span class="unit">Hz</span>
-      <label class="lbl">Ch BW</label>
+      <label class="lbl">Channel width</label>
       <input type="number" id="sdr2-chbw" step="500" min="0" max="15000" value="0" class="si">
       <span class="unit">Hz</span>
     </div>
@@ -533,8 +545,8 @@
     Restart sequence: SDR1 Master starts first — SDR2 Slave waits until Master is streaming (~3s). Total restart ~12s.
   </div>
   <div class="apply-row">
-    <button id="sdr-apply-btn" class="apply-btn" onclick="applySettings()">Apply &amp; Restart Both Tuners</button>
-    <button id="sdr-stop-btn" class="stop-btn" onclick="sdrCmd('stop')">Stop Both</button>
+    <button id="sdr-apply-btn" class="apply-btn" onclick="applySettings()">Apply and restart both tuners</button>
+    <button id="sdr-stop-btn" class="stop-btn" onclick="sdrCmd('stop')">Stop both tuners</button>
   </div>
   <div id="sdr-apply-status" class="apply-status"></div>
 </div>
@@ -547,7 +559,7 @@
   <div class="status-card mb-3">
     <div class="status-head">
       <span class="sdr-tag primary">Single Tuner</span>
-      <span id="single-proc-badge" class="proc-badge stopped">STOPPED</span>
+      <span id="single-proc-badge" class="proc-badge stopped">Stopped</span>
       <span id="single-freq-display" class="freq-display inactive">---.--- MHz</span>
       <span id="single-bw-badge" class="mod-badge">-- MHz BW</span>
     </div>
@@ -560,7 +572,7 @@
 
   <!-- Bandwidth visualization -->
   <div class="status-card mb-3">
-    <h3 class="sect-head mb-2">Band Overview</h3>
+    <h3 class="sect-head mb-2">Band overview</h3>
     <div id="band-viz" class="band-viz">
       <span id="band-viz-low" class="band-viz-edge low">---</span>
       <span id="band-viz-high" class="band-viz-edge high">---</span>
@@ -571,16 +583,16 @@
 
   <!-- Device settings -->
   <div class="shared-panel">
-    <h3 class="sect-head">Device Settings</h3>
+    <h3 class="sect-head">Device settings</h3>
     <div class="half-grid">
       <div>
         <div class="f-row">
-          <label class="lbl lbl-wide">Center Freq</label>
+          <label class="lbl lbl-wide">Center frequency</label>
           <input type="number" id="single-center-freq" step="0.001" min="0.001" max="2000" value="446.500" class="si ctl">
           <span class="unit">MHz</span>
         </div>
         <div class="f-row">
-          <label class="lbl lbl-wide">Sample Rate</label>
+          <label class="lbl lbl-wide">Sample rate</label>
           <select id="single-sample-rate" class="si ctl" title="2.0 MHz (low-IF) is the only rate offered. Other rates either do not divide evenly into rtl_airband's 16 kHz audio (audio drops) or are zero-IF, which gave no audio on this RSPduo.">
             <option value="2.0" selected>2.0 MHz (low-IF)</option>
           </select>
@@ -607,14 +619,14 @@
       </div>
       <div>
         <div class="f-row">
-          <label class="lbl lbl-wide">Gain Mode</label>
+          <label class="lbl lbl-wide">Gain mode</label>
           <select id="single-gain-mode" class="si ctl" onchange="toggleSingleGain()">
             <option value="agc">AGC (Auto)</option><option value="manual">Manual</option>
           </select>
         </div>
         <div id="single-agc-settings">
           <div class="f-row">
-            <label class="lbl lbl-wide">AGC Setpoint</label>
+            <label class="lbl lbl-wide">AGC setpoint</label>
             <input type="range" id="single-agc-sp" min="-72" max="0" value="-30" class="ctl"
                    oninput="document.getElementById('single-agc-sp-val').textContent=this.value+' dB'">
             <span id="single-agc-sp-val" class="val">-30 dB</span>
@@ -653,7 +665,7 @@
   <div class="status-card mb-3">
     <div class="ch-header">
       <h3 class="sect-head">Channels</h3>
-      <button onclick="addChannel()" class="rb rb-sm rb-primary">+ Add Channel</button>
+      <button onclick="addChannel()" class="rb rb-sm">Add channel</button>
     </div>
     <div id="single-channel-list"></div>
   </div>
@@ -661,7 +673,7 @@
   <!-- Apply & Stop -->
   <div class="apply-bar">
     <div class="apply-row">
-      <button id="single-apply-btn" class="apply-btn" onclick="applySingleSettings()">Apply &amp; Restart</button>
+      <button id="single-apply-btn" class="apply-btn" onclick="applySingleSettings()">Apply and restart</button>
       <button id="single-stop-btn" class="stop-btn" onclick="singleStop()">Stop</button>
     </div>
     <div id="single-apply-status" class="apply-status"></div>
@@ -810,7 +822,7 @@ function renderChannelList(channels) {
   _chLevelWidths.clear();
   var container = document.getElementById('single-channel-list');
   if (singleChannels.length === 0) {
-    container.innerHTML = '<div class="ch-empty">No channels configured. Click "+ Add Channel" to add one.</div>';
+    container.innerHTML = '<div class="ch-empty">No channels configured. Add one with Add channel.</div>';
     return;
   }
   var html = '';
@@ -833,7 +845,7 @@ function renderChannelList(channels) {
     html += '<input type="text" value="' + _escAttr(ch.label || '') + '" class="si ch-label" placeholder="Label" title="Channel label">';
     var nf = _chFilterChangedCount(ch);
     html += '<button class="rb rb-sm ch-filt-btn' + (nf ? ' changed' : '') + '" onclick="toggleChFilters(' + i + ')" title="Per-channel audio filters">Filters' + (nf ? ' (' + nf + ')' : '') + '</button>';
-    html += '<button class="rb rb-sm rb-danger" onclick="removeChannel(' + i + ')" title="Remove channel">X</button>';
+    html += '<button class="rb rb-sm rb-danger" onclick="removeChannel(' + i + ')" title="Remove this channel">Remove</button>';
     html += '</div>';
     html += _chFiltersHtml(ch, i);
     html += '</div>';
@@ -892,7 +904,7 @@ function _chFiltersHtml(ch, i) {
   h += '</div>';
   h += '<label class="tgl"><input type="checkbox" class="ch-cont"' + (_chVal(ch, 'continuous') ? ' checked' : '') +
        '> Continuous output (stream silence while squelch is closed)</label>';
-  h += '<div class="ch-filter-hint">HPF/LPF take effect immediately. The other fields need Apply &amp; Restart.</div>';
+  h += '<div class="ch-filter-hint">HPF/LPF take effect immediately. The other fields need Apply and restart.</div>';
   h += '</div>';
   return h;
 }
@@ -909,7 +921,7 @@ function applyVoiceFilterLive(tuner, hpEl, lpEl, statusId) {
         setStatus(statusId, 'Filter ' + tuner + ': ' + (hp || 'off') + ' - ' + (lp ? lp + ' Hz' : 'off') + ' applied live', 'ok');
       } else {
         setStatus(statusId, 'Filter not applied: ' + (d.error || 'unknown') +
-                  (String(d.error).indexOf('no channel') >= 0 ? ' (press Apply & Restart first)' : ''), 'err');
+                  (String(d.error).indexOf('no channel') >= 0 ? ' (press Apply and restart first)' : ''), 'err');
       }
       setTimeout(function() { setStatus(statusId, ''); }, 4000);
     })
@@ -1023,7 +1035,7 @@ function applySingleSettings() {
   postJson('/sdrcmd', settings)
     .then(function(d) {
       btn.disabled = false;
-      btn.textContent = 'Apply & Restart';
+      btn.textContent = 'Apply and restart';
       if (d.ok) {
         setStatus('single-apply-status', 'Single tuner restarted successfully', 'ok');
         singleInitialLoad = true;
@@ -1034,7 +1046,7 @@ function applySingleSettings() {
     })
     .catch(function() {
       btn.disabled = false;
-      btn.textContent = 'Apply & Restart';
+      btn.textContent = 'Apply and restart';
       setStatus('single-apply-status', 'Network error', 'err');
     });
 }
@@ -1222,7 +1234,7 @@ function applySettings() {
   postJson('/sdrcmd', settings)
     .then(function(d) {
       btn.disabled = false;
-      btn.textContent = 'Apply & Restart Both Tuners';
+      btn.textContent = 'Apply and restart both tuners';
       if (d.ok) {
         setStatus('sdr-apply-status', 'Both tuners restarted successfully', 'ok');
         initialLoad = true;
@@ -1233,7 +1245,7 @@ function applySettings() {
     })
     .catch(function() {
       btn.disabled = false;
-      btn.textContent = 'Apply & Restart Both Tuners';
+      btn.textContent = 'Apply and restart both tuners';
       setStatus('sdr-apply-status', 'Network error', 'err');
     });
 }
@@ -1248,7 +1260,7 @@ function sdrCmd(cmd) {
 
 function setProcBadge(id, running) {
   var el = document.getElementById(id);
-  el.textContent = running ? 'RUNNING' : 'STOPPED';
+  el.textContent = running ? 'Running' : 'Stopped';
   el.classList.toggle('running', running);
   el.classList.toggle('stopped', !running);
 }
@@ -1343,7 +1355,7 @@ function sdrActLoad() {
     }).join('');
     box.querySelectorAll('.sa-strip').forEach(function(el, i) {
       RGC.strip(el, {start: start, end: end, bins: rows[i].bins,
-        paint: function(b) { return b > 0 ? {color: '--t-accent', alpha: Math.min(1, 0.3 + b / 70)} : null; },
+        paint: function(b) { return b > 0 ? {color: '--t-ok', alpha: Math.min(1, 0.3 + b / 70)} : null; },
         describe: function(b) { return b > 0 ? 'audio, peak ' + b + '%' : 'quiet'; }});
     });
     RGC.timeAxis(document.getElementById('sdr-act-axis'), start, end);

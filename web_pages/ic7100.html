@@ -39,10 +39,12 @@
      steps that decade; Up/Down arrows step the active digit; Left/Right
      move the active position. */
   .ic-freq-display {
-    font-family: var(--f-mono, monospace);
+    font-family: var(--font-display);
+    color: var(--t-accent);
+    text-shadow: 0 0 14px color-mix(in srgb, var(--t-accent) 40%, transparent);
     font-size: 2.6em;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     color: var(--t-accent);
     font-variant-numeric: tabular-nums;
     padding: 0 var(--s-3);
@@ -80,7 +82,7 @@
   }
   .ic-tune-steps button {
     min-width: 3em;
-    font-family: var(--f-mono, monospace);
+    font-family: var(--font-mono);
     font-size: var(--f-xs);
   }
   .ic-tune-steps .ic-tune-zero { background: var(--t-panel-hi); }
@@ -143,7 +145,7 @@
     border-radius: var(--r-sm);
     font-size: var(--f-xs);
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.02em;
   }
   .ic-tx-badge.on { display: inline-block; }
 
@@ -170,8 +172,8 @@
     color: var(--t-accent);
     font-weight: 600;
     font-size: var(--f-sm);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    text-transform: none;
     margin-bottom: var(--s-2);
   }
   .ic-row {
@@ -196,7 +198,7 @@
     font-size: var(--f-sm);
   }
   .ic-input.w-freq { width: 9em; }
-  .ic-input.w-cat  { flex: 1; font-family: var(--f-mono, monospace); }
+  .ic-input.w-cat  { flex: 1; font-family: var(--font-mono); }
 
   /* Offline state */
   .ic-offline {
@@ -224,7 +226,7 @@
     padding: var(--s-2);
     height: 8em;
     overflow-y: auto;
-    font-family: var(--f-mono, monospace);
+    font-family: var(--font-mono);
     font-size: var(--f-xs);
     color: var(--t-text-dim);
     white-space: pre-wrap;
@@ -317,7 +319,7 @@
 
   .knob-cap {
     font-size: var(--f-xs); color: var(--t-text-dim);
-    letter-spacing: 0.07em; text-transform: uppercase;
+    letter-spacing: 0.02em; text-transform: none;
     font-variant-numeric: tabular-nums;
   }
 

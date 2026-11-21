@@ -552,7 +552,13 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
                 }
 
         # Pre-scan for D75 link endpoint (avoid repeated scans in dict below)
-        _d75_link = next((src for src in self.link_endpoints.values() if getattr(src, 'plugin_type', None) == 'd75'), None)
+        _d75_name = next((n for n, src in self.link_endpoints.items() if getattr(src, 'plugin_type', None) == 'd75'), None)
+        _d75_link = self.link_endpoints.get(_d75_name) if _d75_name else None
+        # d75_connected = the endpoint link is up; d75_radio_connected = that
+        # endpoint also has a serial session with the radio (False when the
+        # radio is off — the endpoint stops reporting serial_connected).
+        _d75_radio = bool(_d75_name) and bool(
+            getattr(self, '_link_last_status', {}).get(_d75_name, {}).get('serial_connected', False))
 
         return {
             'uptime': uptime_str,
@@ -623,6 +629,7 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
             'cat_enabled': bool(self.cat_client) or getattr(self.config, 'ENABLE_CAT_CONTROL', False),
             'd75_enabled': getattr(self.config, 'ENABLE_D75', False) or bool(_d75_link),
             'd75_connected': bool(_d75_link),
+            'd75_radio_connected': _d75_radio,
             'd75_audio_connected': bool(_d75_link),
             'd75_mode': 'link_endpoint' if _d75_link else 'disabled',
             'd75_level': _d75_link.audio_level if _d75_link else 0,
