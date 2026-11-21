@@ -4,6 +4,43 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [8.0.0] -- 2026-11-21
+
+- **New look: "rig front panel".** The web UI takes its visual language
+  from the radios it drives: a graphite chassis, amber readouts in a
+  seven-segment face, and colour that means one thing everywhere. Green is
+  receiving or healthy, red is transmitting or a fault, amber is a readout,
+  the selected key or focus, yellow needs attention, and idle is neutral.
+  Text is Barlow Semi Condensed, readouts DSEG7, both bundled in
+  `web_pages/fonts/` (OFL) so the UI works offline. No all-caps labels;
+  internal names replaced with plain ones.
+- **Theme handling.** The palette lives in `common.css`; `common.js` no
+  longer pushes server colours over it. A non-default `WEB_THEME` now
+  changes only the accent, so green and red keep their RX/TX meaning.
+  `/theme` reports the theme name; `/config` uses the same fonts and
+  palette.
+- **Header.** One 48px row instead of about 100px. All level meters fit a
+  single label-over-bar row, and a Levels button hides them (hidden by
+  default on phones).
+- **Dashboard.** Live things first: subsystem lamps, activity, gateway
+  state, then host. Gateway flags read as a lamp plus a plain word
+  ("Keyed", "Idle", "Radio off"); host readouts no longer repeat the trend
+  tiles. Activity strips draw audio green and connections grey.
+- **TH-9800 and TH-D75.** Each frequency sits in an LCD-style window with
+  ghosted annunciators. PTT is a wide key that says "On air" while keyed.
+  The Disconnect buttons sit apart from Connect and ask first.
+- **SDR, Operate, Routing.** SDR's Apply and restart is a normal filled
+  key on the right with Stop on the left, and channel "X" is "Remove".
+  Soundboard pads show the sound name ("Horns", not `horns_713`) with the
+  slot number in the corner. Routing gains a key for the H/L/D/A/C and
+  P/M/R buttons; Save is the rightmost button.
+- **Fix: a powered-off TH-D75 showed as connected and flashed red.**
+  `/d75status` reported `serial_connected: true` for any linked D75
+  endpoint and left out `transmitting` when the radio was off; the page's
+  `classList.toggle('tx', undefined)` then flipped the band windows red on
+  every poll. Both now default to false, and `/status` gains
+  `d75_radio_connected`, which the dashboard shows as "Radio off".
+
 ## [6.1.0] -- 2026-11-18
 
 - **AllStar AS1/AS2 buttons play their bus.** The AS1/AS2 PCM monitor
