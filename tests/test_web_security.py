@@ -479,11 +479,39 @@ def signed_updates():
     web.shutdown()
 
 
+def family_user_pages():
+    print("\n10. Family Locator user pages skip the gateway login, nothing else does")
+    import web_routes_get
+    web_routes_get.FAMILY_LOCATOR_PORT = free_port()   # never reach the real app on :8790
+    srv = start_web(password='pw')
+    tun = {'Cf-Connecting-Ip': '203.0.113.9', 'Cf-Ray': 'abc'}
+    # Past access control the proxy answers 502/504 (no app on the port in this test); 401 = login asked.
+    for path in ('/family/v/abcdefghijklmnopqrstuv/', '/family/v/abcdefghijklmnopqrstuv/api/devices',
+                 '/family/static/app.js'):
+        st, _, _ = req(srv, 'GET', path, tun)
+        check(f"tunnel GET {path} needs no gateway login", st != 401, st)
+    for path in ('/family/', '/family/api/devices', '/family/v/../api/config', '/family/v/%2e%2e/api/config',
+                 '/family/vx/', '/dashboard'):
+        st, _, _ = req(srv, 'GET', path, tun)
+        check(f"tunnel GET {path} still needs the login", st == 401, st)
+    st, _, _ = req(srv, 'GET', '/family/v/abcdefghijklmnopqrstuv/',
+                   {**tun, 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate'})
+    check("an email link to a user page opens", st != 403 and st != 401, st)
+    st, _, _ = req(srv, 'GET', '/family/v/abcdefghijklmnopqrstuv/api/devices',
+                   {**tun, 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'cors'})
+    check("...but another site can't fetch its API", st == 403, st)
+    st, _, _ = req(srv, 'POST', '/family/v/abcdefghijklmnopqrstuv/api/geofences',
+                   {**tun, 'Origin': 'https://evil.example'}, b'{}')
+    check("...or post to it", st == 403, st)
+    srv.shutdown()
+
+
 def main():
     secrets_masked()
     web_access()
     link_auth()
     signed_updates()
+    family_user_pages()
     print("\nALL PASS" if not failed else f"\n{failed} FAILED")
     return 1 if failed else 0
 

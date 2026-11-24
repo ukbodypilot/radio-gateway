@@ -79,6 +79,15 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     # Anything else fetched cross-site is refused.
     # /family/: Family Locator (proxied); its alert/summary emails link here from Gmail.
     _NAVIGABLE_EXTRA = frozenset({'/config', '/family', '/family/'})
+    # Family Locator user pages: /family/v/<secret>/ is a cut-down page for a relative, opened from
+    # an email link with no password. The app itself checks the secret, throttles bad ones and only
+    # answers that page's own routes; /family/static/ is its public JS/CSS. These skip the gateway
+    # login (and may be opened from a link on another site); every other /family/ path keeps it.
+    _LOGIN_FREE_PREFIXES = ('/family/v/', '/family/static/')
+
+    def _login_free(self, path):
+        low = path.lower()
+        return path.startswith(self._LOGIN_FREE_PREFIXES) and '..' not in path and '%2e' not in low
 
     def _check_access(self):
         path = self.path.split('?', 1)[0]
@@ -87,6 +96,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         if path in self._ENDPOINT_UPDATE_PATHS:
             return True
         if path == self._LINK_WS_PATH:
+            return True
+        if self._login_free(path):
             return True
         # Prometheus on the box scrapes /metrics with no credentials.
         if path == '/metrics' and self._from_this_box():
@@ -142,7 +153,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
                 return True
             if (self.headers.get('Sec-Fetch-Mode') == 'navigate'
                     and (path in self._STATIC_PAGES
-                         or path in self._NAVIGABLE_EXTRA)):
+                         or path in self._NAVIGABLE_EXTRA
+                         or path.startswith('/family/v/'))):
                 return True
             self._send_forbidden('Cross-site request refused.')
             return False
