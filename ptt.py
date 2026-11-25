@@ -32,16 +32,25 @@ class RelayController:
             self._port = None
 
     def set_state(self, on):
-        """Set relay on (True) or off (False). Returns True on success."""
-        if not self._port:
-            return False
-        try:
-            self._port.write(self.CMD_ON if on else self.CMD_OFF)
-            self._state = on
-            return True
-        except Exception as e:
-            print(f"  [Relay] Write error on {self._device}: {e}")
-            return False
+        """Set relay on (True) or off (False). Returns True on success.
+
+        The module re-enumerates when USB devices are moved (the udev symlink
+        follows it, our open fd doesn't), so a failed write, or no port at all,
+        closes and reopens once and retries before giving up (2026-11-22).
+        """
+        cmd = self.CMD_ON if on else self.CMD_OFF
+        for attempt in (1, 2):
+            if not self._port and not self.open():
+                return False
+            try:
+                self._port.write(cmd)
+                self._state = on
+                return True
+            except Exception as e:
+                print(f"  [Relay] Write error on {self._device}: {e}"
+                      + (" -- reopening" if attempt == 1 else ""))
+                self.close()
+        return False
 
     @property
     def state(self):

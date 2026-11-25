@@ -169,6 +169,12 @@ class GPSManager:
                             self._parse_rmc(fields)
                         elif sid.endswith('GSV'):
                             self._parse_gsv(fields)
+                    except (serial.SerialException, OSError):
+                        # Port gone (unplugged / re-enumerated). Must reach the
+                        # outer handler so it closes and reopens the port; if it
+                        # were swallowed here, readline() fails instantly forever
+                        # and pins a core (2026-11-22: ~6M exceptions/min).
+                        raise
                     except Exception:
                         log_exc()
 
