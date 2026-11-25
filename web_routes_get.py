@@ -1172,6 +1172,77 @@ def handle_family_proxy(handler, parent):
             pass
 
 
+TESLA_PORT = 9877
+
+
+def handle_tesla_redirect(handler, parent):
+    """GET /tesla -> /tesla/ so the app's relative asset and API URLs resolve under the prefix."""
+    handler.send_response(301)
+    handler.send_header('Location', '/tesla/')
+    handler.send_header('Content-Length', '0')
+    handler.end_headers()
+
+
+def tesla_client_address(handler):
+    """The address the Tesla app judges LAN-vs-outside by (outside needs the app's own password).
+
+    Over the Cloudflare tunnel the TCP peer is the local cloudflared, so the visitor is
+    Cf-Connecting-Ip; a tunnel request without it is reported as 'unknown' (never local).
+    """
+    if handler.headers.get('Cf-Connecting-Ip') or handler.headers.get('Cf-Ray'):
+        return handler.headers.get('Cf-Connecting-Ip') or 'unknown'
+    return handler.client_address[0] if handler.client_address else 'unknown'
+
+
+def handle_tesla_proxy(handler, parent):
+    """GET/POST /tesla/* — reverse proxy to the Tesla page (~/tesla-tools, tesla-poller user service, :9877).
+
+    The gateway login applies first. The Tesla app then lets LAN/Tailscale clients straight in and
+    asks everyone else for its own password, judged from X-Forwarded-For (tesla_client_address).
+    """
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    _target = f'http://127.0.0.1:{TESLA_PORT}{handler.path[len("/tesla"):]}'
+
+    def _relay(status, headers, body):
+        handler.send_response(status)
+        for _hk, _hv in headers:
+            if _hk.lower() in ('transfer-encoding', 'content-encoding', 'content-length', 'connection'):
+                continue
+            handler.send_header(_hk, _hv)
+        handler.send_header('Content-Length', str(len(body)))
+        handler.end_headers()
+        if body:
+            handler.wfile.write(body)
+
+    try:
+        _content_len = int(handler.headers.get('Content-Length', 0))
+        _body_in = handler.rfile.read(_content_len) if _content_len > 0 else None
+        _req = _ureq.Request(_target, data=_body_in, method=handler.command or 'GET')
+        for _h in ('Accept', 'Accept-Language', 'Content-Type', 'Cookie', 'User-Agent', 'X-Requested-With'):
+            _v = handler.headers.get(_h)
+            if _v:
+                _req.add_header(_h, _v)
+        _req.add_header('X-Forwarded-For', tesla_client_address(handler))
+        _req.add_header('Accept-Encoding', 'identity')
+        with _ureq.urlopen(_req, timeout=40) as _resp:
+            _relay(_resp.status, _resp.headers.items(), _resp.read())
+    except _uerr.HTTPError as _e:
+        try:
+            _relay(_e.code, _e.headers.items() if _e.headers else [], _e.read() if hasattr(_e, 'read') else b'')
+        except BrokenPipeError:
+            pass
+    except BrokenPipeError:
+        pass
+    except Exception:
+        _err = (b'<html><body style="font-family:sans-serif;text-align:center;padding-top:80px">'
+                b'<h3>The Tesla page is not running</h3><p>systemctl --user status tesla-poller</p></body></html>')
+        try:
+            _relay(503, [('Content-Type', 'text/html')], _err)
+        except BrokenPipeError:
+            pass
+
+
 def handle_pat_proxy(handler, parent):
     """GET /pat or /pat/* — reverse proxy to Pat Winlink web UI."""
     import urllib.request as _ureq

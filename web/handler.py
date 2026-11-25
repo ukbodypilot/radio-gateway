@@ -78,7 +78,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     # Pages a link on another site may open (Sec-Fetch-Mode: navigate).
     # Anything else fetched cross-site is refused.
     # /family/: Family Locator (proxied); its alert/summary emails link here from Gmail.
-    _NAVIGABLE_EXTRA = frozenset({'/config', '/family', '/family/'})
+    # /tesla/: the Tesla page (proxied); its alert emails may link here.
+    _NAVIGABLE_EXTRA = frozenset({'/config', '/family', '/family/', '/tesla', '/tesla/'})
     # Family Locator user pages: /family/v/<secret>/ is a cut-down page for a relative, opened from
     # an email link with no password. The app itself checks the secret, throttles bad ones and only
     # answers that page's own routes; /family/static/ is its public JS/CSS. These skip the gateway
@@ -367,6 +368,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         # Accepts ?instance=vhf|uhf for multi-radio routing.
         '/kv4pstatus':            'g:handle_kv4pstatus',
         '/family':                'g:handle_family_redirect',
+        '/tesla':                 'g:handle_tesla_redirect',
     }
     _GET_PREFIX = (
         ('/pages/',               'g:handle_pages'),
@@ -384,6 +386,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         ('/pat/',                 'g:handle_pat_proxy'),
         ('/grafana/',             'g:handle_grafana_proxy'),
         ('/family/',              'g:handle_family_proxy'),
+        ('/tesla/',               'g:handle_tesla_proxy'),
         ('/prometheus/',          'g:handle_prometheus_proxy'),
         ('/loop/',                'g:handle_loop_api'),
         ('/api/endpoint_logs',    'g:handle_endpoint_logs'),
@@ -515,6 +518,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         ('/pat/',        'g:handle_pat_proxy'),
         ('/grafana/',    'g:handle_grafana_proxy'),
         ('/family/',     'g:handle_family_proxy'),
+        ('/tesla/',      'g:handle_tesla_proxy'),
         ('/prometheus/', 'g:handle_prometheus_proxy'),
         ('/packet/',     'p:handle_packet_cmd'),
         ('/speakers/',   'k:handle_speakers_post'),

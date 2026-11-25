@@ -506,12 +506,52 @@ def family_user_pages():
     srv.shutdown()
 
 
+def tesla_proxy():
+    print("\n11. /tesla/ proxy: gateway login first, then the real visitor address for the Tesla app")
+    import web_routes_get
+    seen = {}
+
+    class Echo(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen['xff'] = self.headers.get('X-Forwarded-For')
+            seen['path'] = self.path
+            body = b'ok'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        do_POST = do_GET
+
+        def log_message(self, *a):
+            pass
+
+    app = ThreadingHTTPServer(('127.0.0.1', free_port()), Echo)
+    threading.Thread(target=app.serve_forever, daemon=True).start()
+    web_routes_get.TESLA_PORT = app.server_address[1]
+    srv = start_web(password='pw')
+    tun = {'Cf-Connecting-Ip': '8.8.8.8', 'Cf-Ray': 'abc'}
+    st, _, _ = req(srv, 'GET', '/tesla/api/status', tun)
+    check("tunnel /tesla/ without the gateway login is refused", st == 401, st)
+    st, body, _ = req(srv, 'GET', '/tesla/api/status?x=1', {**tun, **basic('pw')})
+    check("with the login it reaches the app, prefix stripped", st == 200 and seen.get('path') == '/api/status?x=1', (st, seen))
+    check("...and the app is told the tunnel visitor's address", seen.get('xff') == '8.8.8.8', seen.get('xff'))
+    req(srv, 'GET', '/tesla/', {'Cf-Ray': 'abc', **basic('pw')})
+    check("tunnel request without Cf-Connecting-Ip is 'unknown', never local", seen.get('xff') == 'unknown', seen.get('xff'))
+    req(srv, 'GET', '/tesla/', basic('pw'))
+    check("a LAN request passes its own address", seen.get('xff') == '127.0.0.1', seen.get('xff'))
+    st, _, r = req(srv, 'GET', '/tesla', basic('pw'))
+    check("/tesla redirects to /tesla/", st == 301 and r.getheader('Location') == '/tesla/', st)
+    srv.shutdown()
+    app.shutdown()
+
+
 def main():
     secrets_masked()
     web_access()
     link_auth()
     signed_updates()
     family_user_pages()
+    tesla_proxy()
     print("\nALL PASS" if not failed else f"\n{failed} FAILED")
     return 1 if failed else 0
 
