@@ -15,7 +15,17 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import serial                    # noqa: E402
+try:
+    import serial                # noqa: E402
+except ImportError:              # CI has no pyserial: the test swaps in its own Serial anyway
+    serial = types.ModuleType('serial')
+
+    class SerialException(OSError):
+        pass
+
+    serial.SerialException = SerialException
+    serial.Serial = None
+    sys.modules['serial'] = serial
 import gps_manager               # noqa: E402
 
 failed = 0
