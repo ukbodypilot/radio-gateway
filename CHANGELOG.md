@@ -4,6 +4,8 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [8.1.0] -- 2026-11-26
+
 - **`rig.css`: the house style, shared with sibling apps.** The fonts, `--t-*` tokens, base elements,
   `.rb` buttons, status colours and form wells moved out of `common.css` into `web_pages/rig.css`
   (`common.css` imports it first, so no page changes). It also gains a small app frame (`.lamp`,
