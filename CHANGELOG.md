@@ -4,6 +4,16 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **`rig.css`: the house style, shared with sibling apps.** The fonts, `--t-*` tokens, base elements,
+  `.rb` buttons, status colours and form wells moved out of `common.css` into `web_pages/rig.css`
+  (`common.css` imports it first, so no page changes). It also gains a small app frame (`.lamp`,
+  `.rig-top`, `.rig-tabs`, `.rig-apps`) and `rig-apps.js`. tesla-tools, lan-inventory and Family
+  Locator vendor a copy, so the four apps look like one family while each still runs alone.
+- **Apps menu (`APP_LINKS`).** `APP_LINKS = Tesla=/tesla/, Family Locator=/family/, LAN Console=http://…`
+  adds an "Apps" menu to the top bar; every entry opens inside the gateway. Blank (the default) = no
+  menu. `/sysinfo` returns the list; only paths and http(s) addresses are accepted. This replaces the
+  built-in Tesla entry under Data.
+
 - **`/family/` proxy for Family Locator.** The gateway now reverse-proxies
   `/family/` to the Family Locator app on `:8790` (`handle_family_proxy`),
   so it works from a phone over the Cloudflare tunnel with no extra port.

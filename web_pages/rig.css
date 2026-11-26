@@ -1,0 +1,297 @@
+/* rig.css 1.0.0 — the shared "rig front panel" house style.
+   CANONICAL COPY: radio-gateway web_pages/rig.css. tesla-tools, lan-inventory and family-locator vendor a copy
+   (with fonts/) so each app stands alone; edit here, then run claude-notes ui/sync_rig.sh.
+   Contents: design notes, fonts, tokens (--t-*, scales), base elements, .rb buttons, status text colours, form
+   wells, and the shared frame (.lamp, .rig-top, .rig-apps). Only namespaced or element rules belong here: generic
+   class names (.panel, .bar, .icon, .tag, .empty...) are each app's own, in the stylesheet loaded after this one. */
+/* Radio Gateway — shared theme and base styles.
+   --t-* variables are referenced across every page; change values here
+   to restyle the whole UI. Do not rename without a sweep across all pages.
+
+   ─── Design: "rig front panel" ──────────────────────────────────────────
+   The UI borrows the vocabulary of the radios it drives: a graphite
+   chassis, silkscreened labels, backlit amber readouts and the two LEDs
+   every transceiver has. Colour therefore carries meaning, not mood:
+     --t-ok   busy/RX LED green   receiving, squelch open, healthy
+     --t-err  TX LED red          transmitting, recording, fault
+     --t-accent backlight amber   readouts, the selected/lit control, focus
+     --t-warn sodium yellow       needs attention, ducked, degraded
+   Spend boldness on the readouts (.freq-display, .hero-num, .seg); keep
+   everything else flat and quiet. Sentence case everywhere — no tracked
+   all-caps labels.
+
+   ─── Live-signal vocabulary (pick exactly one per element) ───────────────
+   Loudest → quietest; never stack two levels on the same element.
+     1. .pulse + --t-err        TX, recording, critical-live
+     2. .pulse + --t-ok         RX, listening, active-live
+     3. .rb-active (lit amber)  selected, focused, current tab
+     4. .flash (cell-flash)     value just changed (one-shot 600ms)
+     5. .cyan text              clickable / interactive (now amber; name kept)
+   Panel-level status strips use the .toast accent-edge pattern:
+     border-left: 3px solid var(--t-accent|--t-ok|--t-warn|--t-err).
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* Text face — Barlow Semi Condensed (OFL, fonts/Barlow-OFL.txt). A DIN-like
+   instrument face: narrow enough for dense panels, legible at 12px. */
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('fonts/BarlowSemiCondensed-400.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('fonts/BarlowSemiCondensed-500.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('fonts/BarlowSemiCondensed-600.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Semi Condensed'; font-weight: 700; font-style: normal; font-display: swap;
+  src: url('fonts/BarlowSemiCondensed-700.woff2') format('woff2'); }
+
+/* Readout face — DSEG7 seven-segment (OFL, fonts/DSEG-LICENSE.txt).
+   unicode-range limits it to digits, '.', '-', '/', ':' and space, so a
+   string like "446.700 MHz" draws the number in segments and the unit in
+   Barlow — no markup changes needed anywhere a readout already exists. */
+@font-face { font-family: 'Readout'; font-weight: 400; font-style: normal; font-display: block;
+  src: url('fonts/DSEG7Classic-Regular.woff2') format('woff2');
+  unicode-range: U+0020, U+002D-003A; }
+@font-face { font-family: 'Readout'; font-weight: 700; font-style: normal; font-display: block;
+  src: url('fonts/DSEG7Classic-Bold.woff2') format('woff2');
+  unicode-range: U+0020, U+002D-003A; }
+
+/* Logs and raw protocol text only. */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('fonts/JetBrainsMono.woff2') format('woff2-variations'),
+       url('fonts/JetBrainsMono.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Chassis + faceplate */
+  --t-bg:         #1a1d20;  /* chassis */
+  --t-panel:      #23272b;  /* faceplate */
+  --t-panel-hi:   #2c3136;  /* raised / hover */
+  --t-border:     #343a40;  /* panel seam */
+  --t-border-hi:  #4b545c;
+  --t-glass:      #14110b;  /* smoked readout window */
+  --t-well:       #131517;  /* recessed: meter tracks, inputs */
+
+  /* Silkscreen */
+  --t-text:       #ece7dd;
+  --t-text-dim:   #a8a196;  /* labels, secondary */
+  --t-text-mute:  #847e74;  /* disabled, tertiary (AA on --t-panel at 13px+) */
+
+  /* Lamps */
+  --t-accent:     #ffb23e;  /* backlight amber: readouts, lit control, focus */
+  --t-ok:         #63d46f;  /* RX / busy LED */
+  --t-warn:       #ecd651;  /* attention */
+  --t-err:        #ff5446;  /* TX LED, fault */
+
+  /* Desaturated variants — dense log lines, subtle tints. */
+  --t-ok-soft:    #8dbf8f;
+  --t-warn-soft:  #cbbd78;
+  --t-err-soft:   #d68377;
+
+  /* Legacy button aliases — widely referenced across pages */
+  --t-btn:        #2b3035;
+  --t-btn-border: #3e464d;
+  --t-btn-hover:  #343a40;
+  --t-btn-active: color-mix(in srgb, var(--t-accent) 16%, var(--t-panel));
+  --t-checkbox:   var(--t-accent);
+
+  /* Scales — use only these steps; do not introduce new sizes.
+     A condensed face sets ~15% narrower than the old mono, so the type
+     steps are one notch larger at roughly the same line width. */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px;  --s-4: 16px;  --s-5: 24px;  --s-6: 32px;
+  --f-xs: 12px; --f-sm: 13px; --f-base: 14px; --f-md: 16px; --f-lg: 20px; --f-xl: 28px;
+  --r-sm: 3px; --r-md: 6px;
+
+  /* Control heights — one place to tune ergonomics. */
+  --h-ctl:    32px;
+  --h-ctl-sm: 26px;
+
+  --font-base:    'Barlow Semi Condensed', 'Roboto Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Readout', var(--font-base);
+}
+/* Touch screens: fat-finger targets. */
+@media (pointer: coarse) {
+  :root { --h-ctl: 40px; --h-ctl-sm: 34px; }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-base);
+  font-size: var(--f-base);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  color: var(--t-text);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  background: var(--t-bg);
+  min-height: 100vh;
+}
+
+::selection { background: var(--t-accent); color: var(--t-glass); }
+:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
+
+h1, h2, h3 {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin: 0 0 var(--s-3);
+  color: var(--t-text);
+}
+h1 { font-size: var(--f-lg); }
+h2 { font-size: var(--f-md); }
+h3 { font-size: var(--f-sm); font-weight: 500; color: var(--t-text-dim); margin: 0 0 var(--s-2); }
+
+a { color: var(--t-accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+code, pre, kbd, samp, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+
+/* Reusable buttons — raised rig keys. Three tiers:
+     .rb            secondary (most buttons)
+     .rb-primary    the one action a panel exists for (filled amber)
+     .rb-danger     destructive / keys the transmitter; keep it apart from
+                    its safe neighbour, never adjacent to the primary */
+.rb {
+  font: inherit;
+  font-size: var(--f-sm);
+  font-weight: 500;
+  min-height: var(--h-ctl-sm);
+  background: var(--t-btn);
+  border: 1px solid var(--t-btn-border);
+  border-bottom-color: color-mix(in srgb, var(--t-btn-border) 60%, #000);
+  color: var(--t-text);
+  border-radius: var(--r-sm);
+  padding: var(--s-1) var(--s-3);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.rb:hover { background: var(--t-btn-hover); border-color: var(--t-border-hi); }
+.rb:active { box-shadow: inset 0 1px 2px rgba(0,0,0,0.4); transform: translateY(1px); }
+.rb-sm { padding: 2px var(--s-2); font-size: var(--f-xs); min-height: 0; }
+/* .rb-caps — historically small uppercase; now a semibold short label.
+   Kept as a class so existing markup keeps its weight. */
+.rb-caps { font-weight: 600; letter-spacing: 0.02em; }
+/* Lit key: amber backlight. */
+.rb-active,
+.rb.rb-active {
+  background: var(--t-btn-active);
+  border-color: var(--t-accent);
+  color: var(--t-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 25%, transparent);
+}
+.rb.rb-danger  { color: var(--t-err); border-color: color-mix(in srgb, var(--t-err) 55%, var(--t-btn-border)); }
+.rb.rb-danger:hover { background: var(--t-err); color: #1a0c0a; border-color: var(--t-err); }
+.rb.rb-warn    { color: var(--t-warn); border-color: color-mix(in srgb, var(--t-warn) 55%, var(--t-btn-border)); }
+.rb.rb-warn:hover   { background: var(--t-warn); color: #1a170a; border-color: var(--t-warn); }
+.rb.rb-primary { background: var(--t-accent); color: #1f1504; border-color: var(--t-accent); font-weight: 600; }
+.rb.rb-primary:hover { background: color-mix(in srgb, var(--t-accent) 85%, #fff); border-color: var(--t-accent); }
+
+/* Status text colors */
+.green  { color: var(--t-ok); }
+.red    { color: var(--t-err); }
+.yellow { color: var(--t-warn); }
+.cyan   { color: var(--t-accent); }
+.white  { color: var(--t-text); }
+/* Dim = secondary text (labels, timestamps, inactive).
+   For "faded out" use .dim-op (opacity) instead. */
+.dim    { color: var(--t-text-dim); }
+.mute   { color: var(--t-text-mute); }
+.dim-op { opacity: 0.4; }
+
+/* Form controls — recessed wells */
+input, select, textarea, button { font-family: inherit; }
+:root { color-scheme: dark; }
+/* :where() keeps specificity at zero, so any page or class rule still wins. */
+:where(input:not([type="range"], [type="checkbox"], [type="radio"], [type="file"], [type="color"], [type="button"], [type="submit"]), select, textarea) {
+  background: var(--t-well);
+  color: var(--t-text);
+  border: 1px solid var(--t-border);
+  border-radius: var(--r-sm);
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--f-base);
+  min-height: var(--h-ctl-sm);
+}
+:where(input, select, textarea):focus-visible { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--t-accent) 25%, transparent); }
+:where(input, select, textarea)::placeholder { color: var(--t-text-mute); }
+:where(select) { max-width: 100%; }
+:where(button, select, summary, label[for], input[type="checkbox"], input[type="radio"]):not(:disabled) { cursor: pointer; }
+:where(button, input, select, textarea):disabled { opacity: 0.45; cursor: not-allowed; }
+input[type="range"] { accent-color: var(--t-accent); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--t-accent); width: 16px; height: 16px; }
+.tgl { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--f-base); color: var(--t-text-dim); cursor: pointer; user-select: none; }
+
+/* ─── Shared app frame (added 1.0.0) ──────────────────────────────────────
+   Used by the apps that vendor this file; the gateway shell keeps its own
+   #shell-bar, which these mirror. */
+
+/* Lamp — an LED with its label: <span class="lamp ok"><i></i>Locked</span>.
+   ok / warn / err / accent light it; no class = unlit. */
+.lamp { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.lamp > i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--t-well); box-shadow: inset 0 0 0 1px var(--t-border-hi); }
+.lamp.ok > i     { background: var(--t-ok);     box-shadow: 0 0 6px color-mix(in srgb, var(--t-ok) 70%, transparent); }
+.lamp.warn > i   { background: var(--t-warn);   box-shadow: 0 0 6px color-mix(in srgb, var(--t-warn) 70%, transparent); }
+.lamp.err > i    { background: var(--t-err);    box-shadow: 0 0 6px color-mix(in srgb, var(--t-err) 70%, transparent); }
+.lamp.accent > i { background: var(--t-accent); box-shadow: 0 0 6px color-mix(in srgb, var(--t-accent) 70%, transparent); }
+
+/* Top bar — <header class="rig-top"> brand | tabs | side | apps.
+   Menus are dim until lit; the lit one gets an amber underline on the bar's
+   bottom edge, like a backlit key (same as the gateway's #shell-bar). */
+.rig-top {
+  display: flex; align-items: stretch; flex-wrap: wrap; gap: 0 var(--s-4);
+  min-height: 48px; padding: 0 var(--s-4);
+  background: color-mix(in srgb, var(--t-panel) 70%, var(--t-bg));
+  border-bottom: 1px solid #0d0f10; box-shadow: inset 0 -1px 0 var(--t-border);
+  position: sticky; top: 0; z-index: 1000;
+}
+.rig-brand { display: flex; align-items: center; gap: var(--s-2); min-height: 44px; white-space: nowrap;
+  color: var(--t-text); font-size: var(--f-md); font-weight: 700; letter-spacing: 0.02em; text-decoration: none; }
+.rig-brand:hover { text-decoration: none; }
+.rig-brand small { color: var(--t-text-mute); font-size: var(--f-xs); font-weight: 400; letter-spacing: 0; }
+.rig-tabs { display: flex; flex-wrap: wrap; align-items: stretch; }
+.rig-tabs a, .rig-tabs button {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 2px var(--s-3) 0;
+  color: var(--t-text-dim); font: inherit; font-size: var(--f-md); font-weight: 500;
+  background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  text-decoration: none; cursor: pointer; transition: color 0.1s;
+}
+.rig-tabs a:hover, .rig-tabs button:hover { color: var(--t-text); text-decoration: none; }
+.rig-tabs [aria-current="page"], .rig-tabs [aria-selected="true"], .rig-tabs .on {
+  color: var(--t-accent); border-bottom-color: var(--t-accent); }
+.rig-tabs :focus-visible, .rig-apps :focus-visible { outline: 2px solid var(--t-accent); outline-offset: -2px; }
+.rig-side { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3);
+  padding: var(--s-1) 0; font-size: var(--f-sm); color: var(--t-text-dim); }
+
+/* Apps menu — links to sibling apps, filled by rig-apps.js; hidden unless configured. */
+.rig-apps { position: relative; display: flex; align-items: stretch; }
+.rig-apps[hidden] { display: none; }
+.rig-apps > button {
+  display: flex; align-items: center; gap: 6px; padding: 2px var(--s-3) 0; min-height: 44px;
+  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--t-text-dim);
+  font: inherit; font-size: var(--f-md); font-weight: 500; cursor: pointer;
+}
+.rig-apps > button::after { content: ''; border: 4px solid transparent; border-top-color: currentColor;
+  border-bottom: 0; margin-top: 2px; opacity: 0.55; }
+.rig-apps > button:hover, .rig-apps.open > button { color: var(--t-text); }
+.rig-apps-menu {
+  display: none; position: absolute; top: 100%; right: 0; min-width: 200px; z-index: 1001;
+  background: var(--t-panel-hi); border: 1px solid var(--t-border-hi);
+  border-radius: 0 0 var(--r-md) var(--r-md); box-shadow: 0 10px 24px rgba(0,0,0,0.5); padding: var(--s-1) 0;
+}
+.rig-apps.open .rig-apps-menu { display: block; }
+.rig-apps-menu a { display: flex; align-items: center; min-height: 36px; padding: 0 var(--s-4);
+  border-left: 3px solid transparent; white-space: nowrap; color: var(--t-text); font-size: var(--f-base); }
+.rig-apps-menu a:hover { background: var(--t-btn-hover); text-decoration: none; }
+.rig-apps-menu a[aria-current="page"] { background: var(--t-btn-active); color: var(--t-accent); border-left-color: var(--t-accent); }
+
+@media (max-width: 640px) {
+  .rig-top { gap: 0 var(--s-2); padding: 0 var(--s-2); }
+  /* one row of tabs that scrolls sideways, instead of two or three tall rows */
+  .rig-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+  .rig-tabs::-webkit-scrollbar { display: none; }
+  .rig-tabs a, .rig-tabs button { white-space: nowrap; flex: none; }
+  .rig-tabs a, .rig-tabs button, .rig-apps > button { padding: 2px var(--s-2) 0; font-size: var(--f-base); }
+}

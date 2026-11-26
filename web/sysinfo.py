@@ -15,6 +15,18 @@ import os
 import time
 
 
+def parse_app_links(text):
+    """APP_LINKS "Tesla=/tesla/, LAN Console=http://host:8480/" -> [{'name', 'url'}]. Only paths and http(s)
+    addresses are kept, so a typo cannot become a javascript: link."""
+    out = []
+    for part in str(text or '').split(','):
+        name, sep, url = part.partition('=')
+        name, url = name.strip(), url.strip()
+        if sep and name and (url.startswith('/') or url.startswith('http://') or url.startswith('https://')):
+            out.append({'name': name[:40], 'url': url})
+    return out
+
+
 class _SysinfoMixin:
     def _get_sysinfo(self):
         """Gather system status: CPU, memory, disk I/O, network, temps, IPs."""
@@ -279,6 +291,9 @@ class _SysinfoMixin:
             # Callsign (from PACKET_CALLSIGN) — shown in the shell identity plate.
             cs = str(getattr(self.config, 'PACKET_CALLSIGN', '') or '').strip().upper()
             info['callsign'] = cs if cs and cs != 'N0CALL' else ''
+            # Apps menu (APP_LINKS = "Name=URL, Name=URL"); a list even when empty, so the shell knows the
+            # server is new enough to own the menu
+            info['apps'] = parse_app_links(getattr(self.config, 'APP_LINKS', '') if self.gateway else '')
 
             # Cloudflare tunnel URL for display in system status
             if self.gateway and self.gateway.cloudflare_tunnel:

@@ -382,6 +382,10 @@ DEFAULTS = {
     'WEB_CONFIG_HTTPS': 'false',  # false, self-signed, or letsencrypt (a string: a bool default coerced 'self-signed' to False)
     'GATEWAY_NAME': '',           # Display name shown at top of dashboard (blank = none)
     'WEB_THEME': 'grey',          # Dashboard color theme: grey, blue, red, green, purple, amber, teal, pink
+    # "Apps" menu in the top bar linking to your other apps, as Name=URL pairs separated by commas, e.g.
+    # Tesla=/tesla/, Family Locator=/family/, LAN Console=http://192.168.1.10:8480/
+    # Every entry opens inside the gateway. Blank = no menu.
+    'APP_LINKS': '',
     # Cloudflare Tunnel (free public HTTPS access, no port forwarding needed)
     'SDR_INTERNAL_AUTOSTART': True,    # Auto-start internal SDR (rtl_airband) on gateway startup
     'SDR_INTERNAL_AUTOSTART_CHANNEL': 1,   # Channel slot to recall on autostart (-1 = use last settings)
@@ -800,7 +804,7 @@ LAYOUT = [
     ]),
     ('web', 'Web Configuration', [
         'ENABLE_WEB_CONFIG', 'WEB_CONFIG_PORT', 'WEB_CONFIG_USERNAME', 'WEB_CONFIG_PASSWORD',
-        'WEB_CONFIG_HTTPS', 'GATEWAY_NAME', 'WEB_THEME',
+        'WEB_CONFIG_HTTPS', 'GATEWAY_NAME', 'WEB_THEME', 'APP_LINKS',
         'ENABLE_WEB_MIC', 'WEB_MIC_VOLUME',
         'WEB_MIC_KEY_TIMEOUT', 'WEB_MIC_MAX_TX',
         'ENABLE_WEB_MONITOR', 'WEB_MONITOR_VOLUME', 'MONITOR_VAD_THRESHOLD',

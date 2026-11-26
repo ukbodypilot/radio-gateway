@@ -313,8 +313,8 @@
       <a href="/aircraft" target="content" onclick="setActive(this)" id="nav-adsb">ADS-B</a>
       <a href="/packet" target="content" onclick="setActive(this)" id="nav-packet">Packet</a>
       <a href="/gdrive" target="content" onclick="setActive(this)">GDrive</a>
-      <a href="/tesla/" target="content" onclick="setActive(this)">Tesla</a>
-    </div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">System <span id="mgr-shell-dot" style="display:none;color:var(--t-err);font-size:0.65em;vertical-align:middle;">&#x25cf;</span></span><div class="nav-drop">
+      <a href="/tesla/" target="content" onclick="setActive(this)" id="nav-tesla-legacy">Tesla</a>
+    </div></div><div class="nav-group" onclick="toggleGroup(this)" id="nav-apps" style="display:none"><span class="nav-label">Apps</span><div class="nav-drop" id="apps-drop"></div></div><div class="nav-group" onclick="toggleGroup(this)"><span class="nav-label">System <span id="mgr-shell-dot" style="display:none;color:var(--t-err);font-size:0.65em;vertical-align:middle;">&#x25cf;</span></span><div class="nav-drop">
       <a href="/manager" target="content" onclick="setActive(this)">Manager</a>
       <a href="/grafana" target="content" onclick="setActive(this)">Metrics</a>
       <a href="/config" target="content" onclick="setActive(this)">Config</a>
@@ -430,10 +430,34 @@ function tickClock() {
 }
 setInterval(tickClock, 15000);
 tickClock();
+// Apps menu from APP_LINKS (via /sysinfo). A server that predates APP_LINKS sends no list: keep the old
+// built-in Tesla entry then; otherwise the menu is exactly what the config says.
+function buildAppsMenu(apps) {
+  if (!Array.isArray(apps)) return;
+  var legacy = document.getElementById('nav-tesla-legacy');
+  if (legacy) legacy.remove();
+  var group = document.getElementById('nav-apps'), drop = document.getElementById('apps-drop');
+  drop.textContent = '';
+  apps.forEach(function (a) {
+    if (!a || !a.name || !a.url) return;
+    var el = document.createElement('a');
+    el.href = a.url; el.textContent = a.name;
+    el.target = 'content'; el.onclick = function () { setActive(el); };   // every app opens inside the gateway
+    drop.appendChild(el);
+  });
+  group.style.display = drop.children.length ? '' : 'none';
+  // the frame may have loaded before this menu existed: light the entry for the page already open
+  try {
+    var path = document.getElementById('shell-frame').contentWindow.location.pathname;
+    drop.querySelectorAll('a').forEach(function (a) { a.classList.toggle('active', a.getAttribute('href') === path); });
+    group.classList.toggle('has-active', !!drop.querySelector('a.active'));
+  } catch (e) {}
+}
 function loadIdentity() {
   fetch('/sysinfo').then(function(r){return r.json();}).then(function(s) {
     var name = s.gateway_name || s.hostname || '';
     if (name) { document.getElementById('id-site').textContent = name; _siteName = name; _syncTitle(); }
+    buildAppsMenu(s.apps);
     var call = (s.callsign || '').trim();
     var callEl = document.getElementById('id-call');
     var sepEl  = document.getElementById('id-call-sep');
