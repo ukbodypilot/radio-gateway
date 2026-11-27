@@ -609,11 +609,21 @@ def smart_announce_status() -> str:
     countdowns = data.get('smart_countdowns', [])
     activity = data.get('smart_activity', {})
     lines = ["Smart announcements ENABLED"]
-    for slot_id, secs, mode in countdowns:
+    for c in countdowns:
+        # /status sends {'id', 'remaining', 'mode'}; remaining is seconds, or a word
+        # such as 'Manual' for a slot that only fires by hand. Older gateways sent tuples.
+        if isinstance(c, dict):
+            slot_id, secs, mode = c.get('id'), c.get('remaining'), c.get('mode', '?')
+        else:
+            slot_id, secs, mode = c
         act = activity.get(str(slot_id), {})
-        step = act.get('step', 'idle')
-        mins, s = divmod(int(secs), 60)
-        lines.append(f"  slot {slot_id} [{mode}]: next in {mins}m{s:02d}s — {step}")
+        step = act.get('step', 'idle') if isinstance(act, dict) else 'idle'
+        try:
+            mins, s = divmod(int(secs), 60)
+            when = f"next in {mins}m{s:02d}s"
+        except (TypeError, ValueError):
+            when = str(secs or 'not scheduled')
+        lines.append(f"  slot {slot_id} [{mode}]: {when} — {step}")
     if not countdowns:
         lines.append("  No slots configured")
     return '\n'.join(lines)

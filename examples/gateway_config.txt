@@ -973,12 +973,25 @@ ENABLE_WEB_CONFIG = true
 WEB_CONFIG_PORT = 8080
 WEB_CONFIG_USERNAME = user
 WEB_CONFIG_PASSWORD = user
+# More logins with the same access. Hashes only, never passwords: add one with
+#   python3 tools/web_user.py add <name>     (then restart the gateway)
+WEB_EXTRA_USERS =
+# true: no login from the home network or Tailscale (judged from the connection's own
+# address, which a tunnel visitor can't fake); the Cloudflare tunnel still asks.
+# Anyone on your Wi-Fi can then reach everything, transmit included.
+WEB_LAN_NO_LOGIN = false
 WEB_CONFIG_HTTPS = false           # false, self-signed, or letsencrypt (uses DDNS_HOSTNAME)
 ENABLE_CLOUDFLARE_TUNNEL = false   # free public HTTPS via *.trycloudflare.com (no port fwd needed)
 # Through the tunnel the web UI needs WEB_CONFIG_PASSWORD: without one it
 # answers 403 there (link endpoints and code updates still work). true serves
 # the whole UI, manager included, to anyone who has the URL.
 WEB_TUNNEL_ALLOW_NO_PASSWORD = false
+# Put a short link (spoo.me/xxxxxxx, lowercase) to the tunnel in every
+# email, plus one per APP_LINKS path, so it is easy to type on a phone or car browser.
+# Remade each time the tunnel URL changes; also written to /tmp/cloudflare_tunnel_short.json
+# for other apps on this machine. The tunnel URL is sent to the shortener, and short codes
+# can be scanned, so this stays off while WEB_CONFIG_PASSWORD is blank or "user".
+TUNNEL_SHORT_LINKS = false
 
 # Browser microphone (the MIC button in the shell bar) -> radio TX.
 # Hold to talk; releasing unkeys. Route it by dropping the "Web Mic" source

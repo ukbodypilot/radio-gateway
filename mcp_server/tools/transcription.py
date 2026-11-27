@@ -18,7 +18,10 @@ def transcription_status() -> str:
     status = result.get('status', {})
     results = result.get('results', [])
     lines = []
-    lines.append(f"Mode: {status.get('mode', '?')}  Model: {status.get('model', '?')}  Enabled: {status.get('enabled', '?')}")
+    lines.append(f"Mode: {status.get('mode', '?')}  Model: {status.get('model', '?')}")
+    if status.get('enabled') is False:
+        # The saved on/off toggle (Transcribe page / transcription_config); running but ignoring audio.
+        lines.append("PAUSED: transcription is switched off (Transcribe page toggle); no audio is transcribed")
     lines.append(f"Loaded: {status.get('model_loaded', False)}  VAD: {status.get('vad_db', -100):.0f}dB (thresh {status.get('vad_threshold', '?')})")
     lines.append(f"Total: {status.get('total_transcriptions', 0)}  Pending: {status.get('pending', 0)}")
     stats = status.get('stats', {})
@@ -107,12 +110,18 @@ def transcription_config(
     Args:
         key:   Setting to change — one of:
                'enabled'     — true/false (pause/resume without restart)
-               'model'       — tiny/base (requires restart)
+               'mode'        — off/local/remote/pool (requires restart)
+               'model'       — parakeet/tdt-0.6b-v2 (default), moonshine2/small,
+                               moonshine2/medium (local engine; requires restart)
+               'remote_model' — same names; switches the registered remote
+                               worker(s) to that model
                'vad_threshold' — Silero probability 0.0–1.0 (default 0.5)
                'vad_hold'    — seconds, e.g. 1.0
                'min_duration' — seconds, e.g. 0.5
                'audio_boost' — percentage, e.g. 200
                'forward_mumble' — true/false
+               'log_results' — true/false (write overs to the transcription log)
+               'alert_keywords' — comma-separated words that trigger an alert email
                'restart'     — restart transcriber with saved settings
                'clear'       — clear all results
 
@@ -121,7 +130,7 @@ def transcription_config(
                that feeds the transcription sink.
         value: The value to set (ignored for restart/clear).
     """
-    if key in ('enabled', 'forward_mumble'):
+    if key in ('enabled', 'forward_mumble', 'log_results'):
         value = value.lower() in ('true', '1', 'yes')
     result = _post('/transcribe_config', {'key': key, 'value': value})
     if result.get('ok'):

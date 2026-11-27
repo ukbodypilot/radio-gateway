@@ -110,11 +110,11 @@ def _auth_headers():
     return {}
 
 
-def _get(path: str) -> dict:
+def _get(path: str, timeout: float = 5) -> dict:
     url = GW_BASE_URL + path
     req = urllib.request.Request(url, headers=_auth_headers())
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         return {'error': f'HTTP {e.code}', 'ok': False}

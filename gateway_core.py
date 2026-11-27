@@ -611,6 +611,7 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
             'ddns': ddns_status,
             'ddns_stats': ddns_stats,
             'tunnel_url': self.cloudflare_tunnel.get_url() if self.cloudflare_tunnel else '',
+            'tunnel_short_links': self._tunnel_short_links(),
             'charger': charger_state,
             'cat': cat_state,
             'cat_reliability': cat_reliability,
@@ -698,6 +699,17 @@ class RadioGateway(_LifecycleMixin, _MonitorMixin, _AudioRestartMixin,
             'automation_task': self.automation_engine._current_task if self.automation_engine else None,
             'automation_recording': self.automation_engine.recorder.is_recording() if self.automation_engine else False,
         }
+
+    def _tunnel_short_links(self):
+        """Short links already made for the current tunnel (no network call), for /status."""
+        if not self.cloudflare_tunnel:
+            return {}
+        try:
+            import short_links
+            return short_links.current(self.config, self.cloudflare_tunnel.get_url())
+        except Exception:
+            log_exc()
+            return {}
 
     def _publish_tunnel_url(self):
         """Write current tunnel URL to Google Drive for endpoint discovery."""

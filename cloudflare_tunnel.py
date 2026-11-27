@@ -45,6 +45,7 @@ class CloudflareTunnel:
     def __init__(self, config, on_url_changed=None, supervisor=None):
         self.config = config
         self._url = None
+        self._last_url = None    # never cleared: the health check blanks _url before the respawn
         self._on_url_changed = on_url_changed
         self._supervisor = supervisor          # set via attach_supervisor() if None
         self._health_thread = None
@@ -71,7 +72,9 @@ class CloudflareTunnel:
         if pgrep_first('cloudflared'):
             self._url = self._read_cached_url() or self._scan_log_for_url()
             if self._url:
+                self._last_url = self._url
                 print(f"  [Tunnel] Cached URL: {self._url}")
+                self._make_short_links(self._url)
         else:
             self._url = None
             try:
@@ -196,19 +199,31 @@ class CloudflareTunnel:
         url = m.group(1)
         if url == self._url:
             return
-        old_url = self._url
+        # _url is None after the health check killed an expired tunnel, so the
+        # previous URL comes from _last_url; without it that respawn never emailed.
+        old_url = self._url or self._last_url
         self._url = url
+        self._last_url = url
         try:
             with open(self.URL_FILE, 'w') as f:
                 f.write(url)
         except Exception:
             log_exc()
         print(f"  [Tunnel] Public URL: {url}")
-        if old_url and self._on_url_changed:
+        self._make_short_links(url)
+        if old_url and old_url != url and self._on_url_changed:
             try:
                 self._on_url_changed(url)
             except Exception as e:
                 print(f"  [Tunnel] on_url_changed callback error: {e}")
+
+    def _make_short_links(self, url):
+        """Start making the short links for this URL (short_links.py; off unless configured)."""
+        try:
+            import short_links
+            short_links.refresh_async(self.config, url)
+        except Exception:
+            log_exc()
 
     # ── Cached-URL helpers ─────────────────────────────────────────
 

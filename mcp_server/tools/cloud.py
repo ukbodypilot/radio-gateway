@@ -11,11 +11,24 @@ from mcp_server.server import mcp, _get, _post
 @mcp.tool()
 def cloudflare_status() -> str:
     """
-    Get the Cloudflare tunnel URL and connection status.
+    Get the Cloudflare tunnel URL and its short links (TUNNEL_SHORT_LINKS: one
+    spoo.me link for the gateway and one per APP_LINKS path, remade whenever the
+    tunnel URL changes; the same links go out in emails).
     """
     result = _get('/status')
     url = result.get('tunnel_url', '')
-    return f"Tunnel URL: {url}" if url else "No Cloudflare tunnel active"
+    if not url:
+        return "No Cloudflare tunnel active"
+    lines = [f"Tunnel URL: {url}"]
+    short = result.get('tunnel_short_links') or {}
+    if short.get('links'):
+        for path, link in short['links'].items():
+            lines.append(f"Short {path:<9} {link}")
+    elif short.get('blocked'):
+        lines.append(f"Short links: off ({short['blocked']})")
+    elif short.get('last_error'):
+        lines.append(f"Short links: failing ({short['last_error']})")
+    return "\n".join(lines)
 
 
 @mcp.tool()
@@ -38,20 +51,25 @@ def tunnel_link_url() -> str:
 @mcp.tool()
 def gdrive_status() -> str:
     """
-    Get Google Drive integration status: authentication, folder access,
-    service account email, and tunnel URL publication state.
+    Get Google Drive integration status: rclone remote and folder, authentication,
+    folder access and storage use. The tunnel URL is published there for endpoints.
     """
-    data = _get('/api/gdrive/status')
+    data = _get('/api/gdrive/status', timeout=30)   # runs `rclone about`: seconds when its cache is cold
+    if 'error' in data and not data.get('configured'):
+        return f"Error: {data['error']}"
     if not data.get('configured'):
         return "Google Drive not configured (ENABLE_GDRIVE=false)"
-    lines = ["Google Drive Status:"]
-    lines.append(f"  Account: {data.get('account_email', '?')}")
-    lines.append(f"  Authenticated: {data.get('authenticated', False)}")
-    folder = data.get('folder_name', data.get('folder_id', '?'))
-    lines.append(f"  Folder: {folder}")
-    lines.append(f"  Accessible: {data.get('folder_accessible', False)}")
-    if data.get('folder_error'):
-        lines.append(f"  Error: {data['folder_error']}")
+    gb = 1024 ** 3
+    lines = ["Google Drive Status:",
+             f"  Remote: {data.get('remote', '?')}  Folder: {data.get('folder_path', '?')}",
+             f"  Authenticated: {data.get('authenticated', False)}",
+             f"  Accessible: {data.get('folder_accessible', False)}"]
+    if data.get('total_bytes'):
+        lines.append(f"  Storage: {data.get('used_bytes', 0) / gb:.1f} GB used of "
+                     f"{data['total_bytes'] / gb:.1f} GB ({data.get('free_bytes', 0) / gb:.1f} GB free)")
+    for k in ('error', 'folder_error'):
+        if data.get(k):
+            lines.append(f"  Error: {data[k]}")
     return "\n".join(lines)
 
 

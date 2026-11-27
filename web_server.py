@@ -242,7 +242,10 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'WEB_CONFIG_PORT': 'port (1–65535)',
         'WEB_CONFIG_USERNAME': 'web UI login name (default user)',
         'WEB_CONFIG_PASSWORD': 'default "user"; blank keeps the current one',
+        'WEB_LAN_NO_LOGIN': 'home network / Tailscale need no login; the tunnel always does',
+        'WEB_EXTRA_USERS': 'more logins, hashed: python3 tools/web_user.py add <name>',
         'WEB_TUNNEL_ALLOW_NO_PASSWORD': 'serve the whole UI through the tunnel with no password (not recommended)',
+        'TUNNEL_SHORT_LINKS': 'spoo.me short link to the tunnel in emails; needs a non-default web password',
         'LINK_BIND': 'interface IP for the link port, blank = all',
         'LINK_SECRET': 'master for endpoint keys; blank = generated (~/.config/radio-gateway/link_secret)',
         'LINK_ENROLL_NEW': 'new endpoint names get their key on first connect; turn off once all are enrolled',
@@ -431,6 +434,8 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
             'parent': self,
             'username': str(getattr(self.config, 'WEB_CONFIG_USERNAME', '') or 'user'),
             'password': password,
+            'extra_users': __import__('web_users').parse(self.config.WEB_EXTRA_USERS),
+            'lan_no_login': str(self.config.WEB_LAN_NO_LOGIN).strip().lower() in ('true', '1', 'yes', 'on'),
             'tunnel_allow_open': bool(getattr(
                 self.config, 'WEB_TUNNEL_ALLOW_NO_PASSWORD', False)),
         })

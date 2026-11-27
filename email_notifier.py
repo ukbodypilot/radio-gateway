@@ -22,6 +22,44 @@ class EmailNotifier:
     def is_configured(self):
         return bool(self._address and self._password)
 
+    def _tunnel_url(self):
+        tun = getattr(self.gateway, 'cloudflare_tunnel', None) if self.gateway else None
+        return tun.get_url() if tun else None
+
+    def _short_lines(self, url):
+        """'Short:' lines for the tunnel root and each APP_LINKS path (short_links.py)."""
+        import short_links
+        try:
+            reason = short_links.blocked_reason(self.config)
+            if reason:
+                # Say why only when someone switched it on: off is the default, not news.
+                return [f"Short:     off ({reason})"] if short_links.enabled(self.config) else []
+            out = []
+            for path in short_links.app_paths(self.config):
+                short = short_links.get(self.config, url, path)
+                if short:
+                    label = 'Short:' if path == '/' else f"  {path}"
+                    out.append(f"{label:<11}{short}")
+            return out or ["Short:     (shortener not answering; full link above)"]
+        except Exception:
+            log_exc()
+            return []
+
+    def _with_short_footer(self, body):
+        """Every gateway email carries the short gateway link, unless the body already has it."""
+        url = self._tunnel_url()
+        if not url:
+            return body
+        try:
+            import short_links
+            short = short_links.get(self.config, url, '/')
+        except Exception:
+            log_exc()
+            return body
+        if not short or short in body:
+            return body
+        return f"{body}\n\nGateway (short link): {short}"
+
     def send(self, subject, body):
         """Send an email. Returns True on success."""
         import smtplib
@@ -36,6 +74,7 @@ class EmailNotifier:
         msg['From'] = self._address
         msg['To'] = self._recipient
         msg['Subject'] = subject
+        body = self._with_short_footer(body)
 
         # Plain text version
         msg.attach(MIMEText(body, 'plain'))
@@ -69,6 +108,7 @@ class EmailNotifier:
             url = self.gateway.cloudflare_tunnel.get_url()
             if url:
                 lines.append(f"Gateway:   {url}")
+                lines += self._short_lines(url)
                 lines.append(f"Config:    {url}/config")
                 lines.append(f"Monitor:   {url}/monitor")
                 lines.append(f"Monitor App: {url}/ws_monitor")
@@ -145,6 +185,7 @@ class EmailNotifier:
             url = self.gateway.cloudflare_tunnel.get_url()
             if url:
                 lines.append(f"Gateway:   {url}")
+                lines += self._short_lines(url)
                 lines.append(f"Config:    {url}/config")
                 lines.append(f"Monitor:   {url}/monitor")
                 lines.append(f"Monitor App: {url}/ws_monitor")
@@ -428,11 +469,12 @@ class EmailNotifier:
             f"Cloudflare tunnel URL changed at {now}",
             "",
             f"Gateway:   {new_url}",
+            *self._short_lines(new_url),
             f"Config:    {new_url}/config",
             f"Monitor:   {new_url}/monitor",
             f"Monitor App: {new_url}/ws_monitor",
             "",
-            "The previous tunnel link has expired. Update your bookmarks.",
+            "The previous tunnel link has expired, and so have its short links. Update your bookmarks.",
             "",
             "-- Radio Gateway",
         ]

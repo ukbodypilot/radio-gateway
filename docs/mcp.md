@@ -1,6 +1,6 @@
 # MCP Server
 
-`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **168 tools** across status, radios, routing, transcription, packet, fleet management, and more.
+`gateway_mcp.py` is a stdio-based [MCP](https://modelcontextprotocol.io) server. It gives Claude (or any MCP-compatible AI client) full control of the gateway via its HTTP API. **175 tools** across status, radios, routing, transcription, packet, fleet management, and more.
 
 The Fleet Manager's hourly/daily Claude runs use these tools internally — the gateway itself reads its own state through this surface.
 
@@ -42,7 +42,8 @@ re-key until key requests pause for 5 s.
 | **Routing** | `routing_status`, `routing_levels`, `routing_connect`, `routing_disconnect`, `bus_create`, `bus_delete`, `bus_mute`, `bus_rename`, `sink_mute`, `bus_toggle_processing`, `set_gain`, `bus_set_denoise_mix`, `bus_set_denoise_bypass`, `speaker_mode`, `mixer_control` (legacy per-source mixer) |
 | **Loop recorder** | `loop_recorder_status`, `loop_recorder_toggle`, `loop_recorder_retention`, `loop_recorder_summary`, `loop_recorder_activity`, `loop_recorder_export`, `loop_recorder_delete_all`, `loop_recorder_archive_all`, `loop_recorder_download_all`, `loop_playback_control`, `test_loop_toggle` |
 | **Transcription** | `transcription_status`, `transcription_workers`, `transcription_config`, `transcription_log_query`, `transcription_log_recent`, `transcription_search` |
-| **Speaker ID** | `speakers_list`, `speaker_whois`, `speaker_review`, `speaker_label` |
+| **Speaker ID** | `speakers_list`, `speaker_whois`, `speaker_review`, `speaker_label`, `speaker_unlabel`, `speaker_merge`, `speaker_not_same`, `speaker_note`, `speaker_audit`, `speaker_undo` |
+| **Offload workers / denoise** | `offload_workers_status`, `denoise_status` |
 | **Repeaters / GPS** | `nearby_repeaters`, `repeater_info`, `repeater_tune`, `repeater_refresh`, `gps_status`, `gps_set_position`, `gps_switch_mode` |
 | **Packet / Winlink** | `packet_status`, `packet_mode`, `packet_decoded`, `packet_aprs_stations`, `packet_send_aprs`, `packet_aprs_beacon`, `packet_log`, `packet_bbs_connect`, `packet_bbs_disconnect`, `packet_bbs_send`, `packet_bbs_buffer`, `packet_force_audio`, `packet_set_endpoint`, `winlink_compose`, `winlink_connect`, `winlink_gateways`, `winlink_messages`, `winlink_read`, `winlink_log` |
 | **Gateway link / endpoints** | `link_endpoint_status`, `link_endpoint_command`, `endpoint_ping`, `endpoint_reboot`, `endpoint_battery`, `endpoint_version`, `endpoint_ssh`, `endpoint_logs` |
@@ -53,7 +54,7 @@ re-key until key requests pause for 5 s.
 | **BGM / announcer** | `bgm_status`, `bgm_control`, `announcer_status`, `announcer_configure` |
 | **TTS / soundboard** | `tts_engine_status`, `tts_engine_set`, `soundboard_categories`, `soundboard_set_categories`, `soundboard_refresh` |
 | **Relay / GPIO** | `relay_status`, `relay_charger_toggle` |
-| **ADS-B / Pi-hole** | `adsb_status`, `pihole_status` |
+| **ADS-B** | `adsb_status` |
 | **Metrics** | `metrics_list`, `metrics_query` |
 | **Recordings** | `recordings_list`, `recordings_delete` |
 | **Cloud / GDrive** | `gdrive_status`, `gdrive_list_files`, `gdrive_publish_tunnel`, `cloudflare_status`, `tunnel_link_url` |

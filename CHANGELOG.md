@@ -4,6 +4,29 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Short links to the tunnel in every email (`TUNNEL_SHORT_LINKS`, `short_links.py`).** A spoo.me
+  link with a random 7-character lowercase code (easy to type on a car browser) for the gateway and
+  for each `APP_LINKS` path (`/tesla/`, `/family/`), made again whenever the tunnel URL changes and
+  shared with sibling apps through `/tmp/cloudflare_tunnel_short.json`. TinyURL, is.gd, v.gd, da.gd
+  and clck.ru all blacklist `*.trycloudflare.com`. Refused while `WEB_CONFIG_PASSWORD` is blank or
+  `user`: a short code can be scanned, the tunnel name can't. Default off.
+- **Fix: a tunnel that the health check restarted never emailed its new URL.** The check blanked the
+  URL before cloudflared respawned, so the new one looked like the first; the previous URL is now kept.
+- **Extra web logins (`WEB_EXTRA_USERS`, `tools/web_user.py add|remove|list`).** Same access as the
+  main login, stored as salted PBKDF2 hashes only; a credential that verified once is cached in memory
+  so dashboard polling doesn't pay for the hash. The access log names the user. Offload workers can
+  have their own login (`GATEWAY_USERNAME`/`GATEWAY_PASSWORD`).
+- **No login from the home network (`WEB_LAN_NO_LOGIN`).** Judged from the connection's own address
+  (LAN and Tailscale ranges), never from headers; tunnel visitors arrive through loopback and still
+  log in, as do this machine's own callers. Default off.
+- **MCP: 168 → 175 tools.** New `offload_workers_status`, `denoise_status`, and Speaker ID curation
+  (`speaker_unlabel`, `speaker_merge`, `speaker_not_same`, `speaker_note`, `speaker_audit`,
+  `speaker_undo`). Fixed tools that had drifted from the gateway: `smart_announce_status` (crashed),
+  `gdrive_status` and `winlink_gateways` (printed `?`), `transcription_status` (now says PAUSED),
+  `transcription_config` (current models; `log_results=false` no longer turned it on).
+  `cloudflare_status` shows the short links. Retired `pihole_status` (Pi-hole is gone).
+  `tests/test_mcp_tool_shapes.py` feeds the fixed tools today's payloads.
+
 ## [8.2.0] -- 2026-11-26
 
 - **Offload workers: remote DP8 denoise and Kokoro TTS** (`docs/offload-workers.md`). Two

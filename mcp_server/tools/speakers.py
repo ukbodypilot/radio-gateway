@@ -1,4 +1,4 @@
-"""Speaker ID MCP tools: who is talking, the review queue, and labelling a voice.
+"""Speaker ID MCP tools: who is talking, the review queue, and curating voices (label, merge, undo).
 
 Read through the same /speakers/api endpoints as the web page. Fingerprints
 (embeddings) never leave the gateway; these tools return names, callsigns,
@@ -110,3 +110,73 @@ def speaker_label(voice: int, callsign: str = '', name: str = '') -> str:
     if r.get('ok'):
         return f"Voice #{voice} labelled {' · '.join(x for x in (callsign.upper(), name) if x)} (change #{r.get('audit_id')}, undo on /speakers)."
     return f"Failed: {r.get('error', 'unknown')}"
+
+
+def _action(op, body, done):
+    """POST one curation op; every op is audited and undoable (speaker_audit / speaker_undo)."""
+    r = _post('/speakers/api/action', {'op': op, **body}, timeout=30)
+    if r.get('ok'):
+        return f"{done} (change #{r.get('audit_id')}; speaker_undo({r.get('audit_id')}) reverses it)."
+    return f"Failed: {r.get('error', 'unknown')}"
+
+
+@mcp.tool()
+def speaker_unlabel(voice: int) -> str:
+    """
+    Remove a voice's callsign/name label (the voice and its overs stay). Use when
+    the user says a label is wrong and doesn't know the right one.
+    """
+    return _action('unlabel', {'profile_id': int(voice)}, f"Voice #{voice} unlabelled")
+
+
+@mcp.tool()
+def speaker_merge(keep: int, drop: int) -> str:
+    """
+    Merge two voices that are the same person: every over of `drop` moves to
+    `keep`, and `drop` is removed. Only when the user says they are the same.
+    """
+    return _action('merge', {'keep': int(keep), 'drop': int(drop)}, f"Voice #{drop} merged into #{keep}")
+
+
+@mcp.tool()
+def speaker_not_same(a: int, b: int) -> str:
+    """
+    Record that voices `a` and `b` are different people, so automatic
+    clustering never merges them and the "same person?" card stops asking.
+    """
+    return _action('not_same', {'a': int(a), 'b': int(b)}, f"Voices #{a} and #{b} marked as different people")
+
+
+@mcp.tool()
+def speaker_note(voice: int, notes: str) -> str:
+    """Set the free-text note on a voice (shown on the Speakers page). Empty clears it."""
+    return _action('note', {'profile_id': int(voice), 'notes': notes}, f"Note on voice #{voice} saved")
+
+
+@mcp.tool()
+def speaker_audit(limit: int = 15) -> str:
+    """
+    Recent Speaker ID changes, newest first: user labels/merges and the automatic
+    nightly/recluster work. Each row's id can be passed to speaker_undo.
+    """
+    r = _get('/speakers/api/audit')
+    if not r.get('ok', True) or 'error' in r:
+        return f"Error: {r.get('error', 'unknown')}"
+    rows = r.get('rows') or []
+    if not rows:
+        return "No Speaker ID changes recorded"
+    out = []
+    for row in rows[:max(1, min(int(limit), 100))]:
+        p = row.get('payload') or {}
+        bits = ', '.join(f"{k}={v}" for k, v in p.items() if not isinstance(v, (list, dict)))[:140]
+        out.append(f"#{row.get('id')} {_ago(row.get('ts'))} [{row.get('actor')}] {row.get('action')}: {bits}")
+    return '\n'.join(out)
+
+
+@mcp.tool()
+def speaker_undo(change_id: int) -> str:
+    """
+    Undo one Speaker ID change by its id (from speaker_audit, or the id a label/
+    merge/unlabel reported). Only when the user asks to reverse it.
+    """
+    return _action('undo', {'audit_id': int(change_id)}, f"Change #{change_id} undone")

@@ -380,6 +380,13 @@ DEFAULTS = {
     # loader skips blank values), so the UI always has a login.
     'WEB_CONFIG_USERNAME': 'user',
     'WEB_CONFIG_PASSWORD': 'user',
+    # More logins, same access: "name:pbkdf2_sha256$..., name2:..." (hashes only).
+    # Edit with tools/web_user.py, not by hand.
+    'WEB_EXTRA_USERS': '',
+    # true: browsers on the home network (and Tailscale) open the UI with no login.
+    # Judged from the TCP peer address; tunnel visitors arrive via loopback and still log in.
+    # Anyone on your Wi-Fi can then key the radios.
+    'WEB_LAN_NO_LOGIN': False,
     'WEB_CONFIG_HTTPS': 'false',  # false, self-signed, or letsencrypt (a string: a bool default coerced 'self-signed' to False)
     'GATEWAY_NAME': '',           # Display name shown at top of dashboard (blank = none)
     'WEB_THEME': 'grey',          # Dashboard color theme: grey, blue, red, green, purple, amber, teal, pink
@@ -395,6 +402,10 @@ DEFAULTS = {
     # except the link and endpoint-update routes. true restores the old
     # open-to-the-internet behaviour.
     'WEB_TUNNEL_ALLOW_NO_PASSWORD': False,
+    # Emails carry a spoo.me short link to the tunnel (and to each APP_LINKS path),
+    # remade whenever the tunnel URL changes. Sends the tunnel URL to the shortener, and a
+    # short code can be found by scanning: refused while WEB_CONFIG_PASSWORD is blank/"user".
+    'TUNNEL_SHORT_LINKS': False,
     # ProcessSupervisor opt-ins. Default false → existing systemd /
     # manual handling stays in charge. Setting true makes the gateway
     # supervise the service: respawn on death, status in /processes.
@@ -805,11 +816,11 @@ LAYOUT = [
     ]),
     ('web', 'Web Configuration', [
         'ENABLE_WEB_CONFIG', 'WEB_CONFIG_PORT', 'WEB_CONFIG_USERNAME', 'WEB_CONFIG_PASSWORD',
-        'WEB_CONFIG_HTTPS', 'GATEWAY_NAME', 'WEB_THEME', 'APP_LINKS',
+        'WEB_LAN_NO_LOGIN', 'WEB_CONFIG_HTTPS', 'GATEWAY_NAME', 'WEB_THEME', 'APP_LINKS',
         'ENABLE_WEB_MIC', 'WEB_MIC_VOLUME',
         'WEB_MIC_KEY_TIMEOUT', 'WEB_MIC_MAX_TX',
         'ENABLE_WEB_MONITOR', 'WEB_MONITOR_VOLUME', 'MONITOR_VAD_THRESHOLD',
-        'ENABLE_CLOUDFLARE_TUNNEL', 'WEB_TUNNEL_ALLOW_NO_PASSWORD',
+        'ENABLE_CLOUDFLARE_TUNNEL', 'WEB_TUNNEL_ALLOW_NO_PASSWORD', 'TUNNEL_SHORT_LINKS',
         'ENABLE_GDRIVE', 'GDRIVE_REMOTE', 'GDRIVE_FOLDER',
     ]),
     ('transcription', 'Transcription', [
@@ -852,6 +863,7 @@ NOT_IN_FORM = {
     'SDR_MODE': 'file only; the SDR page persists its own mode',
     'SUPERVISE_MUMBLE': 'file only',
     'TTS_TARGET_RMS_DB': 'file only',
+    'WEB_EXTRA_USERS': 'password hashes: tools/web_user.py edits it',
 }
 NOT_IN_FORM.update({k: 'file only' for k in _FILE_ONLY_DOCUMENTED})
 

@@ -468,11 +468,13 @@ def winlink_gateways() -> str:
     gws = data.get('gateways', [])
     if not gws:
         return "No Winlink gateways found"
-    lines = [f"{len(gws)} nearby Winlink packet gateways:"]
-    for g in gws[:20]:
+    lines = [f"{len(gws)} nearby Winlink packet gateways (nearest 20):"]
+    for g in sorted(gws, key=lambda g: g.get('dist_km') if isinstance(g.get('dist_km'), (int, float)) else 1e9)[:20]:
+        dist = g.get('dist_km')
+        dist = f"{dist:5.1f}" if isinstance(dist, (int, float)) else '    ?'
         lines.append(
-            f"  {g.get('callsign', '?'):12s} {g.get('frequency', '?'):>10s} MHz  "
-            f"{g.get('distance', '?'):>5s} km  {g.get('grid', '')}"
+            f"  {g.get('callsign', '?'):12s} {str(g.get('freq') or '?'):>8s} MHz  {dist} km  "
+            f"{g.get('grid', ''):7s} {g.get('modem', '')} baud, last active {g.get('hours_since', '?')} h ago"
         )
     return '\n'.join(lines)
 
@@ -753,28 +755,6 @@ def endpoint_version() -> str:
         match = 'OK' if ep_ver == gw_ver else 'MISMATCH'
         lines.append(f"  {name}: v={ep_ver} [{match}]")
     return '\n'.join(lines)
-
-
-@mcp.tool()
-def pihole_status() -> str:
-    """
-    Get Pi-hole DNS ad-blocker status: queries, blocked, top clients.
-    Pi-hole runs on the gateway at port 8089.
-    """
-    import urllib.request
-    try:
-        req = urllib.request.Request('http://127.0.0.1:8089/admin/api/stats/summary')
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
-        queries = data.get('queries', {})
-        total = queries.get('total', 0)
-        blocked = queries.get('blocked', 0)
-        pct = queries.get('percent_blocked', 0)
-        clients = data.get('clients', {}).get('total', 0)
-        return (f"Pi-hole: {total} queries, {blocked} blocked ({pct:.1f}%), "
-                f"{clients} clients")
-    except Exception as e:
-        return f"Pi-hole status unavailable: {e}"
 
 
 # ---------------------------------------------------------------------------

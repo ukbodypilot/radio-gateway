@@ -34,6 +34,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     username = 'user'  # WEB_CONFIG_USERNAME
     password = ''     # WEB_CONFIG_PASSWORD; empty means no auth
     tunnel_allow_open = False  # WEB_TUNNEL_ALLOW_NO_PASSWORD
+    lan_no_login = False       # WEB_LAN_NO_LOGIN
 
     protocol_version = "HTTP/1.1"  # Required for WebSocket upgrade
 
@@ -68,7 +69,11 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     #   3. No password: open on the LAN, but 403 through the Cloudflare
     #      tunnel unless WEB_TUNNEL_ALLOW_NO_PASSWORD. /ws/link stays open
     #      so tunnel endpoints keep working.
-    #   4. Basic auth.
+    #   4. WEB_LAN_NO_LOGIN: a client whose own socket address is on the home
+    #      network (or Tailscale) gets in without a login. Tunnel traffic arrives
+    #      from 127.0.0.1 (cloudflared), so it can never qualify; this machine's
+    #      own loopback callers (manager, MCP) still log in as before.
+    #   5. Basic auth.
 
     _ENDPOINT_UPDATE_PATHS = frozenset({
         '/api/endpoint/version', '/api/endpoint/files',
@@ -103,6 +108,8 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         # Prometheus on the box scrapes /metrics with no credentials.
         if path == '/metrics' and self._from_this_box():
             return True
+        if self.lan_no_login and self._from_home_network():
+            return True
         if not self.password:
             if (self._via_tunnel() and not self.tunnel_allow_open
                     and path != self._LINK_WS_PATH):
@@ -112,6 +119,24 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
                 return False
             return True
         return self._check_auth()
+
+    _HOME_NETS = None
+
+    def _from_home_network(self):
+        """The TCP peer itself is a LAN or Tailscale address (never loopback, so never
+        the tunnel). Headers are not consulted: they can be forged, the socket can't."""
+        import ipaddress
+        if GatewayRequestHandler._HOME_NETS is None:
+            GatewayRequestHandler._HOME_NETS = [ipaddress.ip_network(n) for n in (
+                '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10',
+                'fc00::/7', 'fe80::/10')]
+        try:
+            a = ipaddress.ip_address(self.client_address[0])
+        except (ValueError, IndexError, TypeError):
+            return False
+        if a.version == 6 and a.ipv4_mapped:
+            a = a.ipv4_mapped
+        return any(a in n for n in GatewayRequestHandler._HOME_NETS)
 
     def _from_this_box(self):
         """A client on this machine, not cloudflared relaying the tunnel."""
@@ -235,10 +260,15 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
             user, pw = decoded.split(':', 1)
             # compare_digest: constant-time, no timing side-channel
             import hmac
-            if (hmac.compare_digest(user, self.username)
-                    and hmac.compare_digest(pw, self.password)):
+            ok = (hmac.compare_digest(user, self.username)
+                  and hmac.compare_digest(pw, self.password))
+            if not ok and getattr(self, 'extra_users', None):
+                import web_users
+                ok = web_users.verify(self.extra_users, user, pw) is not None
+            if ok:
                 if guard.success(key, now):
-                    self._access_note(f"login from {addr} ({via})")
+                    who = '' if user == self.username else f" as {user[:32]}"
+                    self._access_note(f"login from {addr} ({via}){who}")
                 return True
         except Exception:
             log_exc()

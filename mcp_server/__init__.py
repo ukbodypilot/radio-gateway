@@ -30,6 +30,7 @@ def _register_all_tools():
         metrics,
         usrp,
         manager,
+        workers,
         audio_beds,
     )
 
