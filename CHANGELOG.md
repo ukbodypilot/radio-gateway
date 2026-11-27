@@ -12,6 +12,16 @@ All notable changes to Radio Gateway.
   that chunk dry, never local. Kokoro TTS uses a registered worker first and falls back to a
   lazily loaded local model (`TTS_REMOTE_WORKER`, default on). New: `GET /workers`,
   `rg_denoise_remote_total`, `rg_denoise_remote_rtt_ms`, `rg_tts_remote_total`.
+- **Audio → Denoise page** (`/denoise`). Every bus's DP8 settings in one table: on/off,
+  **Local / Remote**, mix and skip-below threshold, plus live state, cost (cores used here, or
+  the remote round trip) and dry misses per poll. "All on → remote/local" bulk buttons, and
+  remote worker cards (streams, temperature, load, per-stream ms). It writes the same
+  `routing_config.json` keys as the Routing page. New counters per bus: `dn_sent`,
+  `dn_bypassed`, `dn_busy_s`, `dn_ms_avg`. New: `GET /denoise/status`.
+- **Dashboard → Endpoints: Offload Workers panel.** Shows denoise and TTS workers next to the
+  transcribe workers: heartbeat, streams, temperature, load, and each bus's link (RTT, ok, dry).
+  The worker heartbeats now also carry `max_streams`, `status_port`, `loadavg` and `fan_rpm`
+  (plus `requests`/`errors` for TTS).
 
 ## [8.1.0] -- 2026-11-26
 

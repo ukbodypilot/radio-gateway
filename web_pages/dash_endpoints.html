@@ -30,6 +30,15 @@
   <div id="wk-foot" class="panel-foot" style="display:none"></div>
 </div>
 
+<div id="offload-panel" class="panel" style="display:none;">
+  <div class="panel-head">
+    <h2 class="panel-title">Offload Workers</h2>
+    <span id="of-badge" class="panel-meta"></span>
+  </div>
+  <div id="of-list"></div>
+  <div id="of-foot" class="panel-foot"></div>
+</div>
+
 <script src="/pages/common.js"></script>
 <script src="/pages/charts.js"></script>
 <script src="/pages/dash.js"></script>
@@ -340,6 +349,67 @@ createPoller('/transcriptions?since=4102444800', 5000, function(d) {
       + (cnt.expired ? ' · expired ' + cnt.expired : '')
       + (cnt.rejected ? ' · rejected ' + cnt.rejected : '');
   } else foot.style.display = 'none';
+});
+
+// ══ Offload workers (denoise + TTS) ════════════════════════════════════════
+// Self-registered like the transcribe workers; settings live on /denoise.
+var _lastOfHTML = '';
+createPoller('/workers', 5000, function(d) {
+  var pool = d.pool || {};
+  var dn = (pool.denoise || {}).workers || [], tts = (pool.tts || {}).workers || [];
+  var streams = d.denoise || [], ttsSt = d.tts || {};
+  var panel = document.getElementById('offload-panel');
+  panel.style.display = '';
+  var n = dn.length + tts.length;
+  document.getElementById('of-badge').innerHTML = '<span class="' + (n ? 'green' : 'dim') + '">'
+    + dn.length + ' denoise &middot; ' + tts.length + ' TTS</span>';
+  var h = '';
+  if (!n) {
+    h = '<div class="empty empty-live"><span class="empty-glyph">&#9675;</span>No offload workers'
+      + '<span class="empty-hint">Start tools/denoise_worker.py or tools/tts_worker.py on another box</span></div>';
+  }
+  var all = dn.map(function(w){ return ['denoise', w]; }).concat(tts.map(function(w){ return ['tts', w]; }));
+  all.forEach(function(kw, i) {
+    var kind = kw[0], w = kw[1], m = w.meta || {};
+    var fresh = w.age_s < 60;
+    h += '<div class="' + (i > 0 ? 'ep-sep' : '') + '">';
+    h += '<div class="ep-head"><span class="ep-tags">'
+      + '<span class="st-val white ep-name">' + esc(w.name) + '</span>'
+      + '<span class="tag">' + (kind === 'denoise' ? 'DENOISE' : 'TTS') + '</span>'
+      + '<span class="tag accent" title="Self-registered">self-reg</span>'
+      + '<span class="tag ' + (m.model_loaded === false ? 'warn' : fresh ? 'ok' : 'warn') + '">'
+      + (m.model_loaded === false ? 'loading' : 'ready') + '</span>'
+      + '</span></div>';
+    var it = [];
+    it.push(stItem('URL', stVal(esc(w.url.replace(/^\w+:\/\//, '')), 'white')));
+    it.push(stItem('Heartbeat', stVal(Math.round(w.age_s) + 's ago', fresh ? 'green' : 'yellow')));
+    if (kind === 'denoise') {
+      it.push(stItem('Streams', stVal((m.streams || 0) + ' / ' + (m.max_streams || '?'), (m.streams || 0) ? 'cyan' : 'dim')));
+    } else {
+      if (m.requests != null) it.push(stItem('Requests', stVal(m.requests, 'white')));
+      if (m.errors) it.push(stItem('Errors', stVal(m.errors, 'red')));
+    }
+    if (m.cpu_temp_c != null) it.push(stItem('Temp', stVal(m.cpu_temp_c + '&deg;', m.cpu_temp_c < 80 ? 'green' : m.cpu_temp_c < 87 ? 'yellow' : 'red')));
+    if (m.loadavg != null) it.push(stItem('Load', stVal(m.loadavg + (m.cpus ? ' / ' + m.cpus : ''), 'white')));
+    if (m.fan_rpm != null) it.push(stItem('Fan', stVal(m.fan_rpm + ' RPM', 'white')));
+    h += stRow(it);
+    if (kind === 'denoise') {
+      streams.filter(function(s){ return s.worker === w.name; }).forEach(function(s) {
+        var c = s.counts || {}, miss = (c.timeout || 0) + (c.down || 0) + (c.error || 0);
+        h += '<div class="st-line">' + esc(String(s.bus).replace(/^bus_/, '')) + ': '
+          + '<span class="' + (s.connected ? 'green' : 'red') + '">' + (s.connected ? 'connected' : 'down') + '</span>'
+          + (s.rtt_ms_avg != null ? ' &middot; ' + s.rtt_ms_avg + ' ms rtt (max ' + s.rtt_ms_max + ')' : '')
+          + ' &middot; ' + (c.ok || 0) + ' ok'
+          + (miss ? ' &middot; <span class="yellow">' + miss + ' dry</span>' : '') + '</div>';
+      });
+    }
+    h += '</div>';
+  });
+  if (h !== _lastOfHTML) { _lastOfHTML = h; document.getElementById('of-list').innerHTML = h; }
+  var foot = 'Denoise settings: Audio &rarr; <a href="/denoise">Denoise</a>';
+  if (ttsSt && ttsSt.remote != null) foot += ' &middot; TTS: ' + ttsSt.remote + ' remote, '
+    + (ttsSt.fallback || 0) + ' fell back, ' + (ttsSt.local || 0) + ' local';
+  var f = document.getElementById('of-foot'); if (f.innerHTML !== foot) f.innerHTML = foot;
 });
 </script>
 

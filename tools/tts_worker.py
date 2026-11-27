@@ -140,7 +140,9 @@ def main():
     threading.Thread(target=_load, args=(args.model_dir, args.threads),
                      daemon=True, name='KokoroLoad').start()
     wc.start_registration(args, 'tts', tag='tts', extra_fn=lambda: {
-        'model_loaded': _engine is not None, 'engine': 'kokoro', 'proto': 1})
+        'model_loaded': _engine is not None, 'engine': 'kokoro', 'proto': 1,
+        'requests': _stats['requests'], 'errors': _stats['errors'],
+        'fan_rpm': wc.fan_rpm(), 'loadavg': round(os.getloadavg()[0], 2)})
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f'[tts] Listening on {args.host}:{args.port}', flush=True)
     try:

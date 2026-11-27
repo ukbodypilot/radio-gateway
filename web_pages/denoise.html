@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Denoise</title>
+<link rel="stylesheet" href="/pages/common.css">
+<style>
+  /* Denoise page: every bus's DP8 settings in one place, plus where it
+     runs (this box or a remote worker) and what each choice costs.
+     Same tokens and grammar as /transcribe. */
+  body { padding-bottom: var(--s-5); }
+
+  .head-bar {
+    display: flex; align-items: center; gap: var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    background: var(--t-panel); border: 1px solid var(--t-border);
+    border-radius: var(--r-md); margin-bottom: var(--s-3); flex-wrap: wrap;
+  }
+  .head-bar .grp { display: flex; align-items: baseline; gap: var(--s-2); }
+  .head-bar .k { color: var(--t-text-dim); font-size: var(--f-xs); }
+  .head-bar .v { font-variant-numeric: tabular-nums; }
+  .head-bar .push { margin-left: auto; display: flex; gap: var(--s-2); }
+
+  .sect-head {
+    display: flex; align-items: center; gap: var(--s-3);
+    margin: var(--s-5) 0 var(--s-2); font-size: var(--f-xs); color: var(--t-text-dim);
+  }
+  .sect-head .num { color: var(--t-accent); font-weight: 600; }
+  .sect-head .lbl { color: var(--t-text); font-weight: 600; }
+  .sect-head .rule { flex: 1; height: 1px; background: var(--t-border); }
+
+  /* Bus table: fixed columns so live numbers never shove the controls. */
+  .bus-table { width: 100%; border-collapse: collapse; font-size: var(--f-sm); }
+  .bus-table th {
+    text-align: left; font-weight: 500; font-size: var(--f-xs); color: var(--t-text-dim);
+    padding: 6px var(--s-2); border-bottom: 1px solid var(--t-border); white-space: nowrap;
+  }
+  .bus-table td { padding: 8px var(--s-2); border-bottom: 1px dotted var(--t-border); vertical-align: middle; }
+  .bus-table tr:last-child td { border-bottom: none; }
+  .bus-table tr.off td.dimmable { opacity: 0.4; }
+  .bus-table .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bus-name { font-weight: 600; color: var(--t-text); }
+  .bus-type { color: var(--t-text-mute); font-size: var(--f-xs); margin-left: 6px; }
+
+  .seg { display: inline-flex; }
+  .seg .rb { border-radius: 0; }
+  .seg .rb:first-child { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+  .seg .rb:last-child  { border-radius: 0 var(--r-sm) var(--r-sm) 0; border-left: none; }
+
+  .sl { display: flex; align-items: center; gap: var(--s-2); }
+  .sl input[type=range] { width: 110px; accent-color: var(--t-accent); }
+  .sl .val { min-width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; color: var(--t-text); }
+
+  .state { font-size: var(--f-xs); white-space: nowrap; }
+  .state .why { display: block; color: var(--t-text-mute); max-width: 22em; white-space: normal; }
+
+  /* Worker cards */
+  .workers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--s-3); }
+  .kv { display: grid; grid-template-columns: 1fr auto; padding: 4px 0; border-bottom: 1px dotted var(--t-border); }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--t-text-dim); font-size: var(--f-xs); }
+  .kv .v { font-variant-numeric: tabular-nums; text-align: right; }
+  .streams { margin-top: var(--s-2); font-size: var(--f-xs); }
+  .streams td { padding: 2px var(--s-2) 2px 0; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--t-text-mute); padding: var(--s-3); }
+  .note { color: var(--t-text-dim); font-size: var(--f-xs); line-height: 1.6; padding: var(--s-2) var(--s-3); }
+  .note b { color: var(--t-text); font-weight: 600; }
+  .err-line { color: var(--t-err); font-size: var(--f-xs); margin-top: var(--s-2); }
+</style>
+</head>
+<body>
+<script src="/pages/common.js"></script>
+<div id="toast-container" class="toast-stack"></div>
+
+<div class="head-bar">
+  <div class="grp"><span class="k">Buses denoised</span><span class="v" id="h-on">—</span></div>
+  <div class="grp"><span class="k">On this box</span><span class="v" id="h-local">—</span></div>
+  <div class="grp"><span class="k">On remote workers</span><span class="v" id="h-remote">—</span></div>
+  <div class="grp"><span class="k">Remote worker</span><span class="v" id="h-worker">—</span></div>
+  <div class="push">
+    <button class="rb rb-sm" onclick="allTo('dpdfnet_remote')" title="Every bus with denoise on runs on the remote worker">All on → remote</button>
+    <button class="rb rb-sm" onclick="allTo('dpdfnet')" title="Every bus with denoise on runs on this box">All on → local</button>
+  </div>
+</div>
+
+<div class="sect-head"><span class="num">01</span><span class="lbl">Buses</span><span class="rule"></span><span id="bus-meta"></span></div>
+<div class="panel">
+  <table class="bus-table">
+    <thead><tr>
+      <th>Bus</th><th>Denoise</th><th>Runs on</th><th>Mix (wet)</th>
+      <th title="Chunks quieter than this skip the model and play dry. Saves CPU on squelch.">Skip below</th>
+      <th>State</th><th>Cost</th><th title="Chunks played dry because the result missed its slot, last poll">Dry misses</th>
+    </tr></thead>
+    <tbody id="bus-rows"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="sect-head"><span class="num">02</span><span class="lbl">Remote denoise workers</span><span class="rule"></span><span id="wk-meta"></span></div>
+<div class="workers-grid" id="wk-grid"></div>
+
+<div class="sect-head"><span class="num">03</span><span class="lbl">How it works</span><span class="rule"></span></div>
+<div class="panel note">
+  Each bus runs its own DP8 stream (DPDFNet at 8 kHz). <b>Local</b> runs it on this box.
+  <b>Remote</b> streams the bus to a denoise worker in 50 ms chunks, and the result is the same,
+  bit for bit. If the worker's reply is late, or there's no worker at all, that chunk plays
+  <b>dry</b> (not denoised). It never falls back to local, because that would put the load back
+  on this box. Workers register themselves (<code>tools/denoise_worker.py</code>), so no address
+  goes in config. Settings save to <code>routing_config.json</code>, the same file the D button
+  and mix slider in Routing use.
+</div>
+
+<script>
+function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function toast(msg, level){
+  var c=document.getElementById('toast-container'); if(!c) return;
+  var d=document.createElement('div'); d.className='toast '+(level||'info'); d.textContent=msg;
+  c.appendChild(d); setTimeout(function(){ d.remove(); }, 3500);
+}
+function cmd(body){
+  return postJson('/routing/cmd', body).then(function(d){
+    if(!d || !d.ok) toast((d && d.error) || 'Command failed', 'error');
+    return d;
+  }).catch(function(e){ toast('Command failed: '+e, 'error'); return {}; });
+}
+
+var _last = null;          // last /denoise/status payload
+var _prevMiss = {};        // bus -> dry-miss counter total at the previous poll
+var _dragging = {};        // bus+field -> true while a slider is held (don't rebuild under it)
+var _timers = {};
+
+function missTotal(b){
+  var r = b.remote && b.remote.counts || {};
+  return (b.late||0) + (r.timeout||0) + (r.down||0) + (r.error||0);
+}
+
+function stateOf(b){
+  if (!b.enabled) return ['dim', 'off', ''];
+  if (!b.live)    return ['yellow', 'starting', 'no processor yet: it starts with the next audio'];
+  if (b.engine === 'dpdfnet_remote') {
+    var r = b.remote;
+    if (!r) return ['yellow', 'waiting', 'connects when the bus has audio'];
+    if (!r.connected) return ['red', 'dry', r.last_error || 'worker not connected'];
+    return ['green', 'remote', r.worker ? 'on ' + r.worker : ''];
+  }
+  return ['green', 'local', ''];
+}
+
+function costOf(b){
+  if (!b.enabled || !b.live) return '—';
+  if (b.engine === 'dpdfnet_remote') {
+    var r = b.remote || {};
+    if (r.rtt_ms_avg == null) return '0 cores here';
+    return '0 cores here · ' + r.rtt_ms_avg + ' ms rtt (max ' + r.rtt_ms_max + ')';
+  }
+  var c = b.local_cores;
+  return (c == null ? '…' : c.toFixed(2) + ' core') + (b.ms_avg != null ? ' · ' + b.ms_avg + ' ms/chunk' : '');
+}
+
+function render(d){
+  _last = d;
+  var rows = d.busses || [];
+  var on = rows.filter(function(b){ return b.enabled; });
+  var rem = on.filter(function(b){ return b.engine === 'dpdfnet_remote'; });
+  setText(document.getElementById('h-on'), on.length + ' of ' + rows.length);
+  setText(document.getElementById('h-local'), (on.length - rem.length) + ' bus' + ((on.length - rem.length) === 1 ? '' : 'es')
+    + ' · ' + (d.local_cores || 0).toFixed(2) + ' of ' + (d.cpus || '?') + ' cores');
+  setText(document.getElementById('h-remote'), rem.length + ' bus' + (rem.length === 1 ? '' : 'es'));
+  var ws = d.workers || [];
+  var hw = document.getElementById('h-worker');
+  if (!ws.length) { hw.innerHTML = '<span class="red">none registered</span>'; }
+  else {
+    var w = ws[0], m = w.meta || {}, det = w.detail || {};
+    var streams = det.streams ? det.streams.length : (m.streams || 0);
+    var temp = det.cpu_temp_c != null ? det.cpu_temp_c : m.cpu_temp_c;
+    hw.innerHTML = '<span class="green">' + esc(w.name) + '</span> · ' + streams + '/' + (det.max_streams || m.max_streams || '?')
+      + ' streams' + (temp != null ? ' · <span class="' + (temp < 80 ? 'white' : temp < 87 ? 'yellow' : 'red') + '">' + temp + '&deg;</span>' : '')
+      + (ws.length > 1 ? ' (+' + (ws.length - 1) + ')' : '');
+  }
+
+  var held = Object.keys(_dragging).some(function(k){ return _dragging[k]; });
+  if (!held) {
+    var h = '';
+    if (!rows.length) h = '<tr><td colspan="8" class="empty">No buses. Make one in Routing.</td></tr>';
+    rows.forEach(function(b){
+      var st = stateOf(b), rem = b.engine === 'dpdfnet_remote';
+      var mt = missTotal(b), prev = _prevMiss[b.id];
+      var dm = prev == null ? 0 : Math.max(0, mt - prev);
+      _prevMiss[b.id] = mt;
+      var mixPct = Math.round(b.mix * 100);
+      h += '<tr class="' + (b.enabled ? '' : 'off') + '">'
+        + '<td><span class="bus-name">' + esc(b.name) + '</span><span class="bus-type">' + esc(b.type) + '</span></td>'
+        + '<td><button class="rb rb-sm rb-caps' + (b.enabled ? ' rb-active' : '') + '" onclick="toggleDfn(\'' + esc(b.id) + '\')">'
+        +   (b.enabled ? 'ON' : 'OFF') + '</button></td>'
+        + '<td class="dimmable"><span class="seg">'
+        +   '<button class="rb rb-sm' + (!rem ? ' rb-active' : '') + '" onclick="setEngine(\'' + esc(b.id) + '\',\'dpdfnet\')">Local</button>'
+        +   '<button class="rb rb-sm' + (rem ? ' rb-active' : '') + '" onclick="setEngine(\'' + esc(b.id) + '\',\'dpdfnet_remote\')">Remote</button>'
+        + '</span></td>'
+        + '<td class="dimmable"><div class="sl"><input type="range" min="0" max="100" step="5" value="' + mixPct + '" '
+        +   'oninput="slide(\'' + esc(b.id) + '\',\'mix\',this.value,this)" onpointerdown="hold(\'' + esc(b.id) + 'mix\',1)" onpointerup="hold(\'' + esc(b.id) + 'mix\',0)">'
+        +   '<span class="val">' + mixPct + '%</span></div></td>'
+        + '<td class="dimmable"><div class="sl"><input type="range" min="-90" max="-20" step="1" value="' + Math.round(b.bypass_db) + '" '
+        +   'oninput="slide(\'' + esc(b.id) + '\',\'bypass\',this.value,this)" onpointerdown="hold(\'' + esc(b.id) + 'bypass\',1)" onpointerup="hold(\'' + esc(b.id) + 'bypass\',0)">'
+        +   '<span class="val">' + Math.round(b.bypass_db) + ' dB</span></div></td>'
+        + '<td class="state"><span class="' + st[0] + '">' + st[1] + '</span>' + (st[2] ? '<span class="why">' + esc(st[2]) + '</span>' : '') + '</td>'
+        + '<td class="num dimmable">' + esc(costOf(b)) + '</td>'
+        + '<td class="num dimmable"><span class="' + (dm ? 'yellow' : 'dim') + '">' + (b.enabled ? dm : '—') + '</span></td>'
+        + '</tr>';
+    });
+    document.getElementById('bus-rows').innerHTML = h;
+  }
+  setText(document.getElementById('bus-meta'), 'refreshes every 2 s');
+
+  var g = '';
+  if (!ws.length) {
+    g = '<div class="panel empty">No denoise worker registered. Start <code>tools/denoise_worker.py --gateway http://&lt;this box&gt;:8080</code> on another machine; it shows up here within 30 s.</div>';
+  }
+  ws.forEach(function(w){
+    var m = w.meta || {}, det = w.detail || {};
+    var kv = function(k, v){ return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>'; };
+    var temp = det.cpu_temp_c != null ? det.cpu_temp_c : m.cpu_temp_c;
+    var load = det.loadavg ? det.loadavg[0].toFixed(2) : (m.loadavg != null ? m.loadavg : null);
+    g += '<div class="panel"><div class="panel-head"><span class="panel-title">' + esc(w.name) + '</span>'
+      + '<span class="panel-meta"><span class="tag">DP8</span> <span class="tag ' + (w.age_s < 60 ? 'ok' : 'warn') + '">heartbeat ' + Math.round(w.age_s) + 's ago</span></span></div>';
+    g += kv('Address', esc(w.url.replace(/^tcp:\/\//, '')));
+    g += kv('Streams', (det.streams ? det.streams.length : (m.streams || 0)) + ' / ' + (det.max_streams || m.max_streams || '?'));
+    if (temp != null) g += kv('CPU temp', '<span class="' + (temp < 80 ? 'green' : temp < 87 ? 'yellow' : 'red') + '">' + temp + '&deg;C</span>');
+    if (load != null) g += kv('Load (1 min)', load + (m.cpus ? ' of ' + m.cpus + ' threads' : ''));
+    if (det.fan_rpm != null || m.fan_rpm != null) g += kv('Fan', (det.fan_rpm != null ? det.fan_rpm : m.fan_rpm) + ' RPM');
+    if (det.totals) g += kv('Chunks served', det.totals.chunks + (det.totals.refused ? ' · <span class="yellow">' + det.totals.refused + ' refused</span>' : ''));
+    if (det.uptime_s != null) g += kv('Up', fmtSecs(det.uptime_s));
+    if (det.streams && det.streams.length) {
+      g += '<table class="streams"><tr class="dim"><td>bus</td><td>ms avg</td><td>ms max</td><td>chunks</td></tr>';
+      det.streams.forEach(function(s){
+        g += '<tr><td class="white">' + esc(String(s.bus).replace(/^bus_/, '')) + '</td><td>' + (s.proc_ms_avg == null ? '—' : s.proc_ms_avg)
+          + '</td><td>' + s.proc_ms_max + '</td><td>' + s.chunks + '</td></tr>';
+      });
+      g += '</table>';
+    }
+    if (det.error) g += '<div class="err-line">Status endpoint: ' + esc(det.error) + '</div>';
+    g += '</div>';
+  });
+  var grid = document.getElementById('wk-grid');
+  if (grid.innerHTML !== g) grid.innerHTML = g;
+  var rs = d.registration || {};
+  setText(document.getElementById('wk-meta'), 'registered ' + (rs.accepted || 0) + (rs.expired ? ' · expired ' + rs.expired : '') + ' · TTL 90 s');
+}
+
+function refresh(){ return getJson('/denoise/status').then(render).catch(function(){}); }
+
+function hold(key, on){ _dragging[key] = !!on; }
+document.addEventListener('pointerup', function(){ _dragging = {}; });
+
+function slide(bus, field, value, el){
+  var v = parseFloat(value);
+  el.nextElementSibling.textContent = field === 'mix' ? Math.round(v) + '%' : Math.round(v) + ' dB';
+  var k = bus + field;
+  clearTimeout(_timers[k]);
+  _timers[k] = setTimeout(function(){
+    cmd(field === 'mix' ? {cmd: 'set_dfn_mix', bus: bus, mix: v / 100}
+                        : {cmd: 'set_dfn_bypass', bus: bus, bypass_db: v});
+  }, 120);
+}
+
+function toggleDfn(bus){ cmd({cmd: 'toggle_proc', bus: bus, filter: 'dfn'}).then(refresh); }
+
+function setEngine(bus, engine){
+  cmd({cmd: 'set_dfn_engine', bus: bus, engine: engine}).then(function(d){
+    if (d && d.ok) toast(bus + ': denoise ' + (engine === 'dpdfnet_remote' ? 'on the remote worker' : 'on this box'), 'info');
+    refresh();
+  });
+}
+
+function allTo(engine){
+  if (!_last) return;
+  var todo = (_last.busses || []).filter(function(b){ return b.enabled && b.engine !== engine; });
+  if (!todo.length) { toast('Nothing to change', 'info'); return; }
+  Promise.all(todo.map(function(b){ return cmd({cmd: 'set_dfn_engine', bus: b.id, engine: engine}); }))
+    .then(function(){ toast(todo.length + ' bus' + (todo.length === 1 ? '' : 'es') + ' moved ' + (engine === 'dpdfnet_remote' ? 'to remote' : 'to local'), 'info'); refresh(); });
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

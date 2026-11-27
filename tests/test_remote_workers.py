@@ -251,5 +251,45 @@ st = tts_offload.status()
 check('tts counters', st['remote'] >= 1 and st['fallback'] >= 1 and st['local'] >= 2, st)
 httpd.shutdown()
 
+# ── /denoise status payload + page wiring ──────────────────────────────────
+import web_routes_workers as wrw
+
+
+class _Proc:
+    dn_chunks, dn_sent, dn_bypassed, dn_late, dn_wet_discarded = 10, 8, 2, 0, 0
+    dn_ms_avg, dn_busy_s, dfn_engine, _dn_running = 21.3, 0.0, 'dpdfnet', True
+
+
+class _Parent:
+    class gateway:
+        class bus_manager:
+            _bus_processors = {'sdr1': _Proc()}
+
+    def _load_routing_config(self):
+        return ([{'id': 'sdr1', 'name': 'SDR 1', 'processing': {'dfn': True, 'dfn_mix': 0.7}},
+                 {'id': 'quiet', 'name': 'Quiet', 'processing': {}}], [], {})
+
+
+ds = wrw.denoise_status(_Parent())
+row = {b['id']: b for b in ds['busses']}
+check('denoise status: every bus listed', set(row) == {'sdr1', 'quiet'}, ds)
+check('denoise status: settings + live counters',
+      row['sdr1']['enabled'] and row['sdr1']['mix'] == 0.7 and row['sdr1']['sent'] == 8
+      and row['sdr1']['bypassed'] == 2 and row['sdr1']['live'], row['sdr1'])
+check('denoise status: no processor = not live', row['quiet']['live'] is False and not row['quiet']['enabled'])
+_Proc.dn_busy_s = 0.0
+wrw._cpu_prev['sdr1'] = (time.monotonic() - 1.0, 0.0)
+_Proc.dn_busy_s = 0.25
+ds = wrw.denoise_status(_Parent())
+c = {b['id']: b for b in ds['busses']}['sdr1']['local_cores']
+check('denoise status: cores from busy-time delta', c is not None and 0.2 < c < 0.3, c)
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_src = open(os.path.join(_REPO, 'web', 'handler.py')).read()
+check('/denoise page + /denoise/status route registered',
+      "'/denoise': 'denoise.html'" in _src and "'/denoise/status'" in _src)
+check('denoise nav link', 'href="/denoise"' in open(os.path.join(_REPO, 'web_pages', 'shell.html')).read())
+check('offload panel on endpoints page',
+      "createPoller('/workers'" in open(os.path.join(_REPO, 'web_pages', 'dash_endpoints.html')).read())
+
 print(f"\n{'ALL PASS' if not _fails else f'{_fails} FAILED'}")
 sys.exit(1 if _fails else 0)

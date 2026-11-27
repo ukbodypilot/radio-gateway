@@ -558,6 +558,10 @@ class AudioProcessor:
         self.dn_chunks = 0          # chunks emitted from the delay line
         self.dn_late = 0            # ...of which played dry: worker missed the slot
         self.dn_wet_discarded = 0   # denoised results that arrived after their slot
+        self.dn_sent = 0            # chunks handed to the engine (not bypassed)
+        self.dn_bypassed = 0        # chunks under dfn_bypass_db: never sent, played dry
+        self.dn_busy_s = 0.0        # engine wall time; /denoise shows it as cores in use
+        self.dn_ms_avg = None       # EWMA ms per chunk (local: inference, remote: round trip)
 
     def set_dfn_engine(self, engine):
         """Switch denoise engine. Signals the worker to rebuild the stream
@@ -767,6 +771,7 @@ class AudioProcessor:
                 float(getattr(self, 'dfn_bypass_db', -60.0)) / 20.0))
             if pcm_rms(pcm_data) < _bypass_rms:
                 send = False
+                self.dn_bypassed += 1
         except Exception:
             log_exc()
 
@@ -782,6 +787,7 @@ class AudioProcessor:
                 with self._dn_lock:
                     self._dn_queue_in.append((seq, pcm_data, wet, self.dfn_engine))
                 self._dn_evt.set()
+                self.dn_sent += 1
             except Exception as e:
                 print(f"[DFN] {self.name}: enqueue error — {e}")
                 send = False
@@ -893,6 +899,9 @@ class AudioProcessor:
                 except Exception as e:
                     print(f"[DFN] {self.name}: worker process error — {e}")
                     out_bytes = pcm_data
+                _ms = (_time.monotonic() - _t0) * 1000.0
+                self.dn_busy_s += _ms / 1000.0
+                self.dn_ms_avg = _ms if self.dn_ms_avg is None else 0.95 * self.dn_ms_avg + 0.05 * _ms
                 try:
                     import metrics as _m
                     _m.denoise_apply_ms.labels(

@@ -174,6 +174,8 @@ def main():
     threading.Thread(target=status_srv.serve_forever, daemon=True, name='Status').start()
     wc.start_registration(args, 'denoise', tag='denoise', extra_fn=lambda: {
         'engine': 'dpdfnet', 'proto': rd.PROTO, 'streams': len(_conns),
+        'max_streams': _max_streams, 'status_port': args.port + 1,
+        'fan_rpm': wc.fan_rpm(), 'loadavg': round(os.getloadavg()[0], 2),
         'model_loaded': True})
     print(f'[denoise] Listening on {args.host}:{args.port} (status on :{args.port + 1}), '
           f'max {_max_streams} streams', flush=True)

@@ -72,6 +72,16 @@ use. The local model files must still be present: a switch to Kokoro without
 them is refused up front. Counters: `rg_tts_remote_total{result}` (remote,
 fallback, local). Measured: 3.2 s to synthesise 4 s of speech on the macmini.
 
+## Where to see and control it
+
+- **Audio → Denoise** (`/denoise`, data from `GET /denoise/status`): a row per bus with on/off,
+  Local/Remote, mix and skip-below, plus state (`local`, `remote`, `dry` with the reason,
+  `waiting`), cost (`local_cores` comes from deltas of the processor's `dn_busy_s`; remote buses
+  cost ~0 here), and dry misses since the last poll. The worker cards proxy the worker's own
+  `:9803/status`, cached 3 s with a 1 s timeout.
+- **Dashboard → Endpoints → Offload Workers** (`GET /workers`): registered denoise/TTS workers
+  and each remote bus's link counters.
+
 ## Installing a worker
 
 Copy `audio_util.py`, `log_util.py` and `remote_denoise.py`, plus

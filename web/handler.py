@@ -291,6 +291,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         '/recordings': 'recordings.html',
         '/recorder': 'recorder.html',
         '/transcribe': 'transcribe.html',
+        '/denoise': 'denoise.html',
         '/txlog': 'txlog.html',
         '/speakers': 'speakers.html',
         '/logs': 'logs.html',
@@ -318,6 +319,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
     _GET_EXACT = {
         '/status':                'g:handle_status',
         '/workers':               'p:handle_workers_status',
+        '/denoise/status':        'p:handle_denoise_status',
         '/soundboard/categories': 'p:handle_soundboard_categories',
         '/announcer':             'p:handle_announcer',
         '/tts/engine':            'p:handle_tts_engine',
