@@ -171,24 +171,33 @@ check('make_denoise_stream builds a RemoteDP8Stream', isinstance(s2, remote_deno
 s2.close()
 
 # Real DP8 through the worker: same output as the local stream, bit for bit.
-srv3 = start_worker(denoise_worker._make_stream)
-reg3 = remote_workers.WorkerRegistry()
-reg3.register('denoise', f'tcp://127.0.0.1:{srv3.getsockname()[1]}', 'local')
-rs = remote_denoise.RemoteDP8Stream(registry=reg3, bus='t3')
-rs.REPLY_TIMEOUT_S = 1.0
-rs.process_mix(chunk(0), 1.0)
-check('real DP8 worker connects', wait_for(lambda: rs.stats()['connected'], 15), rs.last_error)
-loc = audio_util._DPDFNet8kStream()
-rng = np.random.default_rng(1)
-same = True
-for i in range(10):
-    x = (rng.standard_normal(2400) * 3000).astype(np.int16)
-    a = rs.process_mix(x, 0.7)
-    b = loc.process_mix(x, 0.7)
-    same = same and np.array_equal(a, b)
-check('remote DP8 output == local DP8 output', same and rs.counts['ok'] == 10, rs.counts)
-check('round trip measured', rs.stats()['rtt_ms_avg'] is not None)
-rs.close()
+# Needs onnxruntime + the bundled model; CI installs neither, so SKIP there.
+try:
+    import onnxruntime  # noqa: F401
+    _dp8_ok = os.path.exists(audio_util._dpdfnet_model_path())
+except ImportError:
+    _dp8_ok = False
+if not _dp8_ok:
+    print('  SKIP  real DP8 through the worker (onnxruntime or bundled model missing)')
+else:
+    srv3 = start_worker(denoise_worker._make_stream)
+    reg3 = remote_workers.WorkerRegistry()
+    reg3.register('denoise', f'tcp://127.0.0.1:{srv3.getsockname()[1]}', 'local')
+    rs = remote_denoise.RemoteDP8Stream(registry=reg3, bus='t3')
+    rs.REPLY_TIMEOUT_S = 1.0
+    rs.process_mix(chunk(0), 1.0)
+    check('real DP8 worker connects', wait_for(lambda: rs.stats()['connected'], 15), rs.last_error)
+    loc = audio_util._DPDFNet8kStream()
+    rng = np.random.default_rng(1)
+    same = True
+    for i in range(10):
+        x = (rng.standard_normal(2400) * 3000).astype(np.int16)
+        a = rs.process_mix(x, 0.7)
+        b = loc.process_mix(x, 0.7)
+        same = same and np.array_equal(a, b)
+    check('remote DP8 output == local DP8 output', same and rs.counts['ok'] == 10, rs.counts)
+    check('round trip measured', rs.stats()['rtt_ms_avg'] is not None)
+    rs.close()
 
 
 # ── Remote TTS ─────────────────────────────────────────────────────────────
