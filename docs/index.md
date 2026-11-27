@@ -18,6 +18,7 @@ Pick the path that matches what you're trying to do.
 | [web-ui.md](web-ui.md) | The shell + dashboard sub-pages (Overview / Endpoints / Services / Operate) |
 | [fleet-manager.md](fleet-manager.md) | Document-driven autonomous monitoring + repairs |
 | [transcription-pool.md](transcription-pool.md) | Multi-machine ASR (Moonshine + Whisper) |
+| [offload-workers.md](offload-workers.md) | Remote DP8 denoise + Kokoro TTS workers |
 | [speaker-id.md](speaker-id.md) | Who is talking: voice fingerprints, callsign evidence, the Speakers page, nightly re-cluster |
 | [audio-routing.md](audio-routing.md) | Bus mixer, processing chain, streaming, speaker modes |
 | [radio-plugins.md](radio-plugins.md) | TH-9800 / TH-D75 / KV4P / SDR / link endpoints (FTM-150, IC-7100) |

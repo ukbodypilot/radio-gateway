@@ -194,6 +194,28 @@ denoise_late_total = Counter(
     registry=REGISTRY,
 )
 
+denoise_remote_total = Counter(
+    'rg_denoise_remote_total',
+    'Remote (offload worker) denoise chunks by result: ok, timeout, down, error',
+    ['bus', 'result'],
+    registry=REGISTRY,
+)
+
+denoise_remote_rtt_ms = Histogram(
+    'rg_denoise_remote_rtt_ms',
+    'Remote denoise round trip per chunk in milliseconds (send to reply)',
+    ['bus'],
+    buckets=(2.5, 5, 10, 15, 20, 30, 50, 80),
+    registry=REGISTRY,
+)
+
+tts_remote_total = Counter(
+    'rg_tts_remote_total',
+    'Kokoro TTS requests by where they ran: remote, fallback (remote failed, ran local), local (no worker)',
+    ['result'],
+    registry=REGISTRY,
+)
+
 agc_gain_db = Gauge(
     'rg_agc_gain_db',
     'Current bus AGC gain in dB (held between overs)',

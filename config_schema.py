@@ -114,6 +114,7 @@ DEFAULTS = {
     'ENABLE_TTS': True,
     'ENABLE_TEXT_COMMANDS': True,
     'TTS_ENGINE': 'kokoro',  # kokoro (offline ONNX, default) | edge (Microsoft Neural) | gtts (Google)
+    'TTS_REMOTE_WORKER': True,  # Kokoro runs on a registered remote TTS worker (tools/tts_worker.py) when one is up; local Kokoro is the fallback
     'KOKORO_DEFAULT_VOICE': 'af_heart',  # Kokoro voice ID — see docs/TTS_TEXT_COMMANDS_GUIDE.md
     'TTS_VOLUME': 1.0,  # Volume multiplier for TTS audio (1.0 = normal, 2.0 = double, 3.0 = triple)
     'TTS_TARGET_RMS_DB': -16.0,  # Loudness-normalise synthesised TTS to this RMS (all 3 engines land quieter); tanh soft-clip, one-way
@@ -751,7 +752,7 @@ LAYOUT = [
         'CW_WPM', 'CW_FREQUENCY', 'CW_VOLUME',
     ]),
     ('tts', 'Text-to-Speech', [
-        'ENABLE_TTS', 'TTS_ENGINE', 'ENABLE_TEXT_COMMANDS', 'TTS_VOLUME', 'TTS_SPEED',
+        'ENABLE_TTS', 'TTS_ENGINE', 'TTS_REMOTE_WORKER', 'ENABLE_TEXT_COMMANDS', 'TTS_VOLUME', 'TTS_SPEED',
         'KOKORO_DEFAULT_VOICE', 'TTS_DEFAULT_VOICE',
     ]),
     ('cat', 'TH-9800 CAT Control', [

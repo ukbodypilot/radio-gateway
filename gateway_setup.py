@@ -145,6 +145,45 @@ TTS_ENGINE_LABELS = {
 }
 
 
+def _kokoro_files():
+    import os as _os
+    _base = _os.path.join(_os.path.dirname(__file__), 'tools', 'models', 'kokoro')
+    return (_base, _os.path.join(_base, 'kokoro-v1.0.onnx'),
+            _os.path.join(_base, 'voices-v1.0.bin'))
+
+
+def _load_local_kokoro():
+    import os as _os
+    _base, _model, _voices = _kokoro_files()
+    # Files first: a missing model is the likelier, more useful answer
+    # than an import error, and needs no onnxruntime.
+    if not _os.path.exists(_model) or not _os.path.exists(_voices):
+        raise RuntimeError(f"Kokoro model files missing in {_base}")
+    from kokoro_onnx import Kokoro
+    return Kokoro(_model, _voices)
+
+
+def _make_kokoro(gw):
+    """The Kokoro engine the gateway calls .create() on.
+
+    TTS_REMOTE_WORKER on (default): an OffloadKokoro that synthesises on a
+    registered remote TTS worker (the macmini) and falls back to a local
+    Kokoro, loaded only when first needed. Off: the local Kokoro, loaded now.
+    Raises if the local model can't load and no remote path is configured.
+    """
+    if getattr(gw.config, 'TTS_REMOTE_WORKER', True):
+        import os as _os
+        import tts_offload
+        # Check the fallback exists NOW (cheap), load it later. Otherwise a
+        # switch to Kokoro with no model "succeeds" and TTS dies at the first
+        # speak the moment the worker is away.
+        _base, _model, _voices = _kokoro_files()
+        if not _os.path.exists(_model) or not _os.path.exists(_voices):
+            raise RuntimeError(f"Kokoro model files missing in {_base}")
+        return tts_offload.OffloadKokoro(_load_local_kokoro)
+    return _load_local_kokoro()
+
+
 def apply_tts_engine(gw, backend):
     """(Re)initialise the TTS backend in place. Returns (ok, message).
 
@@ -165,20 +204,11 @@ def apply_tts_engine(gw, backend):
     engine = None
     try:
         if backend == 'kokoro':
-            # Reuse an already-loaded Kokoro rather than paying the model load
+            # Reuse an already-built Kokoro rather than paying the model load
             # again on every switch back to it.
             engine = getattr(gw, '_kokoro_instance', None)
             if engine is None:
-                import os as _os
-                _base = _os.path.join(_os.path.dirname(__file__), 'tools', 'models', 'kokoro')
-                _model = _os.path.join(_base, 'kokoro-v1.0.onnx')
-                _voices = _os.path.join(_base, 'voices-v1.0.bin')
-                # Files first: a missing model is the likelier, more useful
-                # answer than an import error, and needs no onnxruntime.
-                if not _os.path.exists(_model) or not _os.path.exists(_voices):
-                    return False, f"Kokoro model files missing in {_base}"
-                from kokoro_onnx import Kokoro
-                engine = Kokoro(_model, _voices)
+                engine = _make_kokoro(gw)
             gw._kokoro_instance = engine
         elif backend == 'edge':
             import edge_tts
@@ -223,20 +253,21 @@ def setup_tts(gw):
         print("Initializing text-to-speech...")
         if gw._tts_backend == 'kokoro':
             import os as _os
-            from kokoro_onnx import Kokoro
-            _base = _os.path.join(_os.path.dirname(__file__), 'tools', 'models', 'kokoro')
-            _model = _os.path.join(_base, 'kokoro-v1.0.onnx')
-            _voices = _os.path.join(_base, 'voices-v1.0.bin')
-            if not _os.path.exists(_model) or not _os.path.exists(_voices):
+            _base, _model, _voices = _kokoro_files()
+            _remote = bool(getattr(gw.config, 'TTS_REMOTE_WORKER', True))
+            if not _remote and (not _os.path.exists(_model) or not _os.path.exists(_voices)):
                 print(f"⚠ Kokoro model files missing in {_base}")
                 print(f"  Download with:")
                 print(f"  wget -P {_base} https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx")
                 print(f"  wget -P {_base} https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin")
                 gw.tts_engine = None
                 return
-            gw.tts_engine = Kokoro(_model, _voices)
+            gw.tts_engine = _make_kokoro(gw)
             gw._kokoro_instance = gw.tts_engine
-            print("✓ Text-to-speech (Kokoro ONNX / offline) initialized")
+            if _remote:
+                print("✓ Text-to-speech (Kokoro on a remote TTS worker, local fallback) initialized")
+            else:
+                print("✓ Text-to-speech (Kokoro ONNX / offline) initialized")
         elif gw._tts_backend == 'edge':
             import edge_tts
             gw.tts_engine = edge_tts

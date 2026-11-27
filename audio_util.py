@@ -325,8 +325,22 @@ class _DPDFNet8kStream:
 
 
 # Engine registry. make_denoise_stream() returns None for an unknown id.
+def _remote_dp8_stream():
+    import remote_denoise
+    return remote_denoise.RemoteDP8Stream()
+
+
 _DENOISE_ENGINES = {
     'dpdfnet': _DPDFNet8kStream,
+    # Same model on a remote worker (tools/denoise_worker.py, the macmini).
+    # A miss there plays DRY, never local: see remote_denoise.py.
+    'dpdfnet_remote': _remote_dp8_stream,
+}
+
+# Short names for the UI and logs.
+DENOISE_ENGINE_LABELS = {
+    'dpdfnet': 'DP8 (local)',
+    'dpdfnet_remote': 'DP8 (remote worker)',
 }
 
 # Legal engine identifiers — consumers validate user input against these.
@@ -835,6 +849,8 @@ class AudioProcessor:
             if self.enable_dfn:
                 stream = make_denoise_stream(self.dfn_engine)
                 current_engine = self.dfn_engine if stream is not None else None
+                if stream is not None and hasattr(stream, 'bus'):
+                    stream.bus = self.name
         except Exception:
             log_exc()
         while self._dn_running:
@@ -853,6 +869,8 @@ class AudioProcessor:
                         except Exception: pass
                     stream = make_denoise_stream(engine)
                     current_engine = engine
+                    if stream is not None and hasattr(stream, 'bus'):
+                        stream.bus = self.name   # remote stream: metric/log label
                     if stream is None:
                         # Engine unavailable — emit dry so the bus keeps
                         # flowing; the pass-through mirrors the old

@@ -170,6 +170,7 @@ class WebConfigServer(_SysinfoMixin, _RoutingCmdsMixin, _CertsMixin):
         'TTS_VOLUME': 'multiplier (1.0 = normal)',
         'TTS_SPEED': 'ratio (1.0 = normal, 1.3 = 30% faster)',
         'KOKORO_DEFAULT_VOICE': 'voice ID for Kokoro engine (e.g. af_heart, bf_emma, am_puck)',
+        'TTS_REMOTE_WORKER': 'Kokoro on the remote TTS worker when one is registered (local fallback)',
         # Speaker
         'SPEAKER_OUTPUT_DEVICE': 'device name (blank = system default)',
         'SPEAKER_VOLUME': 'multiplier',

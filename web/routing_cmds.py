@@ -243,6 +243,29 @@ class _RoutingCmdsMixin:
                 return {'ok': True, 'bypass_db': bypass}
         return {'ok': False, 'error': f'bus not found: {bus_id}'}
 
+    def _routing_cmd_set_dfn_engine(self, data, busses, connections):
+        # Where this bus's denoise runs: 'dpdfnet' (here) or 'dpdfnet_remote'
+        # (the offload worker on the macmini; a miss plays dry, never local).
+        from audio_util import DENOISE_ENGINE_IDS, normalize_denoise_engine
+        bus_id = data.get('bus', '')
+        engine = normalize_denoise_engine(data.get('engine', ''))
+        if engine not in DENOISE_ENGINE_IDS:
+            return {'ok': False, 'error': f'invalid engine: {engine}'}
+        for b in busses:
+            if b['id'] == bus_id:
+                proc = b.setdefault('processing', {})
+                proc['dfn_engine'] = engine
+                self._save_routing_config(busses, connections)
+                bm = getattr(self.gateway, 'bus_manager', None) if self.gateway else None
+                if bm:
+                    if bus_id in bm._bus_config:
+                        bm._bus_config[bus_id]['dfn_engine'] = engine
+                    _bp = bm._bus_processors.get(bus_id)
+                    if _bp is not None:
+                        _bp.set_dfn_engine(engine)
+                return {'ok': True, 'engine': engine}
+        return {'ok': False, 'error': f'bus not found: {bus_id}'}
+
     def _routing_cmd_set_loop_hours(self, data, busses, connections):
         bus_id = data.get('bus', '')
         hours = data.get('hours', 24)
@@ -378,6 +401,7 @@ class _RoutingCmdsMixin:
         'toggle_proc':     _routing_cmd_toggle_proc,
         'set_dfn_mix':     _routing_cmd_set_dfn_mix,
         'set_dfn_bypass':  _routing_cmd_set_dfn_bypass,
+        'set_dfn_engine':  _routing_cmd_set_dfn_engine,
         'set_loop_hours':  _routing_cmd_set_loop_hours,
         'bus_mute':        _routing_cmd_bus_mute,
         'mute':            _routing_cmd_mute,

@@ -181,7 +181,7 @@ q.set_dfn_engine('rnnoise')
 check('AudioProcessor accepts a legacy id as dpdfnet', q.dfn_engine == 'dpdfnet', q.dfn_engine)
 q.set_dfn_engine('bogus')
 check('AudioProcessor rejects an unknown id', q.dfn_engine == 'dpdfnet', q.dfn_engine)
-check('only dpdfnet is registered', audio_util.DENOISE_ENGINE_IDS == ('dpdfnet',),
+check('engines: local + remote DP8', audio_util.DENOISE_ENGINE_IDS == ('dpdfnet', 'dpdfnet_remote'),
       audio_util.DENOISE_ENGINE_IDS)
 
 print('PASS' if not _fails else f'FAIL ({_fails})')

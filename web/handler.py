@@ -317,6 +317,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
 
     _GET_EXACT = {
         '/status':                'g:handle_status',
+        '/workers':               'p:handle_workers_status',
         '/soundboard/categories': 'p:handle_soundboard_categories',
         '/announcer':             'p:handle_announcer',
         '/tts/engine':            'p:handle_tts_engine',
@@ -474,6 +475,7 @@ class GatewayRequestHandler(http.server.BaseHTTPRequestHandler):
         '/transcription/query':        'p:handle_transcription_query',
         '/transcribe_config':          'p:handle_transcribe_config',
         '/transcribe_worker/register': 'p:handle_transcribe_worker_register',
+        '/worker/register':            'p:handle_worker_register',
         '/testloop':                   'p:handle_testloop',
         '/bgm':                        'p:handle_bgm',
         '/netplayer':                  'p:handle_netplayer',

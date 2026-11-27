@@ -12,6 +12,7 @@ from web_routes_transcribe  import (
     handle_transcription_query, handle_transcribe_config,
     handle_transcribe_worker_register,
 )
+from web_routes_workers  import handle_worker_register, handle_workers_status
 from web_routes_radio  import (
     handle_d75cmd, handle_ic7100cmd, handle_kv4pcmd, handle_linkcmd, handle_catcmd,
     handle_sdrcmd, handle_packet_cmd,

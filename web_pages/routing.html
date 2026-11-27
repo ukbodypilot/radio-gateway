@@ -262,6 +262,21 @@
     flex-shrink: 0;
   }
 
+  /* Where the bus's denoise runs: local = here, remote = offload worker. */
+  .dfn-where {
+    flex-shrink: 0;
+    font: inherit;
+    font-size: 10px;
+    line-height: 1;
+    padding: 1px 4px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--t-border);
+    background: var(--t-panel-hi);
+    color: var(--t-fg-dim);
+    cursor: pointer;
+  }
+  .dfn-where.remote { color: var(--t-accent); border-color: var(--t-accent); }
+
   .gain-slider {
     width: 60px;
     flex-shrink: 0;
@@ -1084,6 +1099,13 @@ function rebuildEditor() {
             +   'onchange="setDfnMix(\'' + b.id + '\', this.value, false)" '
             +   'ondblclick="this.value=0.5;setDfnMix(\'' + b.id + '\', 0.5, false)">'
             + '<span class="dfn-mix-val" id="dfn-mix-val-' + b.id + '">' + pct + '%</span>'
+            + (function() {
+                var rem = proc.dfn_engine === 'dpdfnet_remote';
+                return '<button class="dfn-where' + (rem ? ' remote' : '') + '" id="dfn-where-' + b.id + '" '
+                  + 'onclick="toggleDfnWhere(\'' + b.id + '\')" '
+                  + 'title="Where denoise runs: local = this box, remote = the offload worker (a miss plays dry, never local)">'
+                  + (rem ? 'remote' : 'local') + '</button>';
+              })()
             + '</div>';
         })()
       /* Delay lives in the title bar for solo busses — see the injection
@@ -1537,6 +1559,24 @@ function setDfnMix(busId, value, isLive) {
     if (_dfnMixTimers[busId]) { clearTimeout(_dfnMixTimers[busId]); delete _dfnMixTimers[busId]; }
     send();
   }
+}
+
+// Denoise location (per-bus): local DP8 here, or DP8 on the remote worker
+function toggleDfnWhere(busId) {
+  var btn = document.getElementById('dfn-where-' + busId);
+  var toRemote = !(btn && btn.classList.contains('remote'));
+  fetch('/routing/cmd', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd: 'set_dfn_engine', bus: busId,
+                          engine: toRemote ? 'dpdfnet_remote' : 'dpdfnet'})
+  }).then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { setStatus(busId + ': ' + (d.error || 'denoise engine change failed')); return; }
+      var rem = d.engine === 'dpdfnet_remote';
+      if (btn) { btn.classList.toggle('remote', rem); btn.textContent = rem ? 'remote' : 'local'; }
+      setStatus(busId + ': denoise runs ' + (rem ? 'on the remote worker' : 'locally'));
+    });
 }
 
 // Speaker mode selector

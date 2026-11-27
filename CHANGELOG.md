@@ -4,6 +4,15 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+- **Offload workers: remote DP8 denoise and Kokoro TTS** (`docs/offload-workers.md`). Two
+  services for another box (the macmini) that self-register at `/worker/register`, like the
+  transcription workers, so no address goes in config. In `/routing`, each bus's denoise row gains
+  a **local / remote** button (`dfn_engine` `dpdfnet_remote`). A remote bus streams 50 ms chunks over
+  one TCP connection, and the output is bit-identical to local. A late reply or a lost worker plays
+  that chunk dry, never local. Kokoro TTS uses a registered worker first and falls back to a
+  lazily loaded local model (`TTS_REMOTE_WORKER`, default on). New: `GET /workers`,
+  `rg_denoise_remote_total`, `rg_denoise_remote_rtt_ms`, `rg_tts_remote_total`.
+
 ## [8.1.0] -- 2026-11-26
 
 - **`rig.css`: the house style, shared with sibling apps.** The fonts, `--t-*` tokens, base elements,
