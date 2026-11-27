@@ -4,6 +4,8 @@ All notable changes to Radio Gateway.
 
 ## [Unreleased]
 
+## [8.2.0] -- 2026-11-26
+
 - **Offload workers: remote DP8 denoise and Kokoro TTS** (`docs/offload-workers.md`). Two
   services for another box (the macmini) that self-register at `/worker/register`, like the
   transcription workers, so no address goes in config. In `/routing`, each bus's denoise row gains

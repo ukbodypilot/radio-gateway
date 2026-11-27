@@ -48,6 +48,7 @@ More screenshots in `docs/screenshots/`.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detailed release history. Highlights:
 
+- **v8.2.0** (2026-11-26) — Offload workers: run DP8 denoise per bus and Kokoro TTS on another box (self-registering, a late reply plays dry, never local), a new Audio → Denoise page to control every bus's denoise in one place, and an Offload Workers panel on the Endpoints page.
 - **v8.1.0** (2026-11-26) — One house style (`rig.css`) shared with tesla-tools, lan-inventory and Family Locator, plus an optional Apps menu (`APP_LINKS`) that opens your other apps inside the gateway; `/family/` proxy for Family Locator.
 - **v8.0.0** (2026-11-21) — New "rig front panel" web UI: amber seven-segment readouts, colour that means RX/TX/attention, a one-row header with collapsible meters, a live-first dashboard, LCD-style radio pages with a big PTT key, and plain labels throughout. Fixes a powered-off TH-D75 showing as connected and flashing red.
 - **v6.1.0** (2026-11-18) — Speaker ID: voice fingerprints on every transcribed over, callsign and introduction evidence, a `/speakers` curation page with conflict cards that suggest splits, and a nightly re-cluster; the TX Log gains a callsign column and channel filter, and several buses can feed transcription. AllStar AS1/AS2 buttons now play their processed bus (gain + denoise) instead of the quiet raw feed, and the routing gain slider works on plugins.
